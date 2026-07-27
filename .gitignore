@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Node / Next
+node_modules/
+.next/
+
+# OS
+.DS_Store
+
+# 本地运行产物(数据/模型/向量库/日志)
+data/
+models/
+weaviate-data/
+postgres-data/
+logs/
+*.db
+*.sqlite
+*.sqlite3
