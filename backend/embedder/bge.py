@@ -4,10 +4,13 @@
 - BGEReranker:cross-encoder 重排,用于精排提升 Top-K 质量。
 
 两者均通过 FlagEmbedding 库加载,首次实例化时可能触发模型权重下载
-(数 GB),生产环境建议预热。
+(数 GB)。模型权重缓存在项目本地 `MODEL_CACHE_DIR`(默认 `<repo>/models/`),
+避免污染用户主目录且便于跨环境迁移。
 """
 
 import logging
+import os
+from pathlib import Path
 
 import numpy as np
 
@@ -16,22 +19,50 @@ from backend.embedder.base import Embedder, Reranker, detect_device
 logger = logging.getLogger(__name__)
 
 
+def _ensure_hf_cache(model_cache_dir: Path) -> None:
+    """把 HuggingFace 缓存目录指向项目本地路径。
+
+    必须在 import FlagEmbedding / transformers 之前调用,否则
+    `from_pretrained` 仍会用默认 `~/.cache/huggingface/hub/`。
+
+    Args:
+        model_cache_dir: 项目内缓存目录(如 `<repo>/models/`)。
+            实际 HuggingFace hub 缓存位于其下的 `hub/` 子目录。
+    """
+    hub_dir = model_cache_dir / "hub"
+    hub_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("HF_HOME", str(model_cache_dir))
+    os.environ.setdefault("HF_HUB_CACHE", str(hub_dir))
+    os.environ.setdefault("TRANSFORMERS_CACHE", str(hub_dir))
+
+
 class BGEEmbedder(Embedder):
     """基于 BAAI/bge-m3 的嵌入模型实现。
 
     输出 1024 维 dense 向量,适用于 OpenAI 兼容的向量库(如 Weaviate)。
     """
 
-    def __init__(self, device: str = "auto", model_name: str = "BAAI/bge-m3"):
+    def __init__(
+        self,
+        device: str = "auto",
+        model_name: str = "BAAI/bge-m3",
+        cache_dir: Path | None = None,
+    ):
         """加载 BGE-m3 模型权重。
 
         Args:
             device: 推理设备偏好。"auto" 自动检测,其他值(如 "cpu")强制指定。
             model_name: HuggingFace 模型标识,默认 BAAI/bge-m3。
+            cache_dir: 模型权重本地缓存目录。为 None 时取环境变量
+                `MODEL_CACHE_DIR`,默认 `<repo>/models/`。
         """
         self._device = detect_device(device)
         self._dimension = 1024
-        logger.info("加载 BGE-m3 嵌入模型(device=%s)...", self._device)
+        resolved_cache = cache_dir or Path(
+            os.environ.get("MODEL_CACHE_DIR", Path(__file__).resolve().parents[2] / "models")
+        )
+        _ensure_hf_cache(resolved_cache)
+        logger.info("加载 BGE-m3 嵌入模型(device=%s, cache=%s)...", self._device, resolved_cache)
         try:
             from FlagEmbedding import BGEM3FlagModel
         except ImportError as exc:  # pragma: no cover - 依赖缺失分支
@@ -77,15 +108,22 @@ class BGEReranker(Reranker):
         self,
         device: str = "auto",
         model_name: str = "BAAI/bge-reranker-v2-m3",
+        cache_dir: Path | None = None,
     ):
         """加载 bge-reranker-v2-m3 模型权重。
 
         Args:
             device: 推理设备偏好。"auto" 自动检测,其他值(如 "cpu")强制指定。
             model_name: HuggingFace 模型标识,默认 BAAI/bge-reranker-v2-m3。
+            cache_dir: 模型权重本地缓存目录。为 None 时取环境变量
+                `MODEL_CACHE_DIR`,默认 `<repo>/models/`。
         """
         self._device = detect_device(device)
-        logger.info("加载 bge-reranker-v2-m3(device=%s)...", self._device)
+        resolved_cache = cache_dir or Path(
+            os.environ.get("MODEL_CACHE_DIR", Path(__file__).resolve().parents[2] / "models")
+        )
+        _ensure_hf_cache(resolved_cache)
+        logger.info("加载 bge-reranker-v2-m3(device=%s, cache=%s)...", self._device, resolved_cache)
         try:
             from FlagEmbedding import FlagReranker
         except ImportError as exc:  # pragma: no cover - 依赖缺失分支

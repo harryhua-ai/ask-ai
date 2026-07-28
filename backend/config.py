@@ -33,6 +33,7 @@ class Settings:
     deepseek_api_base: str
     deepseek_model: str
     embedder_device: str
+    model_cache_dir: Path
     github_token: str
     api_host: str
     api_port: int
@@ -55,6 +56,7 @@ def _env(key: str, default: str = "") -> str:
 
 def load_settings(config_dir: Path | None = None) -> Settings:
     """从环境变量加载 Settings 实例。"""
+    project_root = Path(__file__).resolve().parent.parent
     return Settings(
         postgres_host=_env("POSTGRES_HOST", "localhost"),
         postgres_port=int(_env("POSTGRES_PORT", "5432")),
@@ -67,6 +69,7 @@ def load_settings(config_dir: Path | None = None) -> Settings:
         deepseek_api_base=_env("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"),
         deepseek_model=_env("DEEPSEEK_MODEL", "deepseek-chat"),
         embedder_device=_env("EMBEDDER_DEVICE", "auto"),
+        model_cache_dir=Path(_env("MODEL_CACHE_DIR", str(project_root / "models"))),
         github_token=_env("GITHUB_TOKEN"),
         api_host=_env("ASKAI_API_HOST", "0.0.0.0"),
         api_port=int(_env("ASKAI_API_PORT", "8000")),
