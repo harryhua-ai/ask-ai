@@ -24,6 +24,7 @@ from sse_starlette.sse import EventSourceResponse
 from backend.api.schemas import AskRequest, ClickRequest, FeedbackRequest
 from backend.db.models import Conversation, SourceClick
 from backend.pipeline.rag import RAGOrchestrator
+from backend.utils.budget import BudgetLimiter, estimate_tokens
 from backend.utils.pii import mask_pii
 
 logger = logging.getLogger(__name__)
@@ -41,9 +42,15 @@ def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
     return request.app.state.session_factory
 
 
+def get_budget(request: Request) -> BudgetLimiter:
+    """依赖:从 app.state 获取预算熔断器(Task 21 S2)。"""
+    return request.app.state.budget
+
+
 # Annotated 依赖类型(Annotated 风格消除 ruff B008)
 RAGDep = Annotated[RAGOrchestrator, Depends(get_rag)]
 SessionFactoryDep = Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)]
+BudgetDep = Annotated[BudgetLimiter, Depends(get_budget)]
 
 
 @router.post("/ask")
@@ -53,21 +60,36 @@ async def ask(
     request: Request,
     rag: RAGDep,
     session_factory: SessionFactoryDep,
+    budget: BudgetDep,
 ) -> EventSourceResponse:
     """SSE 流式问答端点。
 
     流程:
         1. PII 脱敏用户消息。
-        2. ``rag.stream_answer`` 产出 JSON 事件,逐条转为 SSE:
+        2. S2 预算熔断:估算 prompt token + max_tokens(4096)预扣;
+           超限时返回 ``declined`` 事件,不再调用 LLM。
+        3. ``rag.stream_answer`` 产出 JSON 事件,逐条转为 SSE:
            - ``sources`` 事件 → 转发 ``sources`` SSE 事件。
            - ``token`` 事件 → 转发 ``token`` SSE 事件。
            - ``complete`` 事件 → 提取最终元数据,不直接转发。
-        3. 空结果(拒答)时 ``stream_answer`` 仅产一条 ``complete`` 事件;
+        4. 空结果(拒答)时 ``stream_answer`` 仅产一条 ``complete`` 事件;
            此处将拒答文本作为 ``token`` SSE 事件补发,保证客户端可见。
-        4. 写入 Postgres conversations 表。
-        5. 发送 ``done`` SSE 事件,携带 ``conversation_id``。
+        5. 写入 Postgres conversations 表。
+        6. 发送 ``done`` SSE 事件,携带 ``conversation_id``。
     """
     masked_message = mask_pii(req.message)
+
+    # S2: 预算熔断 — 估算 prompt token + max_tokens 预扣
+    est_input = estimate_tokens(masked_message) + sum(
+        estimate_tokens(str(h.get("content", ""))) for h in req.conversation_history
+    )
+    if not budget.check_and_reserve(est_input + 4096):
+
+        async def declined() -> Any:
+            yield {"event": "declined", "data": json.dumps({"reason": "服务繁忙,请稍后再试"})}
+            yield {"event": "done", "data": json.dumps({"conversation_id": str(uuid.uuid4())})}
+
+        return EventSourceResponse(declined())
 
     async def event_generator() -> Any:
         conversation_id = str(uuid.uuid4())
