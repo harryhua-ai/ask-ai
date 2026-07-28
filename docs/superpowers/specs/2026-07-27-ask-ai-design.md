@@ -297,7 +297,7 @@ class SourceConfig:
 ### 同步策略
 
 - cron 定时增量:各源按 content_hash / commit 比对
-- 同步日志入 Postgres(`sync_log`:源 / 时间 / 新增·更新·删除数 / 状态 / 失败原因)
+- 同步日志入 Postgres(表结构见第 11.3 节)
 - 失败用上一版向量库(Weaviate 不动)+ 告警
 - 支持管理员手动触发(Phase 2 UI)
 - 失效文档及时从 Weaviate 移除
@@ -501,7 +501,227 @@ CREATE TABLE llm_routing (
 | MCP Server | 面向 Claude Code/Cursor |
 | 剪枝 | 小 LLM 过滤低相关 chunk |
 
-## 11. 隐私与数据收集
+## 11. 数据模型(Postgres)
+
+Phase 1 创建全部表,部分表有预留字段供后期功能使用,避免数据迁移。
+
+### 11.1 对话与统计(Phase 1 采集,Phase 2-3 消费)
+
+```sql
+-- 匿名对话记录(Phase 1 采集,Phase 2 对话审查,Phase 3 分析)
+CREATE TABLE conversations (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- Phase 1 字段
+    question        TEXT NOT NULL,
+    answer          TEXT,
+    channel         VARCHAR(20) NOT NULL DEFAULT 'widget',   -- widget | discord | whatsapp | mcp
+    language        VARCHAR(10),                              -- 识别出的语言
+    sources         JSONB DEFAULT '[]',                       -- 引用的来源列表
+    is_answered     BOOLEAN NOT NULL DEFAULT false,           -- 是否成功回答(非拒答)
+    feedback        VARCHAR(10),                              -- 'up' | 'down' | NULL
+    response_time_ms INT,                                     -- RAG 管线耗时
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Phase 2 预留字段(Phase 1 建表时创建,默认 NULL)
+    intent_tag      VARCHAR(100),                             -- 意图标签(Phase 2 自动标注)
+    custom_tags     JSONB DEFAULT '[]',                       -- 自定义标签(Phase 2)
+    customization_id VARCHAR(50),                             -- 关联的配置 ID(Phase 2)
+
+    -- Phase 3 预留字段
+    cluster_id      VARCHAR(100),                             -- 聚类分组 ID(Phase 3 Top Questions)
+    gap_status      VARCHAR(20),                              -- 'open' | 'resolved' | NULL(Phase 3 Coverage Gaps)
+    override_answer TEXT                                      -- 人工覆盖答案(Phase 3 Improve This Answer)
+);
+
+CREATE INDEX idx_conversations_created_at ON conversations (created_at);
+CREATE INDEX idx_conversations_is_answered ON conversations (is_answered);
+CREATE INDEX idx_conversations_channel ON conversations (channel);
+CREATE INDEX idx_conversations_cluster_id ON conversations (cluster_id) WHERE cluster_id IS NOT NULL;
+CREATE INDEX idx_conversations_gap_status ON conversations (gap_status) WHERE gap_status IS NOT NULL;
+```
+
+### 11.2 来源点击追踪(Phase 1 采集,Phase 3 分析)
+
+```sql
+-- 用户点击答案中来源链接的记录(Phase 3 Source Analytics 消费)
+CREATE TABLE source_clicks (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE,
+    source_url      TEXT NOT NULL,
+    source_type     VARCHAR(20) NOT NULL,                     -- github | wiki | website | blog
+    product         VARCHAR(50),                              -- ne101 | ne301 | ...
+    clicked_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_source_clicks_conversation ON source_clicks (conversation_id);
+CREATE INDEX idx_source_clicks_source_url ON source_clicks (source_url);
+```
+
+### 11.3 同步日志(Phase 1 采集,Phase 2 监控面板)
+
+```sql
+-- 数据源同步执行记录
+CREATE TABLE sync_log (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    source_id       VARCHAR(100) NOT NULL,                    -- 对应 SourceConfig.id
+    source_type     VARCHAR(50) NOT NULL,                      -- github | filesystem | web_crawl | sdk
+    status          VARCHAR(20) NOT NULL,                      -- 'success' | 'failed' | 'partial'
+    started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at     TIMESTAMPTZ,
+    duration_ms     INT,
+    items_new       INT DEFAULT 0,
+    items_updated   INT DEFAULT 0,
+    items_deleted   INT DEFAULT 0,
+    items_unchanged INT DEFAULT 0,
+    error_detail    TEXT,                                     -- 失败原因详情
+    triggered_by    VARCHAR(20) DEFAULT 'cron'                -- 'cron' | 'manual'
+);
+
+CREATE INDEX idx_sync_log_source ON sync_log (source_id, started_at DESC);
+CREATE INDEX idx_sync_log_status ON sync_log (status, started_at DESC);
+```
+
+### 11.4 数据源配置(Phase 1 YAML,Phase 2 迁入 Postgres + UI)
+
+```sql
+-- 数据源配置(Phase 2 管理 UI 操作;Phase 1 可不写入,仅建表)
+CREATE TABLE data_sources (
+    id              VARCHAR(100) PRIMARY KEY,                  -- 唯一标识
+    type            VARCHAR(50) NOT NULL,                      -- github | filesystem | web_crawl | sdk
+    product         VARCHAR(50) NOT NULL,                      -- 产品线
+    enabled         BOOLEAN DEFAULT true,
+    config          JSONB NOT NULL,                            -- 类型特定配置
+    sync_interval   VARCHAR(20) DEFAULT '24h',                 -- 同步频率
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### 11.5 Customization 配置(Phase 1 单套 YAML,Phase 2 多套 + UI)
+
+```sql
+-- 助手配置(system prompt、人设、语气等)
+-- Phase 1 可不写入,仅建表;Phase 2 多套配置 + 按渠道绑定
+CREATE TABLE customizations (
+    id              VARCHAR(50) PRIMARY KEY,
+    name            VARCHAR(100) NOT NULL,                     -- 配置名称,如 "售前默认" "开发者技术"
+    -- 三层结构(参考 Kapa)
+    system_prompt   TEXT NOT NULL,                             -- 完整 system prompt
+    style_tone      TEXT,                                      -- 风格语气指令
+    guardrails      TEXT,                                      -- 边界规则(禁止回答的领域等)
+    language        VARCHAR(10) DEFAULT 'auto',                -- 回答语言(auto = 跟随提问)
+    assistant_name  VARCHAR(50) DEFAULT 'CamThink 助手',
+    -- 版本管理(Phase 2+)
+    is_active       BOOLEAN DEFAULT true,
+    version         VARCHAR(20) DEFAULT '1.0',
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 配置与渠道绑定(一个渠道绑一套配置)
+CREATE TABLE customization_bindings (
+    channel         VARCHAR(20) PRIMARY KEY,                   -- widget | discord | whatsapp | mcp
+    customization_id VARCHAR(50) REFERENCES customizations(id) ON DELETE CASCADE
+);
+```
+
+### 11.6 人工覆盖答案(Phase 3 Improve This Answer)
+
+```sql
+-- 针对特定问题的人工覆盖答案
+-- 匹配规则:当用户问题与此记录的 match_pattern 相似度 > 阈值时,直接返回 override_answer
+CREATE TABLE answer_overrides (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    match_pattern   TEXT NOT NULL,                             -- 匹配的问题模式(或关键词)
+    match_type      VARCHAR(20) DEFAULT 'semantic',            -- 'semantic' | 'keyword' | 'regex'
+    override_answer TEXT NOT NULL,                             -- 人工覆盖的答案(Markdown)
+    override_sources JSONB DEFAULT '[]',                       -- 来源链接
+    created_by      VARCHAR(100),                              -- 创建者
+    is_active       BOOLEAN DEFAULT true,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### 11.7 用户与权限(Phase 2 RBAC)
+
+```sql
+-- 管理后台用户
+CREATE TABLE users (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email           VARCHAR(255) NOT NULL UNIQUE,
+    name            VARCHAR(100),
+    role            VARCHAR(20) NOT NULL DEFAULT 'viewer',     -- 'admin' | 'editor' | 'viewer'
+    is_active       BOOLEAN DEFAULT true,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    last_login_at   TIMESTAMPTZ
+);
+```
+
+### 11.8 LLM 供应商(已在第 7 节定义)
+
+`llm_providers` 和 `llm_routing` 表见第 7 节,此处不重复。 表创建策略
+
+| 表 | Phase 1 | 说明 |
+|---|---|---|
+| `conversations` | ✅ 创建 + 写入 | Phase 1 采集数据,预留字段为 NULL |
+| `source_clicks` | ✅ 创建 + 写入 | Phase 1 采集点击 |
+| `sync_log` | ✅ 创建 + 写入 | Phase 1 cron 写入 |
+| `data_sources` | ✅ 创建(空表) | Phase 1 用 YAML,Phase 2 迁入 |
+| `customizations` | ✅ 创建(空表) | Phase 1 用 YAML,Phase 2 迁入 |
+| `customization_bindings` | ✅ 创建(空表) | Phase 2 使用 |
+| `answer_overrides` | ✅ 创建(空表) | Phase 3 使用 |
+| `users` | ✅ 创建(空表) | Phase 2 使用 |
+| `llm_providers` | ✅ 创建(空表) | Phase 1 用 YAML,Phase 2 迁入 |
+| `llm_routing` | ✅ 创建(空表) | Phase 1 用 YAML,Phase 2 迁入 |
+
+**Phase 1 一次性建全部表,预留字段默认 NULL,后期功能直接填充,无需数据迁移。**
+
+## 12. 管线扩展接口(预留)
+
+### 12.1(Phase 3)
+
+```python
+class Pruner(Protocol):
+    """剪枝接口 — Phase 3 插入重排与生成之间"""
+
+    def prune(
+        self,
+        query: str,
+        chunks: list[RetrievedChunk],
+    ) -> list[RetrievedChunk]:
+        """过滤低相关 chunk,保留高相关 chunk"""
+        ...
+```
+
+管线插入点:
+```
+重排 → [Pruner(Phase 3)] → 依据检查 → 生成
+```
+
+Phase 1 不实现,管线中预留位置。
+
+### 12.2(Phase 4)
+
+```python
+class ChannelAdapter(Protocol):
+    """渠道适配器接口 — 每个渠道实现一个"""
+
+    @property
+    def channel_type(self) -> str: ...
+
+    def receive_message(self, raw_event: dict) -> IncomingMessage:
+        """将渠道原始事件转为统一消息格式"""
+        ...
+
+    def send_response(self, conversation_id: str, response: str | Iterator[str]) -> None:
+        """将回复发送回渠道(支持流式)"""
+        ...
+```
+
+`IncomingMessage` 已在第 3 节定义,`channel` 字段已预留所有渠道类型。
+
+## 13. 隐私与数据收集
 
 - 有限多轮:前端保留最近 5 轮,后端无状态,不落 session
 - PII 脱敏(邮箱 / 电话正则,入库前)
@@ -509,7 +729,7 @@ CREATE TABLE llm_routing (
 - 日志保留期:**90 天**(默认,待最终确认)
 - 不用日志训练公开模型
 
-## 12. 部署形态
+## 14. 部署形态
 
 **Phase 1(macOS 本地)**:
 - docker compose:Weaviate + Postgres + RAG 服务(FastAPI)
@@ -522,7 +742,7 @@ CREATE TABLE llm_routing (
 - device 切 cuda(T4 16GB)
 - widget 嵌入生产站点
 
-## 13. 项目结构(规划)
+## 15. 项目结构(规划)
 
 ```
 ask-ai/
@@ -555,7 +775,7 @@ ask-ai/
 └── .env.example
 ```
 
-## 14. Phase 1 验收标准
+## 16. Phase 1 验收标准
 
 - 官网 + Wiki 右下角可打开助手,桌面 + 移动均可用
 - 能识别并回答多语言问题
@@ -570,7 +790,7 @@ ask-ai/
 - LLMProvider 框架可扩展(deepseek 已实现)
 - Widget 可通过 `<script>` 标签嵌入不同站点
 
-## 15. 待确认项与风险
+## 17. 待确认项与风险
 
 ### 待确认(不影响 Phase 1 开工)
 
