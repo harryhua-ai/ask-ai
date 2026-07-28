@@ -45,7 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import weaviate
 
-import backend.connectors.filesystem
+import backend.connectors.filesystem  # 触发 @register 装饰器
 import backend.connectors.github  # noqa: F401 - 触发 @register 装饰器
 from backend.config import Settings, load_settings, load_yaml_config
 from backend.connectors.registry import ConnectorRegistry, SourceConfig
@@ -158,9 +158,14 @@ async def _sync_one(
 
     finally:
         if not dry_run:
-            async with session_factory() as session:
-                session.add(log_entry)
-                await session.commit()
+            # 内嵌 try/except 防止 commit 失败冲破外层 except 的错误隔离
+            # (例如连接断开 / 死锁),保证后续数据源仍可继续同步
+            try:
+                async with session_factory() as session:
+                    session.add(log_entry)
+                    await session.commit()
+            except Exception as exc:  # noqa: BLE001 - SyncLog 写入失败不中断批次
+                logger.error("SyncLog 写入失败 %s: %s", cfg.id, exc)
 
 
 async def run_sync(

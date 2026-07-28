@@ -446,3 +446,93 @@ async def test_sync_one_populates_items_count_fields():
     # items_deleted: deleted 列表长度 = 1
     assert added_entry.items_deleted == 1
     assert added_entry.status == "success"
+
+
+# --------------------------------------------------------------------------- #
+# SyncLog commit 错误隔离(I2 修复)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+async def test_sync_one_commit_failure_does_not_propagate():
+    """_sync_one 的 SyncLog.commit() 抛异常时不应向上传播。
+
+    finally 块内层 try/except 捕获 commit 异常,确保日志写入失败
+    不会冲破外层 except 的错误隔离。
+    """
+    from scripts.sync import _sync_one
+
+    cfg = _make_config(id="src-1")
+    pipeline = MagicMock()
+    pipeline.ingest_all.return_value = {"doc1": 1}
+    connector = _make_connector_mock()
+
+    # session_factory() 本身抛异常(连接失败场景)
+    failing_factory = MagicMock(side_effect=RuntimeError("session factory crashed"))
+
+    # 不应抛异常 - finally 内层 try/except 应吞掉异常
+    with patch("scripts.sync.ConnectorRegistry.create", return_value=connector):
+        await _sync_one(cfg, pipeline, failing_factory)
+
+    # 主流程应已正常完成
+    pipeline.ingest_all.assert_called_once()
+
+
+@pytest.mark.unit
+async def test_sync_log_commit_failure_does_not_break_isolation():
+    """多个数据源时,第一个 SyncLog commit 失败,后续 source 仍应被处理。
+
+    验证 finally 块的 commit 异常被捕获后,run_sync 循环继续执行,
+    第二个数据源的 ingest_all 仍被调用。
+    """
+    settings = _make_settings()
+    cfg_a = _make_config(id="src-a", enabled=True)
+    cfg_b = _make_config(id="src-b", enabled=True)
+
+    # 用 side_effect 让 fetch_changes 每次返回新 iter(避免迭代器耗尽)
+    connector = MagicMock()
+    connector.fetch_changes.side_effect = lambda *a, **kw: iter([MagicMock(name="doc")])
+    connector.fetch_all.return_value = iter([])
+    connector.fetch_deleted.return_value = []
+
+    pipeline = MagicMock()
+    pipeline.ingest_all.return_value = {"doc1": 1}
+
+    # 第一次 commit 抛异常,第二次正常 - 验证错误隔离
+    call_state = {"n": 0}
+
+    @asynccontextmanager
+    async def _ctx():
+        call_state["n"] += 1
+        session = MagicMock()
+        if call_state["n"] == 1:
+            # 模拟 commit 失败(死锁 / 连接断开)
+            session.commit = AsyncMock(side_effect=RuntimeError("db commit failed"))
+        else:
+            session.commit = AsyncMock()
+        yield session
+
+    factory = MagicMock(side_effect=_ctx)
+
+    patches, _ = _patch_sync_deps(
+        configs=[cfg_a, cfg_b],
+        connector=connector,
+        pipeline=pipeline,
+        session_factory=factory,
+    )
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patches[4],
+        patches[5],
+        patches[6],
+        patches[7],
+        patches[8],
+    ):
+        # run_sync 整体不应抛异常
+        await run_sync(settings)
+
+    # 第二个 source 仍应被处理:ingest_all 被调用 2 次
+    assert pipeline.ingest_all.call_count == 2
