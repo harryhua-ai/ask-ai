@@ -9,9 +9,15 @@
     - ``POST /api/ask`` —— SSE 流式问答
     - ``POST /api/feedback`` —— 对话反馈
     - ``POST /api/click`` —— 来源点击
+
+安全加固(Task 21):
+    - S2 预算熔断器(BudgetLimiter)接入 app.state
+    - S4 GITHUB_TOKEN 最小权限校验
+    - S5 全局异常 handler 不回显堆栈 / 安全响应头 / CORS 白名单 / debug 受控
 """
 
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,8 +25,9 @@ from urllib.parse import urlparse
 
 import uvicorn
 import weaviate
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -36,6 +43,7 @@ from backend.llm.registry import LLMRegistry, LLMRouter
 from backend.pipeline.rag import RAGOrchestrator
 from backend.retrieval.rerank import RerankPipeline
 from backend.retrieval.search import HybridSearcher
+from backend.utils.budget import BudgetConfig, BudgetLimiter
 
 logger = logging.getLogger(__name__)
 settings = load_settings()
@@ -135,6 +143,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.weaviate_client = weaviate_client
     app.state.engine = engine
 
+    # S2: 预算熔断器(每日 LLM 调用 / token 上限,超阈熔断)
+    budget_cfg = BudgetConfig(
+        daily_request_limit=int(os.environ.get("BUDGET_DAILY_REQUESTS", "500")),
+        daily_token_limit=int(os.environ.get("BUDGET_DAILY_TOKENS", "2000000")),
+    )
+    app.state.budget = BudgetLimiter(budget_cfg)
+
+    # S4: GITHUB_TOKEN 最小权限校验(prod 严格,dev 仅 warn)
+    from backend.connectors.github import validate_github_token
+
+    validate_github_token(
+        os.environ.get("GITHUB_TOKEN", ""),
+        strict=os.environ.get("APP_MODE", "dev") == "prod",
+    )
+
     logger.info("Ask AI 后端就绪")
     yield
 
@@ -143,14 +166,49 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Ask AI 后端关闭")
 
 
-app = FastAPI(title="Ask AI", lifespan=lifespan)
+# S5: 生产配置加固 —— debug / docs 受 FASTAPI_DEBUG 控制(默认 false)
+_debug = os.environ.get("FASTAPI_DEBUG", "false").lower() == "true"
+app = FastAPI(
+    title="Ask AI",
+    lifespan=lifespan,
+    debug=_debug,
+    docs_url="/docs" if _debug else None,
+    redoc_url="/redoc" if _debug else None,
+)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# S5: 安全响应头 + 全局异常兜底(异常不回显堆栈,仅记录日志)。
+# 注:Starlette 的 ServerErrorMiddleware 即使处理了异常也会 re-raise 给上层,
+# 导致 ASGI 客户端看到的是 exception 而非 500 响应。在此层 catch 后直接返回
+# JSONResponse,确保客户端拿到安全的降级响应。
+@app.middleware("http")
+async def _security_and_error_handler(request: Request, call_next):
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception("Unhandled exception on %s", request.url.path)
+        response = JSONResponse(status_code=500, content={"detail": "内部服务错误"})
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+
+# S5: CORS 白名单(env 控制,默认仅本地开发站点;不再用 "*")
+_cors = [
+    o.strip()
+    for o in os.environ.get(
+        "CORS_ALLOW_ORIGINS", "http://localhost:3000,http://localhost:1313"
+    ).split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 app.include_router(api_router)
 

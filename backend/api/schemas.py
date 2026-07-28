@@ -3,7 +3,12 @@
 所有入口校验(字段必填、长度、枚举)在系统边界完成,服务层不再重复校验。
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# S3: conversation_history 后端强制边界
+MAX_HISTORY_ITEMS = 10
+MAX_HISTORY_CONTENT_CHARS = 4000
+MAX_HISTORY_TOTAL_CHARS = 20000
 
 
 class AskRequest(BaseModel):
@@ -12,14 +17,34 @@ class AskRequest(BaseModel):
     Attributes:
         message: 用户问题文本(1~2000 字符)。
         language: 可选语言提示(如 ``zh-cn`` / ``en``);为空时由管道自动检测。
-        channel: 渠道标识,默认 ``widget``。预留供路由 / 限流使用。
-        conversation_history: OpenAI 风格历史消息(最多 10 条),供多轮对话使用。
+        channel: 渠道标识(仅允许 ``widget|discord|whatsapp|mcp``),默认 ``widget``。
+        conversation_history: OpenAI 风格历史消息(最多 ``MAX_HISTORY_ITEMS`` 条),
+            单条 content 上限 ``MAX_HISTORY_CONTENT_CHARS`` 字符,总计上限
+            ``MAX_HISTORY_TOTAL_CHARS`` 字符。仅保留 ``role`` / ``content`` 键。
     """
 
     message: str = Field(..., min_length=1, max_length=2000)
     language: str | None = None
-    channel: str = "widget"
-    conversation_history: list[dict] = Field(default_factory=list, max_length=10)
+    channel: str = Field(default="widget", pattern="^(widget|discord|whatsapp|mcp)$")
+    conversation_history: list[dict] = Field(default_factory=list, max_length=MAX_HISTORY_ITEMS)
+
+    @field_validator("conversation_history")
+    @classmethod
+    def _validate_history(cls, v: list[dict]) -> list[dict]:
+        """校验每条 content 长度、总字符数,并仅保留 role/content 键(防止额外字段注入)。"""
+        total = 0
+        for item in v:
+            content = str(item.get("content", ""))
+            if len(content) > MAX_HISTORY_CONTENT_CHARS:
+                raise ValueError(f"history 单条 content 超过 {MAX_HISTORY_CONTENT_CHARS} 字符")
+            total += len(content)
+        if total > MAX_HISTORY_TOTAL_CHARS:
+            raise ValueError(f"history 总字符超过 {MAX_HISTORY_TOTAL_CHARS}")
+        # 仅保留 role/content,丢弃其他键
+        return [
+            {"role": item.get("role", "user"), "content": str(item.get("content", ""))}
+            for item in v
+        ]
 
 
 class FeedbackRequest(BaseModel):

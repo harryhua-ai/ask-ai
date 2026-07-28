@@ -312,3 +312,58 @@ class GitHubConnector(DataSourceConnector):
                             deleted.append(source_id)
                             seen.add(source_id)
         return deleted
+
+
+# ---------------------------------------------------------------------------
+# S4: GITHUB_TOKEN 最小权限校验(模块级函数,启动时由 lifespan 调用)
+# ---------------------------------------------------------------------------
+
+# classic token 写权限前缀(命中即视为违反最小权限)
+_WRITE_SCOPE_PREFIXES: tuple[str, ...] = ("repo", "write:", "delete:", "admin:")
+# classic token 只读 scope 白名单(``""`` 用于 fine-grained token 无 x-oauth-scopes 头的情况)
+_READONLY_SCOPES: frozenset[str] = frozenset({"repo:read", "public_repo", ""})
+
+
+def validate_github_token(token: str, *, strict: bool = False) -> None:
+    """启动时校验 GITHUB_TOKEN 为只读最小权限。
+
+    classic token:检查 ``X-OAuth-Scopes`` 不含写权限(``repo`` / ``write:`` /
+                   ``delete:`` / ``admin:``),``repo:read`` 与 ``public_repo``
+                   视为只读放行。
+    fine-grained token:响应头无 ``x-oauth-scopes``,视为有效(权限粒度在 token
+                       配置层保证)。
+    无 token:warn(私有仓库将拉取失败)。
+    写权限命中:``strict=True``(prod)抛 :class:`RuntimeError` 阻断启动;
+              ``strict=False``(dev)仅 warn。
+
+    Args:
+        token: GitHub Personal Access Token。
+        strict: 是否严格模式(生产)。严格模式下写权限会抛错阻断启动。
+    """
+    if not token:
+        logger.warning("GITHUB_TOKEN 未设置:私有仓库将无法拉取")
+        return
+    try:
+        with httpx.Client(
+            timeout=10,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+            },
+        ) as client:
+            resp = client.get("https://api.github.com/user")
+            resp.raise_for_status()
+            scopes = resp.headers.get("x-oauth-scopes", "")
+            found_write = [
+                s.strip()
+                for s in scopes.split(",")
+                if s.strip() not in _READONLY_SCOPES
+                and any(s.strip().startswith(p) for p in _WRITE_SCOPE_PREFIXES)
+            ]
+            if found_write:
+                msg = f"GITHUB_TOKEN 含写权限 scope {found_write},违反最小权限原则"
+                if strict:
+                    raise RuntimeError(msg)
+                logger.warning(msg)
+    except httpx.HTTPError as e:
+        logger.warning("GITHUB_TOKEN 校验失败(网络或无效 token):%s", e)

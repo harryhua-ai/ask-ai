@@ -20,10 +20,20 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from backend.main import app
+from backend.utils.budget import BudgetConfig, BudgetLimiter
 
 # --------------------------------------------------------------------------- #
 # 辅助工具
 # --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(autouse=True)
+def _ensure_budget_state() -> None:
+    """为所有路由测试提供默认 app.state.budget(Task 21 S2 新增依赖)。
+
+    ask 端点的 ``get_budget`` 依赖从此处读取;测试中默认给高额度避免触发熔断。
+    """
+    app.state.budget = BudgetLimiter(BudgetConfig(daily_request_limit=10_000, daily_token_limit=10_000_000))
 
 
 def _parse_sse_events(body: str) -> list[dict[str, Any]]:
