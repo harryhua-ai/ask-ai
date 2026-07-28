@@ -88,6 +88,6 @@ def _expand_env(value: Any) -> Any:
 
 def load_yaml_config(path: Path) -> dict:
     """加载 YAML 配置文件,并展开其中的 ${VAR} 环境变量占位符。"""
-    with open(path) as f:
-        data = yaml.safe_load(f)
+    with path.open(encoding="utf-8") as config_file:
+        data = yaml.safe_load(config_file)
     return _expand_env(data)
