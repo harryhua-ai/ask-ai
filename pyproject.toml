@@ -37,6 +37,7 @@ packages = ["backend"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+pythonpath = ["."]
 markers = [
     "unit: 单元测试",
     "integration: 集成测试(需要外部服务)",
