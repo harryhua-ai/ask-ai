@@ -31,7 +31,11 @@ class AskRequest(BaseModel):
     @field_validator("conversation_history")
     @classmethod
     def _validate_history(cls, v: list[dict]) -> list[dict]:
-        """校验每条 content 长度、总字符数,并仅保留 role/content 键(防止额外字段注入)。"""
+        """校验每条 content 长度、总字符数,并仅保留 role/content 键。
+
+        role 仅允许 ``user`` / ``assistant``;其他值(如 ``system``)降级为
+        ``user``,防止 system-role 注入攻击。
+        """
         total = 0
         for item in v:
             content = str(item.get("content", ""))
@@ -40,11 +44,14 @@ class AskRequest(BaseModel):
             total += len(content)
         if total > MAX_HISTORY_TOTAL_CHARS:
             raise ValueError(f"history 总字符超过 {MAX_HISTORY_TOTAL_CHARS}")
-        # 仅保留 role/content,丢弃其他键
-        return [
-            {"role": item.get("role", "user"), "content": str(item.get("content", ""))}
-            for item in v
-        ]
+        # 仅保留 role/content,丢弃其他键;role 仅允许 user/assistant(防止 system 注入)
+        result: list[dict] = []
+        for item in v:
+            role = item.get("role", "user")
+            if role not in ("user", "assistant"):
+                role = "user"
+            result.append({"role": role, "content": str(item.get("content", ""))})
+        return result
 
 
 class FeedbackRequest(BaseModel):

@@ -100,28 +100,38 @@ async def ask(
         elapsed = 0
         token_emitted = False
 
-        async for chunk in rag.stream_answer(
-            query=masked_message,
-            channel=req.channel,
-            conversation_history=req.conversation_history,
-        ):
-            data = json.loads(chunk)
-            evt_type = data["type"]
-            if evt_type == "sources":
-                sources = data["sources"]
-                yield {
-                    "event": "sources",
-                    "data": json.dumps({"conversation_id": conversation_id, "sources": sources}),
-                }
-            elif evt_type == "token":
-                token_emitted = True
-                full_answer += data["content"]
-                yield {"event": "token", "data": json.dumps({"content": data["content"]})}
-            elif evt_type == "complete":
-                full_answer = data.get("answer", full_answer)
-                is_answered = data["is_answered"]
-                language = data.get("language", "en")
-                elapsed = data.get("response_time_ms", 0)
+        try:
+            async for chunk in rag.stream_answer(
+                query=masked_message,
+                channel=req.channel,
+                conversation_history=req.conversation_history,
+            ):
+                data = json.loads(chunk)
+                evt_type = data["type"]
+                if evt_type == "sources":
+                    sources = data["sources"]
+                    yield {
+                        "event": "sources",
+                        "data": json.dumps(
+                            {"conversation_id": conversation_id, "sources": sources}
+                        ),
+                    }
+                elif evt_type == "token":
+                    token_emitted = True
+                    full_answer += data["content"]
+                    yield {"event": "token", "data": json.dumps({"content": data["content"]})}
+                elif evt_type == "complete":
+                    full_answer = data.get("answer", full_answer)
+                    is_answered = data["is_answered"]
+                    language = data.get("language", "en")
+                    elapsed = data.get("response_time_ms", 0)
+        except Exception:
+            # S5: LLM 流式生成中途异常(超时/网络错误)时,降级返回友好提示。
+            # 200 响应头已发送,无法改写状态码,但通过 SSE token 事件通知客户端。
+            logger.exception("SSE 流式生成异常, conversation_id=%s", conversation_id)
+            if not token_emitted:
+                full_answer = "服务暂时不可用,请稍后再试。"
+                yield {"event": "token", "data": json.dumps({"content": full_answer})}
 
         # 空结果契约:stream_answer 仅产 complete(is_answered=False)时,
         # 未发过 token 事件 —— 此处补发拒答文本,保证客户端可见
