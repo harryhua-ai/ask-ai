@@ -29,25 +29,29 @@ export function App({ config }: { config: WidgetConfig }) {
     const assistantId = crypto.randomUUID();
     setMessages((prev) => [...prev, { id: assistantId, type: "assistant", content: "" }]);
 
-    await ask(text, messages, "widget", {
-      onSources: (sources, convId) => {
-        setConversationId(convId);
-        setMessages((prev) =>
-          prev.map((m) => (m.id === assistantId ? { ...m, sources } : m)),
-        );
-      },
-      onToken: (token) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId ? { ...m, content: m.content + token } : m,
-          ),
-        );
-      },
-      onDone: (convId) => {
-        setConversationId(convId);
-        setIsStreaming(false);
-      },
-    });
+    // try/finally 确保 isStreaming 总是被重置,即使 fetch 抛错或 SSE 提前返回(resp.body 为空 / resp.ok 为 false)
+    try {
+      await ask(text, messages, "widget", {
+        onSources: (sources, convId) => {
+          setConversationId(convId);
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId ? { ...m, sources } : m)),
+          );
+        },
+        onToken: (token) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId ? { ...m, content: m.content + token } : m,
+            ),
+          );
+        },
+        onDone: (convId) => {
+          setConversationId(convId);
+        },
+      });
+    } finally {
+      setIsStreaming(false);
+    }
   }, [messages, ask]);
 
   const handleFeedback = useCallback(async (msgId: string, feedback: "up" | "down") => {
