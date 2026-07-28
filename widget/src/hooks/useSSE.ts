@@ -30,6 +30,11 @@ export function useSSE(apiUrl: string) {
       }),
     });
 
+    // HTTP 错误响应:4xx/5xx 不应作为 SSE 解析,否则每个 chunk 都会 JSON 解析失败
+    if (!resp.ok) {
+      console.error(`SSE 请求失败: ${resp.status}`);
+      return;
+    }
     // 安全检查:提前校验 body 是否存在,避免非空断言
     if (!resp.body) return;
 
