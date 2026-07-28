@@ -14,6 +14,7 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from urllib.parse import urlparse
 
 import uvicorn
@@ -59,7 +60,7 @@ def _parse_weaviate_url(url: str) -> tuple[str, int]:
     return host, port
 
 
-def _build_llm_router(config_dir) -> LLMRouter:
+def _build_llm_router(config_dir: Path) -> LLMRouter:
     """从 YAML 配置构造 LLMRouter。
 
     YAML routing 结构为 ``{task: {chain: [provider_id, ...]}}``,

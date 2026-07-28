@@ -224,6 +224,44 @@ async def test_ask_empty_result_still_emits_token_and_done() -> None:
     session.commit.assert_awaited_once()
 
 
+@pytest.mark.unit
+async def test_ask_persistence_failure_does_not_break_sse() -> None:
+    """持久化(commit)失败时不应阻断 SSE 流,done 事件仍须发出。
+
+    注入 session_factory 其 commit() 抛 RuntimeError,验证:
+    - HTTP 200(不是 500)
+    - SSE body 仍以 done 事件结尾
+    """
+    rag = _make_streaming_rag(
+        [
+            {"type": "sources", "sources": []},
+            {"type": "token", "content": "Hello"},
+            {
+                "type": "complete",
+                "answer": "Hello",
+                "sources": [],
+                "is_answered": True,
+                "language": "en",
+                "response_time_ms": 1,
+            },
+        ]
+    )
+    factory, session = _make_mock_session_factory()
+    session.commit.side_effect = RuntimeError("Postgres 不可用")
+    app.state.rag = rag
+    app.state.session_factory = factory
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/api/ask", json={"message": "test"})
+
+    assert resp.status_code == 200
+    events = _parse_sse_events(resp.text)
+    event_types = [e["event"] for e in events]
+    # 持久化失败不应影响 token / done 事件
+    assert "token" in event_types
+    assert event_types[-1] == "done"
+
+
 # --------------------------------------------------------------------------- #
 # POST /api/ask —— 输入校验
 # --------------------------------------------------------------------------- #
