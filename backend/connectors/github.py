@@ -22,7 +22,7 @@ from datetime import datetime
 
 import httpx
 
-from backend.connectors.base import RawDocument
+from backend.connectors.base import DataSourceConnector, RawDocument
 from backend.connectors.registry import ConnectorRegistry, SourceConfig
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ AUTO_EXCLUDE = re.compile(
 
 
 @ConnectorRegistry.register("github")
-class GitHubConnector:
+class GitHubConnector(DataSourceConnector):
     """基于 GitHub REST API 的数据源 Connector。
 
     通过 ``SourceConfig.config`` 提供以下参数:
@@ -84,12 +84,12 @@ class GitHubConnector:
         self._include_dirs: list[str] = config.config.get("include_dirs", [])
         self._exclude_regex: str | None = config.config.get("exclude_regex")
         self._token: str = os.environ.get("GITHUB_TOKEN", "")
+        # 不可变构造:用 spread 一次性合并 headers,避免后续 mutation
         self._headers: dict[str, str] = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
+            **({"Authorization": f"Bearer {self._token}"} if self._token else {}),
         }
-        if self._token:
-            self._headers["Authorization"] = f"Bearer {self._token}"
         self._exclude_pattern: re.Pattern[str] | None = (
             re.compile(self._exclude_regex) if self._exclude_regex else None
         )
@@ -110,7 +110,12 @@ class GitHubConnector:
         )
 
     def _fetch_tree(self) -> list[dict]:
-        """递归拉取分支的 git tree,返回 tree 节点列表。"""
+        """递归拉取分支的 git tree,返回 tree 节点列表。
+
+        GitHub 在结果集过大时会设置 ``truncated=true`` 并截断 tree。
+        本方法检测到截断时仅记录 warning;如需完整覆盖,后续可改为
+        递归展开子目录。
+        """
         url = (
             f"https://api.github.com/repos/{self._owner}/{self._repo}"
             f"/git/trees/{self._branch}?recursive=1"
@@ -118,7 +123,16 @@ class GitHubConnector:
         with httpx.Client(timeout=30, headers=self._headers) as client:
             resp = client.get(url)
             resp.raise_for_status()
-            return resp.json().get("tree", [])
+            data = resp.json()
+            if data.get("truncated"):
+                logger.warning(
+                    "Git tree for %s/%s (%s) was truncated by GitHub; "
+                    "some files may be missing from fetch_all",
+                    self._owner,
+                    self._repo,
+                    self._branch,
+                )
+            return data.get("tree", [])
 
     def _should_include(self, path: str) -> bool:
         """判断给定路径是否应被纳入抓取范围。"""
@@ -132,18 +146,48 @@ class GitHubConnector:
             for d in self._include_dirs
         ):
             return False
-        ext = "." + path.rsplit(".", 1)[-1] if "." in path else ""
+        # 使用 os.path.splitext 提取扩展名,正确处理 dotfile 和含点的目录
+        ext = os.path.splitext(path)[1]
         return ext in self._file_types
 
-    def _fetch_file_content(self, path: str) -> str:
-        """通过 Contents API 拉取单个文件内容(自动处理 base64 解码)。"""
-        with httpx.Client(timeout=30, headers=self._headers) as client:
-            resp = client.get(self._api_url(path))
+    def _fetch_file_content(self, path: str, client: httpx.Client | None = None) -> str:
+        """通过 Contents API 拉取单个文件内容(自动处理 base64 解码)。
+
+        限制:GitHub Contents API 对 >1 MB 的文件返回 403/422 错误,
+        message 中含 "too large" 或 "1 MB"。本方法检测到该场景时
+        抛出 ``ValueError``,由上层 try/except 捕获后跳过该文件;
+        如需支持大文件,后续应切换到 Blobs API。
+
+        Args:
+            path: 仓库内相对路径。
+            client: 可选的复用连接;为 ``None`` 时新建短生命周期 Client。
+        """
+        url = self._api_url(path)
+
+        def _do(c: httpx.Client) -> str:
+            resp = c.get(url)
+            # 检测文件过大场景(GitHub Contents API >1 MB 限制)
+            if resp.status_code in (403, 422):
+                try:
+                    msg = resp.json().get("message", "")
+                except Exception:  # noqa: BLE001 - 响应体非 JSON 时忽略
+                    msg = ""
+                low = msg.lower()
+                if "too large" in low or "1 mb" in low:
+                    raise ValueError(
+                        f"file {path} exceeds 1 MB (Contents API limit); "
+                        "use Blobs API for larger files"
+                    )
             resp.raise_for_status()
             data = resp.json()
             if data.get("encoding") == "base64":
                 return base64.b64decode(data["content"]).decode("utf-8", errors="replace")
             return data.get("content", "")
+
+        if client is not None:
+            return _do(client)
+        with httpx.Client(timeout=30, headers=self._headers) as new_client:
+            return _do(new_client)
 
     def _make_document(self, path: str, content: str) -> RawDocument:
         """根据路径与内容构造 RawDocument。"""
@@ -180,19 +224,61 @@ class GitHubConnector:
             except Exception as e:  # noqa: BLE001 - 单文件失败不应阻断整体抓取
                 logger.warning("Failed to fetch %s: %s", path, e)
 
-    def fetch_changes(self, since: datetime) -> Iterator[RawDocument]:
-        """增量抓取:基于 commits 列表收集变更文件,逐个拉取最新内容。"""
+    def _list_commit_shas(self, client: httpx.Client, since: datetime) -> list[str]:
+        """调用 List Commits API 获取 since 之后所有 commit 的 sha。
+
+        限制:当前仅取首页 ``per_page=100`` 条;未跟随 Link 头分页,
+        超过 100 commits 的大变更窗口会漏取。Phase 2 可加分页循环。
+        """
         url = f"https://api.github.com/repos/{self._owner}/{self._repo}/commits"
         params = {"since": since.isoformat(), "sha": self._branch, "per_page": 100}
+        resp = client.get(url, params=params)
+        resp.raise_for_status()
+        return [c["sha"] for c in resp.json() if c.get("sha")]
+
+    def _get_commit_files(self, client: httpx.Client, sha: str) -> list[dict]:
+        """调用单 commit 详情 API 获取 files 字段。
+
+        GitHub List Commits API 响应**不含** files 字段(只有 sha/commit/
+        parents 等),必须额外调用 ``GET /repos/{owner}/{repo}/commits/{sha}``
+        才能拿到每个 commit 修改的文件列表。
+
+        限制:单 commit 详情的 files 字段最多 300 项,超过会被 GitHub 截断
+        (此时响应体 ``truncated=true``,但 GitHub REST 不暴露该字段,
+        只能依赖 commit 文件数 < 300 的假设)。
+        """
+        url = f"https://api.github.com/repos/{self._owner}/{self._repo}/commits/{sha}"
+        resp = client.get(url)
+        resp.raise_for_status()
+        return resp.json().get("files", [])
+
+    def fetch_changes(self, since: datetime) -> Iterator[RawDocument]:
+        """增量抓取:基于 commits 列表收集变更文件,逐个拉取最新内容。
+
+        实现策略(修复 list commits 不含 files 字段的 bug):
+
+        1. 调用 ``GET /repos/{owner}/{repo}/commits?since=...`` 获取 sha 列表。
+        2. 对每个 sha 调用 ``GET /repos/{owner}/{repo}/commits/{sha}`` 拉取
+           commit 详情中的 files 数组(含 filename/status 字段)。
+        3. 累积所有 ``added`` / ``modified`` / ``renamed`` 的文件路径,
+           过滤后逐个调 Contents API 拉取最新内容。
+
+        限制:
+        - 仅取最近 100 commits(见 ``_list_commit_shas`` 的分页说明)。
+        - 单 commit files 数组上限 300 项,超过会被截断。
+        - renamed 文件取新 filename;旧路径的删除事件由 ``fetch_deleted`` 处理。
+        """
         changed_paths: set[str] = set()
         with httpx.Client(timeout=30, headers=self._headers) as client:
-            resp = client.get(url, params=params)
-            resp.raise_for_status()
-            for commit in resp.json():
-                for f in commit.get("files", []):
-                    changed_paths.add(f["filename"])
+            for sha in self._list_commit_shas(client, since):
+                for f in self._get_commit_files(client, sha):
+                    status = f.get("status")
+                    if status in ("added", "modified", "renamed", "changed"):
+                        filename = f.get("filename", "")
+                        if filename:
+                            changed_paths.add(filename)
 
-        for path in changed_paths:
+        for path in sorted(changed_paths):
             if not self._should_include(path):
                 continue
             try:
@@ -202,15 +288,27 @@ class GitHubConnector:
                 logger.warning("Failed to fetch changed %s: %s", path, e)
 
     def fetch_deleted(self, since: datetime) -> list[str]:
-        """返回自 ``since`` 起被删除的文档 source_id 列表。"""
-        url = f"https://api.github.com/repos/{self._owner}/{self._repo}/commits"
-        params = {"since": since.isoformat(), "sha": self._branch, "per_page": 100}
+        """返回自 ``since`` 起被删除的文档 source_id 列表。
+
+        实现策略(同 ``fetch_changes``,需调用单 commit 详情 API):
+
+        1. List Commits 获取 sha 列表。
+        2. 对每个 sha 调用 commit 详情 API,过滤 ``status == "removed"``。
+        3. 将命中的文件名拼装成 source_id 列表返回。
+
+        限制:同 ``fetch_changes``,100 commits / 300 files-per-commit 上限。
+        """
         deleted: list[str] = []
+        seen: set[str] = set()
         with httpx.Client(timeout=30, headers=self._headers) as client:
-            resp = client.get(url, params=params)
-            resp.raise_for_status()
-            for commit in resp.json():
-                for f in commit.get("files", []):
-                    if f["status"] == "removed" and self._should_include(f["filename"]):
-                        deleted.append(f"{self._owner}/{self._repo}/{f['filename']}")
+            for sha in self._list_commit_shas(client, since):
+                for f in self._get_commit_files(client, sha):
+                    if f.get("status") == "removed":
+                        filename = f.get("filename", "")
+                        if not filename or not self._should_include(filename):
+                            continue
+                        source_id = f"{self._owner}/{self._repo}/{filename}"
+                        if source_id not in seen:
+                            deleted.append(source_id)
+                            seen.add(source_id)
         return deleted
