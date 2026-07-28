@@ -7,10 +7,13 @@
 - ``fetch_changes`` 的 mtime 过滤
 - 二进制/非 utf-8 文件不报错
 - ``fetch_deleted`` 返回空列表(本地文件系统无法检测删除)
+- 单文件 ``PermissionError`` 不阻断整体抓取 + logger.warning 被调用
 """
 
+import logging
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -198,3 +201,57 @@ def test_filesystem_init_does_not_mutate_config(tmp_path) -> None:  # type: igno
 
     assert connector._file_types == {".md"}
     assert connector._include_dirs == ["docs"]
+
+
+@pytest.mark.unit
+def test_filesystem_skips_unreadable_file(
+    tmp_path, monkeypatch, caplog
+) -> None:  # type: ignore[no-untyped-def]
+    """单文件读取异常不应中断整个抓取。
+
+    使用 monkeypatch 让 ``bad.md`` 的 ``read_text`` 抛 ``PermissionError``
+    (避免 chmod 000 方案在 CI 以 root 运行时失效)。
+
+    验证三点:
+    1. ``fetch_all()`` 不抛异常;
+    2. 其他正常文件仍能 yield 出来;
+    3. ``logger.warning`` 被调用(caplog 捕获到包含 "无法读取" 的记录)。
+    """
+    (tmp_path / "good.md").write_text("good content")
+    (tmp_path / "bad.md").write_text("bad content")
+
+    config = _make_config(str(tmp_path))
+    connector = ConnectorRegistry.create(config)
+
+    original_read_text = Path.read_text
+
+    def fake_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self.name == "bad.md":
+            raise PermissionError(f"mocked permission denied: {self}")
+        return original_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_text", fake_read_text)
+
+    with caplog.at_level(logging.WARNING, logger="backend.connectors.filesystem"):
+        docs = list(connector.fetch_all())
+
+    # 只 yield 出 good.md,坏文件被跳过
+    assert len(docs) == 1
+    assert docs[0].title == "good"
+    assert docs[0].content == "good content"
+    # logger.warning 被调用,消息含 "无法读取"
+    warning_messages = [r.getMessage() for r in caplog.records]
+    assert any("无法读取" in msg for msg in warning_messages)
+    # 错误信息中包含坏文件名,确认是正确的文件被跳过
+    assert any("bad.md" in msg for msg in warning_messages)
+
+    # 同样验证 fetch_changes 不会因单文件异常中断
+    caplog.clear()
+    since = datetime(2020, 1, 1, tzinfo=UTC)  # 让所有文件都命中 mtime > since
+    with caplog.at_level(logging.WARNING, logger="backend.connectors.filesystem"):
+        changed_docs = list(connector.fetch_changes(since))
+
+    assert len(changed_docs) == 1
+    assert changed_docs[0].title == "good"
+    fetch_changes_messages = [r.getMessage() for r in caplog.records]
+    assert any("无法读取" in msg for msg in fetch_changes_messages)
