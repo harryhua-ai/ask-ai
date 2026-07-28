@@ -148,6 +148,7 @@ dependencies = [
     "sse-starlette>=2.1",
     "langdetect>=1.0.9",
     "tiktoken>=0.9",
+    "slowapi>=0.1.9",
 ]
 
 [project.optional-dependencies]
@@ -566,7 +567,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
-    Boolean, Integer, String, Text, DateTime, ForeignKey, func,
+    Boolean, Integer, String, Text, DateTime, ForeignKey, func, Index, text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -696,7 +697,7 @@ class User(Base):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class LLMProvider(Base):
+class LLMProviderModel(Base):
     __tablename__ = "llm_providers"
 
     id: Mapped[str] = mapped_column(String(50), primary_key=True)
@@ -713,6 +714,18 @@ class LLMRouting(Base):
     task: Mapped[str] = mapped_column(String(50), primary_key=True)
     chain: Mapped[list[Any]] = mapped_column(JSONB, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# 索引(对齐设计文档 §11 SQL DDL)
+Index("idx_conversations_created_at", Conversation.created_at)
+Index("idx_conversations_is_answered", Conversation.is_answered)
+Index("idx_conversations_channel", Conversation.channel)
+Index("idx_conversations_cluster_id", Conversation.cluster_id, postgresql_where=text("cluster_id IS NOT NULL"))
+Index("idx_conversations_gap_status", Conversation.gap_status, postgresql_where=text("gap_status IS NOT NULL"))
+Index("idx_source_clicks_conversation", SourceClick.conversation_id)
+Index("idx_source_clicks_source_url", SourceClick.source_url)
+Index("idx_sync_log_source", SyncLog.source_id, SyncLog.started_at.desc())
+Index("idx_sync_log_status", SyncLog.status, SyncLog.started_at.desc())
 ```
 
 - [ ] **Step 3: Create backend/db/session.py**
@@ -1952,13 +1965,14 @@ from backend.pipeline.ingest import IngestionPipeline
 
 
 @pytest.mark.unit
-def test_ingest_document_stores_in_weaviate_and_postgres():
+def test_ingest_document_stores_in_weaviate():
     embedder = MagicMock()
     embedder.embed.return_value = [[0.1] * 1024]
     embedder.dimension = 1024
 
     weaviate_client = MagicMock()
-    postmark_session = MagicMock()
+    collection = MagicMock()
+    weaviate_client.collections.get.return_value = collection
 
     doc = RawDocument(
         source_id="test/1",
@@ -1971,11 +1985,11 @@ def test_ingest_document_stores_in_weaviate_and_postgres():
         content_hash="abc123",
     )
 
-    pipeline = IngestionPipeline(embedder, weaviate_client, postmark_session)
+    pipeline = IngestionPipeline(embedder, weaviate_client, class_name="Document")
     pipeline.ingest_document(doc)
 
     embedder.embed.assert_called_once_with(["NE503 specs"])
-    assert weaviate_client.collection.create.called or True  # depends on mock setup
+    assert collection.data.insert.called
 ```
 
 - [ ] **Step 2: Create backend/pipeline/ingest.py**
@@ -2562,9 +2576,7 @@ async def test_rag_generates_answer():
         SearchResult("NE503 功耗 2.5W", "s1", "github", "ne503", "README", "url", 0.9, 0)
     ]
     reranker = MagicMock()
-    reranker.rerank.return_value = [
-        SearchResult("NE503 功耗 2.5W", "s1", "github", "ne503", "README", "url", 0.95, 0)
-    ]
+    reranker.rerank.return_value = [0.95]  # 返回 float 分数列表,不是 SearchResult
     llm = AsyncMock()
     llm.generate.return_value = LLMResponse(
         content="NE503 的功耗为 2.5W [GitHub]",
@@ -2627,6 +2639,7 @@ class RAGOrchestrator:
         recall_limit: int = 50,
         top_k: int = 10,
         conversation_max_turns: int = 5,
+        pruner: Any = None,  # Phase 3 预留:Pruner Protocol
     ):
         self._searcher = searcher
         self._reranker = reranker
@@ -2636,6 +2649,7 @@ class RAGOrchestrator:
         self._recall_limit = recall_limit
         self._top_k = top_k
         self._max_turns = conversation_max_turns
+        self._pruner = pruner
 
     def _build_context(self, results: list[SearchResult]) -> str:
         parts = []
@@ -2700,6 +2714,9 @@ class RAGOrchestrator:
 
         reranked = self._reranker.rerank(query, results, top_k=self._top_k)
 
+        if self._pruner:
+            reranked = self._pruner.prune(query, reranked)
+
         if not reranked:
             elapsed = int((time.monotonic() - start) * 1000)
             return RAGAnswer(
@@ -2745,6 +2762,9 @@ class RAGOrchestrator:
         )
 
         reranked = self._reranker.rerank(query, results, top_k=self._top_k)
+
+        if self._pruner:
+            reranked = self._pruner.prune(query, reranked)
 
         if not reranked:
             import json
@@ -2845,6 +2865,8 @@ import uuid
 
 from fastapi import APIRouter, Depends, Request
 from sse_starlette.sse import EventSourceResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from backend.api.schemas import AskRequest, FeedbackRequest, ClickRequest
 from backend.db.models import Conversation, SourceClick
@@ -2852,6 +2874,7 @@ from backend.utils.pii import mask_pii
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
+limiter = Limiter(key_func=get_remote_address)
 
 
 def get_rag(request: Request):
@@ -2863,6 +2886,7 @@ def get_session_factory(request: Request):
 
 
 @router.post("/ask")
+@limiter.limit("20/minute")
 async def ask(
     req: AskRequest,
     request: Request,
@@ -2962,6 +2986,9 @@ import uvicorn
 import weaviate
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from backend.config import load_settings, load_yaml_config
 from backend.api.routes import router as api_router
@@ -2977,6 +3004,8 @@ from backend.pipeline.rag import RAGOrchestrator
 
 logger = logging.getLogger(__name__)
 settings = load_settings()
+
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 
 
 @asynccontextmanager
@@ -3040,6 +3069,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Ask AI", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -3392,58 +3423,6 @@ export function useSSE(apiUrl: string) {
       }),
     });
 
-    if (!resp.body) return;
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (line.startsWith("event: ")) {
-          const eventType = line.slice(7).trim();
-          continue;
-        }
-        if (line.startsWith("data: ")) {
-          try {
-            const data = JSON.parse(line.slice(6));
-            switch (data.type || data.event) {
-              case undefined:
-                // SSE event data format from sse-starlette
-                break;
-            }
-          } catch {}
-        }
-      }
-    }
-  }, [apiUrl]);
-
-  const askWithEventSource = useCallback(async (
-    message: string,
-    history: ChatMessage[],
-    channel: string,
-    callbacks: SSECallbacks,
-  ) => {
-    const conversationHistory = history.map((m) => ({
-      role: m.type === "user" ? "user" : "assistant",
-      content: m.content,
-    }));
-
-    const resp = await fetch(`${apiUrl}/api/ask`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message,
-        channel,
-        conversation_history: conversationHistory.slice(-10),
-      }),
-    });
-
     const reader = resp.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -3479,7 +3458,7 @@ export function useSSE(apiUrl: string) {
     }
   }, [apiUrl]);
 
-  return { ask: askWithEventSource };
+  return { ask };
 }
 ```
 
@@ -3563,6 +3542,7 @@ export function App({ config }: { config: WidgetConfig }) {
           config={config}
           messages={messages}
           isStreaming={isStreaming}
+          conversationId={conversationId}
           suggestedQuestions={messages.length === 0 ? SUGGESTED_QUESTIONS : []}
           onSend={handleSend}
           onClose={() => setIsOpen(false)}
@@ -3586,13 +3566,14 @@ interface Props {
   config: WidgetConfig;
   messages: ChatMessage[];
   isStreaming: boolean;
+  conversationId: string | null;
   suggestedQuestions: string[];
   onSend: (text: string) => void;
   onClose: () => void;
   onFeedback: (msgId: string, feedback: "up" | "down") => void;
 }
 
-export function ChatPanel({ config, messages, isStreaming, suggestedQuestions, onSend, onClose, onFeedback }: Props) {
+export function ChatPanel({ config, messages, isStreaming, conversationId, suggestedQuestions, onSend, onClose, onFeedback }: Props) {
   const [input, setInput] = useState("");
   const messagesEnd = useRef<HTMLDivElement>(null);
 
@@ -3626,6 +3607,7 @@ export function ChatPanel({ config, messages, isStreaming, suggestedQuestions, o
             message={msg}
             isStreaming={isStreaming}
             apiUrl={config.apiUrl}
+            conversationId={conversationId}
             onFeedback={onFeedback}
           />
         ))}
@@ -3660,6 +3642,7 @@ interface Props {
   message: ChatMessage;
   isStreaming: boolean;
   apiUrl: string;
+  conversationId: string | null;
   onFeedback: (msgId: string, feedback: "up" | "down") => void;
 }
 
@@ -3671,7 +3654,7 @@ const SOURCE_LABELS: Record<string, string> = {
   filesystem: "知识库",
 };
 
-export function MessageBubble({ message, isStreaming, apiUrl, onFeedback }: Props) {
+export function MessageBubble({ message, isStreaming, apiUrl, conversationId, onFeedback }: Props) {
   const isUser = message.type === "user";
   return (
     <div className={isUser ? "ask-ai-bubble-user" : "ask-ai-bubble-assistant"}>
@@ -3688,11 +3671,12 @@ export function MessageBubble({ message, isStreaming, apiUrl, onFeedback }: Prop
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={() => {
+                    if (!conversationId) return;
                     fetch(`${apiUrl}/api/click`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({
-                        conversation_id: message.id,
+                        conversation_id: conversationId,
                         source_url: src.url,
                         source_type: src.type,
                         product: src.product,
@@ -3895,7 +3879,7 @@ git commit -m "feat: Docker 部署 + README"
 | Spec 要求 | 对应 Task | 状态 |
 |---|---|---|
 | FastAPI SSE 端点 | Task 16 | ✅ |
-| 限流(访客级+全局) | 未覆盖 | ⚠️ 需补充中间件 |
+| 限流(访客级+全局) | Task 16 (slowapi: 全局 60/min + ask 端点 20/min) | ✅ 已修复 |
 | PII 脱敏 | Task 14 | ✅ |
 | Weaviate hybrid 检索 | Task 12 | ✅ |
 | bge-reranker 重排 | Task 8, 13 | ✅ |
@@ -3915,8 +3899,19 @@ git commit -m "feat: Docker 部署 + README"
 | 反馈 👍/👎 | Task 16, 18 | ✅ |
 | device 抽象 | Task 8 | ✅ |
 | 全部 10 张 Postgres 表 | Task 2 | ✅ |
+| Postgres 索引(6 个) | Task 2 (Index 定义) | ✅ 已修复 |
+| Pruner 管线预留位置 | Task 15 (pruner=None 可选参数) | ✅ 已修复 |
 
-**Missing: 限流中间件** — 需要补充。建议在 Task 16 中加入 `slowapi` 或自定义中间件。
+**Spec 待确认项(不影响 Phase 1 开工):**
+- 日志保留期 90 天(§13)— 需后续加 cron 清理任务或 Postgres retention policy
+- 查询分解(§5 pipeline 图提到,§10 Phase 1 列表未列)— 按 §10 处理,Phase 1 不实现
+
+**Bug 修复记录:**
+- B1: test_ingest.py 构造函数参数不匹配 → 已修复(移除多余的 postmark_session 参数)
+- B2: MessageBubble click conversation_id → 已修复(透传 conversationId prop)
+- B3: test_rag.py reranker mock 返回类型错误 → 已修复(返回 float 列表)
+- B4: useSSE.ts 死代码 → 已修复(合并为单个 ask 函数)
+- B5: SQLAlchemy LLMProvider 类名冲突 → 已修复(重命名为 LLMProviderModel)
 
 **Type consistency:** Checked — `SearchResult`, `RawDocument`, `LLMResponse`, `RAGAnswer` used consistently across tasks.
 
