@@ -139,6 +139,46 @@ def test_reranker_protocol_is_runtime_checkable():
 
 
 # --------------------------------------------------------------------------- #
+# 单元测试:HuggingFace 本地缓存路由
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_ensure_hf_cache_sets_env_vars(tmp_path, monkeypatch):
+    """_ensure_hf_cache 应设置 HF_HOME/HF_HUB_CACHE/TRANSFORMERS_CACHE 指向项目目录。"""
+    monkeypatch.delenv("HF_HOME", raising=False)
+    monkeypatch.delenv("HF_HUB_CACHE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_CACHE", raising=False)
+
+    from backend.embedder.bge import _ensure_hf_cache
+
+    cache_dir = tmp_path / "models"
+    _ensure_hf_cache(cache_dir)
+
+    import os
+
+    assert os.environ["HF_HOME"] == str(cache_dir)
+    assert os.environ["HF_HUB_CACHE"] == str(cache_dir / "hub")
+    assert os.environ["TRANSFORMERS_CACHE"] == str(cache_dir / "hub")
+    assert (cache_dir / "hub").is_dir()
+
+
+@pytest.mark.unit
+def test_ensure_hf_cache_does_not_override_existing(tmp_path, monkeypatch):
+    """已存在的 HF_HOME 不应被覆盖(setdefault 语义)。"""
+    monkeypatch.setenv("HF_HOME", "/preconfigured")
+    cache_dir = tmp_path / "models"
+
+    from backend.embedder.bge import _ensure_hf_cache
+
+    _ensure_hf_cache(cache_dir)
+
+    import os
+
+    assert os.environ["HF_HOME"] == "/preconfigured"
+
+
+# --------------------------------------------------------------------------- #
 # 集成测试:真实模型推理(首次运行需下载权重)
 # --------------------------------------------------------------------------- #
 
