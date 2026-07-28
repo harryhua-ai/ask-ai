@@ -1,17 +1,87 @@
-// 占位 App 组件 —— Task 18 会替换为完整的聊天 UI
-import type { WidgetConfig } from "./types";
+import { useState, useCallback } from "react";
+import type { WidgetConfig, ChatMessage } from "./types";
+import { useSSE } from "./hooks/useSSE";
+import { ChatPanel } from "./components/ChatPanel";
 
-interface AppProps {
-  config: WidgetConfig;
-}
+const SUGGESTED_QUESTIONS = [
+  "NE503 支持哪些接口?",
+  "如何开始使用 NeoMind?",
+  "NE101 的功耗是多少?",
+  "AIToolStack 有哪些功能?",
+];
 
-export function App({ config }: AppProps) {
+export function App({ config }: { config: WidgetConfig }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const { ask } = useSSE(config.apiUrl);
+
+  const handleSend = useCallback(async (text: string) => {
+    const userMsg: ChatMessage = {
+      id: crypto.randomUUID(),
+      type: "user",
+      content: text,
+    };
+    setMessages((prev) => [...prev, userMsg]);
+    setIsStreaming(true);
+
+    const assistantId = crypto.randomUUID();
+    setMessages((prev) => [...prev, { id: assistantId, type: "assistant", content: "" }]);
+
+    await ask(text, messages, "widget", {
+      onSources: (sources, convId) => {
+        setConversationId(convId);
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantId ? { ...m, sources } : m)),
+        );
+      },
+      onToken: (token) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, content: m.content + token } : m,
+          ),
+        );
+      },
+      onDone: (convId) => {
+        setConversationId(convId);
+        setIsStreaming(false);
+      },
+    });
+  }, [messages, ask]);
+
+  const handleFeedback = useCallback(async (msgId: string, feedback: "up" | "down") => {
+    if (!conversationId) return;
+    await fetch(`${config.apiUrl}/api/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversation_id: conversationId, feedback }),
+    });
+  }, [conversationId, config.apiUrl]);
+
   return (
-    <div
-      className="ask-ai-fab"
-      style={{ background: config.primaryColor ?? "#2563eb" }}
-    >
-      💬
-    </div>
+    <>
+      {!isOpen && (
+        <button
+          className="ask-ai-fab"
+          style={{ backgroundColor: config.primaryColor }}
+          onClick={() => setIsOpen(true)}
+        >
+          💬
+        </button>
+      )}
+      {isOpen && (
+        <ChatPanel
+          config={config}
+          messages={messages}
+          isStreaming={isStreaming}
+          conversationId={conversationId}
+          suggestedQuestions={messages.length === 0 ? SUGGESTED_QUESTIONS : []}
+          onSend={handleSend}
+          onClose={() => setIsOpen(false)}
+          onFeedback={handleFeedback}
+        />
+      )}
+    </>
   );
 }
