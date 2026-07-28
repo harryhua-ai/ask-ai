@@ -96,7 +96,11 @@ def test_chunk_empty_content_returns_empty_list():
 
 @pytest.mark.unit
 def test_chunk_none_content_returns_empty_list():
-    """None content 防御性兜底,返回空列表(虽然类型标注为 str)。"""
+    """None content 的防御性兜底,返回空列表。
+
+    RawDocument.content 的类型契约上为 str,不应为 None——此测试仅防止
+    上游 connector 违约时 chunking 管道静默 crash(防御性编程)。
+    """
     doc = _make_doc("placeholder")
     # 用 dataclasses.replace 不可行(frozen),直接绕过类型系统:
     object.__setattr__(doc, "content", None)  # type: ignore[arg-type]
@@ -245,3 +249,61 @@ def test_chunk_default_arguments_work():
     for chunk in chunks:
         assert isinstance(chunk, Chunk)
         assert chunk.text
+
+
+# --------------------------------------------------------------------------- #
+# 多字节内容(中文 / emoji)硬切——C1 回归覆盖
+#
+# 旧实现的 _hard_split_section 用 decode([tid]) 累加字符长度,对跨 UTF-8 字节
+# 的 BPE token 返回 U+FFFD(len=1)而非真实字节宽度,导致字符偏移正向漂移,
+# chunk 实际 token 数超出 max_tokens 10-20%。以下 3 个测试以零容差断言验证
+# byte 偏移跟踪修复(decode_single_token_bytes + byte_to_char 映射)。
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_hard_split_respects_max_tokens_for_chinese():
+    """纯中文长段落硬切后,**所有** chunk 的 token 数 <= max_tokens(零容差)。
+
+    回归 C1:旧实现因 decode([tid]) 多字节漂移,chunk 实际 token 数可达
+    max_tokens * 1.1~1.2。byte 偏移跟踪修复后应严格 <= max_tokens。
+    """
+    content = "你好世界测试文档段落 " * 200
+    doc = _make_doc(content)
+    chunks = chunk_document(doc, max_tokens=64, overlap=8)
+    assert len(chunks) > 1
+    for chunk in chunks:
+        actual = _estimate_tokens(chunk.text)
+        assert actual <= 64, f"chunk {chunk.chunk_index} token 数 {actual} > max_tokens=64"
+
+
+@pytest.mark.unit
+def test_hard_split_respects_max_tokens_for_emoji():
+    """emoji + 中文混合内容硬切后,**所有** chunk 的 token 数 <= max_tokens(零容差)。
+
+    emoji(4 字节 UTF-8)和中文(3 字节 UTF-8)都可能被 BPE 拆成多个
+    续字节 token,验证 byte 偏移跟踪对 3/4 字节序列同样精确。
+    """
+    content = "文档段落 A🎉文档段落 B " * 100
+    doc = _make_doc(content)
+    chunks = chunk_document(doc, max_tokens=64, overlap=8)
+    assert len(chunks) > 1
+    for chunk in chunks:
+        actual = _estimate_tokens(chunk.text)
+        assert actual <= 64, f"chunk {chunk.chunk_index} token 数 {actual} > max_tokens=64"
+
+
+@pytest.mark.unit
+def test_hard_split_no_empty_chunks_for_multibyte():
+    """多字节内容硬切不应产生空 chunk(I1 空 chunk 过滤回归)。
+
+    旧实现对续字节 token 调用 decode([tid]) 返回 U+FFFD,偏移漂移后
+    section[start:end] 可能返回空串,直接构造空 Chunk。修复后应全部非空。
+    """
+    content = "你好世界测试文档段落 " * 200
+    doc = _make_doc(content)
+    chunks = chunk_document(doc, max_tokens=64, overlap=8)
+    assert len(chunks) > 1
+    for chunk in chunks:
+        assert chunk.text, f"chunk {chunk.chunk_index} 为空"
+        assert len(chunk.text) > 0

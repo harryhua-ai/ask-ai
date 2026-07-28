@@ -10,6 +10,9 @@ section 执行 token 级硬切(带 overlap 滑窗)。输出多个不可变 Chunk
 - chunk_document 对空 content / None content 返回空列表(见 docstring)。
 - 超长 section(max_tokens 上限无法容纳)走 _hard_split_section 滑窗硬切,
   在窗口之间保留 overlap 个 token 的上下文,改善下游检索召回。
+- _hard_split_section 使用 byte 偏移跟踪(decode_single_token_bytes) +
+  byte→char 映射表,精确处理 UTF-8 多字节字符(中文 / emoji),避免
+  decode([tid]) 产生的 U+FFFD 替换字符导致字符偏移漂移。
 """
 
 import logging
@@ -73,48 +76,130 @@ class Chunk:
     end_char: int
 
 
-def _split_by_structure(content: str) -> list[str]:
-    """按 Markdown 标题(## / ###)切分文本,保留标题行。
+def _build_byte_to_char_map(encoded: bytes) -> list[int]:
+    """构建 byte 偏移 → 完整 UTF-8 字符数的映射表(O(N))。
 
-    使用零宽 lookahead,确保分隔符(`\\n## `)不出现在结果中,从而让标题
-    保留在每个 section 开头。
+    ``byte_to_char[b]`` 等价于 ``len(encoded[:b].decode("utf-8", errors="ignore"))``,
+    即 ``encoded[:b]`` 范围内的完整 UTF-8 字符数量。位于多字节字符"内部"的
+    byte 位置不会增加字符计数,直到该字符的全部字节都已消费。
+
+    用于把 tiktoken BPE token 的 byte 偏移精确映射到 Python str 的字符偏移,
+    避免 ``decode([tid])`` 对跨 UTF-8 字节边界的 token 返回 U+FFFD 替换字符
+    (len=1) 导致的字符偏移正向漂移。
+
+    Args:
+        encoded: 已编码的 UTF-8 字节串。
+
+    Returns:
+        长度 ``len(encoded) + 1`` 的列表,索引为 byte 偏移,值为字符数。
+    """
+    n = len(encoded)
+    byte_to_char = [0] * (n + 1)
+    char_idx = 0
+    i = 0
+    while i < n:
+        first = encoded[i]
+        # UTF-8 首字节 → 字符字节宽度的判定
+        if first < 0x80:
+            width = 1
+        elif first < 0xC0:
+            # 意外的续字节(非法 UTF-8),按 1 字节跳过,不计字符
+            width = 1
+            byte_to_char[i + 1] = char_idx
+            i += 1
+            continue
+        elif first < 0xE0:
+            width = 2
+        elif first < 0xF0:
+            width = 3
+        else:
+            width = 4
+
+        end = i + width
+        if end <= n:
+            # 字符完整:内部字节位置保持当前 char_idx,末尾递增
+            for j in range(i + 1, end):
+                byte_to_char[j] = char_idx
+            char_idx += 1
+            byte_to_char[end] = char_idx
+            i = end
+        else:
+            # 字符不完整(截断),剩余位置保持 char_idx
+            for j in range(i + 1, n + 1):
+                byte_to_char[j] = char_idx
+            break
+    return byte_to_char
+
+
+def _split_by_structure(content: str) -> list[tuple[str, int]]:
+    """按 Markdown 标题(## / ###)切分文本,返回 ``(section_text, start_offset)`` 元组列表。
+
+    使用零宽 lookahead ``\\n(?=#{1,3}\\s)``,确保分隔符(``\\n``)不出现在
+    结果中,让标题保留在每个 section 开头。
+
+    ``start_offset`` 是 stripped section **内容** 在原文中的字符偏移,
+    用于让后续管道跳过 ``content.find()`` 定位(对含前导空白 / 多换行的
+    原文不可靠)。
 
     Args:
         content: 待切分的原始文本。
 
     Returns:
-        非空 section 列表(已 strip)。空白片段被丢弃。
+        ``(stripped_section, start_offset_in_content)`` 元组列表;
+        空白片段被丢弃。
     """
-    parts = re.split(r"\n(?=#{1,3}\s)", content)
-    return [p.strip() for p in parts if p.strip()]
+    split_positions = [m.start() for m in re.finditer(r"\n(?=#{1,3}\s)", content)]
+    # 每个 split 位置是 \n 的索引,+1 跳过 \n(它不属于下一个 section)
+    boundaries = [0, *(p + 1 for p in split_positions), len(content)]
+
+    result: list[tuple[str, int]] = []
+    for i in range(len(boundaries) - 1):
+        start = boundaries[i]
+        end = boundaries[i + 1]
+        part = content[start:end]
+        stripped = part.strip()
+        if not stripped:
+            continue
+        # stripped 内容在 part 中的偏移 = 前导空白长度
+        strip_offset = len(part) - len(part.lstrip())
+        result.append((stripped, start + strip_offset))
+    return result
 
 
-def _merge_small_sections(sections: list[str], max_tokens: int) -> list[str]:
+def _merge_small_sections(
+    sections: list[tuple[str, int]],
+    max_tokens: int,
+) -> list[tuple[str, int]]:
     """把相邻小 section 合并到 max_tokens 以内的单元。
 
     策略:维护一个 buffer,尝试把当前 section append 到 buffer;若超限则
     flush buffer,开启新 buffer。**注意**:单个 section 本身超过 max_tokens
-    时会被原样 append,交由 _hard_split_section 二次切分。
+    时会被原样 append,交由 :func:`_hard_split_section` 二次切分。
 
     Args:
-        sections: 已按结构切分的 section 列表。
+        sections: ``_split_by_structure`` 的输出—— ``(text, start_offset)`` 元组列表。
         max_tokens: 单个合并单元的 token 上限。
 
     Returns:
-        合并后的 section 列表(每项可能含多个原始 section)。
+        ``(merged_text, start_offset)`` 元组列表;
+        ``start_offset`` 取合并组中 **第一个** section 的偏移。
     """
-    merged: list[str] = []
-    buffer = ""
-    for section in sections:
-        candidate = f"{buffer}\n\n{section}" if buffer else section
+    merged: list[tuple[str, int]] = []
+    buffer_text = ""
+    buffer_offset = 0
+    for section_text, section_offset in sections:
+        candidate = f"{buffer_text}\n\n{section_text}" if buffer_text else section_text
         if _estimate_tokens(candidate) <= max_tokens:
-            buffer = candidate
+            if not buffer_text:
+                buffer_offset = section_offset
+            buffer_text = candidate
         else:
-            if buffer:
-                merged.append(buffer)
-            buffer = section
-    if buffer:
-        merged.append(buffer)
+            if buffer_text:
+                merged.append((buffer_text, buffer_offset))
+            buffer_text = section_text
+            buffer_offset = section_offset
+    if buffer_text:
+        merged.append((buffer_text, buffer_offset))
     return merged
 
 
@@ -125,13 +210,25 @@ def _hard_split_section(
 ) -> list[tuple[str, int, int]]:
     """对超长 section 做 token 级滑窗硬切。
 
-    将 section 按 cl100k_base 切成 token id 序列,以 (max_tokens - overlap)
-    为步长滑窗,每个窗口解码回文本并记录在 section 内的 (start, end) 字符
+    将 section 按 cl100k_base 切成 token id 序列,以 ``(max_tokens - overlap)``
+    为步长滑窗,每个窗口解码回文本并记录在 section 内的 ``(start, end)`` 字符
     偏移。
 
+    **Byte 偏移跟踪(C1 修复)**:使用 ``decode_single_token_bytes(tid)`` 跟踪
+    BPE token 的 UTF-8 byte 偏移,再通过 :func:`_build_byte_to_char_map` 映射
+    到 Python str 字符偏移。相比旧的 ``decode([tid])`` 逐 token 字符累加方案,
+    能正确处理跨 UTF-8 字节边界的 BPE token(对中文 / emoji 不产生偏移漂移)。
+
+    **窗口起始字符对齐**:若窗口起始 token 位于多字节字符的续字节位置
+    (即 ``byte_to_char[b] == byte_to_char[b-1]``),``start_char`` 向后推进
+    1 个字符,跳过不完整字符——否则该字符的另一半 token 属于上一个窗口,
+    会导致 re-encode 后 chunk 的 token 数超出 max_tokens。
+
     边界:
-    - 若 section 实际 token 数 <= max_tokens,原样返回 [(section, 0, len)]。
-    - 若 overlap >= max_tokens,将其钳制为 max_tokens // 2 并 warning,避免死循环。
+    - 若 section 实际 token 数 <= max_tokens,原样返回 ``[(section, 0, len)]``。
+    - 若 overlap >= max_tokens,将其钳制为 ``max_tokens // 2`` 并 warning,避免死循环。
+    - 空窗口(``start_char >= end_char``,由续字节跳过产生)仍被返回,
+      由 :func:`chunk_document` 的空 chunk 过滤兜底(I1)。
 
     Args:
         section: 待硬切的 section 文本。
@@ -139,7 +236,7 @@ def _hard_split_section(
         overlap: 相邻 chunk 间重叠的 token 数。
 
     Returns:
-        列表,每项为 (chunk_text, start_char_in_section, end_char_in_section)。
+        列表,每项为 ``(chunk_text, start_char_in_section, end_char_in_section)``。
     """
     if not section:
         return []
@@ -150,7 +247,7 @@ def _hard_split_section(
     safe_overlap = min(overlap, max_tokens // 2)
     if safe_overlap != overlap:
         logger.warning(
-            "overlap=%d 被 钳制为 %d(max_tokens=%d)",
+            "overlap=%d 被钳制为 %d(max_tokens=%d)",
             overlap,
             safe_overlap,
             max_tokens,
@@ -159,29 +256,47 @@ def _hard_split_section(
 
     enc = _get_encoding()
     token_ids = enc.encode(section)
+    encoded = section.encode("utf-8")
+    n_bytes = len(encoded)
+    byte_to_char = _build_byte_to_char_map(encoded)
 
-    # 用解码每个 token 切片的方式建立 token_idx -> (start_char, end_char) 映射。
-    # tiktoken 提供 decode_offline 但不保证 byte-aligned;逐 token 解码以拿到
-    # 精确字符偏移,代价是 O(N) 解码调用(N = token 数)。
-    offsets: list[tuple[int, int]] = []
-    cursor = 0
+    # 每个 token 的 (start_char, end_char, start_byte)。
+    # start_byte 用于检测窗口起始是否落在多字节字符的续字节位置。
+    offsets: list[tuple[int, int, int]] = []
+    cursor_b = 0
     for tid in token_ids:
-        piece = enc.decode([tid])
-        end = cursor + len(piece)
-        offsets.append((cursor, end))
-        cursor = end
+        try:
+            tb = enc.decode_single_token_bytes(tid)
+        except KeyError:
+            # 特殊 token(罕见,如 BOS/EOS/prompt marker),退化到 decode 字符宽度。
+            # 注意:此分支下 tb 可能与 encoded 的真实字节不一致,导致 cursor_b 漂移;
+            # 普通文本不会走这里(cl100k_base encode 默认不产出 special token)。
+            tb = enc.decode([tid]).encode("utf-8")
+        start_b = min(cursor_b, n_bytes)
+        end_b = min(cursor_b + len(tb), n_bytes)
+        start_c = byte_to_char[start_b]
+        end_c = byte_to_char[end_b]
+        offsets.append((start_c, end_c, start_b))
+        cursor_b += len(tb)
 
     pieces: list[tuple[str, int, int]] = []
     i = 0
-    n = len(token_ids)
-    while i < n:
-        start_char = offsets[i][0]
+    n_tokens = len(token_ids)
+    while i < n_tokens:
+        raw_start_c, _, start_b = offsets[i]
+        # 窗口起始位于多字节字符中间(续字节位置)时,
+        # start_char 向后推进 1 个字符,跳过不完整字符,
+        # 避免 chunk 的 re-encode token 数超出 max_tokens。
+        if 0 < start_b < n_bytes and byte_to_char[start_b] == byte_to_char[start_b - 1]:
+            start_char = raw_start_c + 1
+        else:
+            start_char = raw_start_c
         # end_char 取窗口最后一个 token 的结束偏移;若越界则用 section 末尾。
-        last_idx = min(i + max_tokens - 1, n - 1)
+        last_idx = min(i + max_tokens - 1, n_tokens - 1)
         end_char = offsets[last_idx][1]
         text = section[start_char:end_char]
         pieces.append((text, start_char, end_char))
-        if last_idx == n - 1:
+        if last_idx == n_tokens - 1:
             break
         i += step
     return pieces
@@ -197,10 +312,14 @@ def chunk_document(
     流程:
         1. 空内容 / None 内容 → 返回 [](见 Returns 段)。
         2. 按 Markdown 标题切分;若无标题,整体视作单 section。
+           切分阶段同时记录每个 section 在原文中的字符偏移,避免后续
+           ``content.find()`` 对 stripped section 不可靠(I2)。
         3. 合并相邻小 section 到 max_tokens 以内。
-        4. 对仍超过 max_tokens 的 section 走 _hard_split_section 滑窗硬切,
-           每个窗口解码为独立 chunk,相邻窗口间共享 overlap 个 token 的上下文。
-        5. 计算每个 chunk 在原文中的绝对 (start_char, end_char)。
+        4. 对仍超过 max_tokens 的 section 走 :func:`_hard_split_section`
+           滑窗硬切——使用 byte 偏移跟踪精确处理中文 / emoji(C1),
+           相邻窗口间共享 overlap 个 token 的上下文。
+        5. 过滤空 chunk(由续字节跳过 / 极小 max_tokens 产生)(I1),
+           计算每个 chunk 在原文中的绝对 ``(start_char, end_char)``。
 
     Args:
         doc: 待切分的原始文档。
@@ -217,37 +336,25 @@ def chunk_document(
     if not content:
         return []
 
-    # Step 1: 结构切分
+    # Step 1: 结构切分(带 section 在原文中的偏移)
     sections = _split_by_structure(content)
     if len(sections) <= 1:
-        sections = [content]
+        sections = [(content, 0)]
 
-    # Step 2: 合并小 section
+    # Step 2: 合并小 section(偏移随合并组首个 section 透传)
     merged = _merge_small_sections(sections, max_tokens)
     if not merged:
-        merged = [content]
+        merged = [(content, 0)]
 
-    # Step 3: 对每个 merged section 做硬切(如需),并记录 (text, abs_start, abs_end)
+    # Step 3: 对每个 merged section 做硬切(如需),并累加 section 偏移得到绝对偏移
     pieces: list[tuple[str, int, int]] = []
-    search_cursor = 0  # str.find 的起点,在原文中向后推进以定位 section 起点
-    for section in merged:
-        # 在原文中定位 section 起点(允许跳过中间已消耗的字符)。
-        rel_start = content.find(section, search_cursor)
-        if rel_start < 0:
-            # 极端情况:section 经 strip 后与原文片段不再完全匹配(理论上不会
-            # 发生,因为 _merge_small_sections 只用 \n\n 拼接)。退化用 0 偏移。
-            logger.warning(
-                "无法在原文中定位 section(start_char 失效),文档 source_id=%s",
-                doc.source_id,
-            )
-            rel_start = search_cursor
-        abs_end_base = rel_start + len(section)
-
-        hard_pieces = _hard_split_section(section, max_tokens, overlap)
+    for section_text, section_offset in merged:
+        hard_pieces = _hard_split_section(section_text, max_tokens, overlap)
         for text, rel_s, rel_e in hard_pieces:
-            pieces.append((text, rel_start + rel_s, rel_start + rel_e))
-
-        search_cursor = abs_end_base
+            # I1: 过滤空 chunk(由续字节跳过 / 极端边界产生)
+            if not text:
+                continue
+            pieces.append((text, section_offset + rel_s, section_offset + rel_e))
 
     # Step 4: 构造不可变 Chunk
     total = len(pieces)
