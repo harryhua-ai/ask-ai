@@ -1,6 +1,7 @@
 """SQLAlchemy ORM 模型定义。
 
-包含 10 张表(对齐设计文档 §11 SQL DDL):
+包含 11 张表(对齐设计文档 §11 SQL DDL + 灌入管道需要的 documents 表):
+- documents: 已灌入文档元数据(content_hash 去重,灌入管道维护)
 - conversations: 对话记录(含 Phase 2/3 预留字段)
 - source_clicks: 来源点击日志
 - sync_log: 同步任务日志
@@ -34,6 +35,31 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 class Base(DeclarativeBase):
     pass
+
+
+class Document(Base):
+    """已灌入向量库的文档元数据(灌入管道维护)。
+
+    用 ``content_hash`` 作为主键实现 doc 级去重:同一内容重复灌入时仅更新
+    chunk_count 与 updated_at,避免 Postgres 行膨胀。chunk 级数据落在
+    Weaviate,本表只承担"哪些文档已灌入 / 何时被灌入 / 灌了多少 chunk"
+    的索引职责,供同步脚本与未来管理界面使用。
+    """
+
+    __tablename__ = "documents"
+
+    content_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_id: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    product: Mapped[str] = mapped_column(String(50), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class Conversation(Base):
