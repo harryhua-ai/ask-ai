@@ -45,10 +45,11 @@ def _make_embedder(dim: int = 1024) -> MagicMock:
 
 
 def _make_weaviate_client() -> MagicMock:
-    """构造 MagicMock Weaviate client,模拟 collections.get 成功。"""
+    """构造 MagicMock Weaviate client,模拟 collections.exists=True / get 成功。"""
     client = MagicMock()
     collection = MagicMock()
     collection.name = "Document"  # 模拟已存在 collection
+    client.collections.exists.return_value = True
     client.collections.get.return_value = collection
     return client
 
@@ -83,6 +84,26 @@ def test_ingest_document_returns_chunk_count():
     count = pipeline.ingest_document(_make_doc())
 
     assert count == 1
+
+
+@pytest.mark.unit
+def test_ingest_raises_when_embedder_returns_mismatched_count():
+    """embedder 返回向量数少于 chunk 数时应 RuntimeError,避免 zip 静默截断。"""
+    embedder = MagicMock()
+    embedder.dimension = 1024
+    # 长内容 → 至少 2 个 chunk,但 embedder 只返回 1 个向量
+    long_content = "# Title\n\n" + ("NE503 specs. " * 500)
+    embedder.embed.return_value = [np.array([0.1] * 1024)]
+
+    client = _make_weaviate_client()
+    collection = client.collections.get.return_value
+
+    pipeline = IngestionPipeline(embedder, client, max_tokens=100, overlap=10)
+    with pytest.raises(RuntimeError, match="embedder 返回"):
+        pipeline.ingest_document(_make_doc(content=long_content))
+
+    # 校验失败时不应写入任何 chunk
+    collection.data.insert.assert_not_called()
 
 
 # --------------------------------------------------------------------------- #
@@ -137,24 +158,27 @@ def test_ingest_document_isolates_per_chunk_failure():
     """单个 chunk 写 Weaviate 失败时,其他 chunk 仍正常写入。"""
     embedder = MagicMock()
     embedder.dimension = 1024
-    # 长内容 → 至少 2 个 chunk
+    # 长内容 → 多个 chunk;side_effect 根据输入数量动态返回向量,
+    # 避免硬编码向量数(因 max_tokens/overlap 组合决定最终 chunk 数)
     long_content = "# Title\n\n" + ("NE503 specs. " * 500)
-    embedder.embed.return_value = [
-        np.array([0.1] * 1024),
-        np.array([0.2] * 1024),
-    ]
+    embedder.embed.side_effect = lambda texts: [np.array([0.1] * 1024) for _ in texts]
 
     client = _make_weaviate_client()
     collection = client.collections.get.return_value
-    # 第一次 insert 失败,第二次成功
-    collection.data.insert.side_effect = [RuntimeError("weaviate boom"), None]
+
+    # 第一次 insert 失败,后续都成功
+    def _insert_side_effect(*args, **kwargs):
+        if collection.data.insert.call_count == 1:
+            raise RuntimeError("weaviate boom")
+
+    collection.data.insert.side_effect = _insert_side_effect
 
     pipeline = IngestionPipeline(embedder, client, max_tokens=100, overlap=10)
     count = pipeline.ingest_document(_make_doc(content=long_content))
 
-    # 1 个成功 = 返回 1
-    assert count == 1
-    assert collection.data.insert.call_count == 2
+    # 1 个失败,其余成功;返回值 = 总 chunk 数 - 1
+    assert collection.data.insert.call_count >= 2
+    assert count == collection.data.insert.call_count - 1
 
 
 @pytest.mark.unit
@@ -280,14 +304,15 @@ def test_delete_document_works_without_postgres():
 
 @pytest.mark.unit
 def test_ensure_collection_creates_when_missing():
-    """collections.get 抛异常时应尝试 collections.create。"""
+    """collections.exists=False 时应调用 collections.create,再 get 拿到代理。"""
     embedder = _make_embedder()
     client = MagicMock()
-    # 第一次 get 失败,触发 create 分支
-    client.collections.get.side_effect = [
-        RuntimeError("not found"),
-        MagicMock(name="created_collection"),
-    ]
+    # exists 返回 False,触发 create 分支
+    client.collections.exists.return_value = False
+    created_collection = MagicMock(name="created_collection")
+    client.collections.create.return_value = created_collection
+    gotten_collection = MagicMock(name="gotten_collection")
+    client.collections.get.return_value = gotten_collection
 
     # mock weaviate.classes.config 以避免真实依赖
     with (
@@ -296,13 +321,13 @@ def test_ensure_collection_creates_when_missing():
         patch("weaviate.classes.config.DataType") as _,
     ):
         configure_cls.Vectorizer.none.return_value = MagicMock()
-        created_collection = MagicMock()
-        client.collections.create.return_value = created_collection
 
         pipeline = IngestionPipeline(embedder, client)
         pipeline.ingest_document(_make_doc())
 
         client.collections.create.assert_called_once()
+        # 新逻辑下,create 之后总是 get 一次拿代理(而非把 create 的返回值当代理)
+        client.collections.get.assert_called_once_with("Document")
 
 
 @pytest.mark.unit
