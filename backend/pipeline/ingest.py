@@ -76,22 +76,25 @@ class IngestionPipeline:
     def _ensure_collection(self) -> None:
         """惰性获取 / 创建 Weaviate collection。
 
-        首次调用先尝试 ``collections.get``(假定已存在);失败时再走
-        ``collections.create``,定义与 RawDocument 对齐的 8 个 property。
-        容错策略避免在每次实例化管道时都尝试创建( prod 中 collection 通常
-        由迁移脚本预创建)。
+        Weaviate Python client v4 中,``collections.get(name)`` 不会真正发请求,
+        只构造一个 Python 对象;真正校验存在性必须用 ``collections.exists(name)``。
+        因此本方法:
+            1. 先用 ``exists`` 探测 collection 是否已存在;
+            2. 若不存在,调用 ``create`` 创建(定义与 RawDocument 对齐的 8 个 property);
+            3. 最后用 ``get`` 拿到 Collection 代理并缓存到 ``self._collection``。
+
+        网络故障 / 认证失败 / 超时等异常会**向上传播**,不再被误判为
+        "collection 不存在"。生产环境推荐由独立迁移脚本预创建 collection,
+        避免运行时竞态。
         """
         if self._collection is not None:
             return
-        try:
-            self._collection = self._client.collections.get(self._class_name)
-            # 触发一次轻量交互以校验 collection 确实存在(MagicMock 测试中无副作用)
-            _ = self._collection.name
-        except Exception:  # noqa: BLE001 - collection 不存在时进入 create 分支
+
+        if not self._client.collections.exists(self._class_name):
             logger.info("Weaviate collection %s 不存在,尝试创建", self._class_name)
             from weaviate.classes.config import Configure, DataType, Property
 
-            self._collection = self._client.collections.create(
+            self._client.collections.create(
                 name=self._class_name,
                 vectorizer_config=Configure.Vectorizer.none(),
                 properties=[
@@ -105,6 +108,8 @@ class IngestionPipeline:
                     Property(name="content_hash", data_type=DataType.TEXT),
                 ],
             )
+
+        self._collection = self._client.collections.get(self._class_name)
 
     # ------------------------------------------------------------------ #
     # 主入口
@@ -133,6 +138,10 @@ class IngestionPipeline:
 
         texts = [c.text for c in chunks]
         vectors = self._embedder.embed(texts)
+
+        # 校验 embedder 返回向量数与 chunk 数一致,避免 zip 在向量缺失时静默截断
+        if len(vectors) != len(chunks):
+            raise RuntimeError(f"embedder 返回 {len(vectors)} 向量,期望 {len(chunks)}")
 
         self._ensure_collection()
 
