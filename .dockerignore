@@ -1,0 +1,16 @@
+.git
+.github
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+htmlcov
+node_modules
+widget/node_modules
+widget/dist
+models/
+docs/
+.superpowers/
+.claude/
+*.md
+.env
