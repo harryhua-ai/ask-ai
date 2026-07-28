@@ -1,0 +1,16 @@
+providers:
+  - id: "deepseek"
+    type: "openai_compatible"
+    enabled: true
+    config:
+      api_base: "${DEEPSEEK_API_BASE}"
+      api_key: "${DEEPSEEK_API_KEY}"
+      model: "${DEEPSEEK_MODEL}"
+      max_tokens: 4096
+      temperature: 0.3
+
+routing:
+  generation:
+    chain: ["deepseek"]
+  query_decomposition:
+    chain: ["deepseek"]
