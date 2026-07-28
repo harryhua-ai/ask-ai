@@ -4,18 +4,21 @@ from pathlib import Path
 from typing import IO
 
 import pytest
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from backend.config import load_yaml_config
 
 
 @pytest.mark.unit
-def test_health_returns_ok() -> None:
-    """健康检查应返回可供编排系统识别的固定响应。"""
+async def test_health_returns_ok() -> None:
+    """健康检查应返回可供编排系统识别的固定响应。
+
+    使用 ASGITransport(不触发 lifespan),避免依赖 Postgres / Weaviate。
+    """
     from backend.main import app
 
-    with TestClient(app) as client:
-        response = client.get("/health")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/health")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
