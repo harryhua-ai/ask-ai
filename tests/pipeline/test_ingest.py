@@ -1,0 +1,319 @@
+"""数据灌入管道(ingestion pipeline)单元测试。
+
+覆盖:
+- brief 基础 case(单 doc 写 Weaviate)
+- 空 content / chunk_document 返回 [] 时跳过 Weaviate
+- 单 doc 失败时 ingest_all 错误隔离
+- 单 chunk 写 Weaviate 失败时跳过,不影响其他 chunk
+- 提供 session_factory 时调用 Postgres upsert
+- delete_document 同步删 Weaviate + Postgres
+- _ensure_collection 在 collection 不存在时创建
+"""
+
+from contextlib import contextmanager
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pytest
+
+from backend.connectors.base import RawDocument
+from backend.pipeline.ingest import IngestionPipeline
+
+
+def _make_doc(**overrides: object) -> RawDocument:
+    """构造默认 RawDocument,允许测试覆盖字段。"""
+    defaults: dict[str, object] = {
+        "source_id": "test/1",
+        "source_type": "github",
+        "product": "ne503",
+        "title": "Test",
+        "content": "NE503 specs",
+        "url": "https://github.com/test",
+        "metadata": {"path": "README.md"},
+        "content_hash": "abc123",
+    }
+    defaults.update(overrides)  # type: ignore[arg-type]
+    return RawDocument(**defaults)  # type: ignore[arg-type]
+
+
+def _make_embedder(dim: int = 1024) -> MagicMock:
+    """构造返回固定向量的 MagicMock embedder。"""
+    emb = MagicMock()
+    emb.dimension = dim
+    emb.embed.return_value = [np.array([0.1] * dim)]
+    return emb
+
+
+def _make_weaviate_client() -> MagicMock:
+    """构造 MagicMock Weaviate client,模拟 collections.get 成功。"""
+    client = MagicMock()
+    collection = MagicMock()
+    collection.name = "Document"  # 模拟已存在 collection
+    client.collections.get.return_value = collection
+    return client
+
+
+# --------------------------------------------------------------------------- #
+# brief 基础测试
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_ingest_document_stores_in_weaviate():
+    """brief 用例:单 doc 应触发 embed + collection.data.insert。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+    collection = client.collections.get.return_value
+
+    doc = _make_doc()
+    pipeline = IngestionPipeline(embedder, client, class_name="Document")
+    pipeline.ingest_document(doc)
+
+    embedder.embed.assert_called_once_with(["NE503 specs"])
+    assert collection.data.insert.called
+
+
+@pytest.mark.unit
+def test_ingest_document_returns_chunk_count():
+    """成功写入时应返回 chunk 数(此处 content 短,只切出 1 个 chunk)。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+
+    pipeline = IngestionPipeline(embedder, client)
+    count = pipeline.ingest_document(_make_doc())
+
+    assert count == 1
+
+
+# --------------------------------------------------------------------------- #
+# 空文档处理
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_ingest_skips_empty_document():
+    """content 为空时 chunk_document 返回 [],不写 Weaviate / Postgres。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+    collection = client.collections.get.return_value
+    session_factory = MagicMock()
+
+    pipeline = IngestionPipeline(embedder, client, session_factory=session_factory)
+    count = pipeline.ingest_document(_make_doc(content=""))
+
+    assert count == 0
+    embedder.embed.assert_not_called()
+    collection.data.insert.assert_not_called()
+    session_factory.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# 错误隔离
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_ingest_all_isolates_per_doc_failure():
+    """一个 doc 抛异常时,后续 doc 仍被处理,失败 doc 计为 0。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+
+    docs = [_make_doc(source_id="ok/1"), _make_doc(source_id="bad/1")]
+    pipeline = IngestionPipeline(embedder, client)
+
+    # 让第二个 doc 在 ingest_document 阶段就抛(模拟 embed 异常)
+    with patch.object(
+        pipeline,
+        "ingest_document",
+        side_effect=[1, RuntimeError("boom")],
+    ):
+        results = pipeline.ingest_all(docs)
+
+    assert results == {"ok/1": 1, "bad/1": 0}
+
+
+@pytest.mark.unit
+def test_ingest_document_isolates_per_chunk_failure():
+    """单个 chunk 写 Weaviate 失败时,其他 chunk 仍正常写入。"""
+    embedder = MagicMock()
+    embedder.dimension = 1024
+    # 长内容 → 至少 2 个 chunk
+    long_content = "# Title\n\n" + ("NE503 specs. " * 500)
+    embedder.embed.return_value = [
+        np.array([0.1] * 1024),
+        np.array([0.2] * 1024),
+    ]
+
+    client = _make_weaviate_client()
+    collection = client.collections.get.return_value
+    # 第一次 insert 失败,第二次成功
+    collection.data.insert.side_effect = [RuntimeError("weaviate boom"), None]
+
+    pipeline = IngestionPipeline(embedder, client, max_tokens=100, overlap=10)
+    count = pipeline.ingest_document(_make_doc(content=long_content))
+
+    # 1 个成功 = 返回 1
+    assert count == 1
+    assert collection.data.insert.call_count == 2
+
+
+@pytest.mark.unit
+def test_ingest_document_isolates_postgres_failure():
+    """Postgres upsert 失败不应影响 Weaviate 写入的返回值。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+    session_factory = MagicMock()
+    # 进入 with 块即抛
+    session_factory.side_effect = RuntimeError("pg down")
+
+    pipeline = IngestionPipeline(embedder, client, session_factory=session_factory)
+    count = pipeline.ingest_document(_make_doc())
+
+    # Weaviate 写入仍然成功
+    assert count == 1
+
+
+# --------------------------------------------------------------------------- #
+# Postgres 写入
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_ingest_document_writes_postgres_when_new():
+    """新 doc 应在 Postgres 插入 Document 行(content_hash 不存在)。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+
+    # session_factory 返回上下文管理器,session.execute().scalar_one_or_none() = None
+    session = MagicMock()
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = None
+    session.execute.return_value = scalar_result
+
+    @contextmanager
+    def _factory():
+        yield session
+
+    session_factory = MagicMock(side_effect=_factory)
+
+    pipeline = IngestionPipeline(embedder, client, session_factory=session_factory)
+    pipeline.ingest_document(_make_doc())
+
+    # 应调用 session.add 插入新行,且 commit
+    assert session.add.called
+    session.commit.assert_called_once()
+
+
+@pytest.mark.unit
+def test_ingest_document_writes_postgres_when_existing():
+    """已存在的 doc 应更新 chunk_count 而非重复插入。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+
+    existing_doc = MagicMock()
+    session = MagicMock()
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = existing_doc
+    session.execute.return_value = scalar_result
+
+    @contextmanager
+    def _factory():
+        yield session
+
+    session_factory = MagicMock(side_effect=_factory)
+
+    pipeline = IngestionPipeline(embedder, client, session_factory=session_factory)
+    pipeline.ingest_document(_make_doc())
+
+    # 已存在时不应 add,只 commit
+    session.add.assert_not_called()
+    session.commit.assert_called_once()
+    # chunk_count 应被更新为 1
+    assert existing_doc.chunk_count == 1
+
+
+# --------------------------------------------------------------------------- #
+# delete_document
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_delete_document_removes_from_weaviate_and_postgres():
+    """delete_document 应同步删 Weaviate + Postgres(若 session_factory 提供)。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+    collection = client.collections.get.return_value
+
+    session = MagicMock()
+
+    @contextmanager
+    def _factory():
+        yield session
+
+    session_factory = MagicMock(side_effect=_factory)
+
+    pipeline = IngestionPipeline(embedder, client, session_factory=session_factory)
+    pipeline.delete_document("test/1")
+
+    collection.data.delete_many.assert_called_once()
+    session.execute.assert_called()  # 至少一次 select / delete
+    session.commit.assert_called_once()
+
+
+@pytest.mark.unit
+def test_delete_document_works_without_postgres():
+    """未提供 session_factory 时 delete_document 仍能仅删 Weaviate。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+    collection = client.collections.get.return_value
+
+    pipeline = IngestionPipeline(embedder, client)
+    pipeline.delete_document("test/1")
+
+    collection.data.delete_many.assert_called_once()
+
+
+# --------------------------------------------------------------------------- #
+# _ensure_collection
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_ensure_collection_creates_when_missing():
+    """collections.get 抛异常时应尝试 collections.create。"""
+    embedder = _make_embedder()
+    client = MagicMock()
+    # 第一次 get 失败,触发 create 分支
+    client.collections.get.side_effect = [
+        RuntimeError("not found"),
+        MagicMock(name="created_collection"),
+    ]
+
+    # mock weaviate.classes.config 以避免真实依赖
+    with (
+        patch("weaviate.classes.config.Configure") as configure_cls,
+        patch("weaviate.classes.config.Property") as _,
+        patch("weaviate.classes.config.DataType") as _,
+    ):
+        configure_cls.Vectorizer.none.return_value = MagicMock()
+        created_collection = MagicMock()
+        client.collections.create.return_value = created_collection
+
+        pipeline = IngestionPipeline(embedder, client)
+        pipeline.ingest_document(_make_doc())
+
+        client.collections.create.assert_called_once()
+
+
+@pytest.mark.unit
+def test_ensure_collection_cached():
+    """第二次 ingest 复用已获取的 collection,不重复 get。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+
+    pipeline = IngestionPipeline(embedder, client)
+    pipeline.ingest_document(_make_doc())
+    pipeline.ingest_document(_make_doc())
+
+    # 第二次 ingest 不应再次 get(缓存命中)
+    assert client.collections.get.call_count == 1
