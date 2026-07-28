@@ -112,58 +112,68 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logging.basicConfig(level=settings.log_level)
     logger.info("Ask AI 后端启动中...")
 
-    # Postgres
-    engine = get_engine(settings.postgres_dsn)
-    await init_db(engine)
-    app.state.session_factory = get_session_factory(engine)
+    try:
+        # Postgres
+        engine = get_engine(settings.postgres_dsn)
+        await init_db(engine)
+        app.state.session_factory = get_session_factory(engine)
 
-    # Weaviate
-    weaviate_host, weaviate_port = _parse_weaviate_url(settings.weaviate_url)
-    weaviate_client = weaviate.connect_to_local(host=weaviate_host, port=weaviate_port)
+        # Weaviate
+        weaviate_host, weaviate_port = _parse_weaviate_url(settings.weaviate_url)
+        weaviate_client = weaviate.connect_to_local(host=weaviate_host, port=weaviate_port)
 
-    # Embedder + Reranker
-    embedder = BGEEmbedder(device=settings.embedder_device)
-    reranker = BGEReranker(device=settings.embedder_device)
+        # Embedder + Reranker
+        embedder = BGEEmbedder(device=settings.embedder_device)
+        reranker = BGEReranker(device=settings.embedder_device)
 
-    # LLM
-    router_llm = _build_llm_router(settings.config_dir)
+        # LLM
+        router_llm = _build_llm_router(settings.config_dir)
 
-    # System prompt
-    prompt_config = load_yaml_config(settings.config_dir / "system_prompt.yaml")
+        # System prompt
+        prompt_config = load_yaml_config(settings.config_dir / "system_prompt.yaml")
 
-    # RAG
-    searcher = HybridSearcher(weaviate_client, embedder, settings.weaviate_class_name)
-    rerank_pipeline = RerankPipeline(reranker)
-    app.state.rag = RAGOrchestrator(
-        searcher=searcher,
-        reranker=rerank_pipeline,
-        llm=router_llm,
-        system_prompt=prompt_config["system_prompt"],
-    )
-    app.state.weaviate_client = weaviate_client
-    app.state.engine = engine
+        # RAG
+        searcher = HybridSearcher(weaviate_client, embedder, settings.weaviate_class_name)
+        rerank_pipeline = RerankPipeline(reranker)
+        app.state.rag = RAGOrchestrator(
+            searcher=searcher,
+            reranker=rerank_pipeline,
+            llm=router_llm,
+            system_prompt=prompt_config["system_prompt"],
+        )
+        app.state.weaviate_client = weaviate_client
+        app.state.engine = engine
 
-    # S2: 预算熔断器(每日 LLM 调用 / token 上限,超阈熔断)
-    budget_cfg = BudgetConfig(
-        daily_request_limit=int(os.environ.get("BUDGET_DAILY_REQUESTS", "500")),
-        daily_token_limit=int(os.environ.get("BUDGET_DAILY_TOKENS", "2000000")),
-    )
-    app.state.budget = BudgetLimiter(budget_cfg)
+        # S2: 预算熔断器(每日 LLM 调用 / token 上限,超阈熔断)
+        budget_cfg = BudgetConfig(
+            daily_request_limit=int(os.environ.get("BUDGET_DAILY_REQUESTS", "500")),
+            daily_token_limit=int(os.environ.get("BUDGET_DAILY_TOKENS", "2000000")),
+        )
+        app.state.budget = BudgetLimiter(budget_cfg)
 
-    # S4: GITHUB_TOKEN 最小权限校验(prod 严格,dev 仅 warn)
-    from backend.connectors.github import validate_github_token
+        # S4: GITHUB_TOKEN 最小权限校验(prod 严格,dev 仅 warn)
+        from backend.connectors.github import validate_github_token
 
-    validate_github_token(
-        os.environ.get("GITHUB_TOKEN", ""),
-        strict=os.environ.get("APP_MODE", "dev") == "prod",
-    )
+        validate_github_token(
+            os.environ.get("GITHUB_TOKEN", ""),
+            strict=os.environ.get("APP_MODE", "dev") == "prod",
+        )
 
-    logger.info("Ask AI 后端就绪")
-    yield
-
-    weaviate_client.close()
-    await engine.dispose()
-    logger.info("Ask AI 后端关闭")
+        logger.info("Ask AI 后端就绪")
+        yield
+    finally:
+        # 资源释放:每步独立 guard,确保单个关闭失败不阻塞后续清理。
+        # 覆盖两种场景:(1) 启动中途抛异常 → 已建立的连接仍能释放;
+        #             (2) 正常关闭时 weaviate/engine 抛异常互不影响。
+        try:
+            weaviate_client.close()
+        except Exception:
+            logger.exception("Weaviate 连接关闭失败")
+        try:
+            await engine.dispose()
+        except Exception:
+            logger.exception("Postgres engine dispose 失败")
+        logger.info("Ask AI 后端关闭")
 
 
 # S5: 生产配置加固 —— debug / docs 受 FASTAPI_DEBUG 控制(默认 false)

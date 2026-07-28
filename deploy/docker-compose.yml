@@ -31,6 +31,10 @@ services:
       - "8080:8080"
     volumes:
       - weaviate_data:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/v1/.well-known/ready || exit 1"]
+      interval: 5s
+      retries: 12
 
   backend:
     build:
@@ -41,11 +45,12 @@ services:
     env_file:
       - path: ../.env
         required: false
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
       weaviate:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   pgdata:
