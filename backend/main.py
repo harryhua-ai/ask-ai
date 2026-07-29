@@ -23,6 +23,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
+from dotenv import load_dotenv
+
 import uvicorn
 import weaviate
 from fastapi import FastAPI, Request
@@ -35,6 +37,8 @@ from slowapi.util import get_remote_address
 # 导入 connector 实现以触发 @ConnectorRegistry.register
 import backend.connectors.filesystem
 import backend.connectors.github  # noqa: F401
+# 导入 LLM provider 以触发 @LLMRegistry.register
+import backend.llm.deepseek  # noqa: F401
 from backend.api.routes import router as api_router
 from backend.config import load_settings, load_yaml_config
 from backend.db.session import get_engine, get_session_factory, init_db
@@ -46,6 +50,7 @@ from backend.retrieval.search import HybridSearcher
 from backend.utils.budget import BudgetConfig, BudgetLimiter
 
 logger = logging.getLogger(__name__)
+load_dotenv()
 settings = load_settings()
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
@@ -210,7 +215,7 @@ async def _security_and_error_handler(request: Request, call_next):
 _cors = [
     o.strip()
     for o in os.environ.get(
-        "CORS_ALLOW_ORIGINS", "http://localhost:3000,http://localhost:1313"
+        "CORS_ALLOW_ORIGINS", "http://localhost:3000,http://localhost:1313,http://localhost:5173"
     ).split(",")
     if o.strip()
 ]

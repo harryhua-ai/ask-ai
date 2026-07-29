@@ -25,3 +25,9 @@ logs/
 *.db
 *.sqlite
 *.sqlite3
+
+# 本地测试/调试产物
+.claude/
+.coverage
+.playwright-mcp/
+uv.lock
