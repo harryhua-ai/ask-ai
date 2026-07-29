@@ -22,6 +22,18 @@ describe("renderMarkdownSafe", () => {
     expect(out).toContain("<pre>");
     expect(out).toContain("<code>");
   });
+
+  it("renders ### headings", () => {
+    expect(renderMarkdownSafe("### Heading")).toContain("<h4>Heading</h4>");
+  });
+
+  it("renders #### headings", () => {
+    expect(renderMarkdownSafe("#### Heading")).toContain("<h4>Heading</h4>");
+  });
+
+  it("renders ## headings", () => {
+    expect(renderMarkdownSafe("## Heading")).toContain("<h4>Heading</h4>");
+  });
 });
 
 describe("isAllowedUrl", () => {

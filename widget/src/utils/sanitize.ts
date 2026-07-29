@@ -34,7 +34,7 @@ export function renderMarkdownSafe(text: string): string {
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, "<pre><code>$2</code></pre>");
   html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  html = html.replace(/^## (.+)$/gm, "<h4>$1</h4>");
+  html = html.replace(/^#{1,6} (.+)$/gm, "<h4>$1</h4>");
   html = html.replace(/^- (.+)$/gm, "<li>$1</li>");
   html = html.replace(/(<li>.*<\/li>)/s, "<ul>$1</ul>");
   html = html.replace(/\n/g, "<br>");
