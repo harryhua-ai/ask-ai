@@ -461,6 +461,8 @@ CREATE TABLE llm_routing (
 | 模块 | 内容 |
 |---|---|
 | RAG 管线 | 检索 → 重排 → 生成 → 拒答 |
+| 查询处理 | 语言识别 + 长文本查询提取(>300 字符触发 LLM 提取核心问题)+ 多轮查询重写(§5 查询分解) |
+| 依据可靠性检查 | rerank 分数阈值拒答(min_score 过滤,不足 3 条相关结果则拒答,§5 + §16 验收) |
 | Widget | 独立 JS,嵌入官网 + Wiki |
 | DataSourceConnector 框架 | GitHub + FileSystem 两个 Connector |
 | 数据源配置 | YAML 配置文件(无 UI) |
@@ -479,6 +481,9 @@ CREATE TABLE llm_routing (
 | Customization 管理 | 多套配置,按渠道绑定,实时预览 |
 | LLM 供应商管理 | 多供应商 CRUD,连通性测试,路由配置 |
 | 对话审查 | 匿名对话列表,多维过滤,Intent 标签 |
+| 语义分块 | 按标题/段落语义边界分块(替换 Phase 1 固定窗口) |
+| 数据源隔离 | chunk 级 channel_visibility 控制(TS_record 等内部记录不出现在 widget 渠道) |
+| chunk 元数据丰富化 | 为每个 chunk 添加 doc_section/chunk_type 等信号,供 rerank 加权 |
 | 团队/RBAC | 用户管理,角色权限 |
 
 ### Phase 3 — 分析与优化
@@ -490,6 +495,7 @@ CREATE TABLE llm_routing (
 | Source Analytics | 最常引用页面,点击追踪 |
 | Improve This Answer | 人工覆盖特定答案 |
 | 报表 | Email/Slack 定期推送 |
+| 剪枝 | 小 LLM 过滤低相关 chunk(Pruner,见 §12.1) |
 
 ### Phase 4 — 智能管理
 
@@ -499,7 +505,6 @@ CREATE TABLE llm_routing (
 | Skills | AI 辅助工作流(覆盖盲区分析、文档审计等) |
 | 多渠道 | Discord + WhatsApp 适配器 |
 | MCP Server | 面向 Claude Code/Cursor |
-| 剪枝 | 小 LLM 过滤低相关 chunk |
 
 ## 11. 数据模型(Postgres)
 
