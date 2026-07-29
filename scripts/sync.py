@@ -40,8 +40,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from dotenv import load_dotenv
+
 # 让 ``python scripts/sync.py`` 直接执行时也能导入 backend 包
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+load_dotenv()
 
 import weaviate
 

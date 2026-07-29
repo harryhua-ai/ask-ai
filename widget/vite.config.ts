@@ -6,6 +6,9 @@ import react from "@vitejs/plugin-react";
 // test 配置:vitest 使用 jsdom 环境(DOMPurify 需要 DOM)
 export default defineConfig({
   plugins: [react()],
+  define: {
+    "process.env.NODE_ENV": JSON.stringify("production"),
+  },
   build: {
     lib: {
       entry: "src/index.tsx",

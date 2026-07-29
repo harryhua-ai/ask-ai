@@ -27,8 +27,10 @@ services:
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
       DISABLE_TELEMETRY: "true"
       PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
+      GRPC_PORT: "50051"
     ports:
       - "8080:8080"
+      - "50051:50051"
     volumes:
       - weaviate_data:/var/lib/weaviate
     healthcheck:

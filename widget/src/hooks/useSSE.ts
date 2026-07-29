@@ -45,7 +45,7 @@ export function useSSE(apiUrl: string) {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
 
       // SSE 事件以空行分隔
       const events = buffer.split("\n\n");
