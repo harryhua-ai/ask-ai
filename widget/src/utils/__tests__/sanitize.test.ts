@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { renderMarkdownSafe } from "../sanitize";
 import { isAllowedUrl } from "../urlPolicy";
+import type { SourceLink } from "../../types";
 
 describe("renderMarkdownSafe", () => {
   it("strips <script> injection", () => {
@@ -33,6 +34,52 @@ describe("renderMarkdownSafe", () => {
 
   it("renders ## headings", () => {
     expect(renderMarkdownSafe("## Heading")).toContain("<h4>Heading</h4>");
+  });
+
+  it("renders whitelist-domain links as <a>", () => {
+    const out = renderMarkdownSafe("[Wiki](https://wiki.camthink.ai/guide)");
+    expect(out).toContain('<a href="https://wiki.camthink.ai/guide"');
+    expect(out).toContain("Wiki");
+    expect(out).toContain('target="_blank"');
+  });
+
+  it("strips non-whitelist-domain links to plain text", () => {
+    const out = renderMarkdownSafe("[Evil](https://evil.com/path)");
+    expect(out).not.toContain("<a");
+    expect(out).not.toContain("evil.com");
+    expect(out).toContain("Evil");
+  });
+
+  it("renders multiple independent lists separately", () => {
+    const md = "- Item A\n- Item B\n\nText between\n\n- Item C\n- Item D";
+    const out = renderMarkdownSafe(md);
+    const ulCount = (out.match(/<ul>/g) || []).length;
+    expect(ulCount).toBe(2);
+    expect(out).toContain("Item A");
+    expect(out).toContain("Item C");
+    expect(out).toContain("Text between");
+  });
+
+  it("consolidates [N] citations to paragraph end as source titles", () => {
+    const sources: SourceLink[] = [
+      { url: "https://github.com/camthink-ai/wiki/blob/main/overview.md", title: "overview", type: "github" },
+      { url: "https://github.com/camthink-ai/wiki/blob/main/specs.md", title: "specs", type: "github" },
+    ];
+    const out = renderMarkdownSafe("NE503 has 20 TOPS [1][2]. It supports multi-model inference [1].", sources);
+    expect(out).not.toContain("<sup>");
+    expect(out).not.toContain("[1]");
+    expect(out).toContain('ask-ai-ref');
+    expect(out).toContain("overview");
+    expect(out).toContain("specs");
+  });
+
+  it("strips [N] when N exceeds sources length", () => {
+    const sources: SourceLink[] = [
+      { url: "https://github.com/camthink-ai/wiki/blob/main/doc.md", title: "doc", type: "github" },
+    ];
+    const out = renderMarkdownSafe("text [2] here", sources);
+    expect(out).not.toContain("ask-ai-ref");
+    expect(out).not.toContain("[2]");
   });
 });
 

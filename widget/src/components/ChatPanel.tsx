@@ -32,7 +32,7 @@ export function ChatPanel({ config, messages, isStreaming, conversationId, sugge
 
   return (
     <div className="ask-ai-panel">
-      <div className="ask-ai-header" style={{ backgroundColor: config.primaryColor }}>
+      <div className="ask-ai-header" style={{ backgroundColor: "#000000" }}>
         <span>CamThink 助手</span>
         <button onClick={onClose} style={{ float: "right", background: "none", border: "none", color: "white", cursor: "pointer" }}>✕</button>
       </div>
@@ -65,7 +65,7 @@ export function ChatPanel({ config, messages, isStreaming, conversationId, sugge
           placeholder="输入你的问题..."
           disabled={isStreaming}
         />
-        <button type="submit" style={{ backgroundColor: config.primaryColor }} disabled={isStreaming || !input.trim()}>
+        <button type="submit" style={{ backgroundColor: "#000000" }} disabled={isStreaming || !input.trim()}>
           发送
         </button>
       </form>
