@@ -6,6 +6,8 @@ venv/
 .env
 .env.*
 !.env.example
+*.egg-info/
+.pytest_cache/
 
 # Node / Next
 node_modules/
