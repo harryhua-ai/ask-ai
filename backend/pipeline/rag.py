@@ -15,7 +15,7 @@
 - searcher / reranker / llm 异常向上传播,由端点层(Task 16)统一处理。
 - ``conversation_history`` 截断到最近 ``conversation_max_turns * 2`` 条
   消息(每轮 = 1 user + 1 assistant)。
-- ``_extract_sources`` 按 URL 去重,同一 URL 的多个 chunk 只算一个来源。
+- ``_extract_sources`` 按归一化路径去重(中英文翻译版只保留一条),最多 5 条。
 """
 
 import json
@@ -62,6 +62,24 @@ class RAGAnswer:
     reranked_results: list[SearchResult]
     language: str
     response_time_ms: int
+
+
+_I18N_PREFIXES = (
+    "/i18n/en/docusaurus-plugin-content-docs/current/",
+    "/i18n/zh-CN/docusaurus-plugin-content-docs/current/",
+)
+
+
+def _normalize_source_path(url: str) -> str:
+    """归一化来源 URL,使同一文档的翻译版本去重。
+
+    去除 Docusaurus i18n 路径前缀,使 ``docs/foo.md`` 与
+    ``i18n/en/.../foo.md`` 映射到同一 key。
+    """
+    for prefix in _I18N_PREFIXES:
+        if prefix in url:
+            return url.replace(prefix, "/docs/")
+    return url
 
 
 class RAGOrchestrator:
@@ -169,12 +187,13 @@ class RAGOrchestrator:
         return messages
 
     def _extract_sources(self, results: list[SearchResult]) -> list[dict]:
-        """从重排结果中提取来源元数据,按 URL 去重。
+        """从重排结果中提取来源元数据,按归一化路径去重。
 
-        同一 URL 下的多个 chunk 只记一个来源,避免重复引用。
+        同一文档的多个翻译版本(如 ``docs/`` 与 ``i18n/en/...``)只保留
+        rerank 分数最高的那个,避免来源列表出现重复条目。
 
         Args:
-            results: 重排后的 SearchResult 列表。
+            results: 重排后的 SearchResult 列表(rerank 降序)。
 
         Returns:
             去重后的来源字典列表,字段:``url`` / ``title`` / ``type`` / ``product``。
@@ -182,17 +201,19 @@ class RAGOrchestrator:
         seen: set[str] = set()
         sources: list[dict] = []
         for r in results:
-            if r.url not in seen:
-                seen.add(r.url)
-                sources.append(
-                    {
-                        "url": r.url,
-                        "title": r.title,
-                        "type": r.source_type,
-                        "product": r.product,
-                    }
-                )
-        return sources
+            norm = _normalize_source_path(r.url)
+            if norm in seen:
+                continue
+            seen.add(norm)
+            sources.append(
+                {
+                    "url": r.url,
+                    "title": r.title,
+                    "type": r.source_type,
+                    "product": r.product,
+                }
+            )
+        return sources[:5]
 
     async def answer(
         self,
