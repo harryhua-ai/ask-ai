@@ -1,0 +1,131 @@
+sources:
+  - id: "github-wiki"
+    type: "github"
+    product: "wiki"
+    enabled: true
+    config:
+      owner: "camthink-ai"
+      repo: "wiki-documents"
+      branch: "main"
+      file_types: [".md", ".mdx"]
+      include_dirs: ["docs/", "blog/", "i18n/"]
+    sync_interval: "1h"
+
+  - id: "github-ne101"
+    type: "github"
+    product: "ne101"
+    enabled: true
+    config:
+      owner: "camthink-ai"
+      repo: "lowpower_camera"
+      branch: "hw-v1.2"
+      file_types: [".md", ".h", ".c", ".txt"]
+      include_dirs: ["docs/", "examples/", "README.md"]
+      exclude_regex: '_test\\.|\\.generated\\.'
+    sync_interval: "1h"
+
+  - id: "github-ne301"
+    type: "github"
+    product: "ne301"
+    enabled: true
+    config:
+      owner: "camthink-ai"
+      repo: "ne301"
+      branch: "main"
+      file_types: [".md", ".h", ".c", ".txt"]
+      include_dirs: ["docs/", "examples/", "README.md"]
+    sync_interval: "1h"
+
+  - id: "github-ne503-sdk"
+    type: "github"
+    product: "ne503"
+    enabled: true
+    config:
+      owner: "camthink-ai"
+      repo: "ne503-aipc-sdks"
+      branch: "main"
+      file_types: [".md", ".py", ".txt", ".yaml"]
+      include_dirs: ["docs/", "examples/", "README.md"]
+    sync_interval: "1h"
+
+  - id: "github-ne503-hailo"
+    type: "github"
+    product: "ne503"
+    enabled: true
+    config:
+      owner: "camthink-ai"
+      repo: "meta-hailo-os"
+      branch: "main"
+      file_types: [".md", ".sh", ".txt", ".yaml"]
+      include_dirs: ["docs/", "README.md"]
+    sync_interval: "1h"
+
+  - id: "github-neomind"
+    type: "github"
+    product: "neomind"
+    enabled: true
+    config:
+      owner: "camthink-ai"
+      repo: "NeoMind"
+      branch: "main"
+      file_types: [".md", ".rs", ".txt"]
+      include_dirs: ["docs/", "README.md"]
+    sync_interval: "1h"
+
+  - id: "github-neomind-devicetypes"
+    type: "github"
+    product: "neomind"
+    enabled: true
+    config:
+      owner: "camthink-ai"
+      repo: "NeoMind-DeviceTypes"
+      branch: "main"
+      file_types: [".md", ".ts", ".js", ".json"]
+      include_dirs: ["README.md"]
+    sync_interval: "1h"
+
+  - id: "github-neomind-dashboard"
+    type: "github"
+    product: "neomind"
+    enabled: true
+    config:
+      owner: "camthink-ai"
+      repo: "NeoMind-Dashboard-Components"
+      branch: "main"
+      file_types: [".md", ".tsx", ".ts"]
+      include_dirs: ["README.md", "docs/"]
+    sync_interval: "1h"
+
+  - id: "github-neomind-extensions"
+    type: "github"
+    product: "neomind"
+    enabled: true
+    config:
+      owner: "camthink-ai"
+      repo: "NeoMind-Extensions"
+      branch: "main"
+      file_types: [".md", ".rs"]
+      include_dirs: ["README.md", "docs/"]
+    sync_interval: "1h"
+
+  - id: "github-aitoolstack"
+    type: "github"
+    product: "aitoolstack"
+    enabled: true
+    config:
+      owner: "camthink-ai"
+      repo: "AIToolStack"
+      branch: "main"
+      file_types: [".md", ".py", ".txt"]
+      include_dirs: ["docs/", "README.md"]
+    sync_interval: "1h"
+
+  - id: "knowledge-base"
+    type: "filesystem"
+    product: "knowledge"
+    enabled: true
+    config:
+      root_path: "~/Documents/GitHub/Knowledge/知识库/"
+      include_dirs: ["support/", "wiki-en/", "sales/", "硬件/", "经验/"]
+      file_types: [".md", ".txt"]
+    sync_interval: "1h"

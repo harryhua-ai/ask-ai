@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Ask AI Widget 测试</title>
+  <style>
+    body { font-family: sans-serif; padding: 40px; }
+    h1 { color: #333; }
+  </style>
+</head>
+<body>
+  <h1>Ask AI Widget 嵌入测试页</h1>
+  <p>这个页面用于测试 widget 是否正确加载和显示。</p>
+
+  <!-- Ask AI Widget -->
+  <script>
+    window.AskAIConfig = {
+      apiUrl: "http://localhost:8000",
+      language: "zh",
+      primaryColor: "#2563eb",
+    };
+  </script>
+  <script src="./dist/widget.js"></script>
+</body>
+</html>

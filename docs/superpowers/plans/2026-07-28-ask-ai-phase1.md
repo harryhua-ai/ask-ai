@@ -15,6 +15,7 @@
 - pytest for backend tests, vitest for widget tests
 - Immutable data patterns (frozen dataclasses)
 - No hardcoded secrets — all via env vars
+- 安全边界:外部输入(消息/history/来源URL/渠道)在系统边界校验;LLM 输出渲染前必须 XSS 清洗;secret 永不进 LLM 上下文
 - No `print()` in backend — use `logging`
 - All code comments and responses in Chinese (简体)
 - Docker Compose for local development
@@ -66,7 +67,8 @@ ask-ai/
 │   └── utils/
 │       ├── __init__.py
 │       ├── pii.py                  # PII masking
-│       └── language.py             # Language detection
+│       ├── language.py             # Language detection
+│       └── budget.py               # 每日预算熔断(S2)
 ├── widget/
 │   ├── package.json
 │   ├── tsconfig.json
@@ -83,6 +85,9 @@ ask-ai/
 │       │   └── SuggestedQuestions.tsx
 │       ├── hooks/
 │       │   └── useSSE.ts
+│       ├── utils/
+│       │   ├── sanitize.ts         # XSS 清洗 + 安全 Markdown 渲染(S1)
+│       │   └── urlPolicy.ts        # 来源链接协议+域白名单(S1)
 │       ├── styles/
 │       │   └── widget.css
 │       └── types.ts
@@ -3872,6 +3877,648 @@ git commit -m "feat: Docker 部署 + README"
 
 ---
 
+## Task 21: Security Hardening
+
+**Files:**
+- Create: `backend/utils/budget.py`
+- Create: `widget/src/utils/sanitize.ts`
+- Create: `widget/src/utils/urlPolicy.ts`
+- Modify: `backend/api/schemas.py`
+- Modify: `backend/api/routes.py`
+- Modify: `backend/connectors/github.py`
+- Modify: `backend/main.py`
+- Modify: `widget/src/components/MessageBubble.tsx`
+- Modify: `widget/package.json` (加 dompurify 依赖)
+- Test: `tests/utils/test_budget.py`, `tests/api/test_schemas.py`, `tests/api/test_hardening.py`, `tests/connectors/test_github_scope.py`, `widget/src/utils/__tests__/sanitize.test.ts`
+
+**Interfaces:**
+- Consumes: `AskRequest` (Task 16), tiktoken (Task 9), `GITHUB_TOKEN` env (Task 6)
+- Produces: 5 项安全加固(对应 §13.2 威胁模型)
+
+**威胁模型(本 Task 应对,详见 spec §13.2):**
+
+| 威胁 | 现状风险 | 应对 |
+|---|---|---|
+| 输出 XSS | `MessageBubble` 用 `dangerouslySetInnerHTML` 渲染未转义的 LLM 输出 | S1 |
+| 成本 DoS | 匿名 Widget 无限刷 `/api/ask` 烧 DeepSeek 额度 | S2 |
+| 输入超长 | `conversation_history` 单条内容无上限,撑爆 context | S3 |
+| 凭证过权 | `GITHUB_TOKEN` 无 scope 校验 | S4 |
+| 配置泄露 | CORS `*`、异常堆栈回显、debug 未关 | S5 |
+
+> **Phase 边界**:Phase 1 LLM 无工具调用,prompt injection 危害限于内容/成本层;Phase 4 接入 Skills/MCP 后升级为执行类威胁(spec §17),届时威胁模型需重做。
+
+- [ ] **Step 1 (S3): conversation_history 后端强制边界**
+
+```python
+# tests/api/test_schemas.py
+import pytest
+from pydantic import ValidationError
+from backend.api.schemas import AskRequest
+
+
+@pytest.mark.unit
+def test_normal_history_passes():
+    req = AskRequest(message="hi", conversation_history=[
+        {"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}])
+    assert len(req.conversation_history) == 2
+
+
+@pytest.mark.unit
+def test_history_over_10_items_rejected():
+    with pytest.raises(ValidationError):
+        AskRequest(message="hi", conversation_history=[{"role": "user", "content": "x"}] * 11)
+
+
+@pytest.mark.unit
+def test_history_oversize_content_rejected():
+    with pytest.raises(ValidationError):
+        AskRequest(message="hi", conversation_history=[{"role": "user", "content": "x" * 5000}])
+
+
+@pytest.mark.unit
+def test_invalid_channel_rejected():
+    with pytest.raises(ValidationError):
+        AskRequest(message="hi", channel="evil")
+
+
+@pytest.mark.unit
+def test_history_strips_extra_keys():
+    req = AskRequest(message="hi", conversation_history=[
+        {"role": "user", "content": "a", "injected": "malware"}])
+    assert "injected" not in req.conversation_history[0]
+```
+
+```python
+# backend/api/schemas.py (update)
+from pydantic import BaseModel, Field, field_validator
+
+MAX_HISTORY_ITEMS = 10
+MAX_HISTORY_CONTENT_CHARS = 4000
+MAX_HISTORY_TOTAL_CHARS = 20000
+
+
+class AskRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=2000)
+    language: str | None = None
+    channel: str = Field(default="widget", pattern="^(widget|discord|whatsapp|mcp)$")
+    conversation_history: list[dict] = Field(default_factory=list, max_length=MAX_HISTORY_ITEMS)
+
+    @field_validator("conversation_history")
+    @classmethod
+    def _validate_history(cls, v: list[dict]) -> list[dict]:
+        total = 0
+        for item in v:
+            content = str(item.get("content", ""))
+            if len(content) > MAX_HISTORY_CONTENT_CHARS:
+                raise ValueError(f"history 单条 content 超过 {MAX_HISTORY_CONTENT_CHARS} 字符")
+            total += len(content)
+        if total > MAX_HISTORY_TOTAL_CHARS:
+            raise ValueError(f"history 总字符超过 {MAX_HISTORY_TOTAL_CHARS}")
+        # 仅保留 role/content,丢弃其他键
+        return [{"role": item.get("role", "user"), "content": str(item.get("content", ""))} for item in v]
+
+
+class FeedbackRequest(BaseModel):
+    conversation_id: str
+    feedback: str = Field(..., pattern="^(up|down)$")
+
+
+class ClickRequest(BaseModel):
+    conversation_id: str
+    source_url: str
+    source_type: str
+    product: str | None = None
+```
+
+- [ ] **Step 2 (S2): 成本预算熔断**
+
+```python
+# tests/utils/test_budget.py
+import pytest
+from datetime import date
+from backend.utils.budget import BudgetLimiter, BudgetConfig
+
+
+@pytest.mark.unit
+def test_allows_within_budget():
+    lim = BudgetLimiter(BudgetConfig(daily_request_limit=5, daily_token_limit=1_000_000))
+    assert lim.check_and_reserve(estimated_tokens=100) is True
+    assert lim.snapshot()["requests"] == 1
+
+
+@pytest.mark.unit
+def test_blocks_when_request_limit_hit():
+    lim = BudgetLimiter(BudgetConfig(daily_request_limit=2, daily_token_limit=1_000_000))
+    lim.check_and_reserve(10)
+    lim.check_and_reserve(10)
+    assert lim.check_and_reserve(10) is False
+
+
+@pytest.mark.unit
+def test_blocks_when_token_limit_hit():
+    lim = BudgetLimiter(BudgetConfig(daily_request_limit=100, daily_token_limit=100))
+    assert lim.check_and_reserve(60) is True
+    assert lim.check_and_reserve(50) is False  # 60+50 > 100
+
+
+@pytest.mark.unit
+def test_resets_on_new_day():
+    today = {"d": date(2026, 7, 28)}
+    lim = BudgetLimiter(
+        BudgetConfig(daily_request_limit=1, daily_token_limit=1_000_000),
+        _now=lambda: today["d"],
+    )
+    assert lim.check_and_reserve(10) is True
+    assert lim.check_and_reserve(10) is False
+    today["d"] = date(2026, 7, 29)  # 跨天
+    assert lim.check_and_reserve(10) is True  # 计数重置
+```
+
+```python
+# backend/utils/budget.py
+import logging
+import threading
+from dataclasses import dataclass
+from datetime import date
+
+import tiktoken
+
+logger = logging.getLogger(__name__)
+_enc = tiktoken.get_encoding("cl100k_base")
+
+
+@dataclass(frozen=True)
+class BudgetConfig:
+    daily_request_limit: int = 500
+    daily_token_limit: int = 2_000_000
+
+
+@dataclass
+class _Counter:
+    requests: int = 0
+    tokens: int = 0
+
+
+def estimate_tokens(text: str) -> int:
+    """用 cl100k_base 估算 token 数(与 Task 9 chunking 同编码;DeepSeek 实际 tokenizer 的合理近似)。"""
+    return len(_enc.encode(text))
+
+
+class BudgetLimiter:
+    """每日 LLM 调用预算熔断,保护计费额度。
+
+    Phase 1:内存计数器(单 worker)。超阈值拒绝新请求并返回降级响应。
+    多 worker / 持久化场景 Phase 2 迁移至 Redis 或 Postgres。
+    """
+
+    def __init__(self, config: BudgetConfig, *, _now=None):
+        self._config = config
+        self._now = _now or date.today
+        self._current_date = self._now()
+        self._counter = _Counter()
+        self._lock = threading.Lock()
+
+    def _maybe_reset(self) -> None:
+        today = self._now()
+        if today != self._current_date:
+            self._current_date = today
+            self._counter = _Counter()
+
+    def check_and_reserve(self, estimated_tokens: int) -> bool:
+        with self._lock:
+            self._maybe_reset()
+            if self._counter.requests >= self._config.daily_request_limit:
+                logger.warning("预算熔断:日请求数达上限 %d", self._config.daily_request_limit)
+                return False
+            if self._counter.tokens + estimated_tokens > self._config.daily_token_limit:
+                logger.warning("预算熔断:日 token 估算达上限 %d", self._config.daily_token_limit)
+                return False
+            self._counter.requests += 1
+            self._counter.tokens += estimated_tokens
+            return True
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            self._maybe_reset()
+            return {
+                "date": self._current_date.isoformat(),
+                "requests": self._counter.requests,
+                "tokens": self._counter.tokens,
+                "daily_request_limit": self._config.daily_request_limit,
+                "daily_token_limit": self._config.daily_token_limit,
+            }
+```
+
+接入 `ask` 端点(在 Task 16 的 `ask` 函数内,`event_generator` 定义之前插入预算检查):
+
+```python
+# backend/api/routes.py (update — ask 端点增量)
+from backend.utils.budget import BudgetLimiter, estimate_tokens
+
+
+def get_budget(request: Request):
+    return request.app.state.budget
+
+
+@router.post("/ask")
+@limiter.limit("20/minute")
+async def ask(
+    req: AskRequest,
+    request: Request,
+    rag=Depends(get_rag),
+    session_factory=Depends(get_session_factory),
+    budget: BudgetLimiter = Depends(get_budget),
+):
+    masked_message = mask_pii(req.message)
+
+    # S2: 预算熔断 — 估算 prompt token + max_tokens 预扣
+    est_input = estimate_tokens(masked_message) + sum(
+        estimate_tokens(str(h.get("content", ""))) for h in req.conversation_history
+    )
+    if not budget.check_and_reserve(est_input + 4096):
+        async def declined():
+            yield {"event": "declined", "data": json.dumps({"reason": "服务繁忙,请稍后再试"})}
+            yield {"event": "done", "data": json.dumps({"conversation_id": str(uuid.uuid4())})}
+        return EventSourceResponse(declined())
+
+    async def event_generator():
+        ...  # Task 16 原有逻辑不变
+```
+
+- [ ] **Step 3 (S4): GITHUB_TOKEN 最小权限校验**
+
+```python
+# tests/connectors/test_github_scope.py
+import pytest
+from unittest.mock import patch, MagicMock
+from backend.connectors.github import validate_github_token
+
+
+@pytest.mark.unit
+def test_classic_token_readonly_passes():
+    resp = MagicMock()
+    resp.headers = {"x-oauth-scopes": "repo:read"}
+    resp.raise_for_status = MagicMock()
+    with patch("backend.connectors.github.httpx.Client") as m:
+        m.return_value.__enter__.return_value.get.return_value = resp
+        validate_github_token("token", strict=True)  # 不抛
+
+
+@pytest.mark.unit
+def test_classic_token_write_scope_fails_in_prod():
+    resp = MagicMock()
+    resp.headers = {"x-oauth-scopes": "repo, write:org"}
+    resp.raise_for_status = MagicMock()
+    with patch("backend.connectors.github.httpx.Client") as m:
+        m.return_value.__enter__.return_value.get.return_value = resp
+        with pytest.raises(RuntimeError):
+            validate_github_token("token", strict=True)
+
+
+@pytest.mark.unit
+def test_classic_token_write_scope_warns_in_dev():
+    resp = MagicMock()
+    resp.headers = {"x-oauth-scopes": "repo"}
+    resp.raise_for_status = MagicMock()
+    with patch("backend.connectors.github.httpx.Client") as m:
+        m.return_value.__enter__.return_value.get.return_value = resp
+        validate_github_token("token", strict=False)  # 不抛,仅 warn
+
+
+@pytest.mark.unit
+def test_fine_grained_token_no_scopes_passes():
+    resp = MagicMock()
+    resp.headers = {"x-oauth-scopes": ""}  # fine-grained token 返回空
+    resp.raise_for_status = MagicMock()
+    with patch("backend.connectors.github.httpx.Client") as m:
+        m.return_value.__enter__.return_value.get.return_value = resp
+        validate_github_token("token", strict=True)
+
+
+@pytest.mark.unit
+def test_no_token_warns():
+    validate_github_token("", strict=True)  # 不抛,仅 warn
+```
+
+```python
+# backend/connectors/github.py (append module-level function)
+_WRITE_SCOPE_PREFIXES = ("repo", "write:", "delete:", "admin:")
+_READONLY_SCOPES = {"repo:read", "public_repo", ""}
+
+
+def validate_github_token(token: str, *, strict: bool = False) -> None:
+    """启动时校验 GITHUB_TOKEN 为只读最小权限。
+
+    classic token:检查 X-OAuth-Scopes 不含写权限(repo/write:/delete:/admin:),
+                   repo:read 与 public_repo 视为只读放行。
+    fine-grained token:响应头无 x-oauth-scopes,视为有效(权限粒度在 token 配置层保证)。
+    无 token:warn(私有仓库将拉取失败)。
+    写权限命中:strict=True(prod)抛 RuntimeError 阻断启动;strict=False(dev)仅 warn。
+    """
+    if not token:
+        logger.warning("GITHUB_TOKEN 未设置:私有仓库将无法拉取")
+        return
+    try:
+        with httpx.Client(timeout=10, headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+        }) as client:
+            resp = client.get("https://api.github.com/user")
+            resp.raise_for_status()
+            scopes = resp.headers.get("x-oauth-scopes", "")
+            found_write = [
+                s.strip() for s in scopes.split(",")
+                if s.strip() not in _READONLY_SCOPES
+                and any(s.strip().startswith(p) for p in _WRITE_SCOPE_PREFIXES)
+            ]
+            if found_write:
+                msg = f"GITHUB_TOKEN 含写权限 scope {found_write},违反最小权限原则"
+                if strict:
+                    raise RuntimeError(msg)
+                logger.warning(msg)
+    except httpx.HTTPError as e:
+        logger.warning("GITHUB_TOKEN 校验失败(网络或无效 token):%s", e)
+```
+
+- [ ] **Step 4 (S5): FastAPI 生产配置加固 + S2/S4 接线**
+
+```python
+# tests/api/test_hardening.py
+import pytest
+from httpx import AsyncClient, ASGITransport
+from backend.main import app
+
+
+@pytest.mark.integration
+async def test_unhandled_exception_hides_stack():
+    @app.get("/__raise")
+    async def _raise():
+        raise RuntimeError("secret internal detail")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/__raise")
+        assert resp.status_code == 500
+        assert "secret internal detail" not in resp.text
+        assert "detail" in resp.json()
+
+
+@pytest.mark.integration
+async def test_security_headers_present():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/health")
+        assert resp.headers["x-content-type-options"] == "nosniff"
+        assert resp.headers["x-frame-options"] == "DENY"
+```
+
+`backend/main.py` 关键增量(顶部新增 import):
+
+```python
+import os
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from backend.utils.budget import BudgetLimiter, BudgetConfig
+```
+
+在 `lifespan` 内(LLM 接线之后、RAG 创建之前)新增:
+
+```python
+    # S2: 预算熔断器
+    budget_cfg = BudgetConfig(
+        daily_request_limit=int(os.environ.get("BUDGET_DAILY_REQUESTS", "500")),
+        daily_token_limit=int(os.environ.get("BUDGET_DAILY_TOKENS", "2000000")),
+    )
+    app.state.budget = BudgetLimiter(budget_cfg)
+
+    # S4: GITHUB_TOKEN 最小权限校验(prod 严格)
+    from backend.connectors.github import validate_github_token
+    validate_github_token(
+        os.environ.get("GITHUB_TOKEN", ""),
+        strict=os.environ.get("APP_MODE", "dev") == "prod",
+    )
+```
+
+`app` 创建与中间件部分替换为(env 控制 debug / 生产关 docs):
+
+```python
+# backend/main.py (update — app 创建 + 中间件)
+_debug = os.environ.get("FASTAPI_DEBUG", "false").lower() == "true"
+app = FastAPI(
+    title="Ask AI",
+    lifespan=lifespan,
+    debug=_debug,
+    docs_url="/docs" if _debug else None,
+    redoc_url="/redoc" if _debug else None,
+)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# S5: 全局异常 handler — 记录堆栈到日志,但不回显给客户端
+@app.exception_handler(Exception)
+async def _global_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled exception on %s", request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "内部服务错误"})
+
+
+# S5: 安全响应头
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+
+# S5: CORS 白名单(env 控制,默认仅本地开发站点;不再用 "*")
+_cors = [o.strip() for o in os.environ.get(
+    "CORS_ALLOW_ORIGINS", "http://localhost:3000,http://localhost:1313"
+).split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
+app.include_router(api_router)
+```
+
+- [ ] **Step 5 (S1): Widget 输出 XSS 防护**
+
+先加依赖:
+
+```bash
+cd widget && npm install dompurify @types/dompurify
+```
+
+```typescript
+// widget/src/utils/sanitize.ts
+import DOMPurify from "dompurify";
+
+const ALLOWED_TAGS = ["p", "br", "strong", "em", "code", "pre", "h4", "ul", "ol", "li", "a"];
+const ALLOWED_ATTR = ["href", "target", "rel"];
+
+/** DOMPurify 清洗,兜底移除任何残余危险标签/属性 */
+export function sanitizeHtml(html: string): string {
+  return DOMPurify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR });
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+/** 安全 Markdown 渲染:先转义全部 HTML(杜绝原始 <script> 注入),再应用格式化,最后 DOMPurify 兜底 */
+export function renderMarkdownSafe(text: string): string {
+  let html = escapeHtml(text);
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, "<pre><code>$2</code></pre>");
+  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/^## (.+)$/gm, "<h4>$1</h4>");
+  html = html.replace(/^- (.+)$/gm, "<li>$1</li>");
+  html = html.replace(/(<li>.*<\/li>)/s, "<ul>$1</ul>");
+  html = html.replace(/\n/g, "<br>");
+  return sanitizeHtml(html);
+}
+```
+
+```typescript
+// widget/src/utils/urlPolicy.ts
+const ALLOWED_PROTOCOLS = ["http:", "https:"];
+const ALLOWED_HOSTS = [
+  "github.com",
+  "raw.githubusercontent.com",
+  "camthink.ai",
+  "wiki.camthink.ai",
+  "docs.camthink.ai",
+];
+
+/** 来源链接协议 + 域白名单:拦截 javascript: / data: 等危险协议与非官方域名 */
+export function isAllowedUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (!ALLOWED_PROTOCOLS.includes(u.protocol)) return false;
+    return ALLOWED_HOSTS.some(
+      (h) => u.hostname === h || u.hostname.endsWith("." + h),
+    );
+  } catch {
+    return false;
+  }
+}
+```
+
+`widget/src/components/MessageBubble.tsx` 改造两点:
+
+```tsx
+// 顶部 import 替换:
+import { renderMarkdownSafe } from "../utils/sanitize";
+import { isAllowedUrl } from "../utils/urlPolicy";
+
+// 渲染行(原 renderMarkdown(message.content) 改为):
+<div dangerouslySetInnerHTML={{ __html: renderMarkdownSafe(message.content) }} />
+
+// 删除原文件内的 renderMarkdown 函数(已由 renderMarkdownSafe 取代)
+
+// 来源链接循环改为(校验 URL 后再决定是否可点):
+{message.sources.map((src, i) => {
+  const safe = isAllowedUrl(src.url);
+  return (
+    <a
+      key={i}
+      className="ask-ai-source"
+      href={safe ? src.url : "#"}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => {
+        if (!safe) { e.preventDefault(); return; }
+        if (!conversationId) return;
+        fetch(`${apiUrl}/api/click`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversation_id: conversationId,
+            source_url: src.url,
+            source_type: src.type,
+            product: src.product,
+          }),
+        });
+      }}
+    >
+      [{SOURCE_LABELS[src.type] || src.type}] {src.title}
+    </a>
+  );
+})}
+```
+
+```typescript
+// widget/src/utils/__tests__/sanitize.test.ts
+import { describe, it, expect } from "vitest";
+import { renderMarkdownSafe } from "../sanitize";
+import { isAllowedUrl } from "../urlPolicy";
+
+describe("renderMarkdownSafe", () => {
+  it("strips <script> injection", () => {
+    expect(renderMarkdownSafe("<script>alert(1)</script>")).not.toContain("<script>");
+  });
+  it("strips <img onerror>", () => {
+    const out = renderMarkdownSafe('<img src=x onerror="alert(1)">');
+    expect(out).not.toContain("onerror");
+    expect(out).not.toContain("<img");
+  });
+  it("preserves bold markdown", () => {
+    expect(renderMarkdownSafe("**bold**")).toContain("<strong>bold</strong>");
+  });
+});
+
+describe("isAllowedUrl", () => {
+  it("rejects javascript: protocol", () => {
+    expect(isAllowedUrl("javascript:alert(1)")).toBe(false);
+  });
+  it("rejects data: protocol", () => {
+    expect(isAllowedUrl("data:text/html,<script>")).toBe(false);
+  });
+  it("accepts github.com", () => {
+    expect(isAllowedUrl("https://github.com/camthink-ai/ne503")).toBe(true);
+  });
+  it("rejects unknown domain", () => {
+    expect(isAllowedUrl("https://evil.com/path")).toBe(false);
+  });
+});
+```
+
+- [ ] **Step 6: 运行所有测试**
+
+```bash
+pytest tests/utils/test_budget.py tests/api/test_schemas.py tests/api/test_hardening.py tests/connectors/test_github_scope.py -v
+cd widget && npm test -- src/utils/__tests__/sanitize.test.ts
+```
+
+Expected: PASS
+
+- [ ] **Step 7: 更新 .env.example + Commit**
+
+在 `.env.example` 追加:
+
+```bash
+# Security (Task 21)
+FASTAPI_DEBUG=false                # 生产保持 false
+APP_MODE=dev                       # prod 时 GITHUB_TOKEN 写权限校验严格
+CORS_ALLOW_ORIGINS=http://localhost:3000,http://localhost:1313  # 生产改为官网/Wiki 域名
+BUDGET_DAILY_REQUESTS=500          # 每日 /api/ask 请求上限
+BUDGET_DAILY_TOKENS=2000000        # 每日 LLM 估算 token 上限
+```
+
+```bash
+git add backend/ widget/ tests/ .env.example
+git commit -m "feat: 安全加固(输出XSS/成本熔断/输入边界/Token最小权限/生产配置)"
+```
+
+---
+
 ## Self-Review
 
 **Spec coverage check:**
@@ -3901,6 +4548,11 @@ git commit -m "feat: Docker 部署 + README"
 | 全部 10 张 Postgres 表 | Task 2 | ✅ |
 | Postgres 索引(6 个) | Task 2 (Index 定义) | ✅ 已修复 |
 | Pruner 管线预留位置 | Task 15 (pruner=None 可选参数) | ✅ 已修复 |
+| 输出 XSS 防护(转义+DOMPurify+URL白名单) | Task 21 (S1) | ✅ 新增 |
+| 成本预算熔断(日请求+token 双阈值) | Task 21 (S2) | ✅ 新增 |
+| conversation_history 后端边界 | Task 21 (S3) | ✅ 新增 |
+| GITHUB_TOKEN 最小权限校验 | Task 21 (S4) | ✅ 新增 |
+| 生产配置(异常不回显/CORS白名单/debug关/安全头) | Task 21 (S5) | ✅ 新增 |
 
 **Spec 待确认项(不影响 Phase 1 开工):**
 - 日志保留期 90 天(§13)— 需后续加 cron 清理任务或 Postgres retention policy
