@@ -5,6 +5,7 @@ interface SSECallbacks {
   onSources: (sources: SourceLink[], conversationId: string) => void;
   onToken: (token: string) => void;
   onDone: (conversationId: string) => void;
+  onError: (message: string) => void;
 }
 
 // SSE 流式接收 hook:解析 event/data 行,分发到对应回调
@@ -33,6 +34,10 @@ export function useSSE(apiUrl: string) {
     // HTTP 错误响应:4xx/5xx 不应作为 SSE 解析,否则每个 chunk 都会 JSON 解析失败
     if (!resp.ok) {
       console.error(`SSE 请求失败: ${resp.status}`);
+      const msg = resp.status === 422
+        ? "问题内容过长或格式有误,请精简后重试。"
+        : "服务暂时不可用,请稍后再试。";
+      callbacks.onError(msg);
       return;
     }
     // 安全检查:提前校验 body 是否存在,避免非空断言

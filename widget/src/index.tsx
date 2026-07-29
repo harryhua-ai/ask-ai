@@ -23,7 +23,7 @@ const config: WidgetConfig = {
     window.AskAIConfig?.apiUrl ??
     "http://localhost:8000",
   language: container.getAttribute("data-language") ?? undefined,
-  primaryColor: container.getAttribute("data-primary-color") ?? "#2563eb",
+  primaryColor: container.getAttribute("data-primary-color") ?? "#f24a00",
 };
 
 const root = createRoot(container);

@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import type { WidgetConfig, ChatMessage } from "./types";
 import { useSSE } from "./hooks/useSSE";
 import { ChatPanel } from "./components/ChatPanel";
+import fabIcon from "./assets/CamThink.ai-black.png";
 
 const SUGGESTED_QUESTIONS = [
   "NE503 支持哪些接口?",
@@ -48,6 +49,13 @@ export function App({ config }: { config: WidgetConfig }) {
         onDone: (convId) => {
           setConversationId(convId);
         },
+        onError: (errMsg) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId ? { ...m, content: errMsg } : m,
+            ),
+          );
+        },
       });
     } finally {
       setIsStreaming(false);
@@ -68,10 +76,9 @@ export function App({ config }: { config: WidgetConfig }) {
       {!isOpen && (
         <button
           className="ask-ai-fab"
-          style={{ backgroundColor: config.primaryColor }}
           onClick={() => setIsOpen(true)}
         >
-          💬
+          <img className="ask-ai-fab-icon" src={fabIcon} alt="Ask AI" />
         </button>
       )}
       {isOpen && (
