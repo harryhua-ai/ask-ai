@@ -25,6 +25,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
+from backend.pipeline.query_rewrite import rewrite_query
 from backend.retrieval.search import SearchResult
 from backend.utils.language import detect_language
 
@@ -106,7 +107,7 @@ class RAGOrchestrator:
         llm: Any,
         system_prompt: str,
         alpha: float = 0.5,
-        recall_limit: int = 50,
+        recall_limit: int = 30,
         top_k: int = 10,
         conversation_max_turns: int = 5,
         pruner: Any = None,  # Phase 3 预留:Pruner Protocol
@@ -179,8 +180,11 @@ class RAGOrchestrator:
 
 ## 要求
 - 只依据上面的资料回答,不编造
-- 用 Markdown 格式
-- 来源引用用内联格式,如:[Wiki] NE503 技术规格
+- 用 Markdown 格式,用 **粗体** 做小节标题
+- 在每段末尾用 [N] 标注该段引用的资料序号,不在句中穿插
+- 不要使用 emoji
+- 不要输出文档路径
+- 回答简洁,直答问题
 - 用 {language} 回答
 """
         messages.append({"role": "user", "content": user_content})
@@ -248,17 +252,18 @@ class RAGOrchestrator:
         start = time.monotonic()
         language = detect_language(query)
 
+        search_query = await rewrite_query(query, conversation_history, self._llm)
         results = self._searcher.search(
-            query=query,
+            query=search_query,
             alpha=self._alpha,
             limit=self._recall_limit,
             product_filter=product_filter,
         )
 
-        reranked = self._reranker.rerank(query, results, top_k=self._top_k)
+        reranked = self._reranker.rerank(search_query, results, top_k=self._top_k)
 
         if self._pruner:
-            reranked = self._pruner.prune(query, reranked)
+            reranked = self._pruner.prune(search_query, reranked)
 
         if not reranked:
             elapsed = int((time.monotonic() - start) * 1000)
@@ -318,14 +323,22 @@ class RAGOrchestrator:
         start = time.monotonic()
         language = detect_language(query)
 
+        t0 = time.monotonic()
+        search_query = await rewrite_query(query, conversation_history, self._llm)
+        rewrite_ms = int((time.monotonic() - t0) * 1000)
+
+        t1 = time.monotonic()
         results = self._searcher.search(
-            query=query,
+            query=search_query,
             alpha=self._alpha,
             limit=self._recall_limit,
             product_filter=product_filter,
         )
+        search_ms = int((time.monotonic() - t1) * 1000)
 
-        reranked = self._reranker.rerank(query, results, top_k=self._top_k)
+        t2 = time.monotonic()
+        reranked = self._reranker.rerank(search_query, results, top_k=self._top_k)
+        rerank_ms = int((time.monotonic() - t2) * 1000)
 
         if self._pruner:
             reranked = self._pruner.prune(query, reranked)
@@ -351,11 +364,25 @@ class RAGOrchestrator:
         yield json.dumps({"type": "sources", "sources": sources})
 
         full_answer = ""
+        t3 = time.monotonic()
+        first_token_ms: int | None = None
         async for chunk in self._llm.stream(messages, task="generation"):
+            if first_token_ms is None:
+                first_token_ms = int((time.monotonic() - t3) * 1000)
             full_answer += chunk
             yield json.dumps({"type": "token", "content": chunk})
 
+        llm_ms = int((time.monotonic() - t3) * 1000)
         elapsed = int((time.monotonic() - start) * 1000)
+
+        logger.info(
+            "RAG timing: rewrite=%dms search=%dms rerank=%dms ttft=%dms llm_total=%dms total=%dms "
+            "(query=%d chars, answer=%d chars, sources=%d)",
+            rewrite_ms, search_ms, rerank_ms,
+            first_token_ms or 0, llm_ms, elapsed,
+            len(query), len(full_answer), len(sources),
+        )
+
         yield json.dumps(
             {
                 "type": "complete",
@@ -364,5 +391,12 @@ class RAGOrchestrator:
                 "is_answered": True,
                 "language": language,
                 "response_time_ms": elapsed,
+                "timing": {
+                    "rewrite_ms": rewrite_ms,
+                    "search_ms": search_ms,
+                    "rerank_ms": rerank_ms,
+                    "first_token_ms": first_token_ms,
+                    "llm_ms": llm_ms,
+                },
             }
         )

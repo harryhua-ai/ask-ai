@@ -1,0 +1,79 @@
+"""查询改写模块。
+
+当用户在多轮对话中追问时,原始查询可能缺少上下文(如 "the product is NE301")。
+本模块用 LLM 将追问 + 对话历史改写为自包含的独立查询,提升检索质量。
+
+设计:
+- 仅在有对话历史时触发(首轮问题直接透传)
+- 使用轻量 LLM 调用,短 prompt,要求仅输出改写后的查询
+- 改写失败时安全回退到原始查询,不阻塞主管道
+"""
+
+import logging
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+_REWRITE_PROMPT = """你是查询改写助手。
+
+用户在多轮对话中提出了一个新问题。请结合对话历史,把这个问题改写为一个自包含的独立查询——即使没有上下文也能理解。
+
+规则:
+- 只输出改写后的查询,不要解释,不要引号
+- 保留用户原始意图,不要添加无关信息
+- 如果问题已经自包含,原样返回
+- 用与用户相同的语言输出
+
+## 对话历史(最近 3 轮)
+
+{history}
+
+## 当前问题
+
+{query}
+
+## 改写后的查询(仅输出查询本身)
+"""
+
+
+async def rewrite_query(
+    query: str,
+    history: list[dict] | None,
+    llm: Any,
+) -> str:
+    """有对话历史时,用 LLM 改写查询使其自包含。
+
+    Args:
+        query: 用户当前查询文本。
+        history: OpenAI 风格的历史消息列表(可为 None 或空)。
+        llm: LLMProvider / LLMRouter 实例。
+
+    Returns:
+        改写后的查询字符串。改写失败时回退到原始 query。
+    """
+    if not history or len(history) < 2:
+        return query
+
+    try:
+        recent = history[-6:]
+        lines = []
+        for m in recent:
+            role = "用户" if m.get("role") == "user" else "助手"
+            content = m.get("content", "")
+            if isinstance(content, str):
+                lines.append(f"{role}: {content[:300]}")
+        history_text = "\n".join(lines)
+
+        prompt = _REWRITE_PROMPT.format(history=history_text, query=query)
+        response = await llm.generate(
+            [{"role": "user", "content": prompt}],
+            task="generation",
+        )
+        rewritten = response.content.strip().strip('"').strip("'")
+        if rewritten and rewritten != query:
+            logger.info("查询改写: %r → %r", query, rewritten)
+            return rewritten
+        return query
+    except Exception:  # noqa: BLE001
+        logger.warning("查询改写失败,回退原始查询", exc_info=True)
+        return query

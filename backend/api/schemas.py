@@ -7,8 +7,8 @@ from pydantic import BaseModel, Field, field_validator
 
 # S3: conversation_history 后端强制边界
 MAX_HISTORY_ITEMS = 10
-MAX_HISTORY_CONTENT_CHARS = 4000
-MAX_HISTORY_TOTAL_CHARS = 20000
+MAX_HISTORY_CONTENT_CHARS = 8000
+MAX_HISTORY_TOTAL_CHARS = 40000
 
 
 class AskRequest(BaseModel):
@@ -23,7 +23,7 @@ class AskRequest(BaseModel):
             ``MAX_HISTORY_TOTAL_CHARS`` 字符。仅保留 ``role`` / ``content`` 键。
     """
 
-    message: str = Field(..., min_length=1, max_length=2000)
+    message: str = Field(..., min_length=1, max_length=8000)
     language: str | None = None
     channel: str = Field(default="widget", pattern="^(widget|discord|whatsapp|mcp)$")
     conversation_history: list[dict] = Field(default_factory=list, max_length=MAX_HISTORY_ITEMS)
