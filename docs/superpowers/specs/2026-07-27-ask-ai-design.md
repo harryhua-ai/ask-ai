@@ -721,13 +721,36 @@ class ChannelAdapter(Protocol):
 
 `IncomingMessage` 已在第 3 节定义,`channel` 字段已预留所有渠道类型。
 
-## 13. 隐私与数据收集
+## 13. 隐私与数据安全
+
+### 13.1 隐私与数据收集
 
 - 有限多轮:前端保留最近 5 轮,后端无状态,不落 session
 - PII 脱敏(邮箱 / 电话正则,入库前)
 - 不收集姓名 / 邮箱 / 电话,不存完整 IP
 - 日志保留期:**90 天**(默认,待最终确认)
 - 不用日志训练公开模型
+
+### 13.2 安全防护
+
+RAG 系统特有的头号威胁是 **prompt injection(提示注入)**——攻击者把指令藏进会被同步进知识库的内容里(间接注入),或直接写在提问里(直接注入),诱导 LLM 偏离既定行为。因为知识库 chunk 会被检索出来拼进 prompt,间接注入尤其危险:攻击者无需直接访问 Widget,只要污染某个 GitHub issue 或文档片段,正常用户命中时即触发。
+
+**Phase 1 LLM 无工具调用**,注入危害限于内容层(伪造来源、钓鱼链接、诱导泄露 system prompt)与成本层(烧 token);**Phase 4 接入 Skills/MCP 后,工具调用使 prompt injection 升级为真正的指令执行,威胁模型需重做**(见 §17 风险)。
+
+| 威胁类别 | Phase 1 防护 |
+|---|---|
+| **凭证管理** | secret 全走 env,不进 LLM 上下文;`GITHUB_TOKEN` 启动时校验为只读最小权限(prod 严格模式阻断启动);Phase 2 LLM key 入库必须加密存储 + 密钥管理 |
+| **输出 XSS** | Widget Markdown 渲染先转义全部 HTML 再格式化,DOMPurify 兜底;来源链接经协议(http/https)+ 域白名单(camthink/github 等)校验,拦截 `javascript:` / `data:` |
+| **输入边界** | 消息 ≤ 2000 字符;`conversation_history` 后端强制上限(≤10 条、单条 ≤4000 字符、总计 ≤20000 字符),不信前端;`channel` 字段白名单 |
+| **成本 DoS** | slowapi 限流 + **每日预算熔断**(请求数 + 估算 token 双阈值,超限返回降级响应);Widget 匿名无登录,此项为刚需而非可选 |
+| **生产配置** | debug 关闭、`/docs` 生产关闭、CORS 白名单(env 控制,非 `*`)、全局异常 handler 不回显堆栈、安全响应头(`X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy`)、Weaviate 生产启用鉴权(Phase 1 本地可匿名) |
+
+**铁律(贯穿各 Phase,不可破坏):**
+
+1. 任何 secret(API key / token / 密码)永不进入 LLM 上下文(system prompt 或用户消息)。
+2. LLM 输出不视为可信内容——渲染到 DOM 前必须清洗,作为链接或指令使用前必须校验。
+3. 知识库内容(被检索进 prompt 的 chunk)同样不视为可信——它是潜在间接注入载体,来源需可控。
+4. Phase 4 的每个工具(Skill / MCP)必须最小权限,危险动作(删数据 / 写文件 / 调外部 API)人工确认。
 
 ## 14. 部署形态
 
@@ -789,6 +812,10 @@ ask-ai/
 - DataSourceConnector 框架可扩展(GitHub + FileSystem 已实现)
 - LLMProvider 框架可扩展(deepseek 已实现)
 - Widget 可通过 `<script>` 标签嵌入不同站点
+- LLM 输出经 XSS 清洗,来源链接经协议 + 域白名单校验(§13.2)
+- 每日 LLM 调用预算超限(请求 / token 双阈值)自动降级
+- 生产配置:异常不回显堆栈、CORS 白名单、debug 关闭
+- GITHUB_TOKEN 启动时校验为只读最小权限
 
 ## 17. 待确认项与风险
 
@@ -807,3 +834,4 @@ ask-ai/
 - **macOS 不宜长期作生产**(服务管理 / 稳定性 / docker 资源),需按计划迁移到 tesla-t4
 - **deepseek API 可用性**:Phase 1 单一供应商,无故障转移;Phase 2 加备用供应商
 - **Widget 跨框架兼容**:Shadow DOM 在不同宿主站点(Next.js / Docusaurus)需实测
+- **Phase 4 工具调用升级威胁**:Skills/MCP 让 LLM 获得执行能力,prompt injection(尤其通过知识库内容的间接注入)可升级为真正的指令执行;届时威胁模型需重做,每个工具最小权限 + 危险动作人工确认(§13.2 铁律 4)
