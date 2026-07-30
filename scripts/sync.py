@@ -176,6 +176,7 @@ async def run_sync(
     source_id: str | None = None,
     *,
     dry_run: bool = False,
+    reindex: bool = False,
 ) -> None:
     """执行一次完整的同步流程。
 
@@ -193,6 +194,11 @@ async def run_sync(
         settings: 全局配置实例(包含 postgres_dsn / weaviate_url 等)。
         source_id: 仅同步指定数据源 ID;``None`` 同步全部启用源。
         dry_run: 仅列举抓取的文档数,不灌入向量库 / 不写 SyncLog。
+        reindex: 删除并重建 Weaviate collection 后全量同步所有数据源。
+            Weaviate v4 不允许修改已有 collection 的 property 类型,故
+            schema 变更(如 Task 4 新增的 channel_visibility / doc_section /
+            chunk_type)必须通过 ``--reindex`` 触发 collection 重建才能生效。
+            ⚠️ 期间服务不可用(零停机迁移为后续工作)。
     """
     config_data = load_yaml_config(settings.config_dir / "data_sources.yaml")
     configs = ConnectorRegistry.load_configs(config_data)
@@ -202,6 +208,19 @@ async def run_sync(
     try:
         host, port = _parse_weaviate_endpoint(settings.weaviate_url)
         weaviate_client = weaviate.connect_to_local(host=host, port=port)
+
+        if reindex:
+            logger.info("reindex 模式:删除 collection %s", settings.weaviate_class_name)
+            try:
+                weaviate_client.collections.delete(
+                    name=settings.weaviate_class_name,
+                )
+                logger.info(
+                    "collection %s 已删除,将由 IngestionPipeline 重建",
+                    settings.weaviate_class_name,
+                )
+            except Exception as exc:  # noqa: BLE001 - collection 不存在时不中断
+                logger.warning("删除 collection 失败(可能不存在):%s", exc)
 
         if not dry_run:
             await init_db(engine)
@@ -242,6 +261,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     支持以下选项:
         --source SOURCE_ID  仅同步指定数据源 ID(默认同步全部启用源)
         --dry-run           仅列举抓取的文档数,不写库
+        --reindex           删除并重建 Weaviate collection 后全量同步
         --help              显示帮助
     """
     parser = argparse.ArgumentParser(
@@ -258,6 +278,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="仅列举抓取的文档数,不灌入向量库,也不写 SyncLog",
     )
+    parser.add_argument(
+        "--reindex",
+        action="store_true",
+        help="删除并重建 Weaviate collection 后全量同步所有数据源",
+    )
     return parser.parse_args(argv)
 
 
@@ -269,7 +294,14 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = _parse_args(argv)
     settings = load_settings()
-    asyncio.run(run_sync(settings, source_id=args.source, dry_run=args.dry_run))
+    asyncio.run(
+        run_sync(
+            settings,
+            source_id=args.source,
+            dry_run=args.dry_run,
+            reindex=args.reindex,
+        )
+    )
 
 
 if __name__ == "__main__":
