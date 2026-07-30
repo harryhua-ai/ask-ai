@@ -1,14 +1,22 @@
-/**
- * Placeholder App — Task 5 脚手架验证用。
- * Task 6 将替换为带路由的真实 App。
- */
+import { Routes, Route, Navigate } from "react-router-dom";
+import { AuthProvider } from "@/hooks/useAuth";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
+import Login from "@/pages/Login";
+
 export default function App() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-brand text-brand-foreground">
-      <div className="text-center">
-        <h1 className="text-3xl font-bold mb-2">脚手架就绪</h1>
-        <p className="text-muted-foreground">Ask AI Admin — Task 6 将实现路由</p>
-      </div>
-    </div>
+    <AuthProvider>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route
+          path="/*"
+          element={
+            <ProtectedRoute>
+              <Navigate to="/data-sources" replace />
+            </ProtectedRoute>
+          }
+        />
+      </Routes>
+    </AuthProvider>
   );
 }
