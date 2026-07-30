@@ -31,9 +31,9 @@ async def auth_headers():
         await session.commit()
     token = create_access_token(str(user_id), "admin", app.state.settings.jwt_secret)
     yield {"Authorization": f"Bearer {token}"}
-    # 清理：删除本测试可能创建的数据源和用户
+    # 清理：仅删除本测试创建的数据源和用户，避免破坏 Task 9 迁移的共享 dev 数据
     async with factory() as session:
-        await session.execute(DataSource.__table__.delete())
+        await session.execute(DataSource.__table__.delete().where(DataSource.id == "test-source"))
         await session.execute(User.__table__.delete().where(User.id == user_id))
         await session.commit()
 
