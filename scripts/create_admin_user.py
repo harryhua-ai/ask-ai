@@ -27,18 +27,20 @@ async def create_admin(email: str, name: str, role: str) -> None:
     password_hash = pwd_context.hash(password)
     settings = load_settings()
     engine = get_engine(settings.postgres_dsn)
-    await init_db(engine)
-    factory = get_session_factory(engine)
-    async with factory() as session:
-        existing = await session.execute(select(User).where(User.email == email))
-        if existing.scalar_one_or_none():
-            print(f"用户 {email} 已存在")
-            return
-        user = User(email=email, name=name, role=role, password_hash=password_hash)
-        session.add(user)
-        await session.commit()
-        print(f"管理员 {email} 创建成功")
-    await engine.dispose()
+    try:
+        await init_db(engine)
+        factory = get_session_factory(engine)
+        async with factory() as session:
+            existing = await session.execute(select(User).where(User.email == email))
+            if existing.scalar_one_or_none():
+                print(f"用户 {email} 已存在")
+                return
+            user = User(email=email, name=name, role=role, password_hash=password_hash)
+            session.add(user)
+            await session.commit()
+            print(f"管理员 {email} 创建成功")
+    finally:
+        await engine.dispose()
 
 
 def main() -> None:
