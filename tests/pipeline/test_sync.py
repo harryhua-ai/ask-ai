@@ -536,3 +536,56 @@ async def test_sync_log_commit_failure_does_not_break_isolation():
 
     # 第二个 source 仍应被处理:ingest_all 被调用 2 次
     assert pipeline.ingest_all.call_count == 2
+
+
+# --------------------------------------------------------------------------- #
+# --reindex:删除并重建 collection(Task 9)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_reindex_deletes_and_recreates_collection():
+    """``--reindex`` 应先删除 collection,再让 IngestionPipeline 重建。
+
+    验证:
+        - ``reindex=True`` 时调用 ``weaviate_client.collections.delete(name=...)``。
+        - ``reindex=False``(默认)时不调用 delete(由其他 run_sync 测试覆盖)。
+
+    适配说明(brief 原文用 ``Settings(postgres_dsn=...)`` 构造,但 ``postgres_dsn``
+    是 ``Settings`` 的 ``@property`` 而非构造器字段,会抛 ``TypeError``):
+        - 改用本文件已有的 ``_make_settings()`` MagicMock 辅助(与现有 run_sync
+          测试一致)。
+        - 额外 patch ``load_yaml_config``,因为 ``_make_settings()`` 的 config_dir
+          指向 ``/tmp/fake-config``,``run_sync`` 会先尝试读取 yaml。
+    """
+    settings = _make_settings()
+
+    with (
+        patch("scripts.sync.load_yaml_config", return_value={"sources": []}),
+        patch("scripts.sync.weaviate") as mock_weaviate,
+        patch("scripts.sync.get_engine") as mock_get_engine,
+        patch("scripts.sync.get_session_factory"),
+        patch("scripts.sync.init_db", new_callable=AsyncMock),
+        patch("scripts.sync.BGEEmbedder"),
+        patch("scripts.sync.IngestionPipeline") as mock_pipeline_cls,
+        patch("scripts.sync.ConnectorRegistry.load_configs") as mock_load_configs,
+    ):
+        mock_client = MagicMock()
+        mock_collections = MagicMock()
+        mock_client.collections = mock_collections
+        mock_weaviate.connect_to_local.return_value = mock_client
+
+        mock_engine = MagicMock()
+        mock_engine.dispose = AsyncMock()
+        mock_get_engine.return_value = mock_engine
+
+        mock_pipeline = MagicMock()
+        mock_pipeline_cls.return_value = mock_pipeline
+
+        mock_load_configs.return_value = []  # 空配置,不实际同步
+
+        await run_sync(settings, dry_run=False, reindex=True)
+
+        # 验证删除了 collection
+        mock_collections.delete.assert_called_once_with(name="Document")
