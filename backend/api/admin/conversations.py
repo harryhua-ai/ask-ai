@@ -4,15 +4,17 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.api.admin.schemas import ConversationOut
 from backend.auth.dependencies import CurrentUser, require_role
 from backend.db.models import Conversation, SourceClick
+from backend.services.intent_tagger import tag_batch, tag_single
 
 router = APIRouter(prefix="/conversations", tags=["对话审查"])
 ViewerDep = Annotated[CurrentUser, Depends(require_role("admin", "editor", "viewer"))]
+EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
 
 
 @router.get("")
@@ -118,3 +120,39 @@ async def get_conversation(
             for c in clicks
         ],
     }
+
+
+@router.post("/batch-tag")
+async def batch_tag_conversations(
+    _: EditorDep,
+    request: Request,
+    batch_size: int = Query(default=50, ge=1, le=500),
+) -> dict:
+    """批量标注未标注的对话（admin/editor）。"""
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    llm = request.app.state.llm
+    count = await tag_batch(factory, llm, batch_size)
+    return {"tagged_count": count}
+
+
+@router.post("/{conversation_id}/tag")
+async def tag_conversation(
+    conversation_id: UUID,
+    _: EditorDep,
+    request: Request,
+) -> dict[str, str]:
+    """手动标注单个对话的 intent（admin/editor）。"""
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    llm = request.app.state.llm
+    async with factory() as session:
+        conv = await session.execute(select(Conversation).where(Conversation.id == conversation_id))
+        conv = conv.scalar_one_or_none()
+        if conv is None:
+            raise HTTPException(status_code=404, detail="对话不存在")
+    tag = await tag_single(str(conversation_id), conv.question, llm)
+    async with factory() as session:
+        await session.execute(
+            update(Conversation).where(Conversation.id == conversation_id).values(intent_tag=tag)
+        )
+        await session.commit()
+    return {"intent_tag": tag}
