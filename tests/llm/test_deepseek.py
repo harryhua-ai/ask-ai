@@ -48,7 +48,7 @@ def test_deepseek_generate_returns_llm_response(monkeypatch):
         return FakeResponse()
 
     monkeypatch.setattr("httpx.AsyncClient.post", fake_post)
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         provider.generate(messages=[{"role": "user", "content": "test"}])
     )
     assert isinstance(result, LLMResponse)

@@ -27,7 +27,7 @@ def test_history_over_10_items_rejected() -> None:
 @pytest.mark.unit
 def test_history_oversize_content_rejected() -> None:
     with pytest.raises(ValidationError):
-        AskRequest(message="hi", conversation_history=[{"role": "user", "content": "x" * 5000}])
+        AskRequest(message="hi", conversation_history=[{"role": "user", "content": "x" * 9000}])
 
 
 @pytest.mark.unit

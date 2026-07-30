@@ -25,7 +25,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-from backend.pipeline.query_rewrite import rewrite_query
+from backend.pipeline.query_rewrite import extract_query, rewrite_query
 from backend.retrieval.search import SearchResult
 from backend.utils.language import detect_language
 
@@ -111,6 +111,7 @@ class RAGOrchestrator:
         top_k: int = 10,
         conversation_max_turns: int = 5,
         pruner: Any = None,  # Phase 3 预留:Pruner Protocol
+        min_results_to_answer: int = 3,
     ) -> None:
         """初始化 RAG 编排器。
 
@@ -135,6 +136,7 @@ class RAGOrchestrator:
         self._top_k = top_k
         self._max_turns = conversation_max_turns
         self._pruner = pruner
+        self._min_results = min_results_to_answer
 
     def _build_context(self, results: list[SearchResult]) -> str:
         """把重排后的候选拼接成 LLM 上下文文本。
@@ -252,7 +254,8 @@ class RAGOrchestrator:
         start = time.monotonic()
         language = detect_language(query)
 
-        search_query = await rewrite_query(query, conversation_history, self._llm)
+        extracted = await extract_query(query, self._llm)
+        search_query = await rewrite_query(extracted, conversation_history, self._llm)
         results = self._searcher.search(
             query=search_query,
             alpha=self._alpha,
@@ -265,7 +268,7 @@ class RAGOrchestrator:
         if self._pruner:
             reranked = self._pruner.prune(search_query, reranked)
 
-        if not reranked:
+        if len(reranked) < self._min_results:
             elapsed = int((time.monotonic() - start) * 1000)
             return RAGAnswer(
                 answer=REJECT_ANSWER,
@@ -324,7 +327,8 @@ class RAGOrchestrator:
         language = detect_language(query)
 
         t0 = time.monotonic()
-        search_query = await rewrite_query(query, conversation_history, self._llm)
+        extracted = await extract_query(query, self._llm)
+        search_query = await rewrite_query(extracted, conversation_history, self._llm)
         rewrite_ms = int((time.monotonic() - t0) * 1000)
 
         t1 = time.monotonic()
@@ -343,7 +347,7 @@ class RAGOrchestrator:
         if self._pruner:
             reranked = self._pruner.prune(query, reranked)
 
-        if not reranked:
+        if len(reranked) < self._min_results:
             elapsed = int((time.monotonic() - start) * 1000)
             yield json.dumps(
                 {
