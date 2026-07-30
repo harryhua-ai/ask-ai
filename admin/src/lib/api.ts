@@ -33,7 +33,8 @@ export async function apiFetch<T>(
   const resp = await fetch(`/api/admin${path}`, { ...options, headers });
   if (resp.status === 401) {
     clearToken();
-    window.location.href = "/login";
+    // BrowserRouter basename="/admin",登录路由为 /admin/login。
+    window.location.href = "/admin/login";
     throw new ApiError(401, "未登录或登录已过期");
   }
   if (!resp.ok) {

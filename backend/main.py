@@ -26,13 +26,14 @@ from urllib.parse import urlparse
 import uvicorn
 import weaviate
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # 导入 connector 实现以触发 @ConnectorRegistry.register
 import backend.connectors.filesystem
@@ -290,11 +291,32 @@ app.include_router(api_router)
 app.include_router(admin_router)
 
 # Task 21: 生产部署 — 在 /admin 路径下托管 admin SPA 构建产物。
-# _admin_dist 存在时挂载 StaticFiles(html=True 在根路径返回 index.html);
-# 不存在时(dev 未 build)跳过,不影响后端启动。
+# _admin_dist 存在时挂载 StaticFiles;对未匹配的子路径(如 /admin/users)
+# 回退到 index.html,使 SPA 深链刷新不会 404。
 _admin_dist = Path(__file__).resolve().parent.parent / "admin" / "dist"
+
+
+class SPAStaticFiles(StaticFiles):
+    """StaticFiles that falls back to index.html for unknown paths.
+
+    ``StaticFiles(html=True)`` 仅在挂载根路径返回 index.html,
+    对 ``/admin/users`` 等 SPA 前端路由刷新时会抛 404。
+    本子类捕获异常并回退到 index.html,由前端路由接管。
+    """
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except (HTTPException, StarletteHTTPException):
+            return await super().get_response("index.html", scope)
+
+
 if _admin_dist.exists():
-    app.mount("/admin", StaticFiles(directory=str(_admin_dist), html=True), name="admin")
+    app.mount(
+        "/admin",
+        SPAStaticFiles(directory=str(_admin_dist), html=True),
+        name="admin",
+    )
 
 
 @app.get("/health")
