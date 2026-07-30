@@ -408,3 +408,22 @@ def test_search_reads_new_properties_into_search_result():
     assert r.chunk_type == "heading"
     assert r.doc_section == "Intro > Setup"
     assert r.channel_visibility == ("widget", "api")
+
+
+@pytest.mark.unit
+def test_search_combines_product_and_channel_filters():
+    """product_filter + channel 同时设置时应走 Filter.all_of 组合路径,不报错且传入 filters。"""
+    mock_client = MagicMock()
+    mock_collection = MagicMock()
+    mock_client.collections.get.return_value = mock_collection
+    mock_collection.query.hybrid.return_value = MagicMock(objects=[])
+
+    mock_embedder = MagicMock()
+    mock_embedder.embed.return_value = [np.array([0.1, 0.2])]
+
+    searcher = HybridSearcher(mock_client, mock_embedder)
+    # 同时传 product_filter 和 channel —— 触发 Filter.all_of 组合分支
+    searcher.search("query", product_filter="ne503", channel="widget")
+
+    hybrid_kwargs = mock_collection.query.hybrid.call_args.kwargs
+    assert "filters" in hybrid_kwargs
