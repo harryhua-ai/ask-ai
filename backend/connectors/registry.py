@@ -24,6 +24,9 @@ class SourceConfig:
         enabled: 是否启用该数据源(禁用的源不会被同步)。
         config: 供应商特定参数(如 GitHub token、文件路径)。
         sync_interval: 同步间隔表达式(如 "1h"、"24h")。
+        channel_visibility: 该数据源产出内容允许透出的渠道白名单
+            (tuple 保证不可变),Phase 2A Task 5 由 Connector 透传到
+            RawDocument / Chunk。默认 ``("widget", "api")`` 表示对所有渠道可见。
     """
 
     id: str
@@ -32,6 +35,8 @@ class SourceConfig:
     enabled: bool
     config: dict[str, Any]
     sync_interval: str
+    # Phase 2A 新增字段
+    channel_visibility: tuple[str, ...] = ("widget", "api")
 
 
 class ConnectorRegistry:
@@ -85,15 +90,19 @@ class ConnectorRegistry:
               - id: ...
                 type: ...
                 product: ...
-                enabled: true        # 可选,默认 True
-                config: {...}        # 可选,默认 {}
-                sync_interval: "24h" # 可选,默认 "24h"
+                enabled: true            # 可选,默认 True
+                config: {...}            # 可选,默认 {}
+                sync_interval: "24h"     # 可选,默认 "24h"
+                channel_visibility:      # 可选,默认 ["widget", "api"]
+                  - widget
+                  - api
 
         Args:
             yaml_data: 已解析的 YAML 字典。
 
         Returns:
-            SourceConfig 列表(保留输入顺序)。
+            SourceConfig 列表(保留输入顺序)。``channel_visibility`` 在
+            YAML 中以 list 给出,这里转成不可变 tuple 以匹配 dataclass 契约。
         """
         configs: list[SourceConfig] = []
         for src in yaml_data.get("sources", []):
@@ -105,6 +114,7 @@ class ConnectorRegistry:
                     enabled=src.get("enabled", True),
                     config=src.get("config", {}),
                     sync_interval=src.get("sync_interval", "24h"),
+                    channel_visibility=tuple(src.get("channel_visibility", ["widget", "api"])),
                 )
             )
         return configs
