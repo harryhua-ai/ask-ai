@@ -113,6 +113,7 @@ class RAGOrchestrator:
         pruner: Any = None,  # Phase 3 预留:Pruner Protocol
         min_results_to_answer: int = 3,
         channel_customizations: dict[str, str] | None = None,
+        override_matcher: Any = None,  # Phase 3A: OverrideMatcher
     ) -> None:
         """初始化 RAG 编排器。
 
@@ -129,6 +130,8 @@ class RAGOrchestrator:
             pruner: 可选的结果裁剪器(Phase 3)。
             channel_customizations: 渠道到 system_prompt 的映射(Phase 2B)。
                 渠道未命中时回退到 ``system_prompt``,确保 Phase 1 行为不变。
+            override_matcher: 可选的人工答案覆盖匹配器(Phase 3A)。
+                命中时跳过整个 RAG 管线直接返回覆盖答案。
         """
         self._searcher = searcher
         self._reranker = reranker
@@ -141,6 +144,7 @@ class RAGOrchestrator:
         self._pruner = pruner
         self._min_results = min_results_to_answer
         self._channel_customizations = channel_customizations or {}
+        self._override_matcher = override_matcher
 
     def _build_context(self, results: list[SearchResult]) -> str:
         """把重排后的候选拼接成 LLM 上下文文本。
@@ -265,6 +269,20 @@ class RAGOrchestrator:
         start = time.monotonic()
         language = detect_language(query)
 
+        # Phase 3A: 人工答案覆盖前置检查
+        if self._override_matcher:
+            override = await self._override_matcher.match(query)
+            if override:
+                elapsed = int((time.monotonic() - start) * 1000)
+                return RAGAnswer(
+                    answer=override.override_answer,
+                    sources=override.override_sources or [],
+                    is_answered=True,
+                    reranked_results=[],
+                    language=language,
+                    response_time_ms=elapsed,
+                )
+
         extracted = await extract_query(query, self._llm)
         search_query = await rewrite_query(extracted, conversation_history, self._llm)
         results = self._searcher.search(
@@ -337,6 +355,24 @@ class RAGOrchestrator:
         """
         start = time.monotonic()
         language = detect_language(query)
+
+        # Phase 3A: 人工答案覆盖前置检查
+        if self._override_matcher:
+            override = await self._override_matcher.match(query)
+            if override:
+                sources = override.override_sources or []
+                yield json.dumps({"type": "sources", "sources": sources})
+                yield json.dumps({"type": "token", "content": override.override_answer})
+                elapsed = int((time.monotonic() - start) * 1000)
+                yield json.dumps({
+                    "type": "complete",
+                    "answer": override.override_answer,
+                    "sources": sources,
+                    "is_answered": True,
+                    "language": language,
+                    "response_time_ms": elapsed,
+                })
+                return
 
         t0 = time.monotonic()
         extracted = await extract_query(query, self._llm)
