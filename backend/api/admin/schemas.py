@@ -238,3 +238,19 @@ class AnalyticsRefreshResult(BaseModel):
 
     cluster_count: int
     total_questions: int
+
+
+class QuestionClusterList(BaseModel):
+    """聚类列表分页响应。"""
+
+    items: list[QuestionClusterOut]
+    total: int
+    page: int
+    size: int
+
+
+class SourceAnalyticsList(BaseModel):
+    """来源分析响应。"""
+
+    items: list[SourceAnalyticsOut]
+    days: int

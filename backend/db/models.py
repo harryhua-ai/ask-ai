@@ -222,7 +222,9 @@ class QuestionCluster(Base):
     period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 # 索引(对齐设计文档 §11 SQL DDL)
@@ -243,3 +245,11 @@ Index("idx_source_clicks_conversation", SourceClick.conversation_id)
 Index("idx_source_clicks_source_url", SourceClick.source_url)
 Index("idx_sync_log_source", SyncLog.source_id, SyncLog.started_at.desc())
 Index("idx_sync_log_status", SyncLog.status, SyncLog.started_at.desc())
+Index(
+    "idx_question_clusters_type_status", QuestionCluster.cluster_type, QuestionCluster.status
+)
+Index(
+    "idx_question_clusters_type_count",
+    QuestionCluster.cluster_type,
+    QuestionCluster.question_count.desc(),
+)

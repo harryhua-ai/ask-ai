@@ -6,7 +6,6 @@ Coverage Gaps(type='gap')聚类未回答问题;Top Questions(type='top')聚类�
 聚类为手动触发,结果存入 question_clusters 表并更新 conversations.cluster_id。
 """
 
-import logging
 import math
 import uuid
 from dataclasses import dataclass
@@ -14,13 +13,11 @@ from datetime import datetime
 from uuid import UUID
 
 import numpy as np
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.db.models import Conversation, QuestionCluster
 from backend.embedder.base import Embedder
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -169,6 +166,8 @@ class ClusteringService:
         date_to: datetime | None,
     ) -> None:
         """存储聚类结果到 DB 并更新 conversations.cluster_id。"""
+        # TODO(性能优化): 当前 O(n·k) 查找 + per-row UPDATE;大规模数据(>10k 对话)
+        # 应改为 dict 索引 + bulk_update_mappings 或 CASE WHEN 批量更新。
         async with self._factory() as session:
             await session.execute(
                 delete(QuestionCluster).where(QuestionCluster.cluster_type == cluster_type)
