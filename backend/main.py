@@ -41,6 +41,7 @@ import backend.connectors.github
 import backend.llm.deepseek  # noqa: F401
 from backend.api.admin.router import admin_router
 from backend.api.routes import router as api_router
+from backend.auth.crypto import decrypt_api_key
 from backend.config import load_settings, load_yaml_config
 from backend.db.session import get_engine, get_session_factory, init_db
 from backend.embedder.bge import BGEEmbedder, BGEReranker
@@ -48,6 +49,7 @@ from backend.llm.registry import LLMRegistry, LLMRouter
 from backend.pipeline.rag import RAGOrchestrator
 from backend.retrieval.rerank import RerankPipeline
 from backend.retrieval.search import HybridSearcher
+from backend.services.config_loader import load_llm_config_from_db
 from backend.utils.budget import BudgetConfig, BudgetLimiter
 
 logger = logging.getLogger(__name__)
@@ -135,8 +137,34 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.embedder = embedder
         app.state.weaviate_class_name = settings.weaviate_class_name
 
-        # LLM
-        router_llm = _build_llm_router(settings.config_dir)
+        # LLM:优先从 DB 加载(Task 16),为空时回退 YAML(Phase 1 兼容)
+        db_config = await load_llm_config_from_db(app.state.session_factory)
+        if db_config:
+            providers_list, routing_dict = db_config
+            providers: dict[str, object] = {}
+            settings_enc = settings.encryption_key
+            for prov in providers_list:
+                cfg = dict(prov["config"])
+                if cfg.get("api_key"):
+                    try:
+                        cfg["api_key"] = decrypt_api_key(cfg["api_key"], settings_enc)
+                    except ValueError:
+                        pass  # 旧数据可能是明文,保持原样继续尝试
+                provider = LLMRegistry.create(
+                    prov["type"],
+                    provider_id=prov["id"],
+                    api_base=cfg.get("api_base", ""),
+                    api_key=cfg.get("api_key", ""),
+                    model=cfg.get("model", ""),
+                    max_tokens=cfg.get("max_tokens", 4096),
+                    temperature=cfg.get("temperature", 0.3),
+                )
+                providers[prov["id"]] = provider
+            router_llm = LLMRouter(providers, routing_dict)
+            logger.info("LLM 配置已从 DB 加载(%d 个供应商)", len(providers))
+        else:
+            router_llm = _build_llm_router(settings.config_dir)
+            logger.info("LLM 配置已从 YAML 加载(DB 为空)")
         app.state.llm = router_llm
 
         # System prompt
