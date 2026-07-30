@@ -1,6 +1,7 @@
 """FastAPI 认证与 RBAC 依赖。"""
 
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
@@ -24,9 +25,9 @@ async def get_current_user(
     settings = request.app.state.settings
     try:
         payload = decode_access_token(creds.credentials, settings.jwt_secret)
-    except Exception:  # noqa: BLE001 - 认证边界: 任何 token 解码错误统一返回 401,避免信息泄露
+        user_id = uuid.UUID(payload["sub"])
+    except Exception:  # noqa: BLE001 - 认证边界: token 解码/sub 解析错误统一返回 401,避免信息泄露
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="令牌无效或已过期")
-    user_id = uuid.UUID(payload["sub"])
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
         user = await session.execute(select(User).where(User.id == user_id))
@@ -39,7 +40,7 @@ async def get_current_user(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
-def require_role(*roles: str):
+def require_role(*roles: str) -> Callable[[CurrentUser], Awaitable[User]]:
     """RBAC 角色校验依赖工厂。用法：Depends(require_role("admin", "editor"))。"""
 
     async def _check(user: CurrentUser) -> User:
