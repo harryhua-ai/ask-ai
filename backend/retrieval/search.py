@@ -95,6 +95,7 @@ class HybridSearcher:
         alpha: float = 0.5,
         limit: int = 50,
         product_filter: str | None = None,
+        channel: str | None = None,
     ) -> list[SearchResult]:
         """执行 hybrid 检索。
 
@@ -102,7 +103,8 @@ class HybridSearcher:
             1. 空 query 直接返回 ``[]``,不调用 embedder / Weaviate。
             2. ``embedder.embed([query])`` 生成 query 向量;返回为空时抛
                ``RuntimeError``,避免后续 ``[0]`` 索引掩盖根因。
-            3. 构造 hybrid 参数;``product_filter`` 非空时附加 ``Filter.by_property``。
+            3. 构造 hybrid 参数;``product_filter`` / ``channel`` 非空时组合
+               ``Filter``(AND 语义)附加到查询。
             4. Weaviate 异常向上传播(不吞);空结果集合返回 ``[]``。
             5. ``distance`` → ``score`` 转换;``metadata`` 为 ``None`` 时 score 退化为 0.0。
 
@@ -112,6 +114,9 @@ class HybridSearcher:
                 默认 ``0.5`` 即 50:50 混合。
             limit: 返回结果数上限。
             product_filter: 可选的产品名过滤(精确匹配 ``product`` property)。
+            channel: 可选的渠道过滤(``widget`` / ``discord`` / ``api`` 等);
+                非空时附加 ``Filter.by_property("channel_visibility").contains_any``
+                限制结果只含声明了对该渠道可见的 chunk。
 
         Returns:
             ``SearchResult`` 列表(按 Weaviate 返回顺序,未重新排序)。
@@ -143,11 +148,21 @@ class HybridSearcher:
             "limit": limit,
             "return_metadata": MetadataQuery(distance=True),
         }
+
+        # 组合 filter:product + channel(AND 语义)
+        filters_list: list = []
         if product_filter:
-            kwargs = {
-                **kwargs,
-                "filters": Filter.by_property("product").equal(product_filter),
-            }
+            filters_list.append(
+                Filter.by_property("product").equal(product_filter)
+            )
+        if channel:
+            filters_list.append(
+                Filter.by_property("channel_visibility").contains_any([channel])
+            )
+        if len(filters_list) == 1:
+            kwargs = {**kwargs, "filters": filters_list[0]}
+        elif len(filters_list) >= 2:
+            kwargs = {**kwargs, "filters": Filter.all_of(filters_list)}
 
         # hybrid 调用失败时异常向上传播,由调用方决定重试 / 降级
         results = collection.query.hybrid(**kwargs)
@@ -159,6 +174,13 @@ class HybridSearcher:
             distance = metadata.distance if metadata is not None else None
             # distance 越小越相似;转为 score:None 时退化为 0.0
             score = 1.0 - distance if distance is not None else 0.0
+            # channel_visibility 从 Weaviate 返回为 list,转为 tuple(不可变)
+            cv_raw = props.get("channel_visibility", ["widget", "api"])
+            cv_tuple = (
+                tuple(cv_raw)
+                if isinstance(cv_raw, (list, tuple))
+                else ("widget", "api")
+            )
             search_results.append(
                 SearchResult(
                     text=props.get("text", ""),
@@ -169,6 +191,9 @@ class HybridSearcher:
                     url=props.get("url", ""),
                     score=score,
                     chunk_index=props.get("chunk_index", 0),
+                    chunk_type=props.get("chunk_type", ""),
+                    doc_section=props.get("doc_section", ""),
+                    channel_visibility=cv_tuple,
                 )
             )
         return search_results
