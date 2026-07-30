@@ -207,3 +207,34 @@ class ConversationOut(BaseModel):
     response_time_ms: int | None
     created_at: str
     intent_tag: str | None
+
+
+class QuestionClusterOut(BaseModel):
+    """聚类结果输出 schema。"""
+
+    id: str
+    cluster_type: str
+    representative_question: str
+    sample_questions: list[str]
+    question_count: int
+    status: str
+    period_start: str | None
+    period_end: str | None
+    created_at: str
+
+
+class SourceAnalyticsOut(BaseModel):
+    """来源分析输出 schema。"""
+
+    url: str
+    source_type: str
+    product: str | None
+    clicks: int
+    references: int
+
+
+class AnalyticsRefreshResult(BaseModel):
+    """聚类刷新结果。"""
+
+    cluster_count: int
+    total_questions: int
