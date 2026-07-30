@@ -120,12 +120,24 @@ sources:
       include_dirs: ["docs/", "README.md"]
     sync_interval: "1h"
 
-  - id: "knowledge-base"
+  - id: "knowledge-public"
     type: "filesystem"
     product: "knowledge"
     enabled: true
+    channel_visibility: ["widget", "api"]
     config:
       root_path: "~/Documents/GitHub/Knowledge/知识库/"
-      include_dirs: ["support/", "wiki-en/", "sales/", "硬件/", "经验/"]
+      include_dirs: ["support/", "wiki-en/"]
+      file_types: [".md", ".txt"]
+    sync_interval: "1h"
+
+  - id: "knowledge-internal"
+    type: "filesystem"
+    product: "knowledge"
+    enabled: true
+    channel_visibility: ["api"]
+    config:
+      root_path: "~/Documents/GitHub/Knowledge/知识库/"
+      include_dirs: ["sales/", "硬件/", "经验/"]
       file_types: [".md", ".txt"]
     sync_interval: "1h"

@@ -448,3 +448,39 @@ def test_github_fetch_wiki_docs() -> None:
     docs = list(connector.fetch_all())
     assert len(docs) > 0
     assert all(d.source_type == "github" for d in docs)
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2A Task 5: GitHubConnector 透传 channel_visibility
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_github_connector_passes_channel_visibility():
+    """GitHubConnector 应把 SourceConfig.channel_visibility 透传到 RawDocument。"""
+    from backend.connectors.github import GitHubConnector
+
+    cfg = SourceConfig(
+        id="test", type="github", product="test", enabled=True,
+        config={"owner": "o", "repo": "r", "branch": "main"},
+        sync_interval="1h",
+        channel_visibility=("api",),
+    )
+    connector = GitHubConnector(cfg)
+    doc = connector._make_document("path/to/file.md", "content")
+    assert doc.channel_visibility == ("api",)
+
+
+@pytest.mark.unit
+def test_github_connector_default_channel_visibility():
+    """SourceConfig 未指定 channel_visibility 时,RawDocument 默认 ('widget','api')。"""
+    from backend.connectors.github import GitHubConnector
+
+    cfg = SourceConfig(
+        id="test", type="github", product="test", enabled=True,
+        config={"owner": "o", "repo": "r"},
+        sync_interval="1h",
+    )
+    connector = GitHubConnector(cfg)
+    doc = connector._make_document("file.md", "content")
+    assert doc.channel_visibility == ("widget", "api")
