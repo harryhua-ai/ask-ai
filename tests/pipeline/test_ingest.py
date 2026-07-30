@@ -423,3 +423,34 @@ def test_ingest_document_writes_new_fields():
     assert props["channel_visibility"] == ["api"]
     assert "chunk_type" in props
     assert "doc_section" in props
+
+
+@pytest.mark.unit
+def test_ingest_document_uses_semantic_chunking():
+    """ingest_document 应使用 chunk_document_semantic 而非 chunk_document。"""
+    from unittest.mock import MagicMock, patch
+    from backend.pipeline.ingest import IngestionPipeline
+    from backend.connectors.base import RawDocument
+
+    mock_client = MagicMock()
+    mock_client.collections.exists.return_value = True
+    mock_collection = MagicMock()
+    mock_client.collections.get.return_value = mock_collection
+
+    mock_embedder = MagicMock()
+    mock_embedder.embed.return_value = [[0.1]]
+
+    pipeline = IngestionPipeline(
+        embedder=mock_embedder, weaviate_client=mock_client, class_name="Document",
+    )
+
+    doc = RawDocument(
+        source_id="t/1", source_type="github", product="p",
+        title="T", content="# Heading\n\nText.", url="u",
+        metadata={}, content_hash="h",
+    )
+
+    with patch("backend.pipeline.ingest.chunk_document_semantic") as mock_chunk:
+        mock_chunk.return_value = []
+        pipeline.ingest_document(doc)
+        mock_chunk.assert_called_once()
