@@ -356,3 +356,55 @@ def test_search_result_has_new_fields_default():
     assert r.chunk_type == ""
     assert r.doc_section == ""
     assert r.channel_visibility == ("widget", "api")
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2A Task 6:channel 过滤 + 新 property 读取
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_search_passes_channel_filter_to_weaviate():
+    """search 应在 channel 参数非空时附加 channel_visibility filter。"""
+    mock_client = MagicMock()
+    mock_collection = MagicMock()
+    mock_client.collections.get.return_value = mock_collection
+    mock_embedder = MagicMock()
+    mock_embedder.embed.return_value = [np.array([0.1, 0.2])]
+
+    searcher = HybridSearcher(mock_client, mock_embedder)
+    searcher.search("query", channel="widget")
+
+    hybrid_call_kwargs = mock_collection.query.hybrid.call_args.kwargs
+    assert "filters" in hybrid_call_kwargs
+
+
+@pytest.mark.unit
+def test_search_reads_new_properties_into_search_result():
+    """search 应从 Weaviate properties 读取 chunk_type / doc_section / channel_visibility。"""
+    mock_client = MagicMock()
+    mock_collection = MagicMock()
+    mock_client.collections.get.return_value = mock_collection
+
+    mock_obj = MagicMock()
+    mock_obj.properties = {
+        "text": "content", "source_id": "s", "source_type": "github",
+        "product": "p", "title": "T", "url": "u", "chunk_index": 0,
+        "chunk_type": "heading", "doc_section": "Intro > Setup",
+        "channel_visibility": ["widget", "api"],
+    }
+    mock_obj.metadata = MagicMock()
+    mock_obj.metadata.distance = 0.2
+    mock_collection.query.hybrid.return_value = MagicMock(objects=[mock_obj])
+
+    mock_embedder = MagicMock()
+    mock_embedder.embed.return_value = [np.array([0.1, 0.2])]
+
+    searcher = HybridSearcher(mock_client, mock_embedder)
+    results = searcher.search("query")
+
+    assert len(results) == 1
+    r = results[0]
+    assert r.chunk_type == "heading"
+    assert r.doc_section == "Intro > Setup"
+    assert r.channel_visibility == ("widget", "api")
