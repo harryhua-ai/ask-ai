@@ -18,6 +18,7 @@ import pytest
 
 from backend.connectors.base import RawDocument
 from backend.pipeline.ingest import IngestionPipeline
+from weaviate.classes.config import DataType
 
 
 def _make_doc(**overrides: object) -> RawDocument:
@@ -373,6 +374,20 @@ def test_ensure_collection_creates_new_properties():
     assert "channel_visibility" in property_names
     assert "doc_section" in property_names
     assert "chunk_type" in property_names
+
+    # 校验 DataType 映射(channel_visibility 必须是 TEXT_ARRAY,供 Task 6 channel 过滤)
+    props_list = create_kwargs.kwargs.get("properties", [])
+
+    def _dtype(name: str):
+        for p in props_list:
+            p_name = p.name if hasattr(p, "name") else p.get("name")
+            if p_name == name:
+                return p.dataType if hasattr(p, "dataType") else p.get("dataType")
+        return None
+
+    assert _dtype("channel_visibility") == DataType.TEXT_ARRAY
+    assert _dtype("doc_section") == DataType.TEXT
+    assert _dtype("chunk_type") == DataType.TEXT
 
 
 @pytest.mark.unit
