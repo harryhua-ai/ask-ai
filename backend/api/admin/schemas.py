@@ -92,3 +92,54 @@ class PaginatedResponse(BaseModel):
     total: int
     page: int
     size: int
+
+
+class CustomizationOut(BaseModel):
+    """Customization 输出 schema。"""
+
+    id: str
+    name: str
+    system_prompt: str
+    style_tone: str | None
+    guardrails: str | None
+    language: str
+    assistant_name: str
+    is_active: bool
+    version: str
+
+
+class CustomizationCreate(BaseModel):
+    """Customization 创建 schema。"""
+
+    id: str = Field(..., min_length=1, max_length=50)
+    name: str = Field(..., min_length=1, max_length=100)
+    system_prompt: str = Field(..., min_length=1)
+    style_tone: str | None = None
+    guardrails: str | None = None
+    language: str = "auto"
+    assistant_name: str = "CamThink 助手"
+
+
+class CustomizationUpdate(BaseModel):
+    """Customization 更新 schema(仅非 None 字段会被写入)。"""
+
+    name: str | None = None
+    system_prompt: str | None = None
+    style_tone: str | None = None
+    guardrails: str | None = None
+    language: str | None = None
+    assistant_name: str | None = None
+    is_active: bool | None = None
+
+
+class BindingOut(BaseModel):
+    """渠道绑定输出 schema。"""
+
+    channel: str
+    customization_id: str
+
+
+class BindingUpdate(BaseModel):
+    """渠道绑定更新 schema。"""
+
+    customization_id: str

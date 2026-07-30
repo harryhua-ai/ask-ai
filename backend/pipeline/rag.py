@@ -112,6 +112,7 @@ class RAGOrchestrator:
         conversation_max_turns: int = 5,
         pruner: Any = None,  # Phase 3 预留:Pruner Protocol
         min_results_to_answer: int = 3,
+        channel_customizations: dict[str, str] | None = None,
     ) -> None:
         """初始化 RAG 编排器。
 
@@ -126,6 +127,8 @@ class RAGOrchestrator:
             conversation_max_turns: 对话历史保留的最大轮数
                 (每轮 = 1 user + 1 assistant 消息)。
             pruner: 可选的结果裁剪器(Phase 3)。
+            channel_customizations: 渠道到 system_prompt 的映射(Phase 2B)。
+                渠道未命中时回退到 ``system_prompt``,确保 Phase 1 行为不变。
         """
         self._searcher = searcher
         self._reranker = reranker
@@ -137,6 +140,7 @@ class RAGOrchestrator:
         self._max_turns = conversation_max_turns
         self._pruner = pruner
         self._min_results = min_results_to_answer
+        self._channel_customizations = channel_customizations or {}
 
     def _build_context(self, results: list[SearchResult]) -> str:
         """把重排后的候选拼接成 LLM 上下文文本。
@@ -160,13 +164,20 @@ class RAGOrchestrator:
         context: str,
         language: str,
         history: list[dict] | None,
+        channel: str = "widget",
     ) -> list[dict]:
         """构造 OpenAI 风格的 messages 列表。
 
         结构:``system → (截断后的 history) → user``。
         history 截断到最近 ``conversation_max_turns * 2`` 条消息。
+
+        Args:
+            channel: 渠道标识。当 ``channel_customizations`` 命中该渠道时,
+                使用渠道专属 system_prompt;否则回退到默认 ``self._system_prompt``,
+                确保 Phase 1 行为不变。
         """
-        messages: list[dict] = [{"role": "system", "content": self._system_prompt}]
+        system_prompt = self._channel_customizations.get(channel, self._system_prompt)
+        messages: list[dict] = [{"role": "system", "content": system_prompt}]
         if history:
             # 每轮对话 = 1 user + 1 assistant,故 max_turns * 2 为消息条数上限
             messages.extend(history[-self._max_turns * 2 :])
@@ -280,7 +291,7 @@ class RAGOrchestrator:
             )
 
         context = self._build_context(reranked)
-        messages = self._build_messages(query, context, language, conversation_history)
+        messages = self._build_messages(query, context, language, conversation_history, channel)
 
         llm_response = await self._llm.generate(messages, task="generation")
         sources = self._extract_sources(reranked)
@@ -362,7 +373,7 @@ class RAGOrchestrator:
             return
 
         context = self._build_context(reranked)
-        messages = self._build_messages(query, context, language, conversation_history)
+        messages = self._build_messages(query, context, language, conversation_history, channel)
         sources = self._extract_sources(reranked)
 
         yield json.dumps({"type": "sources", "sources": sources})
@@ -382,9 +393,15 @@ class RAGOrchestrator:
         logger.info(
             "RAG timing: rewrite=%dms search=%dms rerank=%dms ttft=%dms llm_total=%dms total=%dms "
             "(query=%d chars, answer=%d chars, sources=%d)",
-            rewrite_ms, search_ms, rerank_ms,
-            first_token_ms or 0, llm_ms, elapsed,
-            len(query), len(full_answer), len(sources),
+            rewrite_ms,
+            search_ms,
+            rerank_ms,
+            first_token_ms or 0,
+            llm_ms,
+            elapsed,
+            len(query),
+            len(full_answer),
+            len(sources),
         )
 
         yield json.dumps(
