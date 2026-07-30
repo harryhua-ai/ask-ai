@@ -278,7 +278,7 @@ class RAGOrchestrator:
         reranked = self._reranker.rerank(search_query, results, top_k=self._top_k)
 
         if self._pruner:
-            reranked = self._pruner.prune(search_query, reranked)
+            reranked = await self._pruner.prune(search_query, reranked)
 
         if len(reranked) < self._min_results:
             elapsed = int((time.monotonic() - start) * 1000)
@@ -358,7 +358,7 @@ class RAGOrchestrator:
         rerank_ms = int((time.monotonic() - t2) * 1000)
 
         if self._pruner:
-            reranked = self._pruner.prune(query, reranked)
+            reranked = await self._pruner.prune(query, reranked)
 
         if len(reranked) < self._min_results:
             elapsed = int((time.monotonic() - start) * 1000)

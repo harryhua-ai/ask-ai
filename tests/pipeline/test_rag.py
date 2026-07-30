@@ -353,3 +353,47 @@ async def test_answer_passes_channel_to_searcher():
     mock_searcher.search.assert_called()
     call_kwargs = mock_searcher.search.call_args.kwargs
     assert call_kwargs.get("channel") == "widget"
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3A: Pruner 集成测试
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+async def test_rag_calls_async_pruner():
+    """RAGOrchestrator 应以 await 方式调用 pruner.prune()。"""
+    sr = _make_sr(text="relevant", url="https://example.com/a")
+    rag, searcher, reranker, llm = _build_orchestrator(
+        searcher_results=[sr], reranked_results=[sr]
+    )
+
+    pruner = AsyncMock()
+    pruner.prune.return_value = [sr]
+    rag._pruner = pruner
+
+    await rag.answer("query", "widget")
+
+    pruner.prune.assert_awaited_once()
+
+
+@pytest.mark.unit
+async def test_rag_pruner_filters_reflected_in_answer():
+    """Pruner 过滤掉的 chunk 不应出现在最终 sources 中。"""
+    sr1 = _make_sr(text="keep", source_id="s1", url="https://example.com/keep")
+    sr2 = _make_sr(text="drop", source_id="s2", url="https://example.com/drop")
+
+    rag, searcher, reranker, llm = _build_orchestrator(
+        searcher_results=[sr1, sr2], reranked_results=[sr1, sr2]
+    )
+
+    pruner = AsyncMock()
+    pruner.prune.return_value = [sr1]  # 只保留 sr1
+    rag._pruner = pruner
+
+    result = await rag.answer("query", "widget")
+
+    assert result.is_answered is True
+    urls = [s["url"] for s in result.sources]
+    assert "https://example.com/keep" in urls
+    assert "https://example.com/drop" not in urls
