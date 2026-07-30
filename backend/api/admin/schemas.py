@@ -66,3 +66,29 @@ class DataSourceUpdate(BaseModel):
     enabled: bool | None = None
     config: dict | None = None
     sync_interval: str | None = Field(default=None, pattern=r"^\d+[hm]$")
+
+
+class SyncLogOut(BaseModel):
+    """同步日志输出 schema。"""
+
+    id: str
+    source_id: str
+    source_type: str
+    status: str
+    started_at: str
+    finished_at: str | None
+    duration_ms: int | None
+    items_new: int
+    items_updated: int
+    items_deleted: int
+    error_detail: str | None
+    triggered_by: str
+
+
+class PaginatedResponse(BaseModel):
+    """通用分页响应 schema。"""
+
+    items: list
+    total: int
+    page: int
+    size: int
