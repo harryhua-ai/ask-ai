@@ -16,13 +16,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.api.admin.schemas import (
-    AnalyticsRefreshResult,
-    QuestionClusterOut,
-    SourceAnalyticsOut,
-)
+from backend.api.admin.schemas import AnalyticsRefreshResult
 from backend.auth.dependencies import CurrentUser, require_role
-from backend.db.models import Conversation, QuestionCluster, SourceClick
+from backend.db.models import QuestionCluster, SourceClick
 
 router = APIRouter(prefix="/analytics", tags=["分析仪表盘"])
 ViewerDep = Annotated[CurrentUser, Depends(require_role("admin", "editor", "viewer"))]
@@ -84,7 +80,7 @@ async def list_coverage_gaps(
     }
 
 
-@router.post("/coverage-gaps/refresh")
+@router.post("/coverage-gaps/refresh", response_model=AnalyticsRefreshResult)
 async def refresh_coverage_gaps(
     _: EditorDep,
     request: Request,
@@ -166,7 +162,7 @@ async def list_top_questions(
     }
 
 
-@router.post("/top-questions/refresh")
+@router.post("/top-questions/refresh", response_model=AnalyticsRefreshResult)
 async def refresh_top_questions(
     _: EditorDep,
     request: Request,
