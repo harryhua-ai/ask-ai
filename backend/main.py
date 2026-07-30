@@ -142,6 +142,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # System prompt
         prompt_config = load_yaml_config(settings.config_dir / "system_prompt.yaml")
 
+        # Customization(Phase 2B):从 DB 加载按渠道的 system_prompt,
+        # 失败 / 为空时回退到 YAML(Phase 1 兼容)。widget 渠道必须有可用 prompt。
+        from backend.services.config_loader import load_customizations_from_db
+
+        channel_custs = await load_customizations_from_db(app.state.session_factory)
+        if channel_custs:
+            system_prompt = channel_custs.get("widget", {}).get(
+                "system_prompt", prompt_config["system_prompt"]
+            )
+            channel_customizations: dict[str, str] | None = {
+                ch: c["system_prompt"] for ch, c in channel_custs.items()
+            }
+        else:
+            system_prompt = prompt_config["system_prompt"]
+            channel_customizations = None
+
         # RAG
         searcher = HybridSearcher(weaviate_client, embedder, settings.weaviate_class_name)
         rerank_pipeline = RerankPipeline(reranker)
@@ -149,7 +165,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             searcher=searcher,
             reranker=rerank_pipeline,
             llm=router_llm,
-            system_prompt=prompt_config["system_prompt"],
+            system_prompt=system_prompt,
+            channel_customizations=channel_customizations,
         )
         app.state.weaviate_client = weaviate_client
         app.state.engine = engine
