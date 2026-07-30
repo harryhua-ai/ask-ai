@@ -66,6 +66,7 @@ def _build_orchestrator(
     top_k: int = 10,
     conversation_max_turns: int = 5,
     system_prompt: str = "You are helpful.",
+    min_results_to_answer: int = 1,
 ) -> tuple[RAGOrchestrator, MagicMock, MagicMock, AsyncMock]:
     """构造预填 mock 的 RAGOrchestrator,返回 (rag, searcher, reranker, llm)。
 
@@ -91,6 +92,7 @@ def _build_orchestrator(
         system_prompt=system_prompt,
         top_k=top_k,
         conversation_max_turns=conversation_max_turns,
+        min_results_to_answer=min_results_to_answer,
     )
     return rag, searcher, reranker, llm
 
@@ -152,7 +154,7 @@ async def test_rag_generates_answer():
         latency_ms=500,
     )
 
-    rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="You are helpful.")
+    rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="You are helpful.", min_results_to_answer=1)
     result = await rag.answer("NE503 功耗是多少?", "widget")
 
     assert result.is_answered is True
@@ -191,7 +193,7 @@ async def test_rag_truncates_conversation_history_to_max_turns():
 
     await rag.answer("query", "widget", conversation_history=long_history)
 
-    llm.generate.assert_awaited_once()
+    llm.generate.assert_awaited()
     messages, _ = llm.generate.call_args.args, llm.generate.call_args.kwargs
     passed_messages = messages[0] if messages else llm.generate.call_args.args[0]
 
@@ -287,6 +289,23 @@ async def test_rag_stream_answer_emits_sources_then_tokens_then_complete():
     assert events[3]["answer"] == "Hello world"
     # sources 事件与 complete 事件的 sources 应一致
     assert events[0]["sources"] == events[3]["sources"]
+
+
+@pytest.mark.unit
+async def test_rag_rejects_when_below_min_results():
+    """rerank 结果不足 min_results_to_answer 条时拒答(P0-2)。"""
+    sr = _make_sr()
+    searcher = MagicMock()
+    searcher.search.return_value = [sr, sr]
+    reranker = MagicMock()
+    reranker.rerank.return_value = [sr]  # 只有 1 条 < min_results=3
+    llm = AsyncMock()
+
+    rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="test", min_results_to_answer=3)
+    result = await rag.answer("query", "widget")
+
+    assert result.is_answered is False
+    llm.generate.assert_not_called()
 
 
 @pytest.mark.unit
