@@ -4,6 +4,7 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Layout } from "@/components/Layout";
 import Login from "@/pages/Login";
 import Users from "@/pages/Users";
+import DataSources from "@/pages/DataSources";
 
 export default function App() {
   return (
@@ -17,7 +18,7 @@ export default function App() {
               <Layout>
                 <Routes>
                   <Route path="/" element={<Navigate to="/data-sources" replace />} />
-                  <Route path="/data-sources" element={<div>数据源管理（待实现）</div>} />
+                  <Route path="/data-sources" element={<DataSources />} />
                   <Route path="/sync-logs" element={<div>同步监控（待实现）</div>} />
                   <Route path="/customizations" element={<div>Customization（待实现）</div>} />
                   <Route path="/llm-providers" element={<div>LLM 供应商（待实现）</div>} />
