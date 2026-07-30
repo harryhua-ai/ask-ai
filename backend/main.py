@@ -23,10 +23,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
-from dotenv import load_dotenv
-
 import uvicorn
 import weaviate
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -36,9 +35,11 @@ from slowapi.util import get_remote_address
 
 # 导入 connector 实现以触发 @ConnectorRegistry.register
 import backend.connectors.filesystem
-import backend.connectors.github  # noqa: F401
+import backend.connectors.github
+
 # 导入 LLM provider 以触发 @LLMRegistry.register
 import backend.llm.deepseek  # noqa: F401
+from backend.api.admin.router import admin_router
 from backend.api.routes import router as api_router
 from backend.config import load_settings, load_yaml_config
 from backend.db.session import get_engine, get_session_factory, init_db
@@ -116,6 +117,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """应用生命周期:启动时接线,关闭时释放资源。"""
     logging.basicConfig(level=settings.log_level)
     logger.info("Ask AI 后端启动中...")
+    app.state.settings = settings
 
     try:
         # Postgres
@@ -130,9 +132,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Embedder + Reranker
         embedder = BGEEmbedder(device=settings.embedder_device)
         reranker = BGEReranker(device=settings.embedder_device)
+        app.state.embedder = embedder
+        app.state.weaviate_class_name = settings.weaviate_class_name
 
         # LLM
         router_llm = _build_llm_router(settings.config_dir)
+        app.state.llm = router_llm
 
         # System prompt
         prompt_config = load_yaml_config(settings.config_dir / "system_prompt.yaml")
@@ -226,6 +231,7 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 app.include_router(api_router)
+app.include_router(admin_router)
 
 
 @app.get("/health")
