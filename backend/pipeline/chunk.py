@@ -594,3 +594,102 @@ def chunk_document(
         for i, (text, start, end) in enumerate(pieces)
     ]
     return chunks
+
+
+def chunk_document_semantic(
+    doc: RawDocument,
+    max_tokens: int = 600,
+    overlap: int = 50,
+) -> list[Chunk]:
+    """语义分块:用 Markdown 语义边界替换固定窗口分块。
+
+    流程:
+        1. _identify_blocks 识别语义块(标题/代码块/列表/表格/段落),
+           代码块受到保护,不会被标题边界切断。
+        2. 维护标题层级栈,遇到新标题时弹出更深级别的标题。
+        3. 合并相邻小块到 max_tokens 以内(复用 _merge_small_sections)。
+        4. 对超过 max_tokens 的块走 _hard_split_section 滑窗硬切。
+        5. 对每个切出的 chunk 用 _classify_chunk_type 标注类型,
+           用 _build_doc_section 构建标题路径。
+        6. channel_visibility 从 doc 继承。
+
+    Args:
+        doc: 待切分的原始文档。
+        max_tokens: 单 chunk 的 token 上限(默认 600)。
+        overlap: 硬切时相邻 chunk 重叠的 token 数(默认 50)。
+
+    Returns:
+        Chunk 列表,每个 chunk 填充 chunk_type / doc_section / channel_visibility。
+    """
+    content = doc.content
+    if not content:
+        return []
+
+    blocks = _identify_blocks(content)
+    if not blocks:
+        return []
+
+    # 构建 heading 栈追踪:遍历 blocks,遇到 heading 更新栈
+    # 每个 block 的 doc_section = 该 block 之前的标题栈
+    section_paths: list[list[tuple[int, str]]] = []
+    heading_stack: list[tuple[int, str]] = []
+    for block in blocks:
+        if block.block_type == "heading":
+            level = block.heading_level
+            title_text = content[block.start_char:block.end_char].strip()
+            # 去掉 # 前缀
+            title_clean = re.sub(r"^#{1,6}\s+", "", title_text).strip()
+            # 弹出栈中 >= 当前 level 的标题
+            while heading_stack and heading_stack[-1][0] >= level:
+                heading_stack.pop()
+            heading_stack.append((level, title_clean))
+        section_paths.append(list(heading_stack))
+
+    # 按语义块边界构造 (text, offset) 列表,供 _merge_small_sections 合并
+    raw_sections: list[tuple[str, int]] = []
+    block_paths: list[list[tuple[int, str]]] = []
+    for block, path in zip(blocks, section_paths):
+        text = content[block.start_char:block.end_char]
+        raw_sections.append((text, block.start_char))
+        block_paths.append(path)
+
+    merged = _merge_small_sections(raw_sections, max_tokens)
+    if not merged:
+        merged = [(content, 0)]
+
+    # 对 merged section 追踪其 doc_section(取合并组首个 block 的 path)
+    # merged_sections 的 offset 对应第一个 block 的 start_char
+    # 用 offset 反查 block_paths
+    offset_to_path: dict[int, list[tuple[int, str]]] = {}
+    for (text, offset), path in zip(raw_sections, block_paths):
+        offset_to_path[offset] = path
+
+    pieces: list[tuple[str, int, int, str, str]] = []  # text, start, end, chunk_type, doc_section
+    for section_text, section_offset in merged:
+        hard_pieces = _hard_split_section(section_text, max_tokens, overlap)
+        doc_section = _build_doc_section(offset_to_path.get(section_offset, []))
+        for text, rel_s, rel_e in hard_pieces:
+            if not text:
+                continue
+            abs_start = section_offset + rel_s
+            abs_end = section_offset + rel_e
+            chunk_type = _classify_chunk_type(text)
+            pieces.append((text, abs_start, abs_end, chunk_type, doc_section))
+
+    total = len(pieces)
+    channel_vis = getattr(doc, "channel_visibility", ("widget", "api"))
+    chunks: list[Chunk] = [
+        Chunk(
+            text=text,
+            document=doc,
+            chunk_index=i,
+            total_chunks=total,
+            start_char=start,
+            end_char=end,
+            chunk_type=ctype,
+            doc_section=dsec,
+            channel_visibility=channel_vis,
+        )
+        for i, (text, start, end, ctype, dsec) in enumerate(pieces)
+    ]
+    return chunks

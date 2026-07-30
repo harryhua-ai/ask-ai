@@ -409,3 +409,78 @@ def test_build_doc_section_multi_level():
     from backend.pipeline.chunk import _build_doc_section
     stack = [(1, "A"), (2, "B"), (3, "C")]
     assert _build_doc_section(stack) == "A > B > C"
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2A Task 3:chunk_document_semantic 语义分块器
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_semantic_chunk_basic():
+    """chunk_document_semantic 应切出 chunk 并填充 chunk_type / doc_section。"""
+    from backend.pipeline.chunk import chunk_document_semantic
+    content = "# Introduction\n\nThis is intro text.\n\n## Hardware\n\nDetailed hardware specs."
+    doc = _make_doc(content)
+    chunks = chunk_document_semantic(doc, max_tokens=600, overlap=50)
+    assert len(chunks) >= 1
+    for c in chunks:
+        assert c.chunk_type in ("heading", "paragraph", "code", "list", "table")
+        assert isinstance(c.doc_section, str)
+
+
+@pytest.mark.unit
+def test_semantic_chunk_produces_code_type():
+    """含代码块的文档经语义分块后应产出 chunk_type='code' 的 chunk。
+
+    注意:超过 max_tokens 的代码块仍会被 _hard_split_section 硬切(设计如此),
+    此测试仅验证代码块被正确标注为 code 类型,不验证不被硬切。
+    """
+    from backend.pipeline.chunk import chunk_document_semantic
+    code = "```python\n" + "\n".join(f"x{i} = {i}" for i in range(50)) + "\n```"
+    content = f"# Title\n\n{code}\n\n## After\n\nMore text."
+    doc = _make_doc(content)
+    chunks = chunk_document_semantic(doc, max_tokens=100, overlap=10)
+    code_chunks = [c for c in chunks if c.chunk_type == "code"]
+    assert len(code_chunks) >= 1
+
+
+@pytest.mark.unit
+def test_semantic_chunk_doc_section_tracks_headings():
+    """chunk 的 doc_section 应反映其所在标题层级路径。"""
+    from backend.pipeline.chunk import chunk_document_semantic
+    content = (
+        "# NE503\n\n"
+        "Intro paragraph.\n\n"
+        "## Hardware\n\n"
+        "Hardware details.\n\n"
+        "### Specs\n\n"
+        "Detailed specs."
+    )
+    doc = _make_doc(content)
+    # 小 max_tokens 防止整篇合并到一个 chunk,从而能验证每个 chunk 各自的标题层级路径
+    chunks = chunk_document_semantic(doc, max_tokens=10, overlap=5)
+    # 在 Specs 标题下的 chunk,doc_section 应包含 "NE503 > Hardware > Specs"
+    specs_chunks = [c for c in chunks if "Specs" in c.text or "Detailed specs" in c.text]
+    if specs_chunks:
+        assert any("NE503" in c.doc_section and "Hardware" in c.doc_section for c in specs_chunks)
+
+
+@pytest.mark.unit
+def test_semantic_chunk_channel_visibility_from_doc():
+    """chunk 的 channel_visibility 应从 RawDocument 继承。"""
+    from backend.pipeline.chunk import chunk_document_semantic
+    doc = _make_doc(
+        "# Title\n\nContent.",
+        channel_visibility=("api",),
+    )
+    chunks = chunk_document_semantic(doc)
+    assert all(c.channel_visibility == ("api",) for c in chunks)
+
+
+@pytest.mark.unit
+def test_semantic_chunk_empty_content_returns_empty():
+    """空 content 应返回空列表。"""
+    from backend.pipeline.chunk import chunk_document_semantic
+    doc = _make_doc("")
+    assert chunk_document_semantic(doc) == []
