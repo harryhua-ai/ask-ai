@@ -75,3 +75,40 @@ export interface Conversation {
   created_at: string;
   intent_tag: string | null;
 }
+
+export interface QuestionCluster {
+  id: string;
+  cluster_type: "gap" | "top";
+  representative_question: string;
+  sample_questions: string[];
+  question_count: number;
+  status: "open" | "resolved";
+  period_start: string | null;
+  period_end: string | null;
+  created_at: string;
+}
+
+export interface ClusterList {
+  items: QuestionCluster[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export interface SourceAnalyticsItem {
+  url: string;
+  source_type: string;
+  product: string | null;
+  clicks: number;
+  references: number;
+}
+
+export interface SourceAnalytics {
+  items: SourceAnalyticsItem[];
+  days: number;
+}
+
+export interface RefreshResult {
+  cluster_count: number;
+  total_questions: number;
+}
