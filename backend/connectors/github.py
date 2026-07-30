@@ -93,6 +93,8 @@ class GitHubConnector(DataSourceConnector):
         self._exclude_pattern: re.Pattern[str] | None = (
             re.compile(self._exclude_regex) if self._exclude_regex else None
         )
+        # Phase 2A:透传 channel_visibility 到每条 RawDocument
+        self._channel_visibility: tuple[str, ...] = config.channel_visibility
 
     @property
     def source_id(self) -> str:
@@ -207,6 +209,7 @@ class GitHubConnector(DataSourceConnector):
                 "path": path,
             },
             content_hash=content_hash,
+            channel_visibility=self._channel_visibility,
         )
 
     def fetch_all(self) -> Iterator[RawDocument]:

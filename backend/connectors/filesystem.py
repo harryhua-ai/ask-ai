@@ -41,6 +41,8 @@ class FilesystemConnector(DataSourceConnector):
         # 不可变构造:用 spread 创建新集合,避免引用 config 内部可变对象
         self._file_types: set[str] = {*config.config.get("file_types", [".md", ".txt"])}
         self._include_dirs: list[str] = [*config.config.get("include_dirs", [])]
+        # Phase 2A:透传 channel_visibility 到每条 RawDocument
+        self._channel_visibility: tuple[str, ...] = config.channel_visibility
 
     @property
     def source_id(self) -> str:
@@ -95,6 +97,7 @@ class FilesystemConnector(DataSourceConnector):
             url=f"file://{path.absolute()}",
             metadata={"path": rel, "root": str(self._root)},
             content_hash=content_hash,
+            channel_visibility=self._channel_visibility,
         )
 
     def fetch_all(self) -> Iterator[RawDocument]:

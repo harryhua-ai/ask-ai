@@ -271,3 +271,27 @@ def test_raw_document_has_channel_visibility_default():
         content="x", url="u", metadata={}, content_hash="h",
     )
     assert doc.channel_visibility == ("widget", "api")
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2A Task 5: FilesystemConnector 透传 channel_visibility
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_filesystem_connector_passes_channel_visibility(tmp_path):
+    """FilesystemConnector 应把 SourceConfig.channel_visibility 透传到 RawDocument。"""
+    from backend.connectors.filesystem import FilesystemConnector
+
+    (tmp_path / "test.md").write_text("# Title\n\ncontent")
+
+    cfg = SourceConfig(
+        id="test", type="filesystem", product="test", enabled=True,
+        config={"root_path": str(tmp_path)},
+        sync_interval="1h",
+        channel_visibility=("api",),
+    )
+    connector = FilesystemConnector(cfg)
+    docs = list(connector.fetch_all())
+    assert len(docs) >= 1
+    assert all(d.channel_visibility == ("api",) for d in docs)
