@@ -7,6 +7,7 @@ import Users from "@/pages/Users";
 import DataSources from "@/pages/DataSources";
 import SyncLogs from "@/pages/SyncLogs";
 import Customizations from "@/pages/Customizations";
+import LLMProviders from "@/pages/LLMProviders";
 
 export default function App() {
   return (
@@ -23,7 +24,7 @@ export default function App() {
                   <Route path="/data-sources" element={<DataSources />} />
                   <Route path="/sync-logs" element={<SyncLogs />} />
                   <Route path="/customizations" element={<Customizations />} />
-                  <Route path="/llm-providers" element={<div>LLM 供应商（待实现）</div>} />
+                  <Route path="/llm-providers" element={<LLMProviders />} />
                   <Route path="/conversations" element={<div>对话审查（待实现）</div>} />
                   <Route path="/users" element={<Users />} />
                 </Routes>
