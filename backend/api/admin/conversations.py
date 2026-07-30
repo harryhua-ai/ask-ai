@@ -1,0 +1,120 @@
+"""对话审查端点（多维过滤 + 分页 + 详情）。"""
+
+from typing import Annotated, Any
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from backend.api.admin.schemas import ConversationOut
+from backend.auth.dependencies import CurrentUser, require_role
+from backend.db.models import Conversation, SourceClick
+
+router = APIRouter(prefix="/conversations", tags=["对话审查"])
+ViewerDep = Annotated[CurrentUser, Depends(require_role("admin", "editor", "viewer"))]
+
+
+@router.get("")
+async def list_conversations(
+    _: ViewerDep,
+    request: Request,
+    channel: str | None = Query(default=None),
+    is_answered: bool | None = Query(default=None),
+    feedback: str | None = Query(default=None, pattern="^(up|down)$"),
+    intent_tag: str | None = Query(default=None),
+    date_from: str | None = Query(default=None, description="ISO 日期，如 2026-01-01"),
+    date_to: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=100),
+) -> dict[str, Any]:
+    """查询对话列表（viewer+ 可访问），支持 channel / is_answered / feedback /
+    intent_tag / date_from / date_to 多维过滤 + 分页。
+    """
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        q = select(Conversation)
+        count_q = select(func.count()).select_from(Conversation)
+        if channel:
+            q = q.where(Conversation.channel == channel)
+            count_q = count_q.where(Conversation.channel == channel)
+        if is_answered is not None:
+            q = q.where(Conversation.is_answered == is_answered)
+            count_q = count_q.where(Conversation.is_answered == is_answered)
+        if feedback:
+            q = q.where(Conversation.feedback == feedback)
+            count_q = count_q.where(Conversation.feedback == feedback)
+        if intent_tag:
+            q = q.where(Conversation.intent_tag == intent_tag)
+            count_q = count_q.where(Conversation.intent_tag == intent_tag)
+        if date_from:
+            q = q.where(Conversation.created_at >= date_from)
+            count_q = count_q.where(Conversation.created_at >= date_from)
+        if date_to:
+            q = q.where(Conversation.created_at <= date_to)
+            count_q = count_q.where(Conversation.created_at <= date_to)
+
+        total = (await session.execute(count_q)).scalar() or 0
+        result = await session.execute(
+            q.order_by(Conversation.created_at.desc()).offset((page - 1) * size).limit(size)
+        )
+        convs = result.scalars().all()
+
+    items = [
+        ConversationOut(
+            id=str(c.id),
+            question=c.question,
+            answer=c.answer,
+            channel=c.channel,
+            language=c.language,
+            sources=list(c.sources or []),
+            is_answered=c.is_answered,
+            feedback=c.feedback,
+            response_time_ms=c.response_time_ms,
+            created_at=c.created_at.isoformat() if c.created_at else "",
+            intent_tag=c.intent_tag,
+        )
+        for c in convs
+    ]
+    return {"items": items, "total": total, "page": page, "size": size}
+
+
+@router.get("/{conversation_id}")
+async def get_conversation(
+    conversation_id: UUID,
+    _: ViewerDep,
+    request: Request,
+) -> dict[str, Any]:
+    """查询单条对话详情（含来源点击记录）。"""
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        conv = await session.execute(select(Conversation).where(Conversation.id == conversation_id))
+        conv = conv.scalar_one_or_none()
+        if conv is None:
+            raise HTTPException(status_code=404, detail="对话不存在")
+        clicks_result = await session.execute(
+            select(SourceClick).where(SourceClick.conversation_id == conversation_id)
+        )
+        clicks = clicks_result.scalars().all()
+    return {
+        "id": str(conv.id),
+        "question": conv.question,
+        "answer": conv.answer,
+        "channel": conv.channel,
+        "language": conv.language,
+        "sources": conv.sources or [],
+        "is_answered": conv.is_answered,
+        "feedback": conv.feedback,
+        "response_time_ms": conv.response_time_ms,
+        "created_at": conv.created_at.isoformat() if conv.created_at else "",
+        "intent_tag": conv.intent_tag,
+        "clicks": [
+            {
+                "url": c.source_url,
+                "type": c.source_type,
+                "product": c.product,
+                "clicked_at": c.clicked_at.isoformat() if c.clicked_at else "",
+            }
+            for c in clicks
+        ],
+    }
