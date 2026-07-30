@@ -106,6 +106,10 @@ class IngestionPipeline:
                     Property(name="url", data_type=DataType.TEXT),
                     Property(name="chunk_index", data_type=DataType.INT),
                     Property(name="content_hash", data_type=DataType.TEXT),
+                    # Phase 2A 新增
+                    Property(name="channel_visibility", data_type=DataType.TEXT_ARRAY),
+                    Property(name="doc_section", data_type=DataType.TEXT),
+                    Property(name="chunk_type", data_type=DataType.TEXT),
                 ],
             )
 
@@ -160,6 +164,10 @@ class IngestionPipeline:
                         "url": doc.url,
                         "chunk_index": chunk.chunk_index,
                         "content_hash": doc.content_hash,
+                        # Phase 2A 新增
+                        "channel_visibility": list(chunk.channel_visibility),
+                        "doc_section": chunk.doc_section,
+                        "chunk_type": chunk.chunk_type,
                     },
                     vector=vec_list,
                 )
