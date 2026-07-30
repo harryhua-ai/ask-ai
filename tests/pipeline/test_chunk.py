@@ -324,3 +324,88 @@ def test_chunk_has_new_metadata_fields_with_defaults():
     assert c.chunk_type == "paragraph"
     assert c.doc_section == ""
     assert c.channel_visibility == ("widget", "api")
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2A Task 2:SemanticBlock / _identify_blocks / _classify_chunk_type /
+# _build_doc_section 语义块识别工具
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_identify_blocks_headings():
+    """_identify_blocks 应识别 H1-H6 标题块并标注 heading_level。"""
+    from backend.pipeline.chunk import _identify_blocks
+    content = "# Title\n\n## Subtitle\n\nSome text."
+    blocks = _identify_blocks(content)
+    heading_blocks = [b for b in blocks if b.block_type == "heading"]
+    assert len(heading_blocks) >= 2
+    assert heading_blocks[0].heading_level == 1
+    assert heading_blocks[1].heading_level == 2
+
+
+@pytest.mark.unit
+def test_identify_blocks_code_fence_protected():
+    """代码块内的 # 行不应被识别为标题。"""
+    from backend.pipeline.chunk import _identify_blocks
+    content = "```python\n# This is a comment, not a heading\nprint('hello')\n```\n\n## Real Heading"
+    blocks = _identify_blocks(content)
+    heading_blocks = [b for b in blocks if b.block_type == "heading"]
+    code_blocks = [b for b in blocks if b.block_type == "code"]
+    assert len(code_blocks) >= 1
+    assert len(heading_blocks) == 1
+    assert heading_blocks[0].heading_level == 2
+
+
+@pytest.mark.unit
+def test_classify_chunk_type_detects_code():
+    """_classify_chunk_type 应识别以代码块为主的 chunk 为 'code'。"""
+    from backend.pipeline.chunk import _classify_chunk_type
+    text = "```python\nprint('hello')\nimport os\n```"
+    assert _classify_chunk_type(text) == "code"
+
+
+@pytest.mark.unit
+def test_classify_chunk_type_detects_list():
+    """_classify_chunk_type 应识别列表为主的 chunk 为 'list'。"""
+    from backend.pipeline.chunk import _classify_chunk_type
+    text = "- item one\n- item two\n- item three\n"
+    assert _classify_chunk_type(text) == "list"
+
+
+@pytest.mark.unit
+def test_classify_chunk_type_detects_table():
+    """_classify_chunk_type 应识别表格为主的 chunk 为 'table'。"""
+    from backend.pipeline.chunk import _classify_chunk_type
+    text = "| Col A | Col B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
+    assert _classify_chunk_type(text) == "table"
+
+
+@pytest.mark.unit
+def test_classify_chunk_type_defaults_paragraph():
+    """普通文本应分类为 'paragraph'。"""
+    from backend.pipeline.chunk import _classify_chunk_type
+    assert _classify_chunk_type("This is a normal paragraph of text.") == "paragraph"
+
+
+@pytest.mark.unit
+def test_build_doc_section_from_heading_stack():
+    """_build_doc_section 应从标题层级栈拼接路径。"""
+    from backend.pipeline.chunk import _build_doc_section
+    stack = [(1, "Introduction"), (2, "Hardware"), (3, "Specs")]
+    assert _build_doc_section(stack) == "Introduction > Hardware > Specs"
+
+
+@pytest.mark.unit
+def test_build_doc_section_empty_stack():
+    """空标题栈应返回空字符串。"""
+    from backend.pipeline.chunk import _build_doc_section
+    assert _build_doc_section([]) == ""
+
+
+@pytest.mark.unit
+def test_build_doc_section_multi_level():
+    """多层标题栈应拼接出完整路径(弹出逻辑由调用方负责)。"""
+    from backend.pipeline.chunk import _build_doc_section
+    stack = [(1, "A"), (2, "B"), (3, "C")]
+    assert _build_doc_section(stack) == "A > B > C"
