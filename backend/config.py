@@ -39,6 +39,8 @@ class Settings:
     api_port: int
     log_level: str
     config_dir: Path
+    jwt_secret: str
+    encryption_key: str
 
     @property
     def postgres_dsn(self) -> str:
@@ -75,6 +77,8 @@ def load_settings(config_dir: Path | None = None) -> Settings:
         api_port=int(_env("ASKAI_API_PORT", "8000")),
         log_level=_env("LOG_LEVEL", "INFO"),
         config_dir=config_dir or Path("config"),
+        jwt_secret=_env("JWT_SECRET", "dev-secret-change-in-production"),
+        encryption_key=_env("ENCRYPTION_KEY", ""),
     )
 
 

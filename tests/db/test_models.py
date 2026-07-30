@@ -7,7 +7,16 @@
 import pytest
 from sqlalchemy import select, text
 
-from backend.db.models import Conversation
+from backend.db.models import Conversation, User
+
+
+@pytest.mark.unit
+def test_user_model_has_password_hash():
+    """User 模型必须包含 password_hash 列。"""
+    assert hasattr(User, "password_hash")
+    col = User.__table__.columns["password_hash"]
+    assert col.type.length == 255
+    assert col.nullable is True  # 初始可为空，由迁移脚本填充
 
 
 @pytest.mark.integration
