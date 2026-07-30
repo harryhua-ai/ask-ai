@@ -238,8 +238,9 @@ def _identify_blocks(content: str) -> list[SemanticBlock]:
     for s, e in code_ranges:
         boundaries.add(s)
         boundaries.add(e)
-    for s, _, _ in heading_positions:
+    for s, end, _ in heading_positions:
         boundaries.add(s)
+        boundaries.add(end)  # 标题行尾:让标题块只覆盖标题行本身,避免吸收后续段落文本
     for s, _ in list_positions:
         boundaries.add(s)
     for s, _ in table_positions:
