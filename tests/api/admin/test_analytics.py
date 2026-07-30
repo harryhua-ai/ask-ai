@@ -12,7 +12,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from backend.auth.jwt import create_access_token, hash_password
-from backend.db.models import User
+from backend.db.models import QuestionCluster, User
 from backend.main import app
 
 # 所有 admin API 测试共享 session 级事件循环(与 conftest 的 session fixture 对齐)
@@ -132,3 +132,71 @@ class TestAnalyticsAPI:
                 "/api/admin/analytics/coverage-gaps/refresh", headers=viewer_headers
             )
         assert resp.status_code == 403
+
+    async def test_resolve_gap_normal(self, auth_headers):
+        """PATCH /gaps/{id}/resolve 正常流程:open -> resolved。"""
+        # 先在 DB 创建一个 gap 聚类
+        factory = app.state.session_factory
+        cluster_id = uuid.uuid4()
+        async with factory() as session:
+            session.add(
+                QuestionCluster(
+                    id=cluster_id,
+                    cluster_type="gap",
+                    representative_question="test gap question for resolve",
+                    question_count=3,
+                    status="open",
+                )
+            )
+            await session.commit()
+        try:
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.patch(
+                    f"/api/admin/analytics/gaps/{cluster_id}/resolve",
+                    json={"status": "resolved"},
+                    headers=auth_headers,
+                )
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "resolved"
+            assert resp.json()["id"] == str(cluster_id)
+        finally:
+            # 精准清理:仅删除本测试创建的聚类
+            async with factory() as session:
+                await session.execute(
+                    QuestionCluster.__table__.delete().where(QuestionCluster.id == cluster_id)
+                )
+                await session.commit()
+
+    async def test_resolve_gap_invalid_status(self, auth_headers):
+        """PATCH /gaps/{id}/resolve 非法 status 返回 422。"""
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.patch(
+                "/api/admin/analytics/gaps/00000000-0000-0000-0000-000000000000/resolve",
+                json={"status": "invalid"},
+                headers=auth_headers,
+            )
+        assert resp.status_code == 422
+
+    async def test_refresh_top_questions(self, auth_headers):
+        """POST /top-questions/refresh 正常流程(admin/editor)。"""
+        # mock app.state.clustering — conftest 不初始化此属性
+        original = getattr(app.state, "clustering", None)
+        app.state.clustering = AsyncMock()
+        app.state.clustering.cluster = AsyncMock(return_value=[])
+        try:
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/api/admin/analytics/top-questions/refresh", headers=auth_headers
+                )
+            assert resp.status_code == 200
+            assert "cluster_count" in resp.json()
+        finally:
+            # 清理 mock 状态,避免影响后续测试
+            if original is None:
+                if hasattr(app.state, "clustering"):
+                    del app.state.clustering
+            else:
+                app.state.clustering = original
