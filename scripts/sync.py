@@ -209,7 +209,7 @@ async def run_sync(
         host, port = _parse_weaviate_endpoint(settings.weaviate_url)
         weaviate_client = weaviate.connect_to_local(host=host, port=port)
 
-        if reindex:
+        if reindex and not dry_run:
             logger.info("reindex 模式:删除 collection %s", settings.weaviate_class_name)
             try:
                 weaviate_client.collections.delete(
@@ -221,6 +221,8 @@ async def run_sync(
                 )
             except Exception as exc:  # noqa: BLE001 - collection 不存在时不中断
                 logger.warning("删除 collection 失败(可能不存在):%s", exc)
+        elif reindex and dry_run:
+            logger.warning("reindex 在 dry_run 模式下跳过 collection 删除(避免删后不重灌)")
 
         if not dry_run:
             await init_db(engine)

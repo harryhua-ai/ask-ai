@@ -37,7 +37,8 @@ class SearchResult:
         product: 产品标识(``ne503`` / ``ask-ai`` 等)。
         title: 文档标题。
         url: 文档可访问 URL(可为空字符串)。
-        score: 相似度分数 ∈ [0.0, 1.0],由 ``1 - distance`` 转换而来。
+        score: 相似度分数。检索阶段由 ``1 - distance`` 得出,理论 ∈ [0.0, 1.0];
+            rerank 阶段会被 ``type_weights`` 乘性加权(最高 ×1.2),故重排后可能 > 1.0。
         chunk_index: 该 chunk 在原文中的序号。
         chunk_type: chunk 语义类型(``heading`` / ``paragraph`` / ``code`` /
             ``list`` / ``table``)。默认空串表示未被 Phase 2A Task 2 标注,
