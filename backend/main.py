@@ -29,6 +29,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -287,6 +288,13 @@ app.add_middleware(
 )
 app.include_router(api_router)
 app.include_router(admin_router)
+
+# Task 21: 生产部署 — 在 /admin 路径下托管 admin SPA 构建产物。
+# _admin_dist 存在时挂载 StaticFiles(html=True 在根路径返回 index.html);
+# 不存在时(dev 未 build)跳过,不影响后端启动。
+_admin_dist = Path(__file__).resolve().parent.parent / "admin" / "dist"
+if _admin_dist.exists():
+    app.mount("/admin", StaticFiles(directory=str(_admin_dist), html=True), name="admin")
 
 
 @app.get("/health")
