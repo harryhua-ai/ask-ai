@@ -9,6 +9,7 @@ import SyncLogs from "@/pages/SyncLogs";
 import Customizations from "@/pages/Customizations";
 import LLMProviders from "@/pages/LLMProviders";
 import Conversations from "@/pages/Conversations";
+import AnswerOverrides from "@/pages/AnswerOverrides";
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
                   <Route path="/customizations" element={<Customizations />} />
                   <Route path="/llm-providers" element={<LLMProviders />} />
                   <Route path="/conversations" element={<Conversations />} />
+                  <Route path="/answer-overrides" element={<AnswerOverrides />} />
                   <Route path="/users" element={<Users />} />
                 </Routes>
               </Layout>
