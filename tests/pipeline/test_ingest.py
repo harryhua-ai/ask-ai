@@ -342,3 +342,69 @@ def test_ensure_collection_cached():
 
     # 第二次 ingest 不应再次 get(缓存命中)
     assert client.collections.get.call_count == 1
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2A: 新增 property / 字段写入
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_ensure_collection_creates_new_properties():
+    """_ensure_collection 应创建 channel_visibility / doc_section / chunk_type property。"""
+    from unittest.mock import MagicMock
+    from backend.pipeline.ingest import IngestionPipeline
+
+    mock_client = MagicMock()
+    mock_client.collections.exists.return_value = False
+    mock_collection = MagicMock()
+    mock_client.collections.create.return_value = None
+    mock_client.collections.get.return_value = mock_collection
+
+    pipeline = IngestionPipeline(
+        embedder=MagicMock(), weaviate_client=mock_client, class_name="Document",
+    )
+    pipeline._ensure_collection()
+
+    mock_client.collections.create.assert_called_once()
+    create_kwargs = mock_client.collections.create.call_args
+    property_names = [p.name if hasattr(p, "name") else p.get("name")
+                      for p in create_kwargs.kwargs.get("properties", [])]
+    assert "channel_visibility" in property_names
+    assert "doc_section" in property_names
+    assert "chunk_type" in property_names
+
+
+@pytest.mark.unit
+def test_ingest_document_writes_new_fields():
+    """ingest_document 应把 channel_visibility / doc_section / chunk_type 写入 Weaviate。"""
+    from unittest.mock import MagicMock
+    from backend.pipeline.ingest import IngestionPipeline
+    from backend.connectors.base import RawDocument
+
+    mock_collection = MagicMock()
+    mock_client = MagicMock()
+    mock_client.collections.exists.return_value = True
+    mock_client.collections.get.return_value = mock_collection
+
+    mock_embedder = MagicMock()
+    mock_embedder.embed.return_value = [[0.1, 0.2, 0.3]]
+
+    pipeline = IngestionPipeline(
+        embedder=mock_embedder, weaviate_client=mock_client, class_name="Document",
+    )
+
+    doc = RawDocument(
+        source_id="test/1", source_type="github", product="ne503",
+        title="T", content="# Title\n\nContent.", url="u",
+        metadata={}, content_hash="h", channel_visibility=("api",),
+    )
+    pipeline.ingest_document(doc)
+
+    mock_collection.data.insert.assert_called()
+    insert_kwargs = mock_collection.data.insert.call_args.kwargs
+    props = insert_kwargs.get("properties", {})
+    assert "channel_visibility" in props
+    assert props["channel_visibility"] == ["api"]
+    assert "chunk_type" in props
+    assert "doc_section" in props
