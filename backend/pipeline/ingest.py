@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from backend.connectors.base import RawDocument
 from backend.db.models import Document
 from backend.embedder.base import Embedder
-from backend.pipeline.chunk import chunk_document
+from backend.pipeline.chunk import chunk_document_semantic
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ class IngestionPipeline:
         Returns:
             成功写入 Weaviate 的 chunk 数(0 表示空文档或全部失败)。
         """
-        chunks = chunk_document(doc, self._max_tokens, self._overlap)
+        chunks = chunk_document_semantic(doc, self._max_tokens, self._overlap)
         if not chunks:
             logger.info("文档 %s 切分为空,跳过灌入", doc.source_id)
             return 0

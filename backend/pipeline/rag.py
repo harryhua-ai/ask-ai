@@ -261,6 +261,7 @@ class RAGOrchestrator:
             alpha=self._alpha,
             limit=self._recall_limit,
             product_filter=product_filter,
+            channel=channel,
         )
 
         reranked = self._reranker.rerank(search_query, results, top_k=self._top_k)
@@ -337,6 +338,7 @@ class RAGOrchestrator:
             alpha=self._alpha,
             limit=self._recall_limit,
             product_filter=product_filter,
+            channel=channel,
         )
         search_ms = int((time.monotonic() - t1) * 1000)
 

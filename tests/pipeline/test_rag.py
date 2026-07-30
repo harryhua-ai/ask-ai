@@ -329,3 +329,27 @@ async def test_rag_stream_answer_rejects_when_empty():
     assert "暂未在官方资料中找到" in events[0]["answer"]
     # 不应调用 LLM stream
     llm.stream.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_answer_passes_channel_to_searcher():
+    """RAGOrchestrator.answer 应把 channel 透传给 searcher.search。"""
+    from unittest.mock import AsyncMock, MagicMock
+    from backend.pipeline.rag import RAGOrchestrator
+
+    mock_searcher = MagicMock()
+    mock_searcher.search.return_value = []
+    mock_reranker = MagicMock()
+    mock_reranker.rerank.return_value = []
+    mock_llm = AsyncMock()
+
+    orchestrator = RAGOrchestrator(
+        searcher=mock_searcher, reranker=mock_reranker, llm=mock_llm,
+        system_prompt="test",
+    )
+    await orchestrator.answer("question", channel="widget")
+
+    mock_searcher.search.assert_called()
+    call_kwargs = mock_searcher.search.call_args.kwargs
+    assert call_kwargs.get("channel") == "widget"
