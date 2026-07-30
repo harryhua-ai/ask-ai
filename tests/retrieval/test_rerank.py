@@ -234,3 +234,63 @@ def test_rerank_threshold_property_exposed():
     reranker = MagicMock()
     pipeline = RerankPipeline(reranker, threshold=0.45)
     assert pipeline.threshold == 0.45
+
+
+# --------------------------------------------------------------------------- #
+# chunk_type 乘性加权(Task 7)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_rerank_applies_type_weights():
+    """rerank 应按 chunk_type 对 reranker 分数应用乘性加权。"""
+    from unittest.mock import MagicMock
+    from backend.retrieval.rerank import RerankPipeline
+    from backend.retrieval.search import SearchResult
+
+    mock_reranker = MagicMock()
+    # 两个候选原始分数相同
+    mock_reranker.rerank.return_value = [0.8, 0.8]
+
+    r1 = SearchResult(
+        text="heading text", source_id="s1", source_type="t", product="p",
+        title="T1", url="u1", score=0.9, chunk_index=0, chunk_type="heading",
+    )
+    r2 = SearchResult(
+        text="paragraph text", source_id="s2", source_type="t", product="p",
+        title="T2", url="u2", score=0.9, chunk_index=0, chunk_type="paragraph",
+    )
+
+    pipeline = RerankPipeline(
+        mock_reranker, threshold=0.0, top_k=10,
+        type_weights={"heading": 1.5, "paragraph": 1.0},
+    )
+    results = pipeline.rerank("query", [r1, r2])
+
+    # heading 加权后 0.8*1.5=1.2 应排在 paragraph 0.8*1.0=0.8 前面
+    # 注:用 approx 规避 IEEE 754 浮点精度(0.8*1.5 实际 = 1.2000000000000002)
+    assert results[0].chunk_type == "heading"
+    assert results[0].score == pytest.approx(1.2)
+    assert results[1].chunk_type == "paragraph"
+    assert results[1].score == pytest.approx(0.8)
+
+
+@pytest.mark.unit
+def test_rerank_default_type_weights():
+    """未传 type_weights 时应使用默认权重,不改变现有行为。"""
+    from unittest.mock import MagicMock
+    from backend.retrieval.rerank import RerankPipeline
+    from backend.retrieval.search import SearchResult
+
+    mock_reranker = MagicMock()
+    mock_reranker.rerank.return_value = [0.7]
+
+    r = SearchResult(
+        text="text", source_id="s", source_type="t", product="p",
+        title="T", url="u", score=0.9, chunk_index=0, chunk_type="paragraph",
+    )
+
+    pipeline = RerankPipeline(mock_reranker, threshold=0.0)
+    results = pipeline.rerank("query", [r])
+    # 默认 paragraph weight = 1.0,分数不变
+    assert results[0].score == 0.7
