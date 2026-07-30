@@ -143,3 +143,51 @@ class BindingUpdate(BaseModel):
     """渠道绑定更新 schema。"""
 
     customization_id: str
+
+
+class LLMProviderOut(BaseModel):
+    """LLM 供应商输出 schema(api_key 已脱敏)。"""
+
+    id: str
+    type: str
+    enabled: bool
+    config: dict
+
+
+class LLMProviderCreate(BaseModel):
+    """LLM 供应商创建 schema(config 中包含明文 api_key)。"""
+
+    id: str = Field(..., min_length=1, max_length=50)
+    type: str = Field(..., pattern="^(openai_compatible|anthropic|openai)$")
+    enabled: bool = True
+    config: dict
+
+
+class LLMProviderUpdate(BaseModel):
+    """LLM 供应商更新 schema(仅非 None 字段会被写入)。"""
+
+    type: str | None = None
+    enabled: bool | None = None
+    config: dict | None = None
+
+
+class LLMRoutingOut(BaseModel):
+    """LLM 路由输出 schema。"""
+
+    task: str
+    chain: list[str]
+
+
+class LLMRoutingUpdate(BaseModel):
+    """LLM 路由更新 schema。"""
+
+    chain: list[str]
+
+
+class ConnectivityTestResult(BaseModel):
+    """连通性测试结果 schema。"""
+
+    provider_id: str
+    success: bool
+    latency_ms: int | None
+    error: str | None
