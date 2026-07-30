@@ -191,3 +191,19 @@ class ConnectivityTestResult(BaseModel):
     success: bool
     latency_ms: int | None
     error: str | None
+
+
+class ConversationOut(BaseModel):
+    """对话记录输出 schema。"""
+
+    id: str
+    question: str
+    answer: str | None
+    channel: str
+    language: str | None
+    sources: list
+    is_answered: bool
+    feedback: str | None
+    response_time_ms: int | None
+    created_at: str
+    intent_tag: str | None
