@@ -657,17 +657,21 @@ def chunk_document_semantic(
     if not merged:
         merged = [(content, 0)]
 
-    # 对 merged section 追踪其 doc_section(取合并组首个 block 的 path)
-    # merged_sections 的 offset 对应第一个 block 的 start_char
-    # 用 offset 反查 block_paths
-    offset_to_path: dict[int, list[tuple[int, str]]] = {}
-    for (text, offset), path in zip(raw_sections, block_paths):
-        offset_to_path[offset] = path
-
+    # 对 merged section 追踪其 doc_section:合并段可能跨越多个 heading,
+    # 取合并组内最深 heading 栈(覆盖最完整的层级路径),避免只继承首个 block 的路径。
+    # raw_sections 与 block_paths 已是平行数组,merged 是连续分组的 raw_sections,
+    # 每组以首个 block 的 offset 标识;用 raw_i 游标在 merged 组间顺序推进。
     pieces: list[tuple[str, int, int, str, str]] = []  # text, start, end, chunk_type, doc_section
-    for section_text, section_offset in merged:
+    raw_i = 0
+    for m_idx, (section_text, section_offset) in enumerate(merged):
+        next_off = merged[m_idx + 1][1] if m_idx + 1 < len(merged) else None
+        deepest: list[tuple[int, str]] = []
+        while raw_i < len(raw_sections) and (next_off is None or raw_sections[raw_i][1] < next_off):
+            if len(block_paths[raw_i]) >= len(deepest):
+                deepest = block_paths[raw_i]
+            raw_i += 1
+        doc_section = _build_doc_section(deepest)
         hard_pieces = _hard_split_section(section_text, max_tokens, overlap)
-        doc_section = _build_doc_section(offset_to_path.get(section_offset, []))
         for text, rel_s, rel_e in hard_pieces:
             if not text:
                 continue

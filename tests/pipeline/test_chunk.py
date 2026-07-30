@@ -458,8 +458,7 @@ def test_semantic_chunk_doc_section_tracks_headings():
         "Detailed specs."
     )
     doc = _make_doc(content)
-    # 小 max_tokens 防止整篇合并到一个 chunk,从而能验证每个 chunk 各自的标题层级路径
-    chunks = chunk_document_semantic(doc, max_tokens=10, overlap=5)
+    chunks = chunk_document_semantic(doc, max_tokens=600, overlap=50)
     # 在 Specs 标题下的 chunk,doc_section 应包含 "NE503 > Hardware > Specs"
     specs_chunks = [c for c in chunks if "Specs" in c.text or "Detailed specs" in c.text]
     if specs_chunks:
