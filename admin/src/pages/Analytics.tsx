@@ -196,7 +196,6 @@ function SourceAnalyticsTab() {
 
   const chartData = (data?.items || []).slice(0, 10).map((item) => ({
     name: item.url.split("/").pop() || item.url,
-    fullUrl: item.url,
     clicks: item.clicks,
   }));
 

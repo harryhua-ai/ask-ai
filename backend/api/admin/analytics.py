@@ -9,6 +9,7 @@
 - GET    /sources                 来源点击/引用聚合(viewer+)
 """
 
+import uuid
 from datetime import datetime, timedelta
 from typing import Annotated, Any
 
@@ -16,7 +17,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.api.admin.schemas import AnalyticsRefreshResult
+from backend.api.admin.schemas import (
+    AnalyticsRefreshResult,
+    QuestionClusterList,
+    QuestionClusterOut,
+    SourceAnalyticsList,
+)
 from backend.auth.dependencies import CurrentUser, require_role
 from backend.db.models import QuestionCluster, SourceClick
 
@@ -45,7 +51,7 @@ def _to_cluster_out(c: QuestionCluster) -> dict[str, Any]:
 # ----------------------------------------------------------------------- #
 
 
-@router.get("/coverage-gaps")
+@router.get("/coverage-gaps", response_model=QuestionClusterList)
 async def list_coverage_gaps(
     _: ViewerDep,
     request: Request,
@@ -89,8 +95,11 @@ async def refresh_coverage_gaps(
 ) -> dict[str, Any]:
     """重新聚类未回答问题(admin/editor)。"""
     clustering = request.app.state.clustering
-    df = datetime.fromisoformat(date_from) if date_from else None
-    dt = datetime.fromisoformat(date_to) if date_to else None
+    try:
+        df = datetime.fromisoformat(date_from) if date_from else None
+        dt = datetime.fromisoformat(date_to) if date_to else None
+    except ValueError:
+        raise HTTPException(status_code=422, detail="date_from/date_to 格式无效,需 ISO 8601")
     results = await clustering.cluster("gap", df, dt)
 
     return {
@@ -99,9 +108,9 @@ async def refresh_coverage_gaps(
     }
 
 
-@router.patch("/gaps/{cluster_id}/resolve")
+@router.patch("/gaps/{cluster_id}/resolve", response_model=QuestionClusterOut)
 async def resolve_gap(
-    cluster_id: str,
+    cluster_id: uuid.UUID,
     body: dict,
     _: EditorDep,
     request: Request,
@@ -131,7 +140,7 @@ async def resolve_gap(
 # ----------------------------------------------------------------------- #
 
 
-@router.get("/top-questions")
+@router.get("/top-questions", response_model=QuestionClusterList)
 async def list_top_questions(
     _: ViewerDep,
     request: Request,
@@ -171,8 +180,11 @@ async def refresh_top_questions(
 ) -> dict[str, Any]:
     """重新聚类全部问题(admin/editor)。"""
     clustering = request.app.state.clustering
-    df = datetime.fromisoformat(date_from) if date_from else None
-    dt = datetime.fromisoformat(date_to) if date_to else None
+    try:
+        df = datetime.fromisoformat(date_from) if date_from else None
+        dt = datetime.fromisoformat(date_to) if date_to else None
+    except ValueError:
+        raise HTTPException(status_code=422, detail="date_from/date_to 格式无效,需 ISO 8601")
     results = await clustering.cluster("top", df, dt)
 
     return {
@@ -186,17 +198,18 @@ async def refresh_top_questions(
 # ----------------------------------------------------------------------- #
 
 
-@router.get("/sources")
+@router.get("/sources", response_model=SourceAnalyticsList)
 async def source_analytics(
     _: ViewerDep,
     request: Request,
     days: int = Query(default=30, ge=1, le=365),
     limit: int = Query(default=20, ge=1, le=100),
 ) -> dict[str, Any]:
-    """来源分析:最常引用 + 最多点击(viewer+ 可访问)。
+    """来源分析:source_clicks 按 URL 聚合(viewer+ 可访问)。
 
-    聚合 source_clicks 表的点击数和 conversations.sources 的引用数,
-    按 URL 合并返回 top N。时间窗口使用 timedelta 参数化,避免 SQL 注入。
+    仅聚合 source_clicks 表的点击数,按 URL 分组返回 top N。
+    references 字段为预留占位(后续接入 conversations.sources 聚合)。
+    时间窗口使用 timedelta 参数化,避免 SQL 注入。
     """
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:

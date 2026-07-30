@@ -179,6 +179,18 @@ class TestAnalyticsAPI:
             )
         assert resp.status_code == 422
 
+    async def test_resolve_gap_not_found(self, auth_headers):
+        """不存在的 cluster_id 返回 404。"""
+        import uuid as _uuid
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.patch(
+                f"/api/admin/analytics/gaps/{_uuid.uuid4()}/resolve",
+                json={"status": "resolved"},
+                headers=auth_headers,
+            )
+        assert resp.status_code == 404
+
     async def test_refresh_top_questions(self, auth_headers):
         """POST /top-questions/refresh 正常流程(admin/editor)。"""
         # mock app.state.clustering — conftest 不初始化此属性
