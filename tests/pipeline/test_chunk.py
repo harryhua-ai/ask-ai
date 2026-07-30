@@ -307,3 +307,20 @@ def test_hard_split_no_empty_chunks_for_multibyte():
     for chunk in chunks:
         assert chunk.text, f"chunk {chunk.chunk_index} 为空"
         assert len(chunk.text) > 0
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2A:Chunk 新增元数据字段默认值
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_chunk_has_new_metadata_fields_with_defaults():
+    """Chunk dataclass 应包含 chunk_type / doc_section / channel_visibility 字段且默认值合法。"""
+    doc = _make_doc("hello")
+    chunks = chunk_document(doc)
+    assert len(chunks) == 1
+    c = chunks[0]
+    assert c.chunk_type == "paragraph"
+    assert c.doc_section == ""
+    assert c.channel_visibility == ("widget", "api")

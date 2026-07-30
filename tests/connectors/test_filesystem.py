@@ -255,3 +255,19 @@ def test_filesystem_skips_unreadable_file(
     assert changed_docs[0].title == "good"
     fetch_changes_messages = [r.getMessage() for r in caplog.records]
     assert any("无法读取" in msg for msg in fetch_changes_messages)
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2A:RawDocument 新增 channel_visibility 字段
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_raw_document_has_channel_visibility_default():
+    """RawDocument 应包含 channel_visibility 字段,默认 ('widget','api')。"""
+    from backend.connectors.base import RawDocument
+    doc = RawDocument(
+        source_id="t/1", source_type="t", product="t", title="T",
+        content="x", url="u", metadata={}, content_hash="h",
+    )
+    assert doc.channel_visibility == ("widget", "api")

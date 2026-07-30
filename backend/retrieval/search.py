@@ -39,6 +39,13 @@ class SearchResult:
         url: 文档可访问 URL(可为空字符串)。
         score: 相似度分数 ∈ [0.0, 1.0],由 ``1 - distance`` 转换而来。
         chunk_index: 该 chunk 在原文中的序号。
+        chunk_type: chunk 语义类型(``heading`` / ``paragraph`` / ``code`` /
+            ``list`` / ``table``)。默认空串表示未被 Phase 2A Task 2 标注,
+            ``HybridSearcher.search`` 从 Weaviate property 填充。
+        doc_section: chunk 所属文档章节路径。默认空串表示未标注。
+        channel_visibility: 该 chunk 允许透出的渠道白名单(tuple 保证不可变),
+            Phase 2A Task 6 在 HybridSearcher 中用于按渠道过滤。默认
+            ``("widget", "api")`` 对所有渠道可见。
     """
 
     text: str
@@ -49,6 +56,11 @@ class SearchResult:
     url: str
     score: float
     chunk_index: int
+    # Phase 2A 新增字段(均有默认值,保证现有 HybridSearcher.search 零回归;
+    # Task 4/6 会从 Weaviate property 填充这些字段)
+    chunk_type: str = ""
+    doc_section: str = ""
+    channel_visibility: tuple[str, ...] = ("widget", "api")
 
 
 class HybridSearcher:

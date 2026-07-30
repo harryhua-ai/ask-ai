@@ -24,6 +24,9 @@ class RawDocument:
         url: 文档可访问 URL(便于溯源)。
         metadata: 扩展元数据(如标签、语言、MIME 类型)。
         content_hash: 内容哈希,用于变更检测与去重。
+        channel_visibility: 该文档允许透出的渠道白名单(tuple 保证不可变),
+            Phase 2A Task 5 由 SourceConfig 透传到 Connector 输出。默认
+            ``("widget", "api")`` 表示对所有渠道可见。
     """
 
     source_id: str
@@ -34,6 +37,8 @@ class RawDocument:
     url: str
     metadata: dict[str, Any]
     content_hash: str
+    # Phase 2A 新增字段
+    channel_visibility: tuple[str, ...] = ("widget", "api")
 
 
 class DataSourceConnector(Protocol):

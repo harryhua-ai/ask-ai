@@ -338,3 +338,21 @@ def test_search_passes_custom_class_name():
     searcher.search("NE503")
 
     client.collections.get.assert_called_once_with("CustomDoc")
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2A:SearchResult 新增元数据字段默认值
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_search_result_has_new_fields_default():
+    """SearchResult 应包含 chunk_type / doc_section / channel_visibility 字段。"""
+    from backend.retrieval.search import SearchResult
+    r = SearchResult(
+        text="t", source_id="s", source_type="github", product="p",
+        title="T", url="u", score=0.5, chunk_index=0,
+    )
+    assert r.chunk_type == ""
+    assert r.doc_section == ""
+    assert r.channel_visibility == ("widget", "api")

@@ -66,6 +66,14 @@ class Chunk:
         total_chunks: 所属文档切出的 chunk 总数。
         start_char: chunk.text 在 document.content 中的起始字符偏移。
         end_char: chunk.text 在 document.content 中的结束字符偏移(不含)。
+        chunk_type: chunk 语义类型(heading / paragraph / code / list / table),
+            Phase 2A Task 2 由 Markdown 语义块识别器填充。默认 ``"paragraph"``
+            兼容现有 chunk_document 调用路径(全部按段落处理)。
+        doc_section: chunk 所属文档章节路径(如 ``"安装 > 依赖"``),Phase 2A
+            Task 2 填充。默认空串表示未标注。
+        channel_visibility: 该 chunk 允许透出的渠道白名单(tuple 保证不可变),
+            Phase 2A Task 5 由 connector 配置透传。默认 ``("widget", "api")``
+            表示对所有渠道可见。
     """
 
     text: str
@@ -74,6 +82,10 @@ class Chunk:
     total_chunks: int
     start_char: int
     end_char: int
+    # Phase 2A 新增字段(均有默认值,保证现有调用零回归)
+    chunk_type: str = "paragraph"
+    doc_section: str = ""
+    channel_visibility: tuple[str, ...] = ("widget", "api")
 
 
 def _build_byte_to_char_map(encoded: bytes) -> list[int]:
@@ -366,6 +378,9 @@ def chunk_document(
             total_chunks=total,
             start_char=start,
             end_char=end,
+            chunk_type="paragraph",
+            doc_section="",
+            channel_visibility=getattr(doc, "channel_visibility", ("widget", "api")),
         )
         for i, (text, start, end) in enumerate(pieces)
     ]
