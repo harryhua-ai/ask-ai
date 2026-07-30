@@ -211,6 +211,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.weaviate_client = weaviate_client
         app.state.engine = engine
 
+        # ClusteringService(Phase 3B):问题聚类
+        # 依赖 session_factory 与 embedder,两者在 RAG 之前已就绪;
+        # 放在 engine 赋值之后、S2 预算熔断器之前,保持"RAG → 分析"的逻辑相邻。
+        from backend.services.clustering import ClusteringService
+
+        clustering = ClusteringService(app.state.session_factory, embedder)
+        app.state.clustering = clustering
+
         # S2: 预算熔断器(每日 LLM 调用 / token 上限,超阈熔断)
         budget_cfg = BudgetConfig(
             daily_request_limit=int(os.environ.get("BUDGET_DAILY_REQUESTS", "500")),
