@@ -23,23 +23,27 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
-from dotenv import load_dotenv
-
 import uvicorn
 import weaviate
-from fastapi import FastAPI, Request
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # 导入 connector 实现以触发 @ConnectorRegistry.register
 import backend.connectors.filesystem
-import backend.connectors.github  # noqa: F401
+import backend.connectors.github
+
 # 导入 LLM provider 以触发 @LLMRegistry.register
 import backend.llm.deepseek  # noqa: F401
+from backend.api.admin.router import admin_router
 from backend.api.routes import router as api_router
+from backend.auth.crypto import decrypt_api_key
 from backend.config import load_settings, load_yaml_config
 from backend.db.session import get_engine, get_session_factory, init_db
 from backend.embedder.bge import BGEEmbedder, BGEReranker
@@ -47,6 +51,7 @@ from backend.llm.registry import LLMRegistry, LLMRouter
 from backend.pipeline.rag import RAGOrchestrator
 from backend.retrieval.rerank import RerankPipeline
 from backend.retrieval.search import HybridSearcher
+from backend.services.config_loader import load_llm_config_from_db
 from backend.utils.budget import BudgetConfig, BudgetLimiter
 
 logger = logging.getLogger(__name__)
@@ -116,6 +121,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """应用生命周期:启动时接线,关闭时释放资源。"""
     logging.basicConfig(level=settings.log_level)
     logger.info("Ask AI 后端启动中...")
+    app.state.settings = settings
 
     try:
         # Postgres
@@ -130,12 +136,67 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Embedder + Reranker
         embedder = BGEEmbedder(device=settings.embedder_device)
         reranker = BGEReranker(device=settings.embedder_device)
+        app.state.embedder = embedder
+        app.state.weaviate_class_name = settings.weaviate_class_name
 
-        # LLM
-        router_llm = _build_llm_router(settings.config_dir)
+        # LLM:优先从 DB 加载(Task 16),为空时回退 YAML(Phase 1 兼容)
+        db_config = await load_llm_config_from_db(app.state.session_factory)
+        if db_config:
+            providers_list, routing_dict = db_config
+            providers: dict[str, object] = {}
+            settings_enc = settings.encryption_key
+            for prov in providers_list:
+                cfg = dict(prov["config"])
+                if cfg.get("api_key"):
+                    try:
+                        cfg["api_key"] = decrypt_api_key(cfg["api_key"], settings_enc)
+                    except ValueError:
+                        pass  # 旧数据可能是明文,保持原样继续尝试
+                try:
+                    provider = LLMRegistry.create(
+                        prov["type"],
+                        provider_id=prov["id"],
+                        api_base=cfg.get("api_base", ""),
+                        api_key=cfg.get("api_key", ""),
+                        model=cfg.get("model", ""),
+                        max_tokens=cfg.get("max_tokens", 4096),
+                        temperature=cfg.get("temperature", 0.3),
+                    )
+                except Exception:
+                    # 单个供应商构造失败(未注册的 type / 配置非法)不阻塞启动,
+                    # 跳过该供应商,其余正常加载。
+                    logger.exception(
+                        "LLM 供应商构造失败,已跳过: id=%s type=%s",
+                        prov["id"],
+                        prov["type"],
+                    )
+                    continue
+                providers[prov["id"]] = provider
+            router_llm = LLMRouter(providers, routing_dict)
+            logger.info("LLM 配置已从 DB 加载(%d 个供应商)", len(providers))
+        else:
+            router_llm = _build_llm_router(settings.config_dir)
+            logger.info("LLM 配置已从 YAML 加载(DB 为空)")
+        app.state.llm = router_llm
 
         # System prompt
         prompt_config = load_yaml_config(settings.config_dir / "system_prompt.yaml")
+
+        # Customization(Phase 2B):从 DB 加载按渠道的 system_prompt,
+        # 失败 / 为空时回退到 YAML(Phase 1 兼容)。widget 渠道必须有可用 prompt。
+        from backend.services.config_loader import load_customizations_from_db
+
+        channel_custs = await load_customizations_from_db(app.state.session_factory)
+        if channel_custs:
+            system_prompt = channel_custs.get("widget", {}).get(
+                "system_prompt", prompt_config["system_prompt"]
+            )
+            channel_customizations: dict[str, str] | None = {
+                ch: c["system_prompt"] for ch, c in channel_custs.items()
+            }
+        else:
+            system_prompt = prompt_config["system_prompt"]
+            channel_customizations = None
 
         # RAG
         searcher = HybridSearcher(weaviate_client, embedder, settings.weaviate_class_name)
@@ -144,7 +205,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             searcher=searcher,
             reranker=rerank_pipeline,
             llm=router_llm,
-            system_prompt=prompt_config["system_prompt"],
+            system_prompt=system_prompt,
+            channel_customizations=channel_customizations,
         )
         app.state.weaviate_client = weaviate_client
         app.state.engine = engine
@@ -226,6 +288,35 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 app.include_router(api_router)
+app.include_router(admin_router)
+
+# Task 21: 生产部署 — 在 /admin 路径下托管 admin SPA 构建产物。
+# _admin_dist 存在时挂载 StaticFiles;对未匹配的子路径(如 /admin/users)
+# 回退到 index.html,使 SPA 深链刷新不会 404。
+_admin_dist = Path(__file__).resolve().parent.parent / "admin" / "dist"
+
+
+class SPAStaticFiles(StaticFiles):
+    """StaticFiles that falls back to index.html for unknown paths.
+
+    ``StaticFiles(html=True)`` 仅在挂载根路径返回 index.html,
+    对 ``/admin/users`` 等 SPA 前端路由刷新时会抛 404。
+    本子类捕获异常并回退到 index.html,由前端路由接管。
+    """
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except (HTTPException, StarletteHTTPException):
+            return await super().get_response("index.html", scope)
+
+
+if _admin_dist.exists():
+    app.mount(
+        "/admin",
+        SPAStaticFiles(directory=str(_admin_dist), html=True),
+        name="admin",
+    )
 
 
 @app.get("/health")

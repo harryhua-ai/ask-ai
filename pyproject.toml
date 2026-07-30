@@ -14,13 +14,17 @@ dependencies = [
     "transformers>=4.41,<5.0",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
-    "pydantic>=2.0",
+    "pydantic[email]>=2.0",
     "pydantic-settings>=2.0",
     "python-multipart>=0.0.20",
     "sse-starlette>=2.1",
     "langdetect>=1.0.9",
     "tiktoken>=0.9",
     "slowapi>=0.1.9",
+    "PyJWT>=2.8",
+    "passlib[bcrypt]>=1.7",
+    "bcrypt>=4.0,<4.1",  # passlib 1.7 依赖 bcrypt.__about__(4.1+ 已移除)
+    "cryptography>=43.0",
 ]
 
 [project.optional-dependencies]
