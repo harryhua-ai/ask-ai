@@ -88,6 +88,26 @@ class Chunk:
     channel_visibility: tuple[str, ...] = ("widget", "api")
 
 
+@dataclass(frozen=True)
+class SemanticBlock:
+    """Markdown 语义块(不可变)。
+
+    由 _identify_blocks 产出,描述一个 Markdown 块级元素(标题/代码块/列表/表格/段落)
+    在原文中的字符范围与类型。
+
+    Attributes:
+        block_type: 块类型 — heading / paragraph / code / list / table。
+        start_char: 在原文中的起始字符偏移(含)。
+        end_char: 在原文中的结束字符偏移(不含)。
+        heading_level: 标题级别 1-6;非标题块为 0。
+    """
+
+    block_type: str
+    start_char: int
+    end_char: int
+    heading_level: int
+
+
 def _build_byte_to_char_map(encoded: bytes) -> list[int]:
     """构建 byte 偏移 → 完整 UTF-8 字符数的映射表(O(N))。
 
@@ -141,6 +161,195 @@ def _build_byte_to_char_map(encoded: bytes) -> list[int]:
                 byte_to_char[j] = char_idx
             break
     return byte_to_char
+
+
+_FENCE_PATTERN = re.compile(r"^(?:```|~~~)", re.MULTILINE)
+_HEADING_PATTERN = re.compile(r"^(#{1,6})\s+", re.MULTILINE)
+_LIST_PATTERN = re.compile(r"^\s*(?:[-*+]|\d+\.)\s", re.MULTILINE)
+_TABLE_PATTERN = re.compile(r"^\|.*\|$", re.MULTILINE)
+
+
+def _identify_blocks(content: str) -> list[SemanticBlock]:
+    """识别 Markdown 语义块边界,保护代码块内的标题不被误判。
+
+    扫描策略:
+    1. 先用 _FENCE_PATTERN 找到所有代码块范围,记录为不可切分的 code 块。
+    2. 在代码块范围外,用 _HEADING_PATTERN 找到标题边界。
+    3. 在代码块范围外,用 _LIST_PATTERN / _TABLE_PATTERN 找到列表/表格边界。
+    4. 两个相邻边界之间的文本若无其他类型标记,归为 paragraph。
+
+    Args:
+        content: Markdown 原文。
+
+    Returns:
+        SemanticBlock 列表,按 start_char 升序,覆盖 content 全部字符。
+    """
+    if not content:
+        return []
+
+    n = len(content)
+    blocks: list[SemanticBlock] = []
+
+    # Step 1: 找出所有代码块范围 (start_char, end_char)
+    # 用开闭配对迭代:所有 fence 标记按出现顺序两两配对(第 0 个开 → 第 1 个闭,
+    # 第 2 个开 → 第 3 个闭, ...) 独立匹配每个 fence 会同时命中开闭标记,
+    # 导致闭合 fence 被误认为新的开启 fence。
+    code_ranges: list[tuple[int, int]] = []
+    fence_matches = list(re.finditer(r"^(?:```|~~~)", content, re.MULTILINE))
+    for i in range(0, len(fence_matches) - 1, 2):
+        open_m = fence_matches[i]
+        close_m = fence_matches[i + 1]
+        code_ranges.append((open_m.start(), close_m.end()))
+        blocks.append(SemanticBlock(
+            block_type="code", start_char=open_m.start(), end_char=close_m.end(),
+            heading_level=0,
+        ))
+
+    def _in_code_range(pos: int) -> bool:
+        return any(s <= pos < e for s, e in code_ranges)
+
+    # Step 2: 识别标题边界(排除代码块内的)
+    heading_positions: list[tuple[int, int, int]] = []  # (start, end, level)
+    for m in _HEADING_PATTERN.finditer(content):
+        if _in_code_range(m.start()):
+            continue
+        level = len(m.group(1))
+        line_end = content.find("\n", m.start())
+        if line_end == -1:
+            line_end = n
+        heading_positions.append((m.start(), line_end, level))
+
+    # Step 3: 识别列表和表格的起始位置(排除代码块内的)
+    list_positions: list[tuple[int, int]] = []
+    for m in _LIST_PATTERN.finditer(content):
+        if _in_code_range(m.start()):
+            continue
+        list_positions.append((m.start(), m.end()))
+
+    table_positions: list[tuple[int, int]] = []
+    for m in _TABLE_PATTERN.finditer(content):
+        if _in_code_range(m.start()):
+            continue
+        table_positions.append((m.start(), m.end()))
+
+    # Step 4: 构建非代码块区域的块
+    # 收集所有边界点(代码块边界 + 标题/列表/表格起始)
+    boundaries: set[int] = {0, n}
+    for s, e in code_ranges:
+        boundaries.add(s)
+        boundaries.add(e)
+    for s, _, _ in heading_positions:
+        boundaries.add(s)
+    for s, _ in list_positions:
+        boundaries.add(s)
+    for s, _ in table_positions:
+        boundaries.add(s)
+
+    sorted_boundaries = sorted(boundaries)
+    heading_map = {s: lvl for s, _, lvl in heading_positions}
+    list_starts = {s for s, _ in list_positions}
+    table_starts = {s for s, _ in table_positions}
+
+    for i in range(len(sorted_boundaries) - 1):
+        start = sorted_boundaries[i]
+        end = sorted_boundaries[i + 1]
+        # 跳过代码块内部区域(已被 code 块覆盖)
+        if any(cs <= start < ce for cs, ce in code_ranges):
+            continue
+        text = content[start:end].strip()
+        if not text:
+            continue
+        if start in heading_map:
+            blocks.append(SemanticBlock(
+                block_type="heading", start_char=start, end_char=end,
+                heading_level=heading_map[start],
+            ))
+        elif start in list_starts:
+            blocks.append(SemanticBlock(
+                block_type="list", start_char=start, end_char=end, heading_level=0,
+            ))
+        elif start in table_starts:
+            blocks.append(SemanticBlock(
+                block_type="table", start_char=start, end_char=end, heading_level=0,
+            ))
+        else:
+            blocks.append(SemanticBlock(
+                block_type="paragraph", start_char=start, end_char=end, heading_level=0,
+            ))
+
+    blocks.sort(key=lambda b: b.start_char)
+    return blocks
+
+
+def _classify_chunk_type(text: str) -> str:
+    """根据 chunk 文本内容判断主导类型。
+
+    判断逻辑(按优先级):
+    1. 若文本以标题行开头(# / ## / ... / ######) → 'heading'
+    2. 统计代码块行数(fence 内)、列表行数、表格行数,取占比最高的类型
+    3. 默认 → 'paragraph'
+
+    Args:
+        text: chunk 文本。
+
+    Returns:
+        chunk_type ∈ {heading, paragraph, code, list, table}。
+    """
+    if not text:
+        return "paragraph"
+
+    lines = text.split("\n")
+
+    # 标题检测:首行非空行是否为标题
+    first_non_empty = next((ln for ln in lines if ln.strip()), "")
+    if re.match(r"^#{1,6}\s+", first_non_empty):
+        return "heading"
+
+    total_lines = max(1, len([ln for ln in lines if ln.strip()]))
+    code_lines = 0
+    list_lines = 0
+    table_lines = 0
+    in_fence = False
+
+    for ln in lines:
+        stripped = ln.strip()
+        if re.match(r"^(```|~~~)", stripped):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            code_lines += 1
+        elif re.match(r"^\s*(?:[-*+]|\d+\.)\s", ln):
+            list_lines += 1
+        elif re.match(r"^\|.*\|$", stripped):
+            table_lines += 1
+
+    code_ratio = code_lines / total_lines
+    list_ratio = list_lines / total_lines
+    table_ratio = table_lines / total_lines
+
+    if code_ratio >= 0.5:
+        return "code"
+    if list_ratio >= 0.4:
+        return "list"
+    if table_ratio >= 0.4:
+        return "table"
+    return "paragraph"
+
+
+def _build_doc_section(heading_stack: list[tuple[int, str]]) -> str:
+    """从标题层级栈构建 doc_section 路径字符串。
+
+    heading_stack 中的每个元素为 (level, title),level ∈ [1, 6]。
+    栈中的层级必须合法(不会出现 level 3 跟在 level 1 后面而跳过 level 2),
+    因为调用方在 push 前已经做了 pop 操作。
+
+    Args:
+        heading_stack: 标题栈,按文档出现顺序排列。
+
+    Returns:
+        用 " > " 连接的标题路径;空栈返回空字符串。
+    """
+    return " > ".join(title for _, title in heading_stack)
 
 
 def _split_by_structure(content: str) -> list[tuple[str, int]]:
