@@ -5,11 +5,15 @@ viewer+ 可读取 LLM 供应商与路由;admin / editor 可写入。
 不依赖全局 DB 单例,便于测试隔离。
 
 api_key 安全:
-    - ``_mask_config`` 将响应中的 api_key / secret / token / password 替换为 ``********``
+    - ``_mask_config`` 将响应中的 api_key / secret / token / password 替换为 ``"********"``
     - ``_encrypt_sensitive`` 在写入 DB 前对敏感字段 Fernet 加密
     - 连通性测试端点在调用 LLMRegistry 前解密 api_key
+    - PATCH config 时仅加密新传入的敏感字段,保留 DB 中已加密的旧值
+      (避免对密文二次加密 / 用 "********" 占位符覆盖真实密文)
+    - 连通性测试异常返回脱敏的通用错误消息,完整异常仅 server-side 记录
 """
 
+import logging
 import time
 from typing import Annotated
 
@@ -29,6 +33,8 @@ from backend.auth.crypto import decrypt_api_key, encrypt_api_key
 from backend.auth.dependencies import CurrentUser, require_role
 from backend.db.models import LLMProviderModel, LLMRouting
 from backend.llm.registry import LLMRegistry
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["LLM 供应商管理"])
 EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
@@ -111,7 +117,11 @@ async def update_provider(
 ) -> LLMProviderOut:
     """更新 LLM 供应商字段(admin / editor),仅写入非 None 字段。
 
-    若传入 config,会与已有 config 浅合并后整体加密回写。
+    config 合并语义(防止 api_key 损坏):
+      - 仅加密 req.config 中**新传入**的敏感字段(明文 → 密文)
+      - 丢弃 req.config 中值为 ``"********"`` 的敏感字段(前端回显占位符 → 保留 DB 旧密文)
+      - 再与 provider.config 浅合并,确保未改动的敏感字段保持原密文不变
+
     不存在返回 404。
     """
     settings = request.app.state.settings
@@ -128,8 +138,15 @@ async def update_provider(
         if req.enabled is not None:
             provider.enabled = req.enabled
         if req.config:
-            merged = {**provider.config, **req.config}
-            provider.config = _encrypt_sensitive(merged, settings.encryption_key)
+            # 仅加密新传入的敏感字段;"********" 占位符会被 _encrypt_sensitive 原样保留,
+            # 随后在此处被剔除,避免用占位符覆盖 DB 中的真实密文。
+            new_encrypted = _encrypt_sensitive(req.config, settings.encryption_key)
+            new_encrypted = {
+                k: v
+                for k, v in new_encrypted.items()
+                if not (k in SENSITIVE_KEYS and v == "********")
+            }
+            provider.config = {**provider.config, **new_encrypted}
         await session.commit()
         await session.refresh(provider)
     return LLMProviderOut(
@@ -190,7 +207,8 @@ async def test_provider(provider_id: str, _: EditorDep, request: Request) -> Con
     """对指定 LLM 供应商执行连通性测试(admin / editor)。
 
     在调用 LLMRegistry 前先解密 DB 中的 api_key;
-    测试结果返回 success / latency_ms / error,不泄露 api_key。
+    测试结果返回 success / latency_ms / error,不泄露 api_key 或内部异常细节。
+    异常的完整堆栈仅记录到服务端日志,响应中只返回脱敏的通用错误消息。
     """
     settings = request.app.state.settings
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
@@ -225,7 +243,13 @@ async def test_provider(provider_id: str, _: EditorDep, request: Request) -> Con
         return ConnectivityTestResult(
             provider_id=provider_id, success=ok, latency_ms=latency, error=None
         )
-    except Exception as exc:  # noqa: BLE001 - 连通性测试需兜底所有异常并返回结构化结果
+    except Exception as exc:  # 连通性测试需兜底所有异常并返回结构化结果
+        # 完整异常仅记录到服务端日志(可能含 URL / auth header,不可外泄)
+        logger.exception("LLM 连通性测试失败: provider_id=%s", provider_id)
+        # 返回脱敏的通用错误消息 + 异常类型名,绝不外泄 str(exc)
         return ConnectivityTestResult(
-            provider_id=provider_id, success=False, latency_ms=None, error=str(exc)
+            provider_id=provider_id,
+            success=False,
+            latency_ms=None,
+            error=f"LLM 连通性测试失败({type(exc).__name__})",
         )

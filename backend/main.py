@@ -150,15 +150,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         cfg["api_key"] = decrypt_api_key(cfg["api_key"], settings_enc)
                     except ValueError:
                         pass  # 旧数据可能是明文,保持原样继续尝试
-                provider = LLMRegistry.create(
-                    prov["type"],
-                    provider_id=prov["id"],
-                    api_base=cfg.get("api_base", ""),
-                    api_key=cfg.get("api_key", ""),
-                    model=cfg.get("model", ""),
-                    max_tokens=cfg.get("max_tokens", 4096),
-                    temperature=cfg.get("temperature", 0.3),
-                )
+                try:
+                    provider = LLMRegistry.create(
+                        prov["type"],
+                        provider_id=prov["id"],
+                        api_base=cfg.get("api_base", ""),
+                        api_key=cfg.get("api_key", ""),
+                        model=cfg.get("model", ""),
+                        max_tokens=cfg.get("max_tokens", 4096),
+                        temperature=cfg.get("temperature", 0.3),
+                    )
+                except Exception:
+                    # 单个供应商构造失败(未注册的 type / 配置非法)不阻塞启动,
+                    # 跳过该供应商,其余正常加载。
+                    logger.exception(
+                        "LLM 供应商构造失败,已跳过: id=%s type=%s",
+                        prov["id"],
+                        prov["type"],
+                    )
+                    continue
                 providers[prov["id"]] = provider
             router_llm = LLMRouter(providers, routing_dict)
             logger.info("LLM 配置已从 DB 加载(%d 个供应商)", len(providers))

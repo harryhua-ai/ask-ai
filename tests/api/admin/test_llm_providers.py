@@ -3,11 +3,12 @@
 覆盖:
 - list_providers(viewer+ 可读、未认证 401、api_key 已脱敏)
 - create_provider(201、重复 ID 409、api_key 在 DB 中已加密)
-- update_provider(PATCH、404、传入 api_key 被加密)
+- update_provider(PATCH、404、传入 api_key 被加密、
+  不传 api_key 时保留原密文、传入 "********" 时保留原密文)
 - delete_provider(DELETE、404)
 - list_routing(viewer+ 可读,含 Task 9 迁移项)
 - update_routing(创建、更新)
-- test_provider(连通性测试 —— 通过 mock 避免真实网络调用)
+- test_provider(连通性测试 —— 通过 mock 避免真实网络调用;异常返回脱敏错误)
 
 清理策略:仅删除本测试创建的 LLMProviderModel(id 以 "test-prov" 开头)和
 LLMRouting(task 以 "test-" 开头),不触碰 Task 9 迁移的 deepseek 供应商 / generation 路由。
@@ -36,6 +37,8 @@ _TEST_PROV_ID_2 = "test-prov-create"
 _TEST_PROV_ID_3 = "test-prov-patch"
 _TEST_PROV_ID_4 = "test-prov-del"
 _TEST_PROV_ID_5 = "test-prov-conn"
+_TEST_PROV_ID_6 = "test-prov-patch-no-key"
+_TEST_PROV_ID_7 = "test-prov-patch-masked"
 _TEST_TASK = "test-task"
 
 
@@ -218,6 +221,118 @@ async def test_update_provider_partial_and_encrypts_key(auth_headers):
     assert decrypt_api_key(row.config["api_key"], encryption_key) == "sk-rotated"
 
 
+async def test_update_provider_without_api_key_preserves_ciphertext(auth_headers):
+    """PATCH config 不含 api_key 时,DB 中已加密的 api_key 密文保持不变。
+
+    回归覆盖 C1:旧实现把 DB 中已加密的 api_key 当明文再次加密,
+    导致密文被二次加密、永久无法解密。
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post(
+            "/api/admin/llm-providers",
+            json={
+                "id": _TEST_PROV_ID_6,
+                "type": "openai_compatible",
+                "config": {
+                    "api_base": "https://orig.example.com/v1",
+                    "api_key": "sk-keep-me",
+                    "model": "m-orig",
+                    "max_tokens": 4096,
+                },
+            },
+            headers=auth_headers,
+        )
+        # 读取 PATCH 前的 DB 密文
+        factory = app.state.session_factory
+        encryption_key = app.state.settings.encryption_key
+        async with factory() as session:
+            before = (
+                await session.execute(
+                    select(LLMProviderModel).where(LLMProviderModel.id == _TEST_PROV_ID_6)
+                )
+            ).scalar_one()
+            ciphertext_before = before.config["api_key"]
+        # 解密验证初始值
+        assert decrypt_api_key(ciphertext_before, encryption_key) == "sk-keep-me"
+
+        # PATCH 只改 max_tokens,不传 api_key
+        resp = await client.patch(
+            f"/api/admin/llm-providers/{_TEST_PROV_ID_6}",
+            json={"config": {"max_tokens": 8192}},
+            headers=auth_headers,
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["config"]["max_tokens"] == 8192
+    assert body["config"]["api_key"] == "********"
+
+    # 验证 DB 中 api_key 密文未变,且仍能解回原始明文(未被二次加密)
+    async with factory() as session:
+        after = (
+            await session.execute(
+                select(LLMProviderModel).where(LLMProviderModel.id == _TEST_PROV_ID_6)
+            )
+        ).scalar_one()
+        ciphertext_after = after.config["api_key"]
+    assert ciphertext_after == ciphertext_before, "PATCH 其他字段不应改变 api_key 密文"
+    assert decrypt_api_key(ciphertext_after, encryption_key) == "sk-keep-me"
+
+
+async def test_update_provider_with_masked_placeholder_preserves_ciphertext(auth_headers):
+    """PATCH config 中 api_key 为 "********" 时,DB 密文保持不变。
+
+    回归覆盖 C2:旧实现把前端回显的占位符 "********" 当明文加密回写,
+    覆盖了 DB 中的真实密文。
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post(
+            "/api/admin/llm-providers",
+            json={
+                "id": _TEST_PROV_ID_7,
+                "type": "openai_compatible",
+                "config": {
+                    "api_base": "https://orig.example.com/v1",
+                    "api_key": "sk-keep-me",
+                    "model": "m-orig",
+                },
+            },
+            headers=auth_headers,
+        )
+        factory = app.state.session_factory
+        encryption_key = app.state.settings.encryption_key
+        async with factory() as session:
+            before = (
+                await session.execute(
+                    select(LLMProviderModel).where(LLMProviderModel.id == _TEST_PROV_ID_7)
+                )
+            ).scalar_one()
+            ciphertext_before = before.config["api_key"]
+
+        # 前端把列表接口返回的 "********" 原样回传
+        resp = await client.patch(
+            f"/api/admin/llm-providers/{_TEST_PROV_ID_7}",
+            json={"config": {"api_key": "********", "model": "m-new"}},
+            headers=auth_headers,
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["config"]["model"] == "m-new"
+    assert body["config"]["api_key"] == "********"
+
+    # DB 密文必须未变,且仍能解回原始明文
+    async with factory() as session:
+        after = (
+            await session.execute(
+                select(LLMProviderModel).where(LLMProviderModel.id == _TEST_PROV_ID_7)
+            )
+        ).scalar_one()
+        ciphertext_after = after.config["api_key"]
+    assert ciphertext_after == ciphertext_before, "前端回显的 '********' 不应覆盖 DB 中的真实密文"
+    assert decrypt_api_key(ciphertext_after, encryption_key) == "sk-keep-me"
+
+
 async def test_update_provider_not_found(auth_headers):
     """更新不存在的 ID 返回 404。"""
     transport = ASGITransport(app=app)
@@ -351,7 +466,11 @@ async def test_connectivity_test_mocked(auth_headers):
 
 
 async def test_connectivity_test_handles_failure(auth_headers):
-    """连通性测试在 LLM 抛异常时返回 success=False 与错误信息,不泄露 api_key。"""
+    """连通性测试在 LLM 抛异常时返回 success=False 与脱敏错误,不泄露 api_key 或内部细节。
+
+    回归覆盖 I1:旧实现把 str(exc) 直接回传,若异常消息包含 URL / auth header
+    则可能泄露解密后的 api_key。修复后只返回通用消息 + 异常类型名。
+    """
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         # 复用前一个测试创建的 _TEST_PROV_ID_5(若不存在则创建)
@@ -369,10 +488,11 @@ async def test_connectivity_test_handles_failure(auth_headers):
             headers=auth_headers,
         )
 
-        # mock LLMRegistry.create 抛异常,模拟供应商不可用
+        # mock LLMRegistry.create 抛异常,异常消息中嵌入 api_key 模拟 HTTP 客户端泄露
+        leaked_msg = "HTTP 401 Unauthorized: Bearer sk-mock rejected"
         with patch(
             "backend.api.admin.llm_providers.LLMRegistry.create",
-            side_effect=RuntimeError("connection refused"),
+            side_effect=RuntimeError(leaked_msg),
         ):
             resp = await client.post(
                 f"/api/admin/llm-providers/{_TEST_PROV_ID_5}/test",
@@ -382,6 +502,11 @@ async def test_connectivity_test_handles_failure(auth_headers):
     body = resp.json()
     assert body["success"] is False
     assert body["latency_ms"] is None
-    assert "connection refused" in (body["error"] or "")
-    # 错误信息中绝不包含 api_key
-    assert "sk-mock" not in (body["error"] or "")
+    # 返回的是脱敏的通用消息,不包含原始异常文本
+    assert body["error"] is not None
+    assert "RuntimeError" in body["error"], "错误消息应包含异常类型名"
+    assert "LLM 连通性测试失败" in body["error"], "错误消息应为脱敏的通用文案"
+    # 关键:绝不泄露原始异常文本或 api_key
+    assert "connection" not in body["error"].lower(), "不应包含原始异常文本"
+    assert "sk-mock" not in body["error"], "错误消息中绝不包含 api_key"
+    assert "Bearer" not in body["error"], "错误消息中绝不包含 auth header 片段"
