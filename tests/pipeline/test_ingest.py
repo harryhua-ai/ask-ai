@@ -167,17 +167,24 @@ def test_ingest_document_isolates_per_chunk_failure():
     client = _make_weaviate_client()
     collection = client.collections.get.return_value
 
-    # 第一次 insert 失败,后续都成功
+    # 第一次 insert 失败(模拟 Weaviate 真故障,非 422 exists),replace 也失败
+    # → 该 chunk warning,其余正常(新行为:insert 失败先尝试 replace 幂等覆盖,
+    # replace 也失败才视为真失败)
     def _insert_side_effect(*args, **kwargs):
         if collection.data.insert.call_count == 1:
             raise RuntimeError("weaviate boom")
 
     collection.data.insert.side_effect = _insert_side_effect
 
+    def _replace_boom(*args, **kwargs):
+        raise RuntimeError("weaviate boom")
+
+    collection.data.replace.side_effect = _replace_boom
+
     pipeline = IngestionPipeline(embedder, client, max_tokens=100, overlap=10)
     count = pipeline.ingest_document(_make_doc(content=long_content))
 
-    # 1 个失败,其余成功;返回值 = 总 chunk 数 - 1
+    # 第一个 chunk insert+replace 都失败,其余成功;返回值 = 总 chunk 数 - 1
     assert collection.data.insert.call_count >= 2
     assert count == collection.data.insert.call_count - 1
 
@@ -454,3 +461,163 @@ def test_ingest_document_uses_semantic_chunking():
         mock_chunk.return_value = []
         pipeline.ingest_document(doc)
         mock_chunk.assert_called_once()
+
+
+# --------------------------------------------------------------------------- #
+# Task 6: 代码分块路由 + branch 元数据
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_route_code_to_chunk_code():
+    """代码扩展名(.py)的 doc 应走 chunk_code 而非 chunk_document_semantic。"""
+    from unittest.mock import MagicMock, patch
+    from backend.pipeline.ingest import IngestionPipeline
+    from backend.connectors.base import RawDocument
+    mock_client = MagicMock()
+    mock_client.collections.exists.return_value = True
+    mock_collection = MagicMock()
+    mock_client.collections.get.return_value = mock_collection
+    mock_embedder = MagicMock()
+    mock_embedder.embed.return_value = [[0.1]]
+    pipeline = IngestionPipeline(embedder=mock_embedder, weaviate_client=mock_client)
+    doc = RawDocument(
+        source_id="r/main/m.py", source_type="local_git", product="p",
+        title="m", content="def foo():\n    return 1\n", url="u",
+        metadata={"path": "m.py"}, content_hash="h", branch="main",
+    )
+    with patch("backend.pipeline.ingest.chunk_document_semantic") as mock_semantic, \
+         patch("backend.pipeline.ingest.chunk_code") as mock_code:
+        mock_code.return_value = []
+        pipeline.ingest_document(doc)
+        mock_code.assert_called_once()
+        mock_semantic.assert_not_called()
+
+
+@pytest.mark.unit
+def test_route_markdown_to_semantic():
+    """Markdown 扩展名(.md)的 doc 应走 chunk_document_semantic。"""
+    from unittest.mock import MagicMock, patch
+    from backend.pipeline.ingest import IngestionPipeline
+    from backend.connectors.base import RawDocument
+    mock_client = MagicMock()
+    mock_client.collections.exists.return_value = True
+    mock_collection = MagicMock()
+    mock_client.collections.get.return_value = mock_collection
+    mock_embedder = MagicMock()
+    mock_embedder.embed.return_value = [[0.1]]
+    pipeline = IngestionPipeline(embedder=mock_embedder, weaviate_client=mock_client)
+    doc = RawDocument(
+        source_id="r/main/m.md", source_type="local_git", product="p",
+        title="m", content="# Title\n\nText.", url="u",
+        metadata={"path": "m.md"}, content_hash="h", branch="main",
+    )
+    with patch("backend.pipeline.ingest.chunk_document_semantic") as mock_semantic, \
+         patch("backend.pipeline.ingest.chunk_code") as mock_code:
+        mock_semantic.return_value = []
+        pipeline.ingest_document(doc)
+        mock_semantic.assert_called_once()
+        mock_code.assert_not_called()
+
+
+@pytest.mark.unit
+def test_weaviate_gets_branch_property():
+    """data.insert 的 properties 应含 branch 字段(取自 doc.branch)。"""
+    from unittest.mock import MagicMock
+    from backend.pipeline.ingest import IngestionPipeline
+    from backend.connectors.base import RawDocument
+    mock_client = MagicMock()
+    mock_client.collections.exists.return_value = True
+    mock_collection = MagicMock()
+    mock_client.collections.get.return_value = mock_collection
+    mock_embedder = MagicMock()
+    mock_embedder.embed.return_value = [[0.1]]
+    pipeline = IngestionPipeline(embedder=mock_embedder, weaviate_client=mock_client)
+    doc = RawDocument(
+        source_id="r/hw-v1.2/m.py", source_type="local_git", product="p",
+        title="m", content="def foo():\n    return 1\n", url="u",
+        metadata={"path": "m.py"}, content_hash="h", branch="hw-v1.2",
+    )
+    pipeline.ingest_document(doc)
+    insert_kwargs = mock_collection.data.insert.call_args.kwargs
+    props = insert_kwargs.get("properties", {})
+    assert props.get("branch") == "hw-v1.2"
+
+
+@pytest.mark.unit
+def test_ensure_collection_creates_branch_property():
+    """_ensure_collection 应在 collection properties 中定义 branch(TEXT)。"""
+    from unittest.mock import MagicMock
+    from backend.pipeline.ingest import IngestionPipeline
+    from weaviate.classes.config import DataType
+    mock_client = MagicMock()
+    mock_client.collections.exists.return_value = False
+    mock_client.collections.get.return_value = MagicMock()
+    pipeline = IngestionPipeline(embedder=MagicMock(), weaviate_client=mock_client)
+    pipeline._ensure_collection()
+    create_kwargs = mock_client.collections.create.call_args
+    property_names = [p.name if hasattr(p, "name") else p.get("name")
+                      for p in create_kwargs.kwargs.get("properties", [])]
+    assert "branch" in property_names
+    # 校验 DataType
+    for p in create_kwargs.kwargs.get("properties", []):
+        n = p.name if hasattr(p, "name") else p.get("name")
+        if n == "branch":
+            dt = p.dataType if hasattr(p, "dataType") else p.get("dataType")
+            assert dt == DataType.TEXT
+
+
+@pytest.mark.unit
+def test_upsert_postgres_writes_branch():
+    """_upsert_postgres 应把 doc.branch 写入 Document.branch(Task 7)。"""
+    from contextlib import contextmanager
+    from unittest.mock import MagicMock
+
+    import numpy as np
+
+    from backend.connectors.base import RawDocument
+    from backend.pipeline.ingest import IngestionPipeline
+
+    embedder = MagicMock()
+    embedder.embed.return_value = [np.array([0.1] * 8)]
+    client = MagicMock()
+    client.collections.exists.return_value = True
+    session = MagicMock()
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = None  # 新插入
+    session.execute.return_value = scalar_result
+
+    @contextmanager
+    def _factory():
+        yield session
+
+    pipeline = IngestionPipeline(
+        embedder, client, session_factory=MagicMock(side_effect=_factory)
+    )
+    doc = RawDocument(
+        source_id="r/hw-v1.2/m.py",
+        source_type="local_git",
+        product="p",
+        title="m",
+        content="x",
+        url="u",
+        metadata={"path": "m.py"},
+        content_hash="h1",
+        branch="hw-v1.2",
+    )
+    pipeline.ingest_document(doc)
+    # session.add 被调用,传入的 Document 对象应有 branch
+    added = session.add.call_args[0][0]
+    assert added.branch == "hw-v1.2"
+
+
+def test_deterministic_uuid_stable_and_unique():
+    """确定性 UUID:同 (source_id, chunk_index) 同 uuid;不同 chunk/branch 不同 uuid。"""
+    from backend.pipeline.ingest import _deterministic_uuid
+    u1 = _deterministic_uuid("r/main/f.py", 0)
+    u2 = _deterministic_uuid("r/main/f.py", 0)
+    u3 = _deterministic_uuid("r/main/f.py", 1)
+    u4 = _deterministic_uuid("r/feat-a/f.py", 0)
+    assert u1 == u2, "同 key 应生成同 uuid(幂等基础)"
+    assert u1 != u3, "不同 chunk 应不同 uuid"
+    assert u1 != u4, "不同 branch 应不同 uuid"

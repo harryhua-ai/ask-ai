@@ -27,6 +27,9 @@ class SourceConfig:
         channel_visibility: 该数据源产出内容允许透出的渠道白名单
             (tuple 保证不可变),Phase 2A Task 5 由 Connector 透传到
             RawDocument / Chunk。默认 ``("widget", "api")`` 表示对所有渠道可见。
+        branches: 该数据源需索引的分支列表(多分支)。``()`` 表示单分支
+            (由 config.branch 或 connector 默认 main 决定),兼容旧配置。
+            Plan 1 代码库索引新增。
     """
 
     id: str
@@ -37,6 +40,8 @@ class SourceConfig:
     sync_interval: str
     # Phase 2A 新增字段
     channel_visibility: tuple[str, ...] = ("widget", "api")
+    # Plan 1 新增:多分支索引(空 tuple 表示单分支,兼容旧配置)
+    branches: tuple[str, ...] = ()
 
 
 class ConnectorRegistry:
@@ -96,13 +101,17 @@ class ConnectorRegistry:
                 channel_visibility:      # 可选,默认 ["widget", "api"]
                   - widget
                   - api
+                branches:                # 可选,默认 [] (单分支)
+                  - main
+                  - dev
 
         Args:
             yaml_data: 已解析的 YAML 字典。
 
         Returns:
-            SourceConfig 列表(保留输入顺序)。``channel_visibility`` 在
-            YAML 中以 list 给出,这里转成不可变 tuple 以匹配 dataclass 契约。
+            SourceConfig 列表(保留输入顺序)。``channel_visibility`` 与
+            ``branches`` 在 YAML 中以 list 给出,这里转成不可变 tuple 以匹配
+            dataclass 契约。
         """
         configs: list[SourceConfig] = []
         for src in yaml_data.get("sources", []):
@@ -115,6 +124,7 @@ class ConnectorRegistry:
                     config=src.get("config", {}),
                     sync_interval=src.get("sync_interval", "24h"),
                     channel_visibility=tuple(src.get("channel_visibility", ["widget", "api"])),
+                    branches=tuple(src.get("branches", [])),
                 )
             )
         return configs

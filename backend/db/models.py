@@ -40,7 +40,7 @@ class Base(DeclarativeBase):
 class Document(Base):
     """已灌入向量库的文档元数据(灌入管道维护)。
 
-    用 ``content_hash`` 作为主键实现 doc 级去重:同一内容重复灌入时仅更新
+    用 ``(content_hash, branch)`` 复合主键实现 doc 级去重:同内容跨分支各留一行,同分支重复灌入仅更新
     chunk_count 与 updated_at,避免 Postgres 行膨胀。chunk 级数据落在
     Weaviate,本表只承担"哪些文档已灌入 / 何时被灌入 / 灌了多少 chunk"
     的索引职责,供同步脚本与未来管理界面使用。
@@ -55,6 +55,7 @@ class Document(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    branch: Mapped[str] = mapped_column(String(100), default="", nullable=False, primary_key=True)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

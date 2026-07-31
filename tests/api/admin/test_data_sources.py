@@ -55,3 +55,29 @@ async def test_create_and_list_data_source(auth_headers):
         resp = await client.get("/api/admin/data-sources", headers=auth_headers)
         assert resp.status_code == 200
         assert any(s["id"] == "test-source" for s in resp.json())
+
+
+async def test_preview_branches(auth_headers, monkeypatch):
+    """preview-branches 应调 GitHub API 返回分支列表(mock httpx)。"""
+    from unittest.mock import AsyncMock, MagicMock
+
+    import backend.api.admin.data_sources as mod
+
+    fake_resp = MagicMock()
+    fake_resp.raise_for_status.return_value = None
+    fake_resp.json.return_value = [{"name": "main"}, {"name": "hw-v1.2"}]
+    fake_client = MagicMock()
+    fake_client.__aenter__ = AsyncMock(return_value=fake_client)
+    fake_client.__aexit__ = AsyncMock(return_value=None)
+    fake_client.get = AsyncMock(return_value=fake_resp)
+    monkeypatch.setattr(mod.httpx, "AsyncClient", lambda *a, **kw: fake_client)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get(
+            "/api/admin/data-sources/preview-branches?owner=o&repo=r",
+            headers=auth_headers,
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["branches"] == ["main", "hw-v1.2"]

@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from backend.connectors.base import DataSourceConnector, RawDocument
+from backend.connectors.exclusion import ExclusionPolicy
 from backend.connectors.registry import ConnectorRegistry, SourceConfig
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,12 @@ class FilesystemConnector(DataSourceConnector):
     - ``root_path`` (str, 必填): 要递归扫描的根目录(支持 ``~`` 展开)。
     - ``file_types`` (list[str], 可选): 文件后缀白名单,默认 ``[".md", ".txt"]``。
     - ``include_dirs`` (list[str], 可选): 相对路径前缀白名单;为空表示不限制。
+
+    P8 多分支契约:filesystem 为单分支源,分支名取 ``SourceConfig.branches[0]``
+    (若提供)或 ``config.branch`` / 默认 ``"main"``;``source_id`` 格式为
+    ``{cfg.id}/{branch}/{rel}``,``RawDocument.branch`` 透传该分支名。
+    过滤策略:``file_types`` 白名单 + ``include_dirs`` 前缀 + ``ExclusionPolicy``
+    (排除构建目录、二进制、测试数据等)共同生效。
     """
 
     def __init__(self, config: SourceConfig) -> None:
@@ -43,6 +50,12 @@ class FilesystemConnector(DataSourceConnector):
         self._include_dirs: list[str] = [*config.config.get("include_dirs", [])]
         # Phase 2A:透传 channel_visibility 到每条 RawDocument
         self._channel_visibility: tuple[str, ...] = config.channel_visibility
+        # P8 多分支契约:filesystem 为单分支,取 branches[0] 或 config.branch / main
+        self._branch: str = (
+            config.branches[0] if config.branches else config.config.get("branch", "main")
+        )
+        # P8:接入通用排除策略(构建目录 / 二进制 / 测试数据 / 非源码超大文件)
+        self._policy = ExclusionPolicy(config.config)
 
     @property
     def source_id(self) -> str:
@@ -81,7 +94,9 @@ class FilesystemConnector(DataSourceConnector):
         """根据路径构造 ``RawDocument``。
 
         使用 ``errors="replace"`` 读取,二进制或非 UTF-8 文件不会抛出异常,
-        但可能产生乱码内容(由下游管道决定是否过滤)。
+        但可能产生乱码内容(由下游管道决定是否过滤)。``source_id`` 采用
+        ``{cfg.id}/{branch}/{rel}`` 格式以与 ``LocalGitConnector`` 保持一致;
+        ``branch`` 取构造期确定的单分支名。
         """
         # encoding="utf-8" + errors="replace":二进制/非 utf-8 文件不报错
         content = path.read_text(encoding="utf-8", errors="replace")
@@ -89,51 +104,80 @@ class FilesystemConnector(DataSourceConnector):
         rel = str(path.relative_to(self._root))
         title = path.stem
         return RawDocument(
-            source_id=f"{self._config.id}/{rel}",
+            source_id=f"{self._config.id}/{self._branch}/{rel}",
             source_type="filesystem",
             product=self.product,
             title=title,
             content=content,
             url=f"file://{path.absolute()}",
-            metadata={"path": rel, "root": str(self._root)},
+            metadata={"path": rel, "root": str(self._root), "branch": self._branch},
             content_hash=content_hash,
             channel_visibility=self._channel_visibility,
+            branch=self._branch,
         )
+
+    def _is_excluded(self, path: Path) -> bool:
+        """按 ``ExclusionPolicy`` 判定文件是否应被排除。
+
+        ``stat()`` 失败(权限/IO)记录 warning 并视为不排除,交由后续
+        ``_make_document`` 的读取处理统一跳过,避免重复 stat 容错逻辑。
+
+        Args:
+            path: 绝对路径。
+
+        Returns:
+            True 表示应排除,False 表示保留。
+        """
+        rel = str(path.relative_to(self._root))
+        try:
+            size = path.stat().st_size
+        except OSError as e:
+            logger.warning("无法 stat 文件 %s: %s", path, e)
+            return False
+        return self._policy.should_exclude(rel, size)
 
     def fetch_all(self) -> Iterator[RawDocument]:
         """全量抓取:递归遍历根目录,yield 所有符合过滤条件的文件。
 
+        过滤顺序:``file_types`` + ``include_dirs``(``_should_include``)→
+        ``ExclusionPolicy``(构建目录 / 二进制 / 测试数据 / 非源码超大文件)。
         单文件读取失败(``PermissionError`` / ``FileNotFoundError`` /
         断裂符号链接等)记录 warning 后跳过,不阻断整体抓取;
         与 ``GitHubConnector`` 的单文件 try/except 模式一致。
         """
         for path in sorted(self._root.rglob("*")):
-            if path.is_file() and self._should_include(path):
-                try:
-                    yield self._make_document(path)
-                except (OSError, UnicodeDecodeError) as e:
-                    # OSError 覆盖 PermissionError/FileNotFoundError 等
-                    logger.warning("无法读取文件 %s: %s", path, e)
+            if not (path.is_file() and self._should_include(path)):
+                continue
+            if self._is_excluded(path):
+                continue
+            try:
+                yield self._make_document(path)
+            except (OSError, UnicodeDecodeError) as e:
+                # OSError 覆盖 PermissionError/FileNotFoundError 等
+                logger.warning("无法读取文件 %s: %s", path, e)
 
     def fetch_changes(self, since: datetime) -> Iterator[RawDocument]:
         """增量抓取:yield ``mtime`` 晚于 ``since`` 的文件。
 
-        单文件 ``stat()`` 或读取失败(权限、IO、解码等)记录 warning 后跳过,
-        不阻断整体抓取。``stat()`` 与 ``_make_document`` 放入同一 try 块,
-        避免出现半成功状态。
+        过滤顺序同 ``fetch_all``。单文件 ``stat()`` 或读取失败(权限、IO、
+        解码等)记录 warning 后跳过,不阻断整体抓取。``_is_excluded`` 内的
+        ``stat()`` 与 ``_make_document`` 内的读取已在各自 try 块中容错。
 
         Args:
             since: UTC 时间戳;文件 ``mtime`` 早于等于该时刻的文件会被跳过。
         """
         for path in sorted(self._root.rglob("*")):
-            if path.is_file() and self._should_include(path):
-                try:
-                    mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
-                    if mtime > since:
-                        yield self._make_document(path)
-                except (OSError, UnicodeDecodeError) as e:
-                    # stat() 与 read_text() 均可能抛 OSError
-                    logger.warning("无法读取文件 %s: %s", path, e)
+            if not (path.is_file() and self._should_include(path)):
+                continue
+            if self._is_excluded(path):
+                continue
+            try:
+                mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+                if mtime > since:
+                    yield self._make_document(path)
+            except (OSError, UnicodeDecodeError) as e:
+                # stat() 与 read_text() 均可能抛 OSError
+                logger.warning("无法读取文件 %s: %s", path, e)
 
     def fetch_deleted(self, since: datetime) -> list[str]:
         """返回自 ``since`` 起被删除的文档 source_id 列表。

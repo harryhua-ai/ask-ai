@@ -57,3 +57,13 @@ async def test_conversation_reserved_fields_nullable(db_session):
     assert saved.intent_tag is None
     assert saved.cluster_id is None
     assert saved.gap_status is None
+
+
+@pytest.mark.unit
+def test_document_model_has_branch():
+    """Document 模型必须包含 branch 列(P8 多分支契约)。"""
+    from backend.db.models import Document
+    assert hasattr(Document, "branch")
+    col = Document.__table__.columns["branch"]
+    assert col.nullable is False
+    assert col.index is True
