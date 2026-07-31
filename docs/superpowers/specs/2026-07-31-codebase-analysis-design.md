@@ -56,13 +56,13 @@
 | 其余 5 个 | 各 1(`main`) | ~24K | 小 |
 | **合计(单分支)** | — | **4,641,111** | 9,706 代码文件 + 1,322 文档 |
 
-**多分支并集估算**:ne301(7)× lowpower_camera(3)跨分支大量重叠但各有差异,粗估代码并集 **~8–10M LOC** → **20–30 万 chunk**。
+**多分支并集估算**:ne301(7 分支)与 lowpower_camera(3 分支)跨分支大量重叠但各有差异,粗估代码并集 **~8–10M LOC** → **20–30 万 chunk**。
 
 **语言分布(单分支 LOC)**:.c 2.70M / .h 1.23M / .rs 355K / .tsx 139K / .py 118K / .ts 50K / .cpp 17K / .js 15K / .sh 8K / .hpp 6K。
 
 **索引成本(多分支全量)**:BGE-m3 T4 索引 **15–25 分钟**,Weaviate **3–5GB**,symbols 表 **~50MB(10万+ 行)**。技术可行。
 
-**关键特征**:大头(ne301/lowpower_camera)是嵌入式固件,含大量 vendor / CMSIS / 多版本中间件(stedgeai 2.2/3.0/4.0)/ 第三方库(mongoose)/ 测试数据(wave_1ch)。经讨论确认:**这些不视为噪音**——CamThink 产品基于 STM32+Hailo,客户问题恰恰可能落在 CMSIS 寄存器、ATON NPU 接口、中间件上,必须保留。
+**关键特征**:大头(ne301/lowpower_camera)是嵌入式固件,含大量 vendor / CMSIS / 多版本中间件(stedgeai 2.2/4.0)/ 第三方库(mongoose)/ 测试数据(wave_1ch)。经讨论确认:**这些不视为噪音**——CamThink 产品基于 STM32+Hailo,客户问题恰恰可能落在 CMSIS 寄存器、ATON NPU 接口、中间件上,必须保留。
 
 ### 2.3 问题清单
 
@@ -88,7 +88,7 @@
 - 配置:sync 切到读 DB;前端结构化表单(含分支多选、排除规则)
 - 索引:多分支 checkout → 极保守过滤 → tree-sitter AST 分块(代码)/ 语义分块(Markdown)→ BGE-m3 GPU batch → Weaviate + documents 表
 - 符号:SCIP indexer(优先)+ tree-sitter(兜底)→ PG `symbols` 表
-- 检索:向量召回 + 符号精确/BM25 → RRF 融合 → reranker → 生成(带版本溯源)
+- 检索:向量召回 + 符号名精确/trigram 模糊 → RRF 融合 → reranker → 生成(带版本溯源)
 
 ---
 
@@ -133,7 +133,7 @@
 /api/ask → intent(已有)→ query_rewrite(已有)
    → 混合检索:
        ├─ Weaviate 向量召回 top-K(可按 branch 过滤)
-       └─ PG symbols 符号名精确/BM25(查询含标识符时)
+       └─ PG symbols 符号名精确/trigram 模糊(查询含标识符时)
      → RRF 融合(新)
    → rerank BGE-reranker-v2-m3(已有)→ pruner(已有)
    → DeepSeek 生成 → 答案 + 溯源(文件:行号 @ branch)
@@ -149,7 +149,7 @@
 | **Postgres** | 结构化事实 + 状态 + 关系 | 配置、元数据、符号、日志、对话、用户、路由 | 完整原文、向量 |
 | **Weaviate** | 语义向量检索 | chunk 向量 + 原文片段 + 元数据 | 完整文件、关系数据 |
 
-原则:每份数据只存在最适合它的层,不重复;同一数据的不同表示分层(原文在 FS、片段在 Weaviate、元数据/符号在 PG)。**chunk 原文权威源是 Weaviate**(PG `documents` 只存 `chunk_count`,避免双写不一致)。
+原则:每份数据只存在最适合它的层,不重复;同一数据的不同表示分层(原文在 FS、片段在 Weaviate、元数据/符号在 PG)。**chunk 原文权威源是 Weaviate**(PG `documents` 只存 doc 级元数据(chunk_count/branch/content_hash/索引状态),**不存 chunk 原文**,避免双写不一致)。
 
 #### 4.3.2 全系统数据落点
 
@@ -164,10 +164,10 @@
 | 数据源配置 | PG `data_sources` | <1MB | 管理员配 |
 | 同步日志 | PG `sync_log` | 增长 | 每次同步一行 |
 | 对话记录 | PG `conversations` | 几 GB/年 | 含 Phase2/3 字段,主要增长项 |
-| 点击/定制/覆盖/聚类 | PG 4 表 | <10MB | 运行时 |
+| 点击/定制/覆盖/聚类 | PG 5 表 | <10MB | 运行时(source_clicks/answer_overrides/customizations/customization_bindings/question_clusters)|
 | 用户 / LLM 配置路由 | PG 3 表 | <1MB | 系统 |
 
-#### 4.3.3 Postgres 内部分工(12 表分 3 组)
+#### 4.3.3 Postgres 内部分工(13 表分 3 组)
 
 | 组 | 表 | 维护方 |
 |---|---|---|
@@ -191,17 +191,17 @@
 - 索引(BGE-m3 GPU batch + SCIP)与在线检索(FastAPI)共享同机的 PG/Weaviate/corpus
 - 适合当前规模(<15GB 数据、单实例服务),最简运维
 - docker-compose 统一编排(postgres + weaviate + backend + corpus volume)
-- 后续若高并发,再拆分索引机与在线机、PG/Weaviate 中心化(过渡到 B/C 拓扑)
+- 后续若高并发可演进:方案 B(索引机与在线机拆分)、方案 C(PG/Weaviate 中心化独立集群)
 
 #### 4.3.6 备份策略
 
 - **文件系统**:git 远程天然备份;corpus 丢了重新 clone;models 可重下
 - **Postgres**:`pg_dump` 定期(配置 + 元数据 + 符号 + 对话,**最重要**,难重建)
-- **Weaviate**:可从 PG + FS 重建(重新 embedding),非首要;或 volume 快照
+- **Weaviate**:非首要——可从 FS 代码原文 + PG 元数据**全量重跑 embedding pipeline 重建**(同首次索引,约 15–25 分钟);日常建议 volume 快照缩短 RTO
 
 ---
 
-## 5. 配置子系统(P1 / P6 / P7)
+## 5. 配置子系统(P1 / P5 / P6 / P7)
 
 ### 5.1 sync 读 DB(P1)
 
@@ -231,7 +231,7 @@ branches 字段:新建数据源时,后端提供一个 `GET /data-sources/preview
 
 ### 6.1 多分支(P8)
 
-- **`source_id` 加 branch**:`{owner}/{repo}/{branch}/{path}`(原 `{owner}/{repo}/{path}`)
+- **`source_id` 加 branch**:`{owner}/{repo}/{branch}/{path}`(原 `{owner}/{repo}/{path}`);要求分支名不含 `/`(当前语料所有分支均符合),否则需固定分隔符或转义
 - **chunk 元数据加 branch**:Weaviate property 增 `branch`(TEXT);`Document.metadata_` 增 `branch`
 - **检索按版本过滤**:用户可指定 branch,或返回时标注来源分支
 - 同步流程:对配置的每个分支 `git checkout` 后独立索引一遍,source_id 天然区分
@@ -250,14 +250,14 @@ branches 字段:新建数据源时,后端提供一个 `GET /data-sources/preview
 
 **默认排除**(确定无疑的非源码):
 - 目录:`build/ dist/ node_modules/ __pycache__/ target/ out/ .git/ .next/ .venv/ .idea/ .vscode/`
-- 二进制:图片(`.png/.jpg/.gif/.svg/.webp`)、音频(`.wav/.mp3`)、视频、固件(`.bin/.elf/.hex`)、压缩包
-- 纯测试数据文件:`exclude_regex` 默认含 `wave_.*\.c$`、`*_tables\.c$` 类生成查找表(管理员可调)
+- 二进制与资源:图片(`.png/.jpg/.gif/.svg/.webp`)、音频(`.wav/.mp3`)、视频、固件(`.bin/.elf/.hex`)、压缩包
+- 纯测试数据:`exclude_regex` 默认仅含 `wave_\d.*\.c$`(如 `wave_1ch_16bits.c`)类音频/波形测试数据(**不匹配** CMSIS 查找表)
 
-**保留**:所有源码(含 CMSIS / Middlewares / Drivers / Lib / vendor SDK / ATON)。
+**保留(不论文件大小)**:所有源码(含 CMSIS / Middlewares / Drivers / Lib / vendor SDK / ATON),包括超大文件如 `arm_common_tables.c`(4.7MB)、`stm32n657xx.h`(3.5MB)、`ATON.h`——这些是客户可能问答的内容。
 
-**管理员可配**(P6 表单字段):`exclude_dirs`、`exclude_regex`、`max_file_size`(默认 2MB,超过的代码文件单独标记或按需排除)。
+**管理员可配**(P6 表单字段):`exclude_dirs`、`exclude_regex`、`max_file_size`。`max_file_size` 默认作用于**未命中扩展名排除的非源码文件**(如大型 `.json/.csv/.log`),**不限制源码文件**;如需对源码设上限须管理员显式配置。
 
-**灰色地带**:超大生成查找表(如 `arm_common_tables.c` 4.7MB)按"别排除有用内容"原则**默认保留**,管理员可通过 `max_file_size` 调整。
+**设计原则**:排除规则只砍"确定无疑的非源码";任何可能是客户问答内容的源码(含 vendor/CMSIS/查找表)一律保留,宁可多索引;规则之间不得互相矛盾。
 
 ### 6.4 GPU batch embedding
 
@@ -266,7 +266,7 @@ branches 字段:新建数据源时,后端提供一个 `GET /data-sources/preview
 
 ---
 
-## 7. 符号层(SCIP 优先 + tree-sitter 兜底)
+## 7. 符号层(P4:SCIP 优先 + tree-sitter 兜底)
 
 ### 7.1 策略
 
@@ -288,19 +288,21 @@ scip-clang 需要每个项目的 `compile_commands.json`:
 
 ### 7.3 symbols 表(PG,新)
 
-```
+```sql
 symbols(
   id UUID PK,
   source_id TEXT,        -- {owner}/{repo}/{branch}/{path},关联 documents
   symbol_name TEXT,
-  symbol_kind TEXT,      -- function/class/method/variable/definition/reference
+  symbol_kind TEXT,      -- function/class/method/variable
+  role TEXT,             -- SCIP 角色:definition/reference(区分定义点与引用点)
   file_path TEXT,
   branch TEXT,
   line_start INT, line_end INT,
   signature TEXT,
   language TEXT,
   content_hash TEXT,
-  INDEX(symbol_name), INDEX(source_id)
+  INDEX ON symbols USING gin(symbol_name gin_trgm_ops),  -- trigram 模糊匹配
+  INDEX(source_id)
 )
 ```
 
@@ -311,7 +313,7 @@ symbols(
 ## 8. 混合检索
 
 - **向量召回**:Weaviate top-K(支持按 `branch` 过滤)
-- **符号精确/BM25**:PG `symbols` 表,当查询含标识符(驼峰/下划线词)时触发
+- **符号名精确/trigram 模糊**:PG `symbols` 表,当查询含标识符(驼峰/下划线词)时触发
 - **RRF 融合**(Reciprocal Rank Fusion):无需调参,鲁棒合并两路结果
 - **rerank**:BGE-reranker-v2-m3(已有)
 - **版本过滤/标注**:返回 chunk 带分支标签,答案溯源含 `文件:行号 @ branch`
@@ -324,12 +326,25 @@ symbols(
 - `documents` 表增 `branch` 字段;doc 级去重键含 branch
 - 供 admin 文档列表、去重统计、增量对比使用
 
+```sql
+documents(
+  content_hash TEXT PK,        -- 内容哈希,doc 级去重主键
+  source_id TEXT,              -- {owner}/{repo}/{branch}/{path}
+  branch TEXT,                 -- 分支(多分支区分)
+  source_type TEXT, product TEXT, title TEXT, url TEXT,
+  metadata JSONB,              -- path/root 等
+  chunk_count INT, status TEXT,   -- indexed / failed
+  created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ,
+  INDEX(source_id), INDEX(branch)
+)
+```
+
 ---
 
 ## 10. 并行索引架构
 
 - 跨数据源 + 跨分支并发(当前串行)
-- GPU batch embedding
+- GPU batch embedding:**单 worker 串行 batch** 推理(GPU context 不跨进程共享);CPU 密型的分块/SCIP 用 `ProcessPoolExecutor` 并行,避免多进程重复加载 BGE-m3 撑爆显存
 - 任务调度:首期用 `concurrent.futures.ProcessPoolExecutor` + GPU batch(轻量,无新依赖);若需持久化队列/跨机,后续引入 Arq + Redis
 - 单源/单文件/单符号失败不中断批次(沿用现有错误隔离)
 
@@ -338,10 +353,12 @@ symbols(
 ## 11. 错误处理
 
 - **单文件**抓取/分块/embedding 失败 → warning 跳过,不中断批次(沿用)
-- **SCIP indexer** 失败 → 该语言/该源 fallback tree-sitter,记录到 SyncLog
-- **C/C++ compile_commands.json 缺失/失败** → tree-sitter 兜底,SyncLog 标注降级
+- **SCIP indexer** 失败 → 该语言/该源 fallback tree-sitter,记录到 `sync_log` 表
+- **C/C++ compile_commands.json 缺失/失败** → tree-sitter 兜底,`sync_log` 表 标注降级
 - **git pull 失败** → 该源标 failed,不影响其他源
 - **Weaviate 写入**单 chunk 失败 → warning 继续(沿用)
+- **PG 元数据写失败**(`documents`/`symbols`)→ 记录到 `sync_log` 表,该 doc 标记需重试,下次增量同步校正
+- **双写一致性**:采用"先 Weaviate(权威)后 PG 元数据"顺序,PG 写失败不影响已写向量,下次增量校正
 
 ---
 
@@ -363,7 +380,7 @@ symbols(
 3. **多分支索引量**(20–30 万 chunk,GPU 索引时间 + Weaviate 存储验证)
 
 **建议实现顺序**(spec 内不分阶段,但实现按此推进降低风险):
-1. P1 配置统一(sync 读 DB)+ P6 前端表单 + P7 枚举对齐
+1. P1 配置统一(sync 读 DB)+ P5 `include_dirs` 可配 + P6 前端表单 + P7 枚举对齐
 2. P8 多分支 source_id + P0 极保守排除 + P2 tree-sitter 分块
 3. P3 documents 表启用
 4. GPU 并行索引架构
@@ -429,3 +446,68 @@ symbols(
 1.0MB .c  lowpower_camera/.../usb_stream/test_apps/.../wave_1ch_16bits.c     (音频测试数据,默认排除)
 0.9MB .c  ne301/.../Lib/mongoose/mongoose.c                                  (第三方 web 库)
 ```
+
+<!-- 以上为文档正文,以下为双路审核修复记录 -->
+
+---
+
+## 🔍 Dual Review Log
+
+### Round 1 — 2026-07-31
+
+| # | 级别 | 来源 | 位置 | 问题 | 修复动作 |
+|---|------|------|------|------|---------|
+| 1 | HIGH | 内容审核 | §6.3 | 排除规则三重矛盾:`*_tables\.c$` + max_file_size 2MB 会排除 CMSIS/ATON,与"必须保留 vendor"核心决策冲突 | 去掉 `*_tables\.c$`(仅留 `wave_.*\.c$` 测试数据);`max_file_size` 改为仅作用于非源码资源、不限制源码;删除"灰色地带"矛盾表述,统一为"源码不论大小保留" |
+| 2 | HIGH | 内容审核 | §4.3.6 | 备份重建表述误导(称 PG+FS 重建,但 PG 不存 chunk 原文,实为全量重跑) | 改为"全量重跑 embedding pipeline 重建(15–25 分钟)";补 volume 快照缩短 RTO |
+| 3 | HIGH | 结构审核 | §4.3.3 标题 | "12 表分 3 组"实为 13 表(4+6+3) | 标题改为"13 表分 3 组" |
+| 4 | HIGH | 结构审核 | §4.3.2 | "PG 4 表"实为 5 表(customizations 与 customization_bindings 拆 2 表) | 改为"PG 5 表"并显式列出 5 个表名 |
+
+**本轮修复**: 4 个 | **累计修复**: 4 个
+
+### Round 2 — 2026-07-31
+
+| 维度 | 内容审核 | 结构审核 |
+|------|---------|---------|
+| CRITICAL | 0 | 0 |
+| HIGH | 0 | 0 |
+| MEDIUM | 3(全修) | 2(全修) |
+| LOW | 10(9 修) | 5(4 修) |
+| 结论 | ✅ 通过(HIGH=0) | ✅ 通过(HIGH=0) |
+
+**Round 1 的 4 个 HIGH 全部确认修复到位 ✓**
+
+Round 2 修复(收敛清扫):
+
+| # | 级别 | 来源 | 问题 | 修复 |
+|---|------|------|------|------|
+| M1 | MEDIUM | 内容 | BM25 误标(§7.3 实际 pg_trgm 非 BM25) | 全文"符号精确/BM25"统一为"符号名精确/trigram 模糊" |
+| M2 | MEDIUM | 内容 | symbol_kind 混 SCIP kind/role | 拆为 symbol_kind(语法类型)+ role(definition/reference) |
+| M3 | MEDIUM | 内容 | §4.3.1"只存 chunk_count"与 §9 矛盾 | 改为"只存 doc 级元数据,不存 chunk 原文" |
+| S1 | MEDIUM | 结构 | SyncLog vs sync_log 命名不一致 | 统一为 `sync_log` 表 |
+| S2 | MEDIUM | 结构 | P5 悬空(无方案章节认领) | §5 标题加 P5,§13 步骤 1 加 P5 |
+| L1 | LOW | 内容 | INDEX B-tree vs GIN 不匹配 | 补 GIN trigram 索引 |
+| L2 | LOW | 内容 | max_file_size 语义空操作 | 明确作用于未命中扩展名排除的非源码文件 |
+| L3 | LOW | 内容 | source_id 分支名含 / 歧义 | 注明分支名不含 / |
+| L4 | LOW | 内容 | B/C 拓扑未定义悬空 | 补 B/C 一句话定义 |
+| L5 | LOW | 内容 | 多进程 GPU 显存竞争 | 注明单 worker GPU batch + CPU ProcessPool |
+| L6 | LOW | 内容 | 缺 PG 写失败/双写一致性 | 补 PG 元数据写失败处理 + 双写顺序 |
+| L7 | LOW | 内容 | stedgeai 3.0 不存在(事实错) | 改为 2.2/4.0 |
+| L8 | LOW | 内容 | × 符号歧义 | 改为"7 分支与 3 分支" |
+| L9 | LOW | 内容 | wave_.* 正则过宽 | 收窄为 wave_\d.* |
+| L10 | LOW | 内容 | documents 表缺 schema | 补完整 schema |
+| S3 | LOW | 结构 | §7 标题缺 P4 标签 | 加 (P4:...) |
+| S5 | LOW | 结构 | §7.3 SQL 块缺语言标记 | 加 ```sql |
+
+跳过(纯排版,不影响实现):S4 §1 子节编号(§1 不编号可接受)、S6 §14.3 分支名反引号(繁琐低价值)
+
+**本轮修复**: 17 个 | **累计修复**: 21 个
+
+---
+
+### 汇总
+
+- **收敛轮次**: 2
+- **累计修复**: 21 个问题(HIGH: 4, MEDIUM: 5, LOW: 12;跳过 2 个纯排版 LOW)
+- **内容审核**: ✅ 通过
+- **结构审核**: ✅ 通过
+- **完成时间**: 2026-07-31
