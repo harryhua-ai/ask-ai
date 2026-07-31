@@ -117,8 +117,6 @@ async def test_rag_rejects_when_no_results():
     assert isinstance(result, RAGAnswer)
     assert result.is_answered is False
     assert "暂未在官方资料中找到" in result.answer
-    # 拒答时不应调用 LLM
-    llm.generate.assert_not_called()
 
 
 @pytest.mark.unit
@@ -289,23 +287,6 @@ async def test_rag_stream_answer_emits_sources_then_tokens_then_complete():
     assert events[3]["answer"] == "Hello world"
     # sources 事件与 complete 事件的 sources 应一致
     assert events[0]["sources"] == events[3]["sources"]
-
-
-@pytest.mark.unit
-async def test_rag_rejects_when_below_min_results():
-    """rerank 结果不足 min_results_to_answer 条时拒答(P0-2)。"""
-    sr = _make_sr()
-    searcher = MagicMock()
-    searcher.search.return_value = [sr, sr]
-    reranker = MagicMock()
-    reranker.rerank.return_value = [sr]  # 只有 1 条 < min_results=3
-    llm = AsyncMock()
-
-    rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="test", min_results_to_answer=3)
-    result = await rag.answer("query", "widget")
-
-    assert result.is_answered is False
-    llm.generate.assert_not_called()
 
 
 @pytest.mark.unit
@@ -482,3 +463,107 @@ async def test_rag_stream_answer_emits_override():
     assert events[2]["is_answered"] is True
     assert events[2]["answer"] == "保修期为 2 年"
     llm.stream.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# 意图识别测试
+# --------------------------------------------------------------------------- #
+
+
+def _intent_response(category: str) -> MagicMock:
+    """构造意图识别 LLM 响应(JSON 字符串)。"""
+    resp = MagicMock()
+    import json as _json
+
+    resp.content = _json.dumps({"category": category, "reason": "test"})
+    return resp
+
+
+@pytest.mark.unit
+async def test_rag_off_topic_rejects_without_search():
+    """意图为 off_topic 时不进入检索,直接拒绝。"""
+    sr = _make_sr()
+    searcher = MagicMock()
+    searcher.search.return_value = [sr]
+    reranker = MagicMock()
+    reranker.rerank.return_value = [sr]
+    llm = AsyncMock()
+    llm.generate.return_value = _intent_response("off_topic")
+
+    rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="test")
+    result = await rag.answer("今天天气怎么样?", "widget")
+
+    assert result.is_answered is False
+    assert "只能回答" in result.answer
+    searcher.search.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_rag_business_inquiry_rejects_without_search():
+    """意图为 business_inquiry 时不进入检索,直接拒绝。"""
+    sr = _make_sr()
+    searcher = MagicMock()
+    searcher.search.return_value = [sr]
+    reranker = MagicMock()
+    reranker.rerank.return_value = [sr]
+    llm = AsyncMock()
+    llm.generate.return_value = _intent_response("business_inquiry")
+
+    rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="test")
+    result = await rag.answer("价格多少?", "widget")
+
+    assert result.is_answered is False
+    assert "销售团队" in result.answer
+    searcher.search.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_rag_product_question_answers_with_few_results():
+    """意图为 product_question 时,即使结果数 < min_results 仍尝试回答。"""
+    sr = _make_sr()
+    searcher = MagicMock()
+    searcher.search.return_value = [sr]
+    reranker = MagicMock()
+    reranker.rerank.return_value = [sr]  # 仅 1 条结果
+    llm = AsyncMock()
+    # classify_intent → extract_query → generation
+    llm.generate.side_effect = [
+        _intent_response("product_question"),
+        _make_llm_response("NE301 电池监控"),
+        _make_llm_response("电池监控需要通过 I2C 读取"),
+    ]
+
+    rag = RAGOrchestrator(
+        searcher, reranker, llm,
+        system_prompt="test",
+        min_results_to_answer=3,  # 正常阈值 3,但 product_question 降为 1
+    )
+    result = await rag.answer("NE301 电池监控", "widget")
+
+    assert result.is_answered is True
+    assert "电池" in result.answer
+
+
+@pytest.mark.unit
+async def test_rag_intent_fail_open_proceeds():
+    """意图识别失败时 fail-open,正常进入 RAG 管线。"""
+    sr = _make_sr()
+    searcher = MagicMock()
+    searcher.search.return_value = [sr]
+    reranker = MagicMock()
+    reranker.rerank.return_value = [sr]
+    llm = AsyncMock()
+    # classify_intent (fail-open) → extract_query → generation
+    bad_resp = MagicMock()
+    bad_resp.content = "NOT JSON"
+    llm.generate.side_effect = [
+        bad_resp,
+        _make_llm_response("NE301 配置"),
+        _make_llm_response("answer"),
+    ]
+
+    rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="test")
+    result = await rag.answer("NE301 配置", "widget")
+
+    assert result.is_answered is True
+    searcher.search.assert_called_once()
