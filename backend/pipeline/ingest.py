@@ -300,6 +300,7 @@ class IngestionPipeline:
                         title=doc.title,
                         url=doc.url,
                         metadata_=doc.metadata,
+                        branch=doc.branch,
                         chunk_count=chunk_count,
                     )
                 )
@@ -310,6 +311,7 @@ class IngestionPipeline:
                 existing.title = doc.title
                 existing.url = doc.url
                 existing.metadata_ = doc.metadata
+                existing.branch = doc.branch
                 existing.chunk_count = chunk_count
             session.commit()
 

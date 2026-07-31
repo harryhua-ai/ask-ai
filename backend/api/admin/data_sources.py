@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.api.admin.schemas import DataSourceCreate, DataSourceOut, DataSourceUpdate
 from backend.auth.dependencies import CurrentUser, require_role
-from backend.connectors.registry import SourceConfig
+from backend.connectors.db_adapter import to_source_config
 from backend.db.models import DataSource
 
 router = APIRouter(prefix="/data-sources", tags=["数据源管理"])
@@ -103,24 +103,25 @@ async def trigger_sync(source_id: str, _: EditorDep, request: Request) -> dict[s
             raise HTTPException(status_code=404, detail="数据源不存在")
         if not ds.enabled:
             raise HTTPException(status_code=400, detail="数据源已禁用")
-        cfg = SourceConfig(
-            id=ds.id,
-            type=ds.type,
-            product=ds.product,
-            enabled=ds.enabled,
-            config=ds.config,
-            sync_interval=ds.sync_interval,
-        )
+        cfg = to_source_config(ds)
+
+    # 捕获到闭包局部变量,避免后台任务引用已结束的 request 对象
+    settings = request.app.state.settings
+    embedder = request.app.state.embedder
+    weaviate_client = request.app.state.weaviate_client
+    weaviate_class_name = request.app.state.weaviate_class_name
 
     async def _run() -> None:
         """后台任务：构造 pipeline 并调用 _sync_one(triggered_by="manual")。"""
+        from backend.db.session import get_sync_session_factory
         from backend.pipeline.ingest import IngestionPipeline
         from scripts.sync import _sync_one
 
         pipeline = IngestionPipeline(
-            request.app.state.embedder,
-            request.app.state.weaviate_client,
-            class_name=request.app.state.weaviate_class_name,
+            embedder,
+            weaviate_client,
+            class_name=weaviate_class_name,
+            session_factory=get_sync_session_factory(settings.postgres_dsn),
         )
         await _sync_one(cfg, pipeline, factory, triggered_by="manual")
 
