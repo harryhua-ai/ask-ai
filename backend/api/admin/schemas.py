@@ -207,3 +207,36 @@ class ConversationOut(BaseModel):
     response_time_ms: int | None
     created_at: str
     intent_tag: str | None
+
+
+class AnswerOverrideOut(BaseModel):
+    """答案覆盖输出 schema。"""
+
+    id: str
+    match_pattern: str
+    match_type: str
+    override_answer: str
+    override_sources: list = Field(default_factory=list)
+    created_by: str | None
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+
+class AnswerOverrideCreate(BaseModel):
+    """答案覆盖创建 schema。"""
+
+    match_pattern: str = Field(..., min_length=1)
+    match_type: str = Field(default="semantic", pattern="^(semantic|keyword|regex)$")
+    override_answer: str = Field(..., min_length=1)
+    override_sources: list = Field(default_factory=list)
+
+
+class AnswerOverrideUpdate(BaseModel):
+    """答案覆盖更新 schema(仅非 None 字段会被写入)。"""
+
+    match_pattern: str | None = None
+    match_type: str | None = Field(default=None, pattern="^(semantic|keyword|regex)$")
+    override_answer: str | None = None
+    override_sources: list | None = None
+    is_active: bool | None = None

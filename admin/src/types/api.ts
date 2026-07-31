@@ -75,3 +75,22 @@ export interface Conversation {
   created_at: string;
   intent_tag: string | null;
 }
+
+export interface AnswerOverride {
+  id: string;
+  match_pattern: string;
+  match_type: "semantic" | "keyword" | "regex";
+  override_answer: string;
+  override_sources: unknown[];
+  created_by: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AnswerOverrideList {
+  items: AnswerOverride[];
+  total: number;
+  page: number;
+  size: number;
+}

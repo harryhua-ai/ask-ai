@@ -353,3 +353,132 @@ async def test_answer_passes_channel_to_searcher():
     mock_searcher.search.assert_called()
     call_kwargs = mock_searcher.search.call_args.kwargs
     assert call_kwargs.get("channel") == "widget"
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3A: Pruner 集成测试
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+async def test_rag_calls_async_pruner():
+    """RAGOrchestrator 应以 await 方式调用 pruner.prune()。"""
+    sr = _make_sr(text="relevant", url="https://example.com/a")
+    rag, searcher, reranker, llm = _build_orchestrator(
+        searcher_results=[sr], reranked_results=[sr]
+    )
+
+    pruner = AsyncMock()
+    pruner.prune.return_value = [sr]
+    rag._pruner = pruner
+
+    await rag.answer("query", "widget")
+
+    pruner.prune.assert_awaited_once()
+
+
+@pytest.mark.unit
+async def test_rag_pruner_filters_reflected_in_answer():
+    """Pruner 过滤掉的 chunk 不应出现在最终 sources 中。"""
+    sr1 = _make_sr(text="keep", source_id="s1", url="https://example.com/keep")
+    sr2 = _make_sr(text="drop", source_id="s2", url="https://example.com/drop")
+
+    rag, searcher, reranker, llm = _build_orchestrator(
+        searcher_results=[sr1, sr2], reranked_results=[sr1, sr2]
+    )
+
+    pruner = AsyncMock()
+    pruner.prune.return_value = [sr1]  # 只保留 sr1
+    rag._pruner = pruner
+
+    result = await rag.answer("query", "widget")
+
+    assert result.is_answered is True
+    urls = [s["url"] for s in result.sources]
+    assert "https://example.com/keep" in urls
+    assert "https://example.com/drop" not in urls
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3A: Override 前置检查测试
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+async def test_rag_returns_override_when_matched():
+    """OverrideMatcher 命中时,直接返回覆盖答案,跳过 search/rerank/generate。"""
+    from backend.db.models import AnswerOverride
+
+    override = AnswerOverride(
+        id=None,
+        match_pattern="保修",
+        match_type="keyword",
+        override_answer="保修期为 2 年",
+        override_sources=[{"url": "https://example.com/warranty", "title": "Warranty"}],
+        created_by="admin",
+        is_active=True,
+    )
+
+    matcher = AsyncMock()
+    matcher.match.return_value = override
+
+    rag, searcher, reranker, llm = _build_orchestrator()
+    rag._override_matcher = matcher
+
+    result = await rag.answer("保修期多久?", "widget")
+
+    assert result.is_answered is True
+    assert result.answer == "保修期为 2 年"
+    assert len(result.sources) == 1
+    assert result.sources[0]["url"] == "https://example.com/warranty"
+    searcher.search.assert_not_called()
+    llm.generate.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_rag_skips_override_when_no_match():
+    """OverrideMatcher 未命中时,正常执行 RAG 管线。"""
+    matcher = AsyncMock()
+    matcher.match.return_value = None
+
+    rag, searcher, reranker, llm = _build_orchestrator()
+    rag._override_matcher = matcher
+
+    await rag.answer("query", "widget")
+
+    searcher.search.assert_called_once()
+
+
+@pytest.mark.unit
+async def test_rag_stream_answer_emits_override():
+    """流式模式下 override 命中时,发出 sources → token → complete 事件。"""
+    from backend.db.models import AnswerOverride
+
+    override = AnswerOverride(
+        id=None,
+        match_pattern="保修",
+        match_type="keyword",
+        override_answer="保修期为 2 年",
+        override_sources=[{"url": "https://example.com/warranty", "title": "Warranty"}],
+        created_by="admin",
+        is_active=True,
+    )
+
+    matcher = AsyncMock()
+    matcher.match.return_value = override
+
+    rag, _, _, llm = _build_orchestrator()
+    rag._override_matcher = matcher
+
+    events = []
+    async for evt in rag.stream_answer("保修期?", "widget"):
+        events.append(json.loads(evt))
+
+    assert len(events) == 3
+    assert events[0]["type"] == "sources"
+    assert events[1]["type"] == "token"
+    assert events[1]["content"] == "保修期为 2 年"
+    assert events[2]["type"] == "complete"
+    assert events[2]["is_answered"] is True
+    assert events[2]["answer"] == "保修期为 2 年"
+    llm.stream.assert_not_called()

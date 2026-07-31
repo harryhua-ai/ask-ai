@@ -201,12 +201,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # RAG
         searcher = HybridSearcher(weaviate_client, embedder, settings.weaviate_class_name)
         rerank_pipeline = RerankPipeline(reranker)
+
+        # Pruner(Phase 3A):检查 routing 中是否有 "pruning" task
+        pruner = None
+        routing_for_pruning = routing_dict.get("pruning", []) if db_config else []
+        if routing_for_pruning and any(pid in providers for pid in routing_for_pruning):
+            from backend.pipeline.pruner import LLMPruner
+
+            pruner = LLMPruner(router_llm)
+            logger.info("Pruner 已启用(task=pruning)")
+
+        # OverrideMatcher(Phase 3A):人工答案覆盖匹配
+        from backend.services.override_matcher import OverrideMatcher
+
+        override_matcher = OverrideMatcher(app.state.session_factory, embedder)
+        await override_matcher.refresh()
+        app.state.override_matcher = override_matcher
+        logger.info("OverrideMatcher 已加载(%d 条覆盖)", len(override_matcher._overrides))
+
         app.state.rag = RAGOrchestrator(
             searcher=searcher,
             reranker=rerank_pipeline,
             llm=router_llm,
             system_prompt=system_prompt,
             channel_customizations=channel_customizations,
+            pruner=pruner,
+            override_matcher=override_matcher,
         )
         app.state.weaviate_client = weaviate_client
         app.state.engine = engine

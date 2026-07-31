@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Lightbulb } from "lucide-react";
 import {
   useConversations,
   useConversationDetail,
@@ -29,6 +31,7 @@ const INTENT_LABELS: Record<string, string> = {
 };
 
 export default function Conversations() {
+  const navigate = useNavigate();
   const [filters, setFilters] = useState<ConversationFilters & { page: number }>({ page: 1 });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const { data, isLoading } = useConversations(filters);
@@ -246,6 +249,23 @@ export default function Conversations() {
                 {INTENT_LABELS[tagMutation.data.intent_tag] || tagMutation.data.intent_tag}
               </Badge>
             )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                navigate("/answer-overrides", {
+                  state: {
+                    prefill: {
+                      match_pattern: detail.question,
+                      override_answer: detail.answer || "",
+                    },
+                  },
+                });
+              }}
+            >
+              <Lightbulb className="h-4 w-4" />
+              改进此答案
+            </Button>
           </div>
         </div>
       )}
