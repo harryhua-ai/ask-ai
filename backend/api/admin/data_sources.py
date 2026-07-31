@@ -1,8 +1,10 @@
 """数据源 CRUD + 手动同步端点。"""
 
 import asyncio
+import os
 from typing import Annotated
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -90,6 +92,27 @@ async def delete_data_source(source_id: str, _: EditorDep, request: Request) -> 
             raise HTTPException(status_code=404, detail="数据源不存在")
         await session.delete(ds)
         await session.commit()
+
+
+@router.get("/preview-branches")
+async def preview_branches(
+    owner: str, repo: str, _: EditorDep
+) -> dict[str, list[str]]:
+    """预览 GitHub 仓库分支列表(供前端多选)。
+
+    GITHUB_TOKEN 从环境变量读取(可选,匿名调用有速率限制)。
+    """
+    token = os.environ.get("GITHUB_TOKEN", "")
+    headers = {
+        "Accept": "application/vnd.github+json",
+        **({"Authorization": f"Bearer {token}"} if token else {}),
+    }
+    async with httpx.AsyncClient(timeout=15, headers=headers) as client:
+        resp = await client.get(
+            f"https://api.github.com/repos/{owner}/{repo}/branches?per_page=100"
+        )
+        resp.raise_for_status()
+    return {"branches": [b["name"] for b in resp.json()]}
 
 
 @router.post("/{source_id}/sync")

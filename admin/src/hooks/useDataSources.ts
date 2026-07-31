@@ -27,6 +27,14 @@ export function useUpdateDataSource() {
   });
 }
 
+export function useDeleteDataSource() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiFetch<void>(`/data-sources/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["data-sources"] }),
+  });
+}
+
 export function useToggleDataSource() {
   const qc = useQueryClient();
   return useMutation({
@@ -40,4 +48,12 @@ export function useTriggerSync() {
   return useMutation({
     mutationFn: (id: string) => apiFetch<{ status: string }>(`/data-sources/${id}/sync`, { method: "POST" }),
   });
+}
+
+/** 预览 GitHub 仓库分支列表(供前端多选填充)。 */
+export async function fetchPreviewBranches(owner: string, repo: string): Promise<string[]> {
+  const data = await apiFetch<{ branches: string[] }>(
+    `/data-sources/preview-branches?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`,
+  );
+  return data.branches;
 }
