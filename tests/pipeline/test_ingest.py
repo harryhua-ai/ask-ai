@@ -454,3 +454,107 @@ def test_ingest_document_uses_semantic_chunking():
         mock_chunk.return_value = []
         pipeline.ingest_document(doc)
         mock_chunk.assert_called_once()
+
+
+# --------------------------------------------------------------------------- #
+# Task 6: 代码分块路由 + branch 元数据
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_route_code_to_chunk_code():
+    """代码扩展名(.py)的 doc 应走 chunk_code 而非 chunk_document_semantic。"""
+    from unittest.mock import MagicMock, patch
+    from backend.pipeline.ingest import IngestionPipeline
+    from backend.connectors.base import RawDocument
+    mock_client = MagicMock()
+    mock_client.collections.exists.return_value = True
+    mock_collection = MagicMock()
+    mock_client.collections.get.return_value = mock_collection
+    mock_embedder = MagicMock()
+    mock_embedder.embed.return_value = [[0.1]]
+    pipeline = IngestionPipeline(embedder=mock_embedder, weaviate_client=mock_client)
+    doc = RawDocument(
+        source_id="r/main/m.py", source_type="local_git", product="p",
+        title="m", content="def foo():\n    return 1\n", url="u",
+        metadata={"path": "m.py"}, content_hash="h", branch="main",
+    )
+    with patch("backend.pipeline.ingest.chunk_document_semantic") as mock_semantic, \
+         patch("backend.pipeline.ingest.chunk_code") as mock_code:
+        mock_code.return_value = []
+        pipeline.ingest_document(doc)
+        mock_code.assert_called_once()
+        mock_semantic.assert_not_called()
+
+
+@pytest.mark.unit
+def test_route_markdown_to_semantic():
+    """Markdown 扩展名(.md)的 doc 应走 chunk_document_semantic。"""
+    from unittest.mock import MagicMock, patch
+    from backend.pipeline.ingest import IngestionPipeline
+    from backend.connectors.base import RawDocument
+    mock_client = MagicMock()
+    mock_client.collections.exists.return_value = True
+    mock_collection = MagicMock()
+    mock_client.collections.get.return_value = mock_collection
+    mock_embedder = MagicMock()
+    mock_embedder.embed.return_value = [[0.1]]
+    pipeline = IngestionPipeline(embedder=mock_embedder, weaviate_client=mock_client)
+    doc = RawDocument(
+        source_id="r/main/m.md", source_type="local_git", product="p",
+        title="m", content="# Title\n\nText.", url="u",
+        metadata={"path": "m.md"}, content_hash="h", branch="main",
+    )
+    with patch("backend.pipeline.ingest.chunk_document_semantic") as mock_semantic, \
+         patch("backend.pipeline.ingest.chunk_code") as mock_code:
+        mock_semantic.return_value = []
+        pipeline.ingest_document(doc)
+        mock_semantic.assert_called_once()
+        mock_code.assert_not_called()
+
+
+@pytest.mark.unit
+def test_weaviate_gets_branch_property():
+    """data.insert 的 properties 应含 branch 字段(取自 doc.branch)。"""
+    from unittest.mock import MagicMock
+    from backend.pipeline.ingest import IngestionPipeline
+    from backend.connectors.base import RawDocument
+    mock_client = MagicMock()
+    mock_client.collections.exists.return_value = True
+    mock_collection = MagicMock()
+    mock_client.collections.get.return_value = mock_collection
+    mock_embedder = MagicMock()
+    mock_embedder.embed.return_value = [[0.1]]
+    pipeline = IngestionPipeline(embedder=mock_embedder, weaviate_client=mock_client)
+    doc = RawDocument(
+        source_id="r/hw-v1.2/m.py", source_type="local_git", product="p",
+        title="m", content="def foo():\n    return 1\n", url="u",
+        metadata={"path": "m.py"}, content_hash="h", branch="hw-v1.2",
+    )
+    pipeline.ingest_document(doc)
+    insert_kwargs = mock_collection.data.insert.call_args.kwargs
+    props = insert_kwargs.get("properties", {})
+    assert props.get("branch") == "hw-v1.2"
+
+
+@pytest.mark.unit
+def test_ensure_collection_creates_branch_property():
+    """_ensure_collection 应在 collection properties 中定义 branch(TEXT)。"""
+    from unittest.mock import MagicMock
+    from backend.pipeline.ingest import IngestionPipeline
+    from weaviate.classes.config import DataType
+    mock_client = MagicMock()
+    mock_client.collections.exists.return_value = False
+    mock_client.collections.get.return_value = MagicMock()
+    pipeline = IngestionPipeline(embedder=MagicMock(), weaviate_client=mock_client)
+    pipeline._ensure_collection()
+    create_kwargs = mock_client.collections.create.call_args
+    property_names = [p.name if hasattr(p, "name") else p.get("name")
+                      for p in create_kwargs.kwargs.get("properties", [])]
+    assert "branch" in property_names
+    # 校验 DataType
+    for p in create_kwargs.kwargs.get("properties", []):
+        n = p.name if hasattr(p, "name") else p.get("name")
+        if n == "branch":
+            dt = p.dataType if hasattr(p, "dataType") else p.get("dataType")
+            assert dt == DataType.TEXT
