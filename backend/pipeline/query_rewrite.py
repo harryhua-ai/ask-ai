@@ -79,16 +79,15 @@ async def rewrite_query(
         return query
 
 
-_LONG_QUERY_THRESHOLD = 300
-
 _EXTRACT_PROMPT = """你是查询提取助手。
 
-用户输入了一段较长的文本(如邮件、bug 报告、详细描述)。请从中提取出最核心的搜索问题——一个简洁的、能直接用于知识库检索的查询。
+请从用户的输入中提取出最核心的搜索问题——一个简洁的、能直接用于知识库检索的查询。
 
 规则:
 - 只输出一个问题,不要解释,不要引号
 - 保留核心技术意图(产品型号、错误信息、功能需求)
 - 去除寒暄、签名、重复上下文
+- 如果输入已经足够简洁明确,原样返回
 - 用与用户相同的语言输出
 
 ## 用户输入
@@ -100,21 +99,19 @@ _EXTRACT_PROMPT = """你是查询提取助手。
 
 
 async def extract_query(query: str, llm: Any) -> str:
-    """长文本输入时,用 LLM 提取核心搜索问题。
+    """用 LLM 从用户输入中提取核心搜索问题。
 
-    当用户粘贴整封邮件或长段描述时,直接用原文搜索会因噪音过多导致检索效果差。
-    本函数用 LLM 从长文本中提取最核心的搜索问题,提升检索质量。
+    所有长度的查询都会经过此处理。对于已经简洁明确的短查询,
+    LLM 会原样返回;对于包含噪音的长文本(邮件、bug 报告等),
+    LLM 会提取核心搜索意图,提升检索质量。
 
     Args:
         query: 用户查询文本。
         llm: LLMProvider / LLMRouter 实例。
 
     Returns:
-        提取后的核心搜索问题。提取失败或查询较短时回退到原始 query。
+        提取后的核心搜索问题。提取失败时回退到原始 query。
     """
-    if len(query) <= _LONG_QUERY_THRESHOLD:
-        return query
-
     try:
         prompt = _EXTRACT_PROMPT.format(query=query)
         response = await llm.generate(
@@ -123,7 +120,7 @@ async def extract_query(query: str, llm: Any) -> str:
         )
         extracted = response.content.strip().strip('"').strip("'")
         if extracted:
-            logger.info("查询提取: %d chars → %r", len(query), extracted)
+            logger.info("查询提取: %r → %r", query, extracted)
             return extracted
         return query
     except Exception:  # noqa: BLE001
