@@ -67,7 +67,10 @@ def test_filesystem_fetch_local_files(tmp_path) -> None:  # type: ignore[no-unty
     md_doc = next(d for d in docs if d.title == "doc1")
     assert md_doc.source_type == "filesystem"
     assert md_doc.product == "test"
-    assert md_doc.source_id == "test-fs/doc1.md"
+    # P8 多分支契约:source_id 格式为 {id}/{branch}/{rel},filesystem 默认 main
+    assert md_doc.source_id == "test-fs/main/doc1.md"
+    assert md_doc.branch == "main"
+    assert md_doc.metadata["branch"] == "main"
     assert md_doc.content == "# NE503\n功耗 2.5W"
     assert md_doc.url.startswith("file://")
     assert md_doc.metadata["path"] == "doc1.md"
@@ -266,9 +269,16 @@ def test_filesystem_skips_unreadable_file(
 def test_raw_document_has_channel_visibility_default():
     """RawDocument 应包含 channel_visibility 字段,默认 ('widget','api')。"""
     from backend.connectors.base import RawDocument
+
     doc = RawDocument(
-        source_id="t/1", source_type="t", product="t", title="T",
-        content="x", url="u", metadata={}, content_hash="h",
+        source_id="t/1",
+        source_type="t",
+        product="t",
+        title="T",
+        content="x",
+        url="u",
+        metadata={},
+        content_hash="h",
     )
     assert doc.channel_visibility == ("widget", "api")
 
@@ -286,7 +296,10 @@ def test_filesystem_connector_passes_channel_visibility(tmp_path):
     (tmp_path / "test.md").write_text("# Title\n\ncontent")
 
     cfg = SourceConfig(
-        id="test", type="filesystem", product="test", enabled=True,
+        id="test",
+        type="filesystem",
+        product="test",
+        enabled=True,
         config={"root_path": str(tmp_path)},
         sync_interval="1h",
         channel_visibility=("api",),
@@ -295,3 +308,56 @@ def test_filesystem_connector_passes_channel_visibility(tmp_path):
     docs = list(connector.fetch_all())
     assert len(docs) >= 1
     assert all(d.channel_visibility == ("api",) for d in docs)
+
+
+# --------------------------------------------------------------------------- #
+# P8 多分支契约:filesystem source_id 加 branch + 接入 ExclusionPolicy
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_filesystem_branch_from_config_branch(tmp_path) -> None:
+    """branches 为空时,分支名取 config.branch。"""
+    (tmp_path / "doc.md").write_text("hi")
+    config = _make_config(str(tmp_path), branch="dev")
+    connector = ConnectorRegistry.create(config)
+    docs = list(connector.fetch_all())
+    assert len(docs) == 1
+    assert docs[0].branch == "dev"
+    assert docs[0].source_id == "test-fs/dev/doc.md"
+
+
+@pytest.mark.unit
+def test_filesystem_branch_from_branches_field(tmp_path) -> None:
+    """SourceConfig.branches 非空时,分支名取 branches[0]。"""
+    (tmp_path / "doc.md").write_text("hi")
+    config = SourceConfig(
+        id="test-fs",
+        type="filesystem",
+        product="test",
+        enabled=True,
+        config={"root_path": str(tmp_path), "file_types": [".md"]},
+        sync_interval="1h",
+        branches=("release", "main"),
+    )
+    connector = ConnectorRegistry.create(config)
+    docs = list(connector.fetch_all())
+    assert len(docs) == 1
+    assert docs[0].branch == "release"
+    assert docs[0].source_id == "test-fs/release/doc.md"
+
+
+@pytest.mark.unit
+def test_filesystem_excludes_build_dir(tmp_path) -> None:
+    """ExclusionPolicy 接入:构建目录(__pycache__)内的文件应被排除。"""
+    (tmp_path / "doc.md").write_text("keep")
+    pycache = tmp_path / "__pycache__"
+    pycache.mkdir()
+    # __pycache__ 内的 .md 文件本会通过 file_types,但 ExclusionPolicy 应排除
+    (pycache / "cache.md").write_text("exclude me")
+    config = _make_config(str(tmp_path))
+    connector = ConnectorRegistry.create(config)
+    docs = list(connector.fetch_all())
+    paths = {d.metadata["path"] for d in docs}
+    assert "doc.md" in paths
+    assert "__pycache__/cache.md" not in paths
