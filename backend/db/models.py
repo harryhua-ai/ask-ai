@@ -208,6 +208,25 @@ class LLMRouting(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class QuestionCluster(Base):
+    """问题聚类结果(Phase 3B Coverage Gaps + Top Questions)。"""
+
+    __tablename__ = "question_clusters"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cluster_type: Mapped[str] = mapped_column(String(20), nullable=False)  # 'gap' | 'top'
+    representative_question: Mapped[str] = mapped_column(Text, nullable=False)
+    sample_questions: Mapped[list[Any]] = mapped_column(JSONB, default=[])
+    question_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="open")  # 'open' | 'resolved' (仅 gap)
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 # 索引(对齐设计文档 §11 SQL DDL)
 Index("idx_conversations_created_at", Conversation.created_at)
 Index("idx_conversations_is_answered", Conversation.is_answered)
@@ -226,3 +245,11 @@ Index("idx_source_clicks_conversation", SourceClick.conversation_id)
 Index("idx_source_clicks_source_url", SourceClick.source_url)
 Index("idx_sync_log_source", SyncLog.source_id, SyncLog.started_at.desc())
 Index("idx_sync_log_status", SyncLog.status, SyncLog.started_at.desc())
+Index(
+    "idx_question_clusters_type_status", QuestionCluster.cluster_type, QuestionCluster.status
+)
+Index(
+    "idx_question_clusters_type_count",
+    QuestionCluster.cluster_type,
+    QuestionCluster.question_count.desc(),
+)
