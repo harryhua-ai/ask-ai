@@ -240,3 +240,50 @@ class AnswerOverrideUpdate(BaseModel):
     override_answer: str | None = None
     override_sources: list | None = None
     is_active: bool | None = None
+
+
+class QuestionClusterOut(BaseModel):
+    """聚类结果输出 schema。"""
+
+    id: str
+    cluster_type: str
+    representative_question: str
+    sample_questions: list[str]
+    question_count: int
+    status: str
+    period_start: str | None
+    period_end: str | None
+    created_at: str
+
+
+class SourceAnalyticsOut(BaseModel):
+    """来源分析输出 schema。"""
+
+    url: str
+    source_type: str
+    product: str | None
+    clicks: int
+    references: int
+
+
+class AnalyticsRefreshResult(BaseModel):
+    """聚类刷新结果。"""
+
+    cluster_count: int
+    total_questions: int
+
+
+class QuestionClusterList(BaseModel):
+    """聚类列表分页响应。"""
+
+    items: list[QuestionClusterOut]
+    total: int
+    page: int
+    size: int
+
+
+class SourceAnalyticsList(BaseModel):
+    """来源分析响应。"""
+
+    items: list[SourceAnalyticsOut]
+    days: int
