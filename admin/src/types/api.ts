@@ -12,6 +12,36 @@ export interface LoginResponse {
   user: User;
 }
 
+export type DataSourceType = "github" | "filesystem" | "local_git";
+
+/** GitHub 数据源 config 形状。 */
+export interface GithubSourceConfig {
+  owner?: string;
+  repo?: string;
+  branches?: string[];
+  file_types?: string[];
+}
+
+/** 本地 git 数据源 config 形状。 */
+export interface LocalGitSourceConfig {
+  repo_path?: string;
+  branches?: string[];
+  file_types?: string[];
+  exclude_dirs?: string[];
+  exclude_regex?: string;
+  max_file_size?: number;
+}
+
+/** 文件系统数据源 config 形状。 */
+export interface FilesystemSourceConfig {
+  root_path?: string;
+  file_types?: string[];
+  include_dirs?: string[];
+  exclude_dirs?: string[];
+  exclude_regex?: string;
+  max_file_size?: number;
+}
+
 export interface DataSource {
   id: string;
   type: string;

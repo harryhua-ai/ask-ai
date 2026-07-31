@@ -1,15 +1,17 @@
 """数据源 CRUD + 手动同步端点。"""
 
 import asyncio
+import os
 from typing import Annotated
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.api.admin.schemas import DataSourceCreate, DataSourceOut, DataSourceUpdate
 from backend.auth.dependencies import CurrentUser, require_role
-from backend.connectors.registry import SourceConfig
+from backend.connectors.db_adapter import to_source_config
 from backend.db.models import DataSource
 
 router = APIRouter(prefix="/data-sources", tags=["数据源管理"])
@@ -92,6 +94,27 @@ async def delete_data_source(source_id: str, _: EditorDep, request: Request) -> 
         await session.commit()
 
 
+@router.get("/preview-branches")
+async def preview_branches(
+    owner: str, repo: str, _: EditorDep
+) -> dict[str, list[str]]:
+    """预览 GitHub 仓库分支列表(供前端多选)。
+
+    GITHUB_TOKEN 从环境变量读取(可选,匿名调用有速率限制)。
+    """
+    token = os.environ.get("GITHUB_TOKEN", "")
+    headers = {
+        "Accept": "application/vnd.github+json",
+        **({"Authorization": f"Bearer {token}"} if token else {}),
+    }
+    async with httpx.AsyncClient(timeout=15, headers=headers) as client:
+        resp = await client.get(
+            f"https://api.github.com/repos/{owner}/{repo}/branches?per_page=100"
+        )
+        resp.raise_for_status()
+    return {"branches": [b["name"] for b in resp.json()]}
+
+
 @router.post("/{source_id}/sync")
 async def trigger_sync(source_id: str, _: EditorDep, request: Request) -> dict[str, str]:
     """手动触发指定数据源同步（后台异步执行，立即返回）。"""
@@ -103,24 +126,25 @@ async def trigger_sync(source_id: str, _: EditorDep, request: Request) -> dict[s
             raise HTTPException(status_code=404, detail="数据源不存在")
         if not ds.enabled:
             raise HTTPException(status_code=400, detail="数据源已禁用")
-        cfg = SourceConfig(
-            id=ds.id,
-            type=ds.type,
-            product=ds.product,
-            enabled=ds.enabled,
-            config=ds.config,
-            sync_interval=ds.sync_interval,
-        )
+        cfg = to_source_config(ds)
+
+    # 捕获到闭包局部变量,避免后台任务引用已结束的 request 对象
+    settings = request.app.state.settings
+    embedder = request.app.state.embedder
+    weaviate_client = request.app.state.weaviate_client
+    weaviate_class_name = request.app.state.weaviate_class_name
 
     async def _run() -> None:
         """后台任务：构造 pipeline 并调用 _sync_one(triggered_by="manual")。"""
+        from backend.db.session import get_sync_session_factory
         from backend.pipeline.ingest import IngestionPipeline
         from scripts.sync import _sync_one
 
         pipeline = IngestionPipeline(
-            request.app.state.embedder,
-            request.app.state.weaviate_client,
-            class_name=request.app.state.weaviate_class_name,
+            embedder,
+            weaviate_client,
+            class_name=weaviate_class_name,
+            session_factory=get_sync_session_factory(settings.postgres_dsn),
         )
         await _sync_one(cfg, pipeline, factory, triggered_by="manual")
 

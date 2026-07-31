@@ -117,8 +117,11 @@ def _patch_sync_deps(
         session_factory, _ = _make_async_session_factory()
 
     return (
-        patch("scripts.sync.load_yaml_config", return_value={"sources": []}),
-        patch("scripts.sync.ConnectorRegistry.load_configs", return_value=configs),
+        patch(
+            "scripts.sync._load_configs_from_db",
+            new_callable=AsyncMock,
+            return_value=configs,
+        ),
         patch("scripts.sync.ConnectorRegistry.create", return_value=connector),
         patch("scripts.sync.get_engine", return_value=engine),
         patch("scripts.sync.init_db", new_callable=AsyncMock),
@@ -202,7 +205,6 @@ async def test_run_sync_processes_enabled_sources():
         patches[5],
         patches[6],
         patches[7],
-        patches[8],
     ):
         await run_sync(settings)
 
@@ -239,7 +241,6 @@ async def test_run_sync_filters_by_source_id():
         patches[5],
         patches[6],
         patches[7],
-        patches[8],
     ):
         await run_sync(settings, source_id="src-a")
 
@@ -277,7 +278,6 @@ async def test_run_sync_records_failed_status_on_exception():
         patches[5],
         patches[6],
         patches[7],
-        patches[8],
     ):
         await run_sync(settings)
 
@@ -310,7 +310,6 @@ async def test_run_sync_skips_disabled_sources():
         patches[5],
         patches[6],
         patches[7],
-        patches[8],
     ):
         await run_sync(settings)
 
@@ -334,9 +333,9 @@ async def test_run_sync_releases_resources_on_exception():
     init_db_mock = AsyncMock(side_effect=RuntimeError("db init failed"))
 
     with (
-        patch("scripts.sync.load_yaml_config", return_value={"sources": []}),
         patch(
-            "scripts.sync.ConnectorRegistry.load_configs",
+            "scripts.sync._load_configs_from_db",
+            new_callable=AsyncMock,
             return_value=[cfg],
         ),
         patch("scripts.sync.ConnectorRegistry.create", return_value=connector),
@@ -382,7 +381,6 @@ async def test_run_sync_dry_run_skips_persistence():
         patches[5],
         patches[6],
         patches[7],
-        patches[8],
     ):
         await run_sync(settings, dry_run=True)
 
@@ -529,7 +527,6 @@ async def test_sync_log_commit_failure_does_not_break_isolation():
         patches[5],
         patches[6],
         patches[7],
-        patches[8],
     ):
         # run_sync 整体不应抛异常
         await run_sync(settings)
@@ -556,20 +553,23 @@ async def test_reindex_deletes_and_recreates_collection():
     是 ``Settings`` 的 ``@property`` 而非构造器字段,会抛 ``TypeError``):
         - 改用本文件已有的 ``_make_settings()`` MagicMock 辅助(与现有 run_sync
           测试一致)。
-        - 额外 patch ``load_yaml_config``,因为 ``_make_settings()`` 的 config_dir
-          指向 ``/tmp/fake-config``,``run_sync`` 会先尝试读取 yaml。
+        - 额外 patch ``_load_configs_from_db``,因为 Task 7 起 run_sync
+          从 Postgres 读配置;此处用 AsyncMock 返回空列表避免实际同步。
     """
     settings = _make_settings()
 
     with (
-        patch("scripts.sync.load_yaml_config", return_value={"sources": []}),
+        patch(
+            "scripts.sync._load_configs_from_db",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
         patch("scripts.sync.weaviate") as mock_weaviate,
         patch("scripts.sync.get_engine") as mock_get_engine,
         patch("scripts.sync.get_session_factory"),
         patch("scripts.sync.init_db", new_callable=AsyncMock),
         patch("scripts.sync.BGEEmbedder"),
         patch("scripts.sync.IngestionPipeline") as mock_pipeline_cls,
-        patch("scripts.sync.ConnectorRegistry.load_configs") as mock_load_configs,
     ):
         mock_client = MagicMock()
         mock_collections = MagicMock()
@@ -582,8 +582,6 @@ async def test_reindex_deletes_and_recreates_collection():
 
         mock_pipeline = MagicMock()
         mock_pipeline_cls.return_value = mock_pipeline
-
-        mock_load_configs.return_value = []  # 空配置,不实际同步
 
         await run_sync(settings, dry_run=False, reindex=True)
 

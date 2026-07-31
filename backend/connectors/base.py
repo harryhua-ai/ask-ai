@@ -27,6 +27,9 @@ class RawDocument:
         channel_visibility: 该文档允许透出的渠道白名单(tuple 保证不可变),
             Phase 2A Task 5 由 SourceConfig 透传到 Connector 输出。默认
             ``("widget", "api")`` 表示对所有渠道可见。
+        branch: 文档所属的源系统分支(如 Git 仓库名分支 ``main``、``hw-v1.2``)。
+            P8 多分支契约由 SourceConfig.branches 透传到 Connector,抓取时填入
+            具体分支名。默认空字符串表示未指定(单分支或非 Git 源)。
     """
 
     source_id: str
@@ -39,6 +42,8 @@ class RawDocument:
     content_hash: str
     # Phase 2A 新增字段
     channel_visibility: tuple[str, ...] = ("widget", "api")
+    # P8 多分支契约新增字段
+    branch: str = ""
 
 
 class DataSourceConnector(Protocol):

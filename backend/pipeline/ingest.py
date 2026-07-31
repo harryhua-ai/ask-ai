@@ -15,6 +15,7 @@
 """
 
 import logging
+import uuid
 from typing import Any
 
 import numpy as np
@@ -25,8 +26,42 @@ from backend.connectors.base import RawDocument
 from backend.db.models import Document
 from backend.embedder.base import Embedder
 from backend.pipeline.chunk import chunk_document_semantic
+from backend.pipeline.chunk_code import LANG_MAP as _CODE_LANG_MAP
+from backend.pipeline.chunk_code import chunk_code
 
 logger = logging.getLogger(__name__)
+
+
+def _deterministic_uuid(source_id: str, chunk_index: int) -> str:
+    """基于 source_id + chunk_index 生成确定性 UUID,重跑同 key 覆盖,保证幂等。
+
+    多分支同 path 文件 source_id 含 branch,故 (source_id, chunk_index) 全局唯一,
+    不会跨分支/跨文档冲突。
+    """
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{source_id}#{chunk_index}"))
+
+
+def _is_code(doc: RawDocument) -> bool:
+    """判断 doc 是否应走代码 AST 分块(按文件扩展名)。
+
+    扩展名取自 ``doc.metadata["path"]``;缺失时回退到 ``doc.source_id``
+    最后一段(假设 source_id 形如 ``<repo>/<branch>/<path>``)。扩展名命中
+    :data:`backend.pipeline.chunk_code.LANG_MAP`(即 tree-sitter 有 grammar
+    支持的语言)时返回 True,否则 False(交给 Markdown / 文档语义分块)。
+
+    Args:
+        doc: 待判定的原始文档。
+
+    Returns:
+        是否按代码分块路由。
+    """
+    path = doc.metadata.get("path", "") if isinstance(doc.metadata, dict) else ""
+    if not path and "/" in doc.source_id:
+        path = doc.source_id.rsplit("/", 1)[-1]
+    if "." not in path:
+        return False
+    ext = ("." + path.rsplit(".", 1)[-1]).lower()
+    return ext in _CODE_LANG_MAP
 
 
 class IngestionPipeline:
@@ -110,6 +145,8 @@ class IngestionPipeline:
                     Property(name="channel_visibility", data_type=DataType.TEXT_ARRAY),
                     Property(name="doc_section", data_type=DataType.TEXT),
                     Property(name="chunk_type", data_type=DataType.TEXT),
+                    # Task 6: 多分支元数据(P8),供检索时按 branch 过滤
+                    Property(name="branch", data_type=DataType.TEXT),
                 ],
             )
 
@@ -135,7 +172,10 @@ class IngestionPipeline:
         Returns:
             成功写入 Weaviate 的 chunk 数(0 表示空文档或全部失败)。
         """
-        chunks = chunk_document_semantic(doc, self._max_tokens, self._overlap)
+        if _is_code(doc):
+            chunks = chunk_code(doc, self._max_tokens, self._overlap)
+        else:
+            chunks = chunk_document_semantic(doc, self._max_tokens, self._overlap)
         if not chunks:
             logger.info("文档 %s 切分为空,跳过灌入", doc.source_id)
             return 0
@@ -154,23 +194,33 @@ class IngestionPipeline:
             try:
                 # 兼容 list / np.ndarray:统一转 list[float] 供 Weaviate v4 使用
                 vec_list = np.asarray(vector).tolist()
-                self._collection.data.insert(
-                    properties={
-                        "source_id": doc.source_id,
-                        "source_type": doc.source_type,
-                        "product": doc.product,
-                        "title": doc.title,
-                        "text": chunk.text,
-                        "url": doc.url,
-                        "chunk_index": chunk.chunk_index,
-                        "content_hash": doc.content_hash,
-                        # Phase 2A 新增
-                        "channel_visibility": list(chunk.channel_visibility),
-                        "doc_section": chunk.doc_section,
-                        "chunk_type": chunk.chunk_type,
-                    },
-                    vector=vec_list,
-                )
+                props = {
+                    "source_id": doc.source_id,
+                    "source_type": doc.source_type,
+                    "product": doc.product,
+                    "title": doc.title,
+                    "text": chunk.text,
+                    "url": doc.url,
+                    "chunk_index": chunk.chunk_index,
+                    "content_hash": doc.content_hash,
+                    # Phase 2A 新增
+                    "channel_visibility": list(chunk.channel_visibility),
+                    "doc_section": chunk.doc_section,
+                    "chunk_type": chunk.chunk_type,
+                    # Task 6: 多分支元数据(P8)
+                    "branch": doc.branch,
+                }
+                # 确定性 UUID:基于 source_id + chunk_index,重跑同 key 覆盖,保证幂等不重复
+                det_uuid = _deterministic_uuid(doc.source_id, chunk.chunk_index)
+                try:
+                    self._collection.data.insert(
+                        properties=props, vector=vec_list, uuid=det_uuid
+                    )
+                except Exception:
+                    # UUID 已存在(重跑/增量重灌),replace 覆盖保证幂等
+                    self._collection.data.replace(
+                        properties=props, vector=vec_list, uuid=det_uuid
+                    )
                 success_count += 1
             except Exception as exc:  # noqa: BLE001 - 单 chunk 失败不中断后续 chunk
                 logger.warning(
@@ -246,7 +296,7 @@ class IngestionPipeline:
     def _upsert_postgres(self, doc: RawDocument, chunk_count: int) -> None:
         """在 Postgres ``documents`` 表 upsert doc 行。
 
-        用 ``content_hash`` 作主键去重:存在则更新 chunk_count / source_id /
+        用 ``(content_hash, branch)`` 复合主键去重:同内容跨分支各留一行;同分支重复灌入更新 chunk_count / source_id /
         updated_at,不存在则插入新行。
 
         Args:
@@ -256,7 +306,9 @@ class IngestionPipeline:
         assert self._session_factory is not None
         with self._session_factory() as session:
             existing = session.execute(
-                select(Document).where(Document.content_hash == doc.content_hash)
+                select(Document).where(
+                Document.content_hash == doc.content_hash, Document.branch == doc.branch
+            )
             ).scalar_one_or_none()
             if existing is None:
                 session.add(
@@ -268,6 +320,7 @@ class IngestionPipeline:
                         title=doc.title,
                         url=doc.url,
                         metadata_=doc.metadata,
+                        branch=doc.branch,
                         chunk_count=chunk_count,
                     )
                 )
@@ -278,6 +331,7 @@ class IngestionPipeline:
                 existing.title = doc.title
                 existing.url = doc.url
                 existing.metadata_ = doc.metadata
+                existing.branch = doc.branch
                 existing.chunk_count = chunk_count
             session.commit()
 
