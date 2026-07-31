@@ -25,6 +25,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
+from backend.pipeline.intent import classify_intent
 from backend.pipeline.query_rewrite import extract_query, rewrite_query
 from backend.retrieval.search import SearchResult
 from backend.utils.language import detect_language
@@ -32,6 +33,8 @@ from backend.utils.language import detect_language
 logger = logging.getLogger(__name__)
 
 REJECT_ANSWER = "暂未在官方资料中找到相关信息。"
+REJECT_OFF_TOPIC = "我只能回答与 CamThink 产品相关的问题。"
+REJECT_BUSINESS = "关于商务合作或价格咨询,请联系我们的销售团队。"
 
 SOURCE_LABELS = {
     "github": "[GitHub]",
@@ -283,6 +286,30 @@ class RAGOrchestrator:
                     response_time_ms=elapsed,
                 )
 
+        # 意图识别:拒绝无关查询,产品问题降低检索阈值
+        intent = await classify_intent(query, self._llm)
+        if intent.category == "off_topic":
+            elapsed = int((time.monotonic() - start) * 1000)
+            return RAGAnswer(
+                answer=REJECT_OFF_TOPIC,
+                sources=[],
+                is_answered=False,
+                reranked_results=[],
+                language=language,
+                response_time_ms=elapsed,
+            )
+        if intent.category == "business_inquiry":
+            elapsed = int((time.monotonic() - start) * 1000)
+            return RAGAnswer(
+                answer=REJECT_BUSINESS,
+                sources=[],
+                is_answered=False,
+                reranked_results=[],
+                language=language,
+                response_time_ms=elapsed,
+            )
+        effective_min = 1 if intent.category == "product_question" else self._min_results
+
         extracted = await extract_query(query, self._llm)
         search_query = await rewrite_query(extracted, conversation_history, self._llm)
         results = self._searcher.search(
@@ -298,7 +325,7 @@ class RAGOrchestrator:
         if self._pruner:
             reranked = await self._pruner.prune(search_query, reranked)
 
-        if len(reranked) < self._min_results:
+        if len(reranked) < effective_min:
             elapsed = int((time.monotonic() - start) * 1000)
             return RAGAnswer(
                 answer=REJECT_ANSWER,
@@ -374,6 +401,36 @@ class RAGOrchestrator:
                 })
                 return
 
+        # 意图识别:拒绝无关查询,产品问题降低检索阈值
+        intent = await classify_intent(query, self._llm)
+        if intent.category == "off_topic":
+            elapsed = int((time.monotonic() - start) * 1000)
+            yield json.dumps(
+                {
+                    "type": "complete",
+                    "answer": REJECT_OFF_TOPIC,
+                    "sources": [],
+                    "is_answered": False,
+                    "language": language,
+                    "response_time_ms": elapsed,
+                }
+            )
+            return
+        if intent.category == "business_inquiry":
+            elapsed = int((time.monotonic() - start) * 1000)
+            yield json.dumps(
+                {
+                    "type": "complete",
+                    "answer": REJECT_BUSINESS,
+                    "sources": [],
+                    "is_answered": False,
+                    "language": language,
+                    "response_time_ms": elapsed,
+                }
+            )
+            return
+        effective_min = 1 if intent.category == "product_question" else self._min_results
+
         t0 = time.monotonic()
         extracted = await extract_query(query, self._llm)
         search_query = await rewrite_query(extracted, conversation_history, self._llm)
@@ -396,7 +453,7 @@ class RAGOrchestrator:
         if self._pruner:
             reranked = await self._pruner.prune(query, reranked)
 
-        if len(reranked) < self._min_results:
+        if len(reranked) < effective_min:
             elapsed = int((time.monotonic() - start) * 1000)
             yield json.dumps(
                 {
