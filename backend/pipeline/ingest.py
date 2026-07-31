@@ -278,7 +278,7 @@ class IngestionPipeline:
     def _upsert_postgres(self, doc: RawDocument, chunk_count: int) -> None:
         """在 Postgres ``documents`` 表 upsert doc 行。
 
-        用 ``content_hash`` 作主键去重:存在则更新 chunk_count / source_id /
+        用 ``(content_hash, branch)`` 复合主键去重:同内容跨分支各留一行;同分支重复灌入更新 chunk_count / source_id /
         updated_at,不存在则插入新行。
 
         Args:
@@ -288,7 +288,9 @@ class IngestionPipeline:
         assert self._session_factory is not None
         with self._session_factory() as session:
             existing = session.execute(
-                select(Document).where(Document.content_hash == doc.content_hash)
+                select(Document).where(
+                Document.content_hash == doc.content_hash, Document.branch == doc.branch
+            )
             ).scalar_one_or_none()
             if existing is None:
                 session.add(
