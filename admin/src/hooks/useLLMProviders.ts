@@ -57,3 +57,17 @@ export function useUpdateRouting() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["llm-routing"] }),
   });
 }
+
+export interface LocalModel {
+  role: string;
+  model_name: string;
+  device: string;
+  dimension?: number;
+}
+
+export function useLocalModels() {
+  return useQuery({
+    queryKey: ["local-models"],
+    queryFn: () => apiFetch<LocalModel[]>("/local-models"),
+  });
+}

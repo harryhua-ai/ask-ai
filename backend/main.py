@@ -137,6 +137,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         embedder = BGEEmbedder(device=settings.embedder_device)
         reranker = BGEReranker(device=settings.embedder_device)
         app.state.embedder = embedder
+        app.state.reranker = reranker
         app.state.weaviate_class_name = settings.weaviate_class_name
 
         # LLM:优先从 DB 加载(Task 16),为空时回退 YAML(Phase 1 兼容)

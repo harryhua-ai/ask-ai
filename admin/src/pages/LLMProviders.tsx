@@ -6,6 +6,7 @@ import {
   useToggleProvider,
   useTestProvider,
   useUpdateRouting,
+  useLocalModels,
   type ConnectivityTestResult,
 } from "@/hooks/useLLMProviders";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 export default function LLMProviders() {
   const { data: providers, isLoading } = useLLMProviders();
   const { data: routing } = useLLMRouting();
+  const { data: localModels } = useLocalModels();
   const createProvider = useCreateProvider();
   const toggleProvider = useToggleProvider();
   const testProvider = useTestProvider();
@@ -51,6 +53,32 @@ export default function LLMProviders() {
         <h1 className="text-2xl font-bold">LLM 供应商管理</h1>
         <Button onClick={() => setShowCreate(!showCreate)}>新增供应商</Button>
       </div>
+
+      {/* 本地模型 */}
+      {localModels && localModels.length > 0 && (
+        <div className="rounded-lg border bg-card p-4">
+          <h2 className="mb-3 text-lg font-semibold">本地模型</h2>
+          <div className="space-y-2">
+            {localModels.map((m) => (
+              <div
+                key={m.role}
+                className="flex items-center gap-3 rounded-md border bg-muted/30 px-3 py-2"
+              >
+                <Badge variant="secondary">{m.role}</Badge>
+                <span className="font-mono text-sm">{m.model_name}</span>
+                <span className="text-sm text-muted-foreground">
+                  device: {m.device}
+                </span>
+                {m.dimension && (
+                  <span className="text-sm text-muted-foreground">
+                    dim: {m.dimension}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 路由配置 */}
       <div className="rounded-lg border bg-card p-4">
