@@ -40,6 +40,28 @@ router = APIRouter(tags=["LLM 供应商管理"])
 EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
 ViewerDep = Annotated[CurrentUser, Depends(require_role("admin", "editor", "viewer"))]
 
+
+@router.get("/local-models")
+async def list_local_models(_: ViewerDep, request: Request) -> list[dict]:
+    """返回本地加载的嵌入模型与重排序模型信息(viewer+ 可访问)。"""
+    models: list[dict] = []
+    embedder = getattr(request.app.state, "embedder", None)
+    if embedder is not None:
+        models.append({
+            "role": "embedding",
+            "model_name": getattr(embedder, "_model_name", "BAAI/bge-m3"),
+            "device": getattr(embedder, "_device", "unknown"),
+            "dimension": getattr(embedder, "_dimension", 1024),
+        })
+    reranker = getattr(request.app.state, "reranker", None)
+    if reranker is not None:
+        models.append({
+            "role": "reranking",
+            "model_name": getattr(reranker, "_model_name", "BAAI/bge-reranker-v2-m3"),
+            "device": getattr(reranker, "_device", "unknown"),
+        })
+    return models
+
 # 所有需要在响应中脱敏、在写入时加密的敏感字段名
 SENSITIVE_KEYS = {"api_key", "secret", "token", "password"}
 

@@ -57,6 +57,7 @@ class BGEEmbedder(Embedder):
                 `MODEL_CACHE_DIR`,默认 `<repo>/models/`。
         """
         self._device = detect_device(device)
+        self._model_name = model_name
         self._dimension = 1024
         resolved_cache = cache_dir or Path(
             os.environ.get("MODEL_CACHE_DIR", Path(__file__).resolve().parents[2] / "models")
@@ -119,6 +120,7 @@ class BGEReranker(Reranker):
                 `MODEL_CACHE_DIR`,默认 `<repo>/models/`。
         """
         self._device = detect_device(device)
+        self._model_name = model_name
         resolved_cache = cache_dir or Path(
             os.environ.get("MODEL_CACHE_DIR", Path(__file__).resolve().parents[2] / "models")
         )
