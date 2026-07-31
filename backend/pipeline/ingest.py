@@ -15,6 +15,7 @@
 """
 
 import logging
+import uuid
 from typing import Any
 
 import numpy as np
@@ -29,6 +30,15 @@ from backend.pipeline.chunk_code import LANG_MAP as _CODE_LANG_MAP
 from backend.pipeline.chunk_code import chunk_code
 
 logger = logging.getLogger(__name__)
+
+
+def _deterministic_uuid(source_id: str, chunk_index: int) -> str:
+    """基于 source_id + chunk_index 生成确定性 UUID,重跑同 key 覆盖,保证幂等。
+
+    多分支同 path 文件 source_id 含 branch,故 (source_id, chunk_index) 全局唯一,
+    不会跨分支/跨文档冲突。
+    """
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{source_id}#{chunk_index}"))
 
 
 def _is_code(doc: RawDocument) -> bool:
@@ -184,25 +194,33 @@ class IngestionPipeline:
             try:
                 # 兼容 list / np.ndarray:统一转 list[float] 供 Weaviate v4 使用
                 vec_list = np.asarray(vector).tolist()
-                self._collection.data.insert(
-                    properties={
-                        "source_id": doc.source_id,
-                        "source_type": doc.source_type,
-                        "product": doc.product,
-                        "title": doc.title,
-                        "text": chunk.text,
-                        "url": doc.url,
-                        "chunk_index": chunk.chunk_index,
-                        "content_hash": doc.content_hash,
-                        # Phase 2A 新增
-                        "channel_visibility": list(chunk.channel_visibility),
-                        "doc_section": chunk.doc_section,
-                        "chunk_type": chunk.chunk_type,
-                        # Task 6: 多分支元数据(P8)
-                        "branch": doc.branch,
-                    },
-                    vector=vec_list,
-                )
+                props = {
+                    "source_id": doc.source_id,
+                    "source_type": doc.source_type,
+                    "product": doc.product,
+                    "title": doc.title,
+                    "text": chunk.text,
+                    "url": doc.url,
+                    "chunk_index": chunk.chunk_index,
+                    "content_hash": doc.content_hash,
+                    # Phase 2A 新增
+                    "channel_visibility": list(chunk.channel_visibility),
+                    "doc_section": chunk.doc_section,
+                    "chunk_type": chunk.chunk_type,
+                    # Task 6: 多分支元数据(P8)
+                    "branch": doc.branch,
+                }
+                # 确定性 UUID:基于 source_id + chunk_index,重跑同 key 覆盖,保证幂等不重复
+                det_uuid = _deterministic_uuid(doc.source_id, chunk.chunk_index)
+                try:
+                    self._collection.data.insert(
+                        properties=props, vector=vec_list, uuid=det_uuid
+                    )
+                except Exception:
+                    # UUID 已存在(重跑/增量重灌),replace 覆盖保证幂等
+                    self._collection.data.replace(
+                        properties=props, vector=vec_list, uuid=det_uuid
+                    )
                 success_count += 1
             except Exception as exc:  # noqa: BLE001 - 单 chunk 失败不中断后续 chunk
                 logger.warning(

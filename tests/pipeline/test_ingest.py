@@ -167,17 +167,24 @@ def test_ingest_document_isolates_per_chunk_failure():
     client = _make_weaviate_client()
     collection = client.collections.get.return_value
 
-    # 第一次 insert 失败,后续都成功
+    # 第一次 insert 失败(模拟 Weaviate 真故障,非 422 exists),replace 也失败
+    # → 该 chunk warning,其余正常(新行为:insert 失败先尝试 replace 幂等覆盖,
+    # replace 也失败才视为真失败)
     def _insert_side_effect(*args, **kwargs):
         if collection.data.insert.call_count == 1:
             raise RuntimeError("weaviate boom")
 
     collection.data.insert.side_effect = _insert_side_effect
 
+    def _replace_boom(*args, **kwargs):
+        raise RuntimeError("weaviate boom")
+
+    collection.data.replace.side_effect = _replace_boom
+
     pipeline = IngestionPipeline(embedder, client, max_tokens=100, overlap=10)
     count = pipeline.ingest_document(_make_doc(content=long_content))
 
-    # 1 个失败,其余成功;返回值 = 总 chunk 数 - 1
+    # 第一个 chunk insert+replace 都失败,其余成功;返回值 = 总 chunk 数 - 1
     assert collection.data.insert.call_count >= 2
     assert count == collection.data.insert.call_count - 1
 
@@ -602,3 +609,15 @@ def test_upsert_postgres_writes_branch():
     # session.add 被调用,传入的 Document 对象应有 branch
     added = session.add.call_args[0][0]
     assert added.branch == "hw-v1.2"
+
+
+def test_deterministic_uuid_stable_and_unique():
+    """确定性 UUID:同 (source_id, chunk_index) 同 uuid;不同 chunk/branch 不同 uuid。"""
+    from backend.pipeline.ingest import _deterministic_uuid
+    u1 = _deterministic_uuid("r/main/f.py", 0)
+    u2 = _deterministic_uuid("r/main/f.py", 0)
+    u3 = _deterministic_uuid("r/main/f.py", 1)
+    u4 = _deterministic_uuid("r/feat-a/f.py", 0)
+    assert u1 == u2, "同 key 应生成同 uuid(幂等基础)"
+    assert u1 != u3, "不同 chunk 应不同 uuid"
+    assert u1 != u4, "不同 branch 应不同 uuid"
