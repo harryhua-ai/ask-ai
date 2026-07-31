@@ -25,8 +25,33 @@ from backend.connectors.base import RawDocument
 from backend.db.models import Document
 from backend.embedder.base import Embedder
 from backend.pipeline.chunk import chunk_document_semantic
+from backend.pipeline.chunk_code import LANG_MAP as _CODE_LANG_MAP
+from backend.pipeline.chunk_code import chunk_code
 
 logger = logging.getLogger(__name__)
+
+
+def _is_code(doc: RawDocument) -> bool:
+    """判断 doc 是否应走代码 AST 分块(按文件扩展名)。
+
+    扩展名取自 ``doc.metadata["path"]``;缺失时回退到 ``doc.source_id``
+    最后一段(假设 source_id 形如 ``<repo>/<branch>/<path>``)。扩展名命中
+    :data:`backend.pipeline.chunk_code.LANG_MAP`(即 tree-sitter 有 grammar
+    支持的语言)时返回 True,否则 False(交给 Markdown / 文档语义分块)。
+
+    Args:
+        doc: 待判定的原始文档。
+
+    Returns:
+        是否按代码分块路由。
+    """
+    path = doc.metadata.get("path", "") if isinstance(doc.metadata, dict) else ""
+    if not path and "/" in doc.source_id:
+        path = doc.source_id.rsplit("/", 1)[-1]
+    if "." not in path:
+        return False
+    ext = ("." + path.rsplit(".", 1)[-1]).lower()
+    return ext in _CODE_LANG_MAP
 
 
 class IngestionPipeline:
@@ -110,6 +135,8 @@ class IngestionPipeline:
                     Property(name="channel_visibility", data_type=DataType.TEXT_ARRAY),
                     Property(name="doc_section", data_type=DataType.TEXT),
                     Property(name="chunk_type", data_type=DataType.TEXT),
+                    # Task 6: 多分支元数据(P8),供检索时按 branch 过滤
+                    Property(name="branch", data_type=DataType.TEXT),
                 ],
             )
 
@@ -135,7 +162,10 @@ class IngestionPipeline:
         Returns:
             成功写入 Weaviate 的 chunk 数(0 表示空文档或全部失败)。
         """
-        chunks = chunk_document_semantic(doc, self._max_tokens, self._overlap)
+        if _is_code(doc):
+            chunks = chunk_code(doc, self._max_tokens, self._overlap)
+        else:
+            chunks = chunk_document_semantic(doc, self._max_tokens, self._overlap)
         if not chunks:
             logger.info("文档 %s 切分为空,跳过灌入", doc.source_id)
             return 0
@@ -168,6 +198,8 @@ class IngestionPipeline:
                         "channel_visibility": list(chunk.channel_visibility),
                         "doc_section": chunk.doc_section,
                         "chunk_type": chunk.chunk_type,
+                        # Task 6: 多分支元数据(P8)
+                        "branch": doc.branch,
                     },
                     vector=vec_list,
                 )
