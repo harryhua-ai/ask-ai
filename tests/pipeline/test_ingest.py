@@ -558,3 +558,47 @@ def test_ensure_collection_creates_branch_property():
         if n == "branch":
             dt = p.dataType if hasattr(p, "dataType") else p.get("dataType")
             assert dt == DataType.TEXT
+
+
+@pytest.mark.unit
+def test_upsert_postgres_writes_branch():
+    """_upsert_postgres 应把 doc.branch 写入 Document.branch(Task 7)。"""
+    from contextlib import contextmanager
+    from unittest.mock import MagicMock
+
+    import numpy as np
+
+    from backend.connectors.base import RawDocument
+    from backend.pipeline.ingest import IngestionPipeline
+
+    embedder = MagicMock()
+    embedder.embed.return_value = [np.array([0.1] * 8)]
+    client = MagicMock()
+    client.collections.exists.return_value = True
+    session = MagicMock()
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = None  # 新插入
+    session.execute.return_value = scalar_result
+
+    @contextmanager
+    def _factory():
+        yield session
+
+    pipeline = IngestionPipeline(
+        embedder, client, session_factory=MagicMock(side_effect=_factory)
+    )
+    doc = RawDocument(
+        source_id="r/hw-v1.2/m.py",
+        source_type="local_git",
+        product="p",
+        title="m",
+        content="x",
+        url="u",
+        metadata={"path": "m.py"},
+        content_hash="h1",
+        branch="hw-v1.2",
+    )
+    pipeline.ingest_document(doc)
+    # session.add 被调用,传入的 Document 对象应有 branch
+    added = session.add.call_args[0][0]
+    assert added.branch == "hw-v1.2"

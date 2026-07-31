@@ -55,6 +55,7 @@ class Document(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    branch: Mapped[str] = mapped_column(String(100), default="", nullable=False, index=True)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

@@ -47,13 +47,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 load_dotenv()
 
 import weaviate
+from sqlalchemy import select
 
 import backend.connectors.filesystem  # 触发 @register 装饰器
-import backend.connectors.github  # noqa: F401 - 触发 @register 装饰器
-from backend.config import Settings, load_settings, load_yaml_config
+import backend.connectors.github
+import backend.connectors.local_git  # noqa: F401 - 触发 @register 装饰器
+from backend.config import Settings, load_settings
+from backend.connectors.db_adapter import to_source_config
 from backend.connectors.registry import ConnectorRegistry, SourceConfig
-from backend.db.models import SyncLog
-from backend.db.session import get_engine, get_session_factory, init_db
+from backend.db.models import DataSource, SyncLog
+from backend.db.session import (
+    get_engine,
+    get_session_factory,
+    get_sync_session_factory,
+    init_db,
+)
 from backend.embedder.bge import BGEEmbedder
 from backend.pipeline.ingest import IngestionPipeline
 
@@ -83,6 +91,26 @@ def _parse_weaviate_endpoint(weaviate_url: str) -> tuple[str, int]:
         weaviate_url = f"http://{weaviate_url}"
     parsed = urlparse(weaviate_url)
     return parsed.hostname or "localhost", parsed.port or 8080
+
+
+async def _load_configs_from_db(session_factory: Any) -> list[SourceConfig]:
+    """从 ``data_sources`` 表读 enabled 配置,转 SourceConfig。
+
+    替代 Task 7 之前从 YAML 加载的逻辑:数据源配置现在持久化在 Postgres
+    ``data_sources`` 表(由管理界面 / API 维护),同步脚本直接读 DB。
+
+    Args:
+        session_factory: 异步 SQLAlchemy 会话工厂(``async_sessionmaker``)。
+
+    Returns:
+        按 ``id`` 升序排列的 :class:`SourceConfig` 列表(仅含 enabled=True)。
+    """
+    async with session_factory() as session:
+        result = await session.execute(
+            select(DataSource).where(DataSource.enabled.is_(True)).order_by(DataSource.id)
+        )
+        rows = result.scalars().all()
+    return [to_source_config(ds) for ds in rows]
 
 
 async def _sync_one(
@@ -181,8 +209,10 @@ async def run_sync(
     """执行一次完整的同步流程。
 
     流程:
-        1. 从 ``<config_dir>/data_sources.yaml`` 加载数据源配置。
-        2. 初始化 Postgres 引擎、Weaviate client、BGE Embedder、IngestionPipeline。
+        1. 创建 Postgres 引擎与异步会话工厂,从 ``data_sources`` 表读 enabled
+           配置(Task 7:替代 YAML,配置由管理界面维护)。
+        2. 初始化 Weaviate client、BGE Embedder、IngestionPipeline(传入同步
+           session_factory 供 ``documents`` 表写入)。
         3. 遍历启用的数据源,调 ``_sync_one`` 逐个同步。
         4. ``finally`` 块释放 Weaviate client 与 Postgres engine。
 
@@ -200,9 +230,6 @@ async def run_sync(
             chunk_type)必须通过 ``--reindex`` 触发 collection 重建才能生效。
             ⚠️ 期间服务不可用(零停机迁移为后续工作)。
     """
-    config_data = load_yaml_config(settings.config_dir / "data_sources.yaml")
-    configs = ConnectorRegistry.load_configs(config_data)
-
     engine = get_engine(settings.postgres_dsn)
     weaviate_client: Any | None = None
     try:
@@ -228,11 +255,14 @@ async def run_sync(
             await init_db(engine)
 
         session_factory = get_session_factory(engine)
+        configs = await _load_configs_from_db(session_factory)
+        sync_session_factory = get_sync_session_factory(settings.postgres_dsn)
         embedder = BGEEmbedder(device=settings.embedder_device)
         pipeline = IngestionPipeline(
             embedder,
             weaviate_client,
             class_name=settings.weaviate_class_name,
+            session_factory=sync_session_factory,
         )
 
         # 显式指定 source_id 视为"手动触发";无参数 cron 调度为"自动"
