@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { DirPicker } from "@/components/DirPicker";
 import type { DataSource } from "@/types/api";
 
 const SOURCE_TYPES = ["github", "filesystem", "local_git"] as const;
@@ -153,6 +154,7 @@ export default function DataSources() {
     defaultValues: EMPTY_FORM,
   });
   const type = watch("type");
+  const rootPath = watch("root_path");
 
   const openCreate = () => {
     reset(EMPTY_FORM);
@@ -341,21 +343,31 @@ export default function DataSources() {
                 <Label>文件类型 (逗号分隔,留空=全部)</Label>
                 <Input {...register("file_types")} placeholder=".md, .txt" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label>包含目录 (逗号分隔)</Label>
+              <div className="space-y-1">
+                <Label>
+                  包含目录 {rootPath ? "(勾选根路径下子目录)" : "(逗号分隔,填根路径后可浏览)"}
+                </Label>
+                {rootPath ? (
+                  <DirPicker
+                    rootPath={rootPath}
+                    value={splitComma(watch("include_dirs"))}
+                    onChange={(dirs) => setValue("include_dirs", dirs.join(", "))}
+                  />
+                ) : (
                   <Input {...register("include_dirs")} placeholder="docs, guides" />
-                </div>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label>排除目录 (逗号分隔)</Label>
                   <Input {...register("exclude_dirs")} placeholder=".git, tmp" />
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label>排除正则</Label>
                   <Input {...register("exclude_regex")} />
                 </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label>最大文件大小 (字节)</Label>
                   <Input type="number" {...register("max_file_size")} />
