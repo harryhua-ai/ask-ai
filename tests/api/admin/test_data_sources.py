@@ -57,6 +57,50 @@ async def test_create_and_list_data_source(auth_headers):
         assert any(s["id"] == "test-source" for s in resp.json())
 
 
+async def test_preview_dirs_lists_subdirs(tmp_path, auth_headers):
+    """preview-dirs 返回 root_path 下的子目录(不列文件/系统目录/隐藏目录)。"""
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    (root / "docs" / "en").mkdir()
+    (root / "src").mkdir()
+    (root / "node_modules").mkdir()  # 系统目录,应过滤
+    (root / ".hidden").mkdir()  # 隐藏目录,应过滤
+    (root / "README.md").write_text("x", encoding="utf-8")  # 文件,不列
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get(
+            "/api/admin/data-sources/preview-dirs",
+            params={"root_path": str(root)},
+            headers=auth_headers,
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    names = {d["name"] for d in data["dirs"]}
+    assert "docs" in names and "src" in names
+    assert "node_modules" not in names  # 系统目录过滤
+    assert ".hidden" not in names  # 隐藏目录过滤
+    # 子层递归:docs 下应有 en
+    docs_entry = next(d for d in data["dirs"] if d["name"] == "docs")
+    assert docs_entry["children_count"] >= 1
+    child_names = {c["name"] for c in docs_entry["children"]}
+    assert "en" in child_names
+    # 子层路径为相对 root 的相对路径
+    en_child = next(c for c in docs_entry["children"] if c["name"] == "en")
+    assert en_child["path"] == "docs/en"
+
+
+async def test_preview_dirs_nonexistent_root_404(auth_headers):
+    """root_path 不存在时返回 404。"""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get(
+            "/api/admin/data-sources/preview-dirs",
+            params={"root_path": "/nonexistent/xxx_abc_123_zzz"},
+            headers=auth_headers,
+        )
+    assert resp.status_code == 404
+
+
 async def test_preview_branches(auth_headers, monkeypatch):
     """preview-branches 应调 GitHub API 返回分支列表(mock httpx)。"""
     from unittest.mock import AsyncMock, MagicMock

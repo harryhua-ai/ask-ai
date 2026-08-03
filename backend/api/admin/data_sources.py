@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+from pathlib import Path
 from typing import Annotated
 
 import httpx
@@ -16,6 +17,43 @@ from backend.db.models import DataSource
 
 router = APIRouter(prefix="/data-sources", tags=["数据源管理"])
 EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
+
+# 系统目录/构建产物:预览子目录时一律过滤,避免噪音与深层爆炸。
+SYSTEM_DIRS = frozenset(
+    {
+        ".git",
+        "node_modules",
+        "__pycache__",
+        "build",
+        "dist",
+        ".venv",
+        "venv",
+        ".idea",
+        ".vscode",
+        "target",
+        ".next",
+    }
+)
+# 顶层/子层返回上限,防止巨型目录拖垮管理面板。
+MAX_TOP_DIRS = 100
+MAX_SUB_DIRS = 50
+
+
+def _is_listable_dir(entry: Path) -> bool:
+    """目录是否可列:是目录 + 非系统目录 + 非隐藏目录。"""
+    return (
+        entry.is_dir()
+        and entry.name not in SYSTEM_DIRS
+        and not entry.name.startswith(".")
+    )
+
+
+def _count_listable_subdirs(path: Path) -> int:
+    """统计 path 下可列子目录数(单层,供前端展示 children_count)。"""
+    try:
+        return sum(1 for x in path.iterdir() if _is_listable_dir(x))
+    except (PermissionError, OSError):
+        return 0
 
 
 def _to_out(ds: DataSource) -> DataSourceOut:
@@ -92,6 +130,52 @@ async def delete_data_source(source_id: str, _: EditorDep, request: Request) -> 
             raise HTTPException(status_code=404, detail="数据源不存在")
         await session.delete(ds)
         await session.commit()
+
+
+@router.get("/preview-dirs")
+async def preview_dirs(root_path: str, _: EditorDep) -> dict[str, list[dict]]:
+    """列出 root_path 下子目录(递归 2 层,过滤系统/隐藏目录),供前端目录选择器。
+
+    安全:root_path 必须存在且为目录(否则 404);返回相对 root_path 的相对路径,
+    不泄露服务器绝对路径结构。顶层限 100、子层限 50 防爆炸。
+    """
+    root = Path(root_path).expanduser()
+    if not root.is_dir():
+        raise HTTPException(status_code=404, detail=f"目录不存在: {root_path}")
+
+    dirs: list[dict] = []
+    try:
+        top_entries = sorted(root.iterdir(), key=lambda p: p.name)
+    except (PermissionError, OSError) as exc:
+        raise HTTPException(status_code=403, detail=f"目录不可读: {root_path}") from exc
+
+    for entry in top_entries:
+        if not _is_listable_dir(entry):
+            continue
+        try:
+            sub_entries = sorted(entry.iterdir(), key=lambda p: p.name)
+        except (PermissionError, OSError):
+            sub_entries = []
+        children = [
+            {
+                "name": sub.name,
+                "path": f"{entry.name}/{sub.name}",
+                "children_count": _count_listable_subdirs(sub),
+            }
+            for sub in sub_entries
+            if _is_listable_dir(sub)
+        ]
+        dirs.append(
+            {
+                "name": entry.name,
+                "path": entry.name,
+                "children": children[:MAX_SUB_DIRS],
+                "children_count": len(children),
+            }
+        )
+        if len(dirs) >= MAX_TOP_DIRS:
+            break  # 防巨型目录爆炸
+    return {"dirs": dirs}
 
 
 @router.get("/preview-branches")
