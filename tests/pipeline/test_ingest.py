@@ -72,7 +72,7 @@ def test_ingest_document_stores_in_weaviate():
     pipeline.ingest_document(doc)
 
     embedder.embed.assert_called_once_with(["NE503 specs"])
-    assert collection.data.insert.called
+    assert collection.data.insert_many.called
 
 
 @pytest.mark.unit
@@ -167,24 +167,28 @@ def test_ingest_document_isolates_per_chunk_failure():
     client = _make_weaviate_client()
     collection = client.collections.get.return_value
 
-    # 第一次 insert 失败(模拟 Weaviate 真故障,非 422 exists),replace 也失败
-    # → 该 chunk warning,其余正常(新行为:insert 失败先尝试 replace 幂等覆盖,
-    # replace 也失败才视为真失败)
+    # insert_many 整批失败 → 回退逐条;逐条路径第一个 chunk insert+replace 都失败,
+    # 其余正常(新行为:insert_many 整批 except 回退逐条 insert,insert 失败试 replace)
+    def _insert_many_side_effect(*args, **kwargs):
+        raise RuntimeError("weaviate boom")
+
     def _insert_side_effect(*args, **kwargs):
         if collection.data.insert.call_count == 1:
             raise RuntimeError("weaviate boom")
 
-    collection.data.insert.side_effect = _insert_side_effect
-
     def _replace_boom(*args, **kwargs):
         raise RuntimeError("weaviate boom")
 
+    collection.data.insert_many.side_effect = _insert_many_side_effect
+    collection.data.insert.side_effect = _insert_side_effect
     collection.data.replace.side_effect = _replace_boom
 
     pipeline = IngestionPipeline(embedder, client, max_tokens=100, overlap=10)
     count = pipeline.ingest_document(_make_doc(content=long_content))
 
-    # 第一个 chunk insert+replace 都失败,其余成功;返回值 = 总 chunk 数 - 1
+    # insert_many 整批失败 1 次;回退逐条时第一个 chunk insert+replace 都失败,
+    # 其余成功;返回值 = 逐条 insert 调用数 - 1(第一个失败)
+    assert collection.data.insert_many.call_count == 1
     assert collection.data.insert.call_count >= 2
     assert count == collection.data.insert.call_count - 1
 
@@ -423,9 +427,9 @@ def test_ingest_document_writes_new_fields():
     )
     pipeline.ingest_document(doc)
 
-    mock_collection.data.insert.assert_called()
-    insert_kwargs = mock_collection.data.insert.call_args.kwargs
-    props = insert_kwargs.get("properties", {})
+    mock_collection.data.insert_many.assert_called()
+    data_objs = mock_collection.data.insert_many.call_args.args[0]
+    props = data_objs[0].properties
     assert "channel_visibility" in props
     assert props["channel_visibility"] == ["api"]
     assert "chunk_type" in props
@@ -522,7 +526,7 @@ def test_route_markdown_to_semantic():
 
 @pytest.mark.unit
 def test_weaviate_gets_branch_property():
-    """data.insert 的 properties 应含 branch 字段(取自 doc.branch)。"""
+    """insert_many 的 DataObject properties 应含 branch 字段(取自 doc.branch)。"""
     from unittest.mock import MagicMock
     from backend.pipeline.ingest import IngestionPipeline
     from backend.connectors.base import RawDocument
@@ -539,8 +543,8 @@ def test_weaviate_gets_branch_property():
         metadata={"path": "m.py"}, content_hash="h", branch="hw-v1.2",
     )
     pipeline.ingest_document(doc)
-    insert_kwargs = mock_collection.data.insert.call_args.kwargs
-    props = insert_kwargs.get("properties", {})
+    data_objs = mock_collection.data.insert_many.call_args.args[0]
+    props = data_objs[0].properties
     assert props.get("branch") == "hw-v1.2"
 
 
