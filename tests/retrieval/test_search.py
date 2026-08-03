@@ -441,3 +441,41 @@ def test_search_result_symbol_defaults():
                      product="ne301", title="T", url="", score=0.5, chunk_index=0)
     assert r.symbol_name == ""
     assert r.symbol_signature == ""
+
+
+@pytest.mark.unit
+def test_search_symbols_bm25_hits_symbol_tokens():
+    """符号 BM25 on symbol_tokens 命中 camelCase 符号(query 'I2C' 命中 BatteryReadI2C)。"""
+    obj = MagicMock()
+    obj.properties = {
+        "text": "def BatteryReadI2C(addr):\n    ...",
+        "source_id": "ne301/main.py",
+        "source_type": "local_git",
+        "product": "ne301",
+        "title": "main.py",
+        "url": "",
+        "chunk_index": 0,
+        "chunk_type": "code",
+        "doc_section": "",
+        "channel_visibility": ["widget", "api"],
+        "symbol_name": "BatteryReadI2C",
+        "symbol_signature": "def BatteryReadI2C(addr)",
+        "branch": "main",
+    }
+    obj.metadata = MagicMock(distance=None)
+
+    client = MagicMock()
+    collection = MagicMock()
+    client.collections.get.return_value = collection
+    results = MagicMock()
+    results.objects = [obj]
+    collection.query.bm25.return_value = results
+
+    searcher = HybridSearcher(client, embedder=MagicMock())
+    out = searcher.search_symbols(query="I2C", limit=10)
+
+    collection.query.bm25.assert_called_once()
+    bm25_kwargs = collection.query.bm25.call_args.kwargs
+    assert bm25_kwargs["query"] == "I2C"
+    assert "symbol_tokens^3" in bm25_kwargs["query_properties"]
+    assert any(r.symbol_name == "BatteryReadI2C" for r in out)

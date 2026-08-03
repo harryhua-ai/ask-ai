@@ -173,6 +173,63 @@ class HybridSearcher:
 
         return [self._to_search_result(obj) for obj in results.objects]
 
+    def search_symbols(
+        self,
+        query: str,
+        limit: int = 30,
+        product_filter: str | None = None,
+        channel: str = "widget",
+    ) -> list[SearchResult]:
+        """独立符号 BM25 召回(对 ``symbol_tokens``,用原始 query 绕过 rewrite)。
+
+        用 ``query_properties=["symbol_tokens^3"]`` 把 BM25 限定到符号 token
+        字段并 boost,让原始 query 中的标识符(如 ``I2C``)精确命中 camelCase
+        符号(如 ``BatteryReadI2C`` → tokens ``"battery read i2c"``)。
+        BM25 无 distance,``score`` 退化为 0.0(由 RRF 重排,rerank 用 text 不
+        依赖 score)。
+
+        Args:
+            query: 原始(未 rewrite)查询文本,保标识符。空 / 纯空白返回 ``[]``。
+            limit: 返回结果数上限。
+            product_filter: 可选产品名过滤(精确匹配 ``product`` property)。
+            channel: 渠道过滤(默认 ``widget``);非空时附加 channel_visibility 过滤。
+
+        Returns:
+            :class:`SearchResult` 列表(含 symbol_name / symbol_signature)。
+        """
+        if not query or not query.strip():
+            logger.info("空 query,跳过符号 BM25 检索")
+            return []
+
+        collection = self._client.collections.get(self._class_name)
+        from weaviate.classes.query import Filter
+
+        filters_list: list = [
+            Filter.by_property("channel_visibility").contains_any([channel])
+        ]
+        if product_filter:
+            filters_list.append(
+                Filter.by_property("product").equal(product_filter)
+            )
+        filters = (
+            filters_list[0]
+            if len(filters_list) == 1
+            else Filter.all_of(filters_list)
+        )
+
+        resp = collection.query.bm25(
+            query=query,
+            query_properties=["symbol_tokens^3"],
+            limit=limit,
+            filters=filters,
+            return_properties=[
+                "source_id", "source_type", "product", "title", "url", "text",
+                "chunk_index", "chunk_type", "doc_section", "channel_visibility",
+                "symbol_name", "symbol_signature", "branch",
+            ],
+        )
+        return [self._to_search_result(o) for o in resp.objects]
+
     def _to_search_result(self, obj: Any) -> SearchResult:
         """Weaviate 对象 → SearchResult(含 symbol 字段,search_symbols 复用)。
 
