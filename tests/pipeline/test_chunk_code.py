@@ -237,6 +237,24 @@ def test_chunk_code_fills_symbol_fields():
 
 
 @pytest.mark.unit
+def test_chunk_code_c_custom_return_type_not_mistaken_as_name():
+    """C 函数返回自定义 type_identifier 时,symbol_name 应取函数名(declarator 内),非返回类型。
+
+    回归:``aicam_result_t aicam_system_init(void)`` —— 旧版前序 DFS 取到返回类型
+    ``aicam_result_t``,修复后应取 ``aicam_system_init``。
+    """
+    src = "aicam_result_t aicam_system_init(void) {\n    return 0;\n}\n"
+    doc = _doc(src, metadata={"path": "core_init.c"}, source_id="ne301/core_init.c",
+               title="core_init.c")
+    chunks = chunk_code(doc)
+    assert len(chunks) == 1
+    c = chunks[0]
+    assert c.symbol_name == "aicam_system_init"   # 不是 aicam_result_t
+    assert c.symbol_tokens == "aicam system init"
+    assert c.symbol_node_type == "function_definition"
+
+
+@pytest.mark.unit
 def test_chunk_code_symbol_fields_empty_for_no_grammar():
     doc = _doc("hello", metadata={"path": "x.txt"}, source_id="r/x.txt",
                title="x")

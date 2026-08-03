@@ -188,7 +188,8 @@ def _find_symbol_name(node) -> str:
     覆盖:
     - Python / TS / TSX / JS:function_declaration / class_declaration 的
       直接子 ``identifier``。
-    - C / CPP:function_declarator 内嵌的 ``identifier``。
+    - C / CPP:function_declarator 内嵌的 ``identifier``(**优先 declarator 子树**,
+      跳过返回类型 ``type_identifier``,否则 ``aicam_result_t f(void)`` 会误取返回类型)。
     - Rust:struct_item / impl_item 的 ``type_identifier``、function_item 的
       ``identifier``。
     - Bash:function_definition 的首 ``word``。
@@ -199,6 +200,14 @@ def _find_symbol_name(node) -> str:
     Returns:
         符号名(解码后的 str);找不到返回空串。
     """
+    # C / CPP function_definition:优先在 function_declarator 子树内找函数名 identifier,
+    # 避免把返回类型 type_identifier 误当函数名(如 aicam_result_t aicam_init)。
+    if node.type == "function_definition":
+        for child in _walk_children(node):
+            if child.type == "function_declarator":
+                name = _find_symbol_name(child)
+                if name:
+                    return name
     if node.type in _NAME_NODE_TYPES:
         try:
             return node.text.decode("utf-8", errors="ignore")
@@ -209,6 +218,11 @@ def _find_symbol_name(node) -> str:
         if name:
             return name
     return ""
+
+
+def _walk_children(node):
+    """直接子节点生成器(语义占位,便于阅读;等价 node.children)。"""
+    return node.children
 
 
 def _extract_signature(node) -> str:
