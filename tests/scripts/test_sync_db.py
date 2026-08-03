@@ -4,9 +4,9 @@ import os
 import subprocess
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
-from backend.db.models import DataSource, Document
+from backend.db.models import DataSource, Document, SyncLog
 from backend.db.session import get_engine, get_sync_session_factory, init_db
 
 pytestmark = pytest.mark.integration
@@ -120,4 +120,175 @@ async def test_run_sync_reads_db_and_writes_documents_with_branch(tiny_repo, mon
             await conn.run_sync(
                 __import__("backend.db.models", fromlist=["Base"]).Base.metadata.drop_all
             )
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Task 3: _sync_one 在 fetch_changes 空时的"首次 vs 无变更"判断
+# ---------------------------------------------------------------------------
+
+# 共用 git 身份环境(避免 git commit 触发 user.name/email 缺失错误)
+_GIT_ENV = {
+    **os.environ,
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@t",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@t",
+}
+# commits 标到 2000 年 → fetch_changes(now-24h) 必返回空(真增量)
+_GIT_OLD_ENV = {
+    **_GIT_ENV,
+    "GIT_AUTHOR_DATE": "2000-01-01T00:00:00",
+    "GIT_COMMITTER_DATE": "2000-01-01T00:00:00",
+}
+
+
+@pytest.fixture
+def backdated_repo(tmp_path):
+    """commits 全标 2000 年的 git repo → fetch_changes(近 24h) 返回空。
+
+    与 ``tiny_repo`` 不同,这里把 commit 日期强制设为 2000-01-01,使得
+    ``fetch_changes(datetime.now(UTC) - timedelta(hours=24))`` 在
+    ``git log --since`` 过滤后**必然返回空**——这是 Task 3 新逻辑的关键
+    触发条件。
+    """
+    r = tmp_path / "repo"
+    r.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=r, check=True)
+    (r / "main_only.py").write_text("a = 1\n")
+    subprocess.run(["git", "add", ".", "-A"], cwd=r, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "init"], cwd=r, check=True, env=_GIT_OLD_ENV
+    )
+    return r
+
+
+_TEST_DSN = "postgresql+asyncpg://ask_ai:changeme@localhost:5432/ask_ai_test"
+
+
+@pytest.mark.integration
+async def test_sync_skips_when_documents_exist_and_no_changes(backdated_repo):
+    """fetch_changes 空 + documents 表已有记录 → 不回退 fetch_all,不 ingest_all。
+
+    场景:数据源之前已全量同步过(documents 表有行),本次窗口期无新变更
+    → 应"跳过",不调 ingest_all,SyncLog.items_unchanged >= 1, items_new == 0。
+    """
+    from unittest.mock import MagicMock
+
+    import backend.connectors.local_git  # noqa: F401 - 触发 @register
+    from backend.connectors.registry import SourceConfig
+    from backend.db.session import get_session_factory
+    from scripts.sync import _sync_one
+
+    engine = get_engine(_TEST_DSN)
+    try:
+        await init_db(engine)
+        async_factory = get_session_factory(engine)
+        sync_factory = get_sync_session_factory(_TEST_DSN)
+
+        cfg = SourceConfig(
+            id="ne301-skip",
+            type="local_git",
+            product="ne301",
+            enabled=True,
+            config={"repo_path": str(backdated_repo), "file_types": [".py"]},
+            sync_interval="1h",
+        )
+
+        # 预先在 documents 表 seed 一行(模拟之前已全量同步过)
+        with sync_factory() as s:
+            s.add(
+                Document(
+                    content_hash="a" * 64,
+                    source_id="ne301-skip/main/main_only.py",
+                    source_type="local_git",
+                    product="ne301",
+                    title="main_only",
+                    url="file:///x",
+                    branch="main",
+                    chunk_count=1,
+                )
+            )
+            s.commit()
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.ingest_all.return_value = {}
+
+        await _sync_one(cfg, mock_pipeline, async_factory, triggered_by="test")
+
+        # 核心断言:没有 ingest_all 调用 = 没有回退全量
+        assert not mock_pipeline.ingest_all.called, (
+            "documents 表已有记录时,fetch_changes 空不应回退 fetch_all"
+        )
+
+        # SyncLog 应记录 items_unchanged >= 1, items_new == 0
+        with sync_factory() as s:
+            logs = list(
+                s.execute(
+                    select(SyncLog).where(SyncLog.source_id == "ne301-skip")
+                ).scalars()
+            )
+            assert logs, "应至少有一条 SyncLog"
+            latest = max(logs, key=lambda x: x.started_at)
+            assert latest.items_unchanged >= 1
+            assert latest.items_new == 0
+            # 清理本测试 seed 的行
+            s.execute(delete(Document).where(Document.source_id.like("ne301-skip/%")))
+            s.execute(delete(SyncLog).where(SyncLog.source_id == "ne301-skip"))
+            s.commit()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.integration
+async def test_sync_falls_back_when_no_documents(backdated_repo):
+    """fetch_changes 空 + documents 表无记录 → 首次同步,回退 fetch_all(ingest_all 被调)。
+
+    场景:数据源从未同步过(documents 表无行),即使 fetch_changes 空(所有
+    commits 都早于 since),也应回退 fetch_all 进行首次全量灌入。
+    """
+    from unittest.mock import MagicMock
+
+    import backend.connectors.local_git  # noqa: F401 - 触发 @register
+    from backend.connectors.registry import SourceConfig
+    from backend.db.session import get_session_factory
+    from scripts.sync import _sync_one
+
+    engine = get_engine(_TEST_DSN)
+    try:
+        await init_db(engine)
+        async_factory = get_session_factory(engine)
+        sync_factory = get_sync_session_factory(_TEST_DSN)
+
+        cfg = SourceConfig(
+            id="ne301-first",
+            type="local_git",
+            product="ne301",
+            enabled=True,
+            config={"repo_path": str(backdated_repo), "file_types": [".py"]},
+            sync_interval="1h",
+        )
+
+        # 保证 documents 表无该源的残留行(防止前置测试污染)
+        with sync_factory() as s:
+            s.execute(delete(Document).where(Document.source_id.like("ne301-first/%")))
+            s.execute(delete(SyncLog).where(SyncLog.source_id == "ne301-first"))
+            s.commit()
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.ingest_all.return_value = {}
+
+        await _sync_one(cfg, mock_pipeline, async_factory, triggered_by="test")
+
+        # 核心断言:回退全量 → ingest_all 被调用
+        assert mock_pipeline.ingest_all.called, (
+            "documents 表无记录时,fetch_changes 空应回退 fetch_all 并调用 ingest_all"
+        )
+
+        # 清理本测试产生的行
+        with sync_factory() as s:
+            s.execute(delete(Document).where(Document.source_id.like("ne301-first/%")))
+            s.execute(delete(SyncLog).where(SyncLog.source_id == "ne301-first"))
+            s.commit()
+    finally:
         await engine.dispose()
