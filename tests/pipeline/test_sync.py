@@ -397,18 +397,28 @@ async def test_run_sync_dry_run_skips_persistence():
 
 @pytest.mark.unit
 async def test_sync_one_falls_back_to_fetch_all_when_changes_empty():
-    """fetch_changes 返回空迭代器时应回退到 fetch_all。"""
+    """fetch_changes 空 + documents 表无记录 → 首次同步,回退到 fetch_all。
+
+    Task 3 后 _sync_one 在 fetch_changes 空时先查 documents 表:无记录则
+    回退全量,有记录则跳过。本测试 mock session.execute 返回 count=0
+    (首次同步),验证 fetch_all + ingest_all 被调用。
+    """
     from scripts.sync import _sync_one
 
     cfg = _make_config(id="src-1")
     pipeline = MagicMock()
     pipeline.ingest_all.return_value = {"doc1": 2}
     connector = MagicMock()
-    # fetch_changes 空 → 回退到 fetch_all
+    # fetch_changes 空 → 进入 documents 表查询分支
     connector.fetch_changes.return_value = iter([])
     connector.fetch_all.return_value = iter([MagicMock(name="doc1")])
     connector.fetch_deleted.return_value = []
     session_factory, session = _make_async_session_factory()
+    # _count_documents 调 await session.execute(...).scalar()
+    # 返回 0 = documents 表无记录 → 走首次回退路径
+    session.execute = AsyncMock(
+        return_value=MagicMock(scalar=MagicMock(return_value=0))
+    )
 
     with patch("scripts.sync.ConnectorRegistry.create", return_value=connector):
         await _sync_one(cfg, pipeline, session_factory)

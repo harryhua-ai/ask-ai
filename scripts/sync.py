@@ -47,7 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 load_dotenv()
 
 import weaviate
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 import backend.connectors.filesystem  # 触发 @register 装饰器
 import backend.connectors.github
@@ -55,7 +55,7 @@ import backend.connectors.local_git  # noqa: F401 - 触发 @register 装饰器
 from backend.config import Settings, load_settings
 from backend.connectors.db_adapter import to_source_config
 from backend.connectors.registry import ConnectorRegistry, SourceConfig
-from backend.db.models import DataSource, SyncLog
+from backend.db.models import DataSource, Document, SyncLog
 from backend.db.session import (
     get_engine,
     get_session_factory,
@@ -113,6 +113,28 @@ async def _load_configs_from_db(session_factory: Any) -> list[SourceConfig]:
     return [to_source_config(ds) for ds in rows]
 
 
+async def _count_documents(session_factory: Any, source_id_prefix: str) -> int:
+    """统计 documents 表中某数据源的已有记录数(判断首次 vs 无变更)。
+
+    用 ``source_id LIKE '<id>/%'`` 前缀匹配(source_id 格式为
+    ``{cfg.id}/{branch}/{rel}``)。
+
+    Args:
+        session_factory: 异步 SQLAlchemy 会话工厂。
+        source_id_prefix: 数据源 ID(如 ``"ne301-local"``)。
+
+    Returns:
+        该数据源在 documents 表的行数。
+    """
+    async with session_factory() as session:
+        result = await session.execute(
+            select(func.count())
+            .select_from(Document)
+            .where(Document.source_id.like(f"{source_id_prefix}/%"))
+        )
+        return int(result.scalar() or 0)
+
+
 async def _sync_one(
     cfg: SourceConfig,
     pipeline: IngestionPipeline,
@@ -149,8 +171,20 @@ async def _sync_one(
 
         docs = list(connector.fetch_changes(since))
         if not docs:
-            # 增量为空(首次同步或窗口期内无变更),回退到全量拉取
-            logger.info("数据源 %s 增量为空,回退到全量拉取", cfg.id)
+            # 区分首次(无 documents 记录)vs 无变更(已有记录)
+            existing = await _count_documents(session_factory, cfg.id)
+            if existing > 0:
+                # 无变更跳过:不回退全量,不灌入,直接记 SyncLog 返回
+                logger.info(
+                    "数据源 %s 无变更,跳过(documents 已有 %d)", cfg.id, existing
+                )
+                log_entry.items_new = 0
+                log_entry.items_unchanged = existing
+                log_entry.finished_at = datetime.now(UTC)
+                log_entry.duration_ms = int((time.monotonic() - start) * 1000)
+                return
+            # 首次同步:documents 表无记录,回退到全量拉取
+            logger.info("数据源 %s 首次同步,回退到全量拉取", cfg.id)
             docs = list(connector.fetch_all())
 
         logger.info("数据源 %s 抓取到 %d 篇文档", cfg.id, len(docs))
