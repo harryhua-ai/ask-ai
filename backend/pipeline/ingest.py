@@ -189,46 +189,103 @@ class IngestionPipeline:
 
         self._ensure_collection()
 
-        success_count = 0
-        for chunk, vector in zip(chunks, vectors):
-            try:
-                # 兼容 list / np.ndarray:统一转 list[float] 供 Weaviate v4 使用
-                vec_list = np.asarray(vector).tolist()
-                props = {
-                    "source_id": doc.source_id,
-                    "source_type": doc.source_type,
-                    "product": doc.product,
-                    "title": doc.title,
-                    "text": chunk.text,
-                    "url": doc.url,
-                    "chunk_index": chunk.chunk_index,
-                    "content_hash": doc.content_hash,
-                    # Phase 2A 新增
-                    "channel_visibility": list(chunk.channel_visibility),
-                    "doc_section": chunk.doc_section,
-                    "chunk_type": chunk.chunk_type,
-                    # Task 6: 多分支元数据(P8)
-                    "branch": doc.branch,
-                }
-                # 确定性 UUID:基于 source_id + chunk_index,重跑同 key 覆盖,保证幂等不重复
-                det_uuid = _deterministic_uuid(doc.source_id, chunk.chunk_index)
-                try:
-                    self._collection.data.insert(
-                        properties=props, vector=vec_list, uuid=det_uuid
-                    )
-                except Exception:
-                    # UUID 已存在(重跑/增量重灌),replace 覆盖保证幂等
-                    self._collection.data.replace(
-                        properties=props, vector=vec_list, uuid=det_uuid
-                    )
-                success_count += 1
-            except Exception as exc:  # noqa: BLE001 - 单 chunk 失败不中断后续 chunk
-                logger.warning(
-                    "写入 Weaviate 失败 doc=%s chunk=%d: %s",
-                    doc.source_id,
-                    chunk.chunk_index,
-                    exc,
+        # 批量写入 Weaviate(insert_many),已存在 UUID 回退单条 replace(幂等覆盖)。
+        # 远程 Weaviate 经 SSH tunnel 时,N chunk 逐条往返延迟极高;
+        # 改为 1 次 batch 提交,已存在对象按 per-object 错误回退 replace。
+        import weaviate as _wv
+        data_objs: list = []
+        props_list: list[dict] = []
+        uuid_list: list = []
+        for _chunk, _vector in zip(chunks, vectors):
+            _vec_list = np.asarray(_vector).tolist()
+            _props = {
+                "source_id": doc.source_id,
+                "source_type": doc.source_type,
+                "product": doc.product,
+                "title": doc.title,
+                "text": _chunk.text,
+                "url": doc.url,
+                "chunk_index": _chunk.chunk_index,
+                "content_hash": doc.content_hash,
+                # Phase 2A 新增
+                "channel_visibility": list(_chunk.channel_visibility),
+                "doc_section": _chunk.doc_section,
+                "chunk_type": _chunk.chunk_type,
+                # Task 6: 多分支元数据(P8)
+                "branch": doc.branch,
+            }
+            _det_uuid = _deterministic_uuid(doc.source_id, _chunk.chunk_index)
+            props_list.append(_props)
+            uuid_list.append(_det_uuid)
+            data_objs.append(
+                _wv.classes.data.DataObject(
+                    properties=_props, vector=_vec_list, uuid=_det_uuid
                 )
+            )
+        success_count = 0
+        try:
+            result = self._collection.data.insert_many(data_objs)
+            responses = getattr(result, "all_responses", [])
+            failed_idx = [
+                i for i, r in enumerate(responses) if getattr(r, "has_errors", False)
+            ]
+            success_count = len(data_objs) - len(failed_idx)
+            # 已存在的 UUID:回退单条 replace 保证幂等覆盖
+            for _i in failed_idx:
+                try:
+                    self._collection.data.replace(
+                        properties=props_list[_i],
+                        vector=np.asarray(vectors[_i]).tolist(),
+                        uuid=uuid_list[_i],
+                    )
+                    success_count += 1
+                except Exception as exc2:  # noqa: BLE001
+                    logger.warning(
+                        "replace 回退失败 doc=%s idx=%d: %s",
+                        doc.source_id,
+                        _i,
+                        str(exc2)[:200],
+                    )
+        except Exception as exc:  # noqa: BLE001 - batch 整体失败,回退逐条 insert/replace
+            logger.warning(
+                "insert_many 整体失败 doc=%s,回退逐条: %s",
+                doc.source_id,
+                str(exc)[:200],
+            )
+            for _chunk, _vector in zip(chunks, vectors):
+                try:
+                    _vec_list = np.asarray(_vector).tolist()
+                    _props = {
+                        "source_id": doc.source_id,
+                        "source_type": doc.source_type,
+                        "product": doc.product,
+                        "title": doc.title,
+                        "text": _chunk.text,
+                        "url": doc.url,
+                        "chunk_index": _chunk.chunk_index,
+                        "content_hash": doc.content_hash,
+                        "channel_visibility": list(_chunk.channel_visibility),
+                        "doc_section": _chunk.doc_section,
+                        "chunk_type": _chunk.chunk_type,
+                        "branch": doc.branch,
+                    }
+                    _det_uuid = _deterministic_uuid(doc.source_id, _chunk.chunk_index)
+                    try:
+                        self._collection.data.insert(
+                            properties=_props, vector=_vec_list, uuid=_det_uuid
+                        )
+                    except Exception:
+                        self._collection.data.replace(
+                            properties=_props, vector=_vec_list, uuid=_det_uuid
+                        )
+                    success_count += 1
+                except Exception as exc2:  # noqa: BLE001 - 单 chunk 失败不中断后续 chunk
+                    logger.warning(
+                        "写入 Weaviate 失败 doc=%s chunk=%d: %s",
+                        doc.source_id,
+                        _chunk.chunk_index,
+                        str(exc2)[:200],
+                    )
 
         # Postgres doc 级 upsert(若提供 session)
         if self._session_factory is not None:
@@ -248,6 +305,9 @@ class IngestionPipeline:
     def ingest_all(self, docs: list[RawDocument]) -> dict[str, int]:
         """批量灌入文档,单 doc 失败不中断后续。
 
+        跨 doc 累积 chunk 后一次性 embed(embedder 内部按 ``batch_size`` 批处理),
+        充分利用 GPU;再按 doc 批量写 Weaviate。单 doc 失败仅记 0,不中断批次。
+
         Args:
             docs: 待灌入的原始文档列表。
 
@@ -255,15 +315,164 @@ class IngestionPipeline:
             ``{source_id: success_chunk_count}`` 字典;失败的 doc 计为 0。
         """
         results: dict[str, int] = {}
+        batch_size = 64  # 每批 64 doc:控制内存,跨 doc 累积满 batch_size embed
+        for start in range(0, len(docs), batch_size):
+            batch = docs[start : start + batch_size]
+            try:
+                results.update(self._ingest_doc_batch(batch))
+            except Exception as exc:  # noqa: BLE001 - 整批失败回退逐 doc
+                logger.error(
+                    "批处理失败(start=%d): %s,回退逐 doc", start, str(exc)[:200]
+                )
+                for doc in batch:
+                    try:
+                        results[doc.source_id] = self.ingest_document(doc)
+                    except Exception as exc2:  # noqa: BLE001
+                        logger.error("索引失败 %s: %s", doc.source_id, exc2)
+                        results[doc.source_id] = 0
+        return results
+
+    def _ingest_doc_batch(self, docs: list[RawDocument]) -> dict[str, int]:
+        """跨 doc 批处理:chunk → 批量 embed → 按 doc 批量写 Weaviate + Postgres。
+
+        将多 doc 的 chunk 文本拼成一个列表统一 embed(embedder 内部按
+        ``batch_size`` 切批),消除逐 doc 小 batch 的 GPU 固定开销。
+        """
+        import weaviate as _wv
+
+        results: dict[str, int] = {}
+        # Phase 1:逐 doc 切分(CPU)
+        doc_chunks: list[tuple[RawDocument, list]] = []
         for doc in docs:
             try:
-                count = self.ingest_document(doc)
-                results[doc.source_id] = count
-            except Exception as exc:  # noqa: BLE001 - 单 doc 失败不中断批次
-                # ingest_document 内部已对 chunk / Postgres 级异常做隔离,
-                # 此处兜底防止 embed / chunk 阶段的异常中断整个批次
-                logger.error("索引失败 %s: %s", doc.source_id, exc)
+                if _is_code(doc):
+                    chunks = chunk_code(doc, self._max_tokens, self._overlap)
+                else:
+                    chunks = chunk_document_semantic(doc, self._max_tokens, self._overlap)
+                if not chunks:
+                    logger.info("文档 %s 切分为空,跳过灌入", doc.source_id)
+                    results[doc.source_id] = 0
+                    continue
+                doc_chunks.append((doc, chunks))
+            except Exception as exc:  # noqa: BLE001
+                logger.error("索引失败 %s: %s", doc.source_id, str(exc)[:200])
                 results[doc.source_id] = 0
+        if not doc_chunks:
+            return results
+
+        # Phase 2:拼平所有 chunk 文本,一次性 embed(embedder 内部按 batch_size 批处理)
+        all_texts: list[str] = []
+        spans: list[tuple[int, int]] = []  # (start, end) into all_texts per doc
+        for _doc, chunks in doc_chunks:
+            s = len(all_texts)
+            all_texts.extend(c.text for c in chunks)
+            spans.append((s, len(all_texts)))
+        try:
+            all_vectors = self._embedder.embed(all_texts)
+        except Exception as exc:  # noqa: BLE001 - embed 失败回退逐 doc(保留原 per-doc 行为)
+            logger.error(
+                "批量 embed 失败(%d texts): %s,回退逐 doc",
+                len(all_texts),
+                str(exc)[:200],
+            )
+            for doc, _chunks in doc_chunks:
+                try:
+                    results[doc.source_id] = self.ingest_document(doc)
+                except Exception as exc2:  # noqa: BLE001
+                    logger.error("索引失败 %s: %s", doc.source_id, exc2)
+                    results[doc.source_id] = 0
+            return results
+        if len(all_vectors) != len(all_texts):
+            raise RuntimeError(
+                f"embedder 返回 {len(all_vectors)} 向量,期望 {len(all_texts)}"
+            )
+
+        # Phase 3:构造整批对象 → 单次 insert_many(跨 doc,1 次往返)→ replace 回退 → 按 doc 统计
+        self._ensure_collection()
+        all_objs: list = []
+        all_props: list[dict] = []
+        all_uuids: list = []
+        all_vecs_flat: list = []
+        obj_spans: list[tuple[int, int]] = []
+        for idx, (doc, chunks) in enumerate(doc_chunks):
+            s, e = spans[idx]
+            vecs = all_vectors[s:e]
+            o_start = len(all_objs)
+            for chunk, vector in zip(chunks, vecs):
+                vec_list = np.asarray(vector).tolist()
+                props = {
+                    "source_id": doc.source_id,
+                    "source_type": doc.source_type,
+                    "product": doc.product,
+                    "title": doc.title,
+                    "text": chunk.text,
+                    "url": doc.url,
+                    "chunk_index": chunk.chunk_index,
+                    "content_hash": doc.content_hash,
+                    "channel_visibility": list(chunk.channel_visibility),
+                    "doc_section": chunk.doc_section,
+                    "chunk_type": chunk.chunk_type,
+                    "branch": doc.branch,
+                }
+                det_uuid = _deterministic_uuid(doc.source_id, chunk.chunk_index)
+                all_props.append(props)
+                all_uuids.append(det_uuid)
+                all_vecs_flat.append(vec_list)
+                all_objs.append(
+                    _wv.classes.data.DataObject(
+                        properties=props, vector=vec_list, uuid=det_uuid
+                    )
+                )
+            obj_spans.append((o_start, len(all_objs)))
+        # 分块 insert_many(跨 doc,WRITE_CHUNK/块),避免大 payload 触发 gRPC 超时;
+        # 失败对象(已存在 UUID / 块级 gRPC 失败)用预计算向量走单条 replace 回退(不重算 embed)
+        WRITE_CHUNK = 128
+        failed_idx: set[int] = set()
+        for _ws in range(0, len(all_objs), WRITE_CHUNK):
+            _we = min(_ws + WRITE_CHUNK, len(all_objs))
+            try:
+                _result = self._collection.data.insert_many(all_objs[_ws:_we])
+                _responses = getattr(_result, "all_responses", [])
+                for _i, _r in enumerate(_responses):
+                    if getattr(_r, "has_errors", False):
+                        failed_idx.add(_ws + _i)
+            except Exception as exc:  # noqa: BLE001 - 块级失败:整块对象走 replace 回退
+                logger.warning(
+                    "insert_many 块失败(offset=%d,%d objs): %s,整块 replace",
+                    _ws,
+                    _we - _ws,
+                    str(exc)[:120],
+                )
+                failed_idx.update(range(_ws, _we))
+        for fi in failed_idx:  # replace 回退(用预计算向量,不重 embed)
+            try:
+                self._collection.data.replace(
+                    properties=all_props[fi],
+                    vector=all_vecs_flat[fi],
+                    uuid=all_uuids[fi],
+                )
+            except Exception as exc2:  # noqa: BLE001
+                logger.warning(
+                    "replace 回退失败 uuid=%s: %s", all_uuids[fi], str(exc2)[:120]
+                )
+        # 按 doc 统计成功数(insert 成功 + replace 回退均计成功)+ Postgres upsert + 日志
+        for idx, (doc, chunks) in enumerate(doc_chunks):
+            o_s, o_e = obj_spans[idx]
+            total = o_e - o_s
+            n_failed_in_doc = sum(1 for i in range(o_s, o_e) if i in failed_idx)
+            success_count = total - n_failed_in_doc  # replace 回退的也算(已尝试覆盖)
+            if self._session_factory is not None:
+                try:
+                    self._upsert_postgres(doc, success_count)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Postgres upsert 失败 doc=%s: %s", doc.source_id, exc)
+            logger.info(
+                "已索引 %s: %d/%d chunk 成功",
+                doc.source_id,
+                success_count,
+                total,
+            )
+            results[doc.source_id] = success_count
         return results
 
     def delete_document(self, source_id: str) -> None:
