@@ -62,6 +62,9 @@ class SearchResult:
     chunk_type: str = ""
     doc_section: str = ""
     channel_visibility: tuple[str, ...] = ("widget", "api")
+    # 函数级符号检索新增字段(默认空串,兼容非代码 chunk)
+    symbol_name: str = ""
+    symbol_signature: str = ""
 
 
 class HybridSearcher:
@@ -168,33 +171,40 @@ class HybridSearcher:
         # hybrid 调用失败时异常向上传播,由调用方决定重试 / 降级
         results = collection.query.hybrid(**kwargs)
 
-        search_results: list[SearchResult] = []
-        for obj in results.objects:
-            props = obj.properties or {}
-            metadata = obj.metadata
-            distance = metadata.distance if metadata is not None else None
-            # distance 越小越相似;转为 score:None 时退化为 0.0
-            score = 1.0 - distance if distance is not None else 0.0
-            # channel_visibility 从 Weaviate 返回为 list,转为 tuple(不可变)
-            cv_raw = props.get("channel_visibility", ["widget", "api"])
-            cv_tuple = (
-                tuple(cv_raw)
-                if isinstance(cv_raw, (list, tuple))
-                else ("widget", "api")
-            )
-            search_results.append(
-                SearchResult(
-                    text=props.get("text", ""),
-                    source_id=props.get("source_id", ""),
-                    source_type=props.get("source_type", ""),
-                    product=props.get("product", ""),
-                    title=props.get("title", ""),
-                    url=props.get("url", ""),
-                    score=score,
-                    chunk_index=props.get("chunk_index", 0),
-                    chunk_type=props.get("chunk_type", ""),
-                    doc_section=props.get("doc_section", ""),
-                    channel_visibility=cv_tuple,
-                )
-            )
-        return search_results
+        return [self._to_search_result(obj) for obj in results.objects]
+
+    def _to_search_result(self, obj: Any) -> SearchResult:
+        """Weaviate 对象 → SearchResult(含 symbol 字段,search_symbols 复用)。
+
+        Args:
+            obj: Weaviate 查询返回的对象(``obj.properties`` / ``obj.metadata``)。
+
+        Returns:
+            :class:`SearchResult` 实例;distance → score(``1 - distance``,
+            ``None`` 退化为 0.0);channel_visibility list → tuple。
+        """
+        props = obj.properties or {}
+        metadata = obj.metadata
+        distance = metadata.distance if metadata is not None else None
+        score = 1.0 - distance if distance is not None else 0.0
+        cv_raw = props.get("channel_visibility", ["widget", "api"])
+        cv_tuple = (
+            tuple(cv_raw)
+            if isinstance(cv_raw, (list, tuple))
+            else ("widget", "api")
+        )
+        return SearchResult(
+            text=props.get("text", ""),
+            source_id=props.get("source_id", ""),
+            source_type=props.get("source_type", ""),
+            product=props.get("product", ""),
+            title=props.get("title", ""),
+            url=props.get("url", ""),
+            score=score,
+            chunk_index=props.get("chunk_index", 0),
+            chunk_type=props.get("chunk_type", ""),
+            doc_section=props.get("doc_section", ""),
+            channel_visibility=cv_tuple,
+            symbol_name=props.get("symbol_name", ""),
+            symbol_signature=props.get("symbol_signature", ""),
+        )
