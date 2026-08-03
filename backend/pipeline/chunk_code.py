@@ -21,6 +21,7 @@
 """
 
 import logging
+import re
 
 from backend.connectors.base import RawDocument
 from backend.pipeline.chunk import (
@@ -92,6 +93,66 @@ _SIG_STRIP_CHARS = "{}: \t\r\n"
 
 # signature 最大长度(字符)。
 _MAX_SIG_LEN = 80
+
+# camelCase / PascalCase / 数字边界拆分规则:
+#   小写→大写:camelCase 边界(readI2C → read + I2C)
+#   大写→大写+小写:缩写词边界(HTMLParser → HTML + Parser)
+#   数字→大写+小写:NE301 + Config(数字后接新词)
+#   数字→大写无小写:I2C 整体(不拆,2→C 后无小写)
+_CAMEL_BOUNDARY = re.compile(
+    r"(?<=[a-z])(?=[A-Z])"        # 小写→大写
+    r"|(?<=[A-Z])(?=[A-Z][a-z])"  # 大写→大写+小写
+    r"|(?<=[0-9])(?=[A-Z][a-z])"  # 数字→大写+小写
+)
+
+
+def _split_symbol_name(name: str) -> str:
+    """camelCase / PascalCase / snake_case → 空格小写;缩写词(I2C / NE301)整体保留。
+
+    用于派生 ``symbol_tokens``,让 BM25 对原始 query 中的标识符命中 camelCase
+    符号(如 query "I2C" 命中 ``BatteryReadI2C`` → tokens 含 "i2c")。
+
+    Args:
+        name: 原始符号名(如 ``BatteryReadI2C`` / ``ne301_init``)。
+
+    Returns:
+        空格分隔的小写 token 串;空输入返回空串。
+    """
+    if not name:
+        return ""
+    s = name.replace("_", " ")
+    s = _CAMEL_BOUNDARY.sub(" ", s)
+    return " ".join(tok.lower() for tok in s.split() if tok)
+
+# camelCase / PascalCase / 数字边界拆分规则:
+#   小写→大写:camelCase 边界(readI2C → read + I2C)
+#   大写→大写+小写:缩写词边界(HTMLParser → HTML + Parser)
+#   数字→大写+小写:NE301 + Config(数字后接新词)
+#   数字→大写无小写:I2C 整体(不拆,2→C 后无小写)
+_CAMEL_BOUNDARY = re.compile(
+    r"(?<=[a-z])(?=[A-Z])"        # 小写→大写
+    r"|(?<=[A-Z])(?=[A-Z][a-z])"  # 大写→大写+小写
+    r"|(?<=[0-9])(?=[A-Z][a-z])"  # 数字→大写+小写
+)
+
+
+def _split_symbol_name(name: str) -> str:
+    """camelCase / PascalCase / snake_case → 空格小写;缩写词(I2C / NE301)整体保留。
+
+    用于派生 ``symbol_tokens``,让 BM25 对原始 query 中的标识符命中 camelCase
+    符号(如 query "I2C" 命中 ``BatteryReadI2C`` → tokens 含 "i2c")。
+
+    Args:
+        name: 原始符号名(如 ``BatteryReadI2C`` / ``ne301_init``)。
+
+    Returns:
+        空格分隔的小写 token 串;空输入返回空串。
+    """
+    if not name:
+        return ""
+    s = name.replace("_", " ")
+    s = _CAMEL_BOUNDARY.sub(" ", s)
+    return " ".join(tok.lower() for tok in s.split() if tok)
 
 
 def _build_byte_to_char_map_local(encoded: bytes) -> list[int]:
@@ -215,7 +276,7 @@ def _collect_sections(
     content: str,
     lang: str,
     byte_to_char: list[int],
-) -> list[tuple[str, int, int, str, str]]:
+) -> list[tuple[str, int, int, str, str, str]]:
     """解析 AST,收集顶层函数/类/方法节点对应的 section。
 
     遇到目标节点即记录并停止向其内部递归(避免 class 内 method 被重复切);
@@ -228,8 +289,8 @@ def _collect_sections(
         byte_to_char: 全文 byte→char 映射表。
 
     Returns:
-        列表,每项 ``(section_text, start_char, end_char, symbol, signature)``。
-        无目标节点时返回空列表(调用方决定是否退化为整体 section)。
+        列表,每项 ``(section_text, start_char, end_char, symbol, signature,
+        node_type)``。无目标节点时返回空列表(调用方决定是否退化为整体 section)。
     """
     from tree_sitter_language_pack import get_parser
 
@@ -237,7 +298,7 @@ def _collect_sections(
     tree = parser.parse(content.encode("utf-8"))
     target_types = FUNCTION_NODE_TYPES[lang]
 
-    sections: list[tuple[str, int, int, str, str]] = []
+    sections: list[tuple[str, int, int, str, str, str]] = []
 
     def walk(node) -> None:
         if node.type in target_types:
@@ -246,7 +307,7 @@ def _collect_sections(
             text = content[start_c:end_c]
             symbol = _find_symbol_name(node)
             signature = _extract_signature(node)
-            sections.append((text, start_c, end_c, symbol, signature))
+            sections.append((text, start_c, end_c, symbol, signature, node.type))
             # 不再向函数/类体内递归,避免方法被重复切
             return
         for child in node.children:
@@ -258,26 +319,28 @@ def _collect_sections(
 
 def _build_chunks(
     doc: RawDocument,
-    pieces: list[tuple[str, int, int, str, str]],
+    pieces: list[tuple[str, int, int, str, str, str]],
 ) -> list[Chunk]:
-    """构造不可变 Chunk 列表(每个 piece 拼 symbol 前缀)。
+    """构造不可变 Chunk 列表(每个 piece 拼 symbol 前缀 + 填 symbol 元数据)。
 
     Args:
         doc: 所属 RawDocument。
         pieces: 列表,每项
-            ``(piece_text, start_char, end_char, symbol, signature)``。
+            ``(piece_text, start_char, end_char, symbol, signature, node_type)``。
             start_char/end_char 是 piece_text 在 doc.content 中的字符偏移
-            (不含前缀);symbol/signature 用于拼前缀(symbol 空则不拼)。
+            (不含前缀);symbol/signature/node_type 用于拼前缀与填充 Chunk 的
+            symbol_* 字段(symbol 空则不拼前缀)。
 
     Returns:
         Chunk 列表,chunk_index 从 0 递增,total_chunks 等于列表长度;
-        chunk_type 固定 ``"code"``,channel_visibility 从 doc 继承。
+        chunk_type 固定 ``"code"``,channel_visibility 从 doc 继承,
+        symbol_tokens 由 symbol_name 经 camelCase 拆分派生。
     """
     total = len(pieces)
     path = _extract_path(doc)
     channel_vis = getattr(doc, "channel_visibility", ("widget", "api"))
     chunks: list[Chunk] = []
-    for i, (text, start, end, symbol, signature) in enumerate(pieces):
+    for i, (text, start, end, symbol, signature, node_type) in enumerate(pieces):
         prefix = _symbol_prefix(doc, path, symbol, signature)
         chunks.append(
             Chunk(
@@ -290,6 +353,10 @@ def _build_chunks(
                 chunk_type="code",
                 doc_section="",
                 channel_visibility=channel_vis,
+                symbol_name=symbol,
+                symbol_signature=signature,
+                symbol_node_type=node_type,
+                symbol_tokens=_split_symbol_name(symbol),
             )
         )
     return chunks
@@ -336,23 +403,24 @@ def chunk_code(
     if lang is None:
         # 无 grammar:走 _hard_split_section 兜底,不拼 symbol 前缀
         hard = _hard_split_section(content, max_tokens, overlap)
-        pieces = [(text, start, end, "", "") for text, start, end in hard if text]
+        pieces = [(text, start, end, "", "", "") for text, start, end in hard if text]
         return _build_chunks(doc, pieces)
 
     # 2. tree-sitter 解析,收集函数/类/方法 section
     sections = _collect_sections(content, lang, byte_to_char)
     if not sections:
         # 无目标节点:整体作为单 section(symbol 空 -> 不拼前缀)
-        sections = [(content, 0, len(content), "", "")]
+        sections = [(content, 0, len(content), "", "", "")]
 
     # 3. 每个 section 走 _hard_split_section,累加 section 全局偏移
-    pieces: list[tuple[str, int, int, str, str]] = []
-    for sec_text, sec_start_c, _sec_end_c, symbol, signature in sections:
+    pieces: list[tuple[str, int, int, str, str, str]] = []
+    for sec_text, sec_start_c, _sec_end_c, symbol, signature, node_type in sections:
         hard = _hard_split_section(sec_text, max_tokens, overlap)
         for text, rel_s, rel_e in hard:
             if not text:
                 continue
-            pieces.append((text, sec_start_c + rel_s, sec_start_c + rel_e, symbol, signature))
+            pieces.append((text, sec_start_c + rel_s, sec_start_c + rel_e,
+                          symbol, signature, node_type))
 
     return _build_chunks(doc, pieces)
 

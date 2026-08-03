@@ -185,3 +185,61 @@ def test_rust_function_split():
     assert all(c.chunk_type == "code" for c in chunks)
     joined = "\n".join(c.text for c in chunks)
     assert "add" in joined and "Foo" in joined and "bar" in joined
+
+
+# ---- _split_symbol_name ----
+
+from backend.pipeline.chunk_code import _split_symbol_name
+
+
+@pytest.mark.unit
+def test_split_symbol_camel_case():
+    assert _split_symbol_name("BatteryReadI2C") == "battery read i2c"
+
+
+@pytest.mark.unit
+def test_split_symbol_pascal_with_acronym():
+    assert _split_symbol_name("HTMLParser") == "html parser"
+
+
+@pytest.mark.unit
+def test_split_symbol_snake_case():
+    assert _split_symbol_name("ne301_init") == "ne301 init"
+
+
+@pytest.mark.unit
+def test_split_symbol_digit_boundary():
+    """数字→大写无小写后继不拆(I2C 整体);数字→大写+小写拆(NE301 + Config)。"""
+    assert _split_symbol_name("readI2C") == "read i2c"        # I2C 整体
+    assert _split_symbol_name("NE301Config") == "ne301 config"  # NE301 + Config
+    assert _split_symbol_name("I2C") == "i2c"                  # I2C 整体
+
+
+@pytest.mark.unit
+def test_split_symbol_empty():
+    assert _split_symbol_name("") == ""
+
+
+# ---- chunk_code 填 symbol 字段 ----
+
+@pytest.mark.unit
+def test_chunk_code_fills_symbol_fields():
+    src = "def battery_read_i2c(addr):\n    return i2c_read(addr)\n"
+    doc = _doc(src, metadata={"path": "main.py"}, source_id="ne301/main.py",
+               title="main.py")
+    chunks = chunk_code(doc)
+    assert len(chunks) == 1
+    c = chunks[0]
+    assert c.symbol_name == "battery_read_i2c"
+    assert c.symbol_tokens == "battery read i2c"
+    assert c.symbol_node_type == "function_definition"
+    assert "battery_read_i2c" in c.symbol_signature
+
+
+@pytest.mark.unit
+def test_chunk_code_symbol_fields_empty_for_no_grammar():
+    doc = _doc("hello", metadata={"path": "x.txt"}, source_id="r/x.txt",
+               title="x")
+    chunks = chunk_code(doc)
+    assert chunks[0].symbol_name == ""
+    assert chunks[0].symbol_tokens == ""
