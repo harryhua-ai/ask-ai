@@ -1,6 +1,6 @@
 # Ask AI — CamThink AI 知识助手 设计文档
 
-- **日期**:2026-07-28(第二版,基于功能需求讨论更新)
+- **日期**:2026-07-28(第二版)/ 2026-08-03 校准(意图 4 分类(3 业务 + off_topic)+ 官网商城 SDK + 函数级检索 + local_git 超前项)
 - **状态**:待用户审阅
 - **项目仓库**:https://github.com/harryhua-ai/ask-ai.git
 - **本地路径**:`/Users/harryhua/Documents/GitHub/ask-ai`
@@ -9,10 +9,11 @@
 
 ## 1. 背景与目标
 
-构建一个对标 Kapa.ai 的自建 RAG 知识助手平台,部署在 CamThink 自有基础设施上。服务两类场景:
+构建一个对标 Kapa.ai 的自建 RAG 知识助手平台,部署在 CamThink 自有基础设施上。服务三类场景(2026-08-03 从两类扩展,见 §5 意图分流):
 
-- 售前产品咨询与选型
-- 开发者技术支持与文档查询
+- **商务咨询**(`commercial`):价格、采购、渠道、库存、促销(数据源:商城 SDK,Phase 2+)
+- **产品方案咨询**(`product`):功能、参数、规格、选型、方案、竞品、适配(售前与产品咨询合并)
+- **技术支持**(`support`):故障排查、集成、二次开发、代码、调试(L1–L3,含开发者)
 
 **最终形态**:多渠道接入(官网 Widget / Discord / WhatsApp / MCP Server),全功能管理后台,数据驱动的知识库质量优化。
 
@@ -100,14 +101,17 @@ class IncomingMessage:
    │
    ▼  有限多轮:前端保留最近 5 轮对话一起发给后端,后端无状态
    │
-   ├── 查询处理:语言识别 + 查询分解(复杂问题)
+   ├── 查询处理:语言识别 + 查询提取(所有查询,无长度阈值)+ 查询改写(首轮也改写)+ 多轮查询重写
+   │
+   ├── 意图分类(Phase 1.5):commercial / product / support / off_topic
+   │     → off_topic 直接拒答;product / support 降低检索阈值;按意图分风格 prompt
    │
    ├── 双路检索:Weaviate hybrid(BGE-m3 dense + 内置 BM25)
    │     alpha=0.5,召回 top ~50
    │
    ├── 重排:bge-reranker-v2-m3 → top 5~10
    │
-   ├── 依据可靠性检查:最高分 < 阈值 → 拒答
+   ├── 依据可靠性检查:rerank min_score 过滤,不足 3 条相关结果则拒答
    │
    ├── LLM 生成(deepseek)
    │     → Markdown 回答 + 内联来源引用 + 同语言
@@ -116,17 +120,19 @@ class IncomingMessage:
    └── 匿名记录(问题/回答/来源/反馈/耗时/语言)
 ```
 
-### 检索参数(Phase 1)
+### 检索参数
 
-| 步骤 | 参数 |
-|---|---|
-| 查询处理 | 语言识别 + (复杂问题)查询分解 |
-| 双路检索 | Weaviate hybrid,`alpha=0.5` |
-| 召回 | top ~50 |
-| 重排 | bge-reranker-v2-m3 → top 5~10 |
-| 剪枝 | Phase 3 |
-| 依据检查 | 重排最高分 < 阈值 → 拒答 |
-| 生成 | top 片段 + system prompt → deepseek |
+| 步骤 | 参数 | Phase |
+|---|---|---|
+| 查询处理 | 语言识别 + 查询提取(所有查询,无长度阈值)+ 查询改写(首轮也改写)+ 多轮查询重写 | Phase 1.5 |
+| 意图分类 | `commercial` / `product` / `support` / `off_topic`;off_topic 拒答,product/support 降检索阈值 | Phase 1.5 |
+| 双路检索 | Weaviate hybrid,`alpha=0.5` | Phase 1 |
+| 召回 | top ~50 | Phase 1 |
+| 符号检索(函数级) | tree-sitter 函数分块 / SCIP(方案待定,见 §12.3) | Phase 3+ |
+| 重排 | bge-reranker-v2-m3 → top 5~10 | Phase 1 |
+| 剪枝 | 小 LLM 过滤低相关 chunk | Phase 3 |
+| 依据检查 | rerank min_score 过滤,不足 3 条相关结果则拒答 | Phase 1 |
+| 生成 | top 片段 + system prompt(按意图分风格)→ deepseek | Phase 1(基础)/ Phase 1.5(分风格) |
 
 ### 对话模式
 
@@ -143,21 +149,25 @@ class IncomingMessage:
 | **反馈** | 每条答案后 👍/👎 按钮 |
 | **推荐问题** | 首屏展示 3-5 个常见问题 |
 
-### 拒答策略
+### 拒答策略(两层)
 
-- 重排最高分 < 阈值 → 拒答
+- **检索前拒答**(Phase 1.5):意图分类为 `off_topic`(闲聊 / 天气 / 非产品域)直接拒答,不进检索
+- **检索后拒答**(Phase 1):rerank min_score 过滤,不足 3 条相关结果则拒答(有依据但数量不足)
 - 拒答话术:"暂未在官方资料中找到相关信息"
 - 不推荐相关问题(Phase 1 简化)
 - 拒答问题入匿名统计(用于后期 Coverage Gaps 分析)
 
 ### 助手人设
 
-- **语气**:专业、简洁、友好(不过度热情,不啰嗦)
-- **自称**:"我"或"CamThink 助手"
-- **称呼用户**:"你"
-- **风格**:直答问题,不铺垫,不寒暄
-- **技术内容**:保留产品型号、接口名、代码术语不翻译
-- **不确定时**:开头说明,不编造
+**通用**(所有意图):专业、简洁、友好;自称"我"或"CamThink 助手";称呼用户"你";直答不铺垫不寒暄;保留产品型号 / 接口名 / 代码术语不翻译;不确定时开头说明,不编造。
+
+**按意图分风格**(Phase 1.5):
+
+| 意图 | 风格侧重 |
+|---|---|
+| `commercial` | 商务口吻,聚焦价格 / 采购 / 渠道 / 库存,引导联系销售 |
+| `product` | 产品方案口吻,选型 / 比对给推荐 + 理由,方案类问题给组合建议 |
+| `support` | 技术精确口吻,保留代码 / 寄存器 / 接口细节,故障排查给步骤 |
 
 ### 缓存策略
 
@@ -232,7 +242,7 @@ class ConnectorRegistry:
 @dataclass(frozen=True)
 class SourceConfig:
     id: str                 # 唯一标识
-    type: str               # "github" | "filesystem" | "web_crawl" | "sdk" | ...
+    type: str               # "local_git" | "filesystem" | "sdk" | "web_crawl" | "github"(原设计,未用) | ...
     product: str            # 产品线
     enabled: bool           # 是否启用
     config: dict            # 类型特定配置(交给各 Connector 自行解析)
@@ -243,10 +253,13 @@ class SourceConfig:
 
 | Connector | 接入方式 | Phase | 说明 |
 |---|---|---|---|
-| **GitHubConnector** | GitHub API | Phase 1 | 覆盖所有 camthink-ai 仓库 |
+| **GitHubConnector** | GitHub API | Phase 1 | 原设计;实际已转 LocalGitConnector |
+| **LocalGitConnector** | 本地 git clone(多分支) | Phase 1.5 | 10 仓库全 clone 本地 + 多分支索引,见 `2026-07-31-codebase-analysis-design.md` |
 | **FileSystemConnector** | 本地文件系统 | Phase 1 | 覆盖 Knowledge 仓库 |
 | **WebCrawlConnector** | Firecrawl / 自写爬虫 | Phase 2+ | 仅用于无 API 的第三方站点 |
-| **SDKConnector** | 各平台 SDK/API | Phase 2+ | 官网 SDK、商城 SDK 等 |
+| **SDKConnector** | 各平台 SDK/API | Phase 2+ | 官网 SDK(→ `product`)、商城 SDK(→ `commercial`);结构化字段 → RawDocument;价格 / 库存高频增量 |
+
+> **Chunk 策略**:文档 / Markdown 语义分块(Phase 1.5);**代码 tree-sitter AST 分块**(Phase 1.5,函数级边界,见 codebase-analysis spec);SDK 结构化数据按字段拼装成文本(Phase 2+,待设计)。
 
 ### 数据源:GitHub 仓库(camthink-ai org)
 
@@ -267,11 +280,15 @@ class SourceConfig:
 
 **未纳入**:`iot_samples`、`cinfer`、`ne301-model-converter`
 
+> **接入方式(Phase 1.5 更新)**:实际通过 **LocalGitConnector**(本地 clone + 多分支 `git checkout`)接入,而非 GitHub API。理由:代码即文档需本地保存(后续训练用);多分支索引;全 clone 到 `ask-ai-corpus/`。所有仓库代码与文档**全量索引**(含第三方 vendored SDK,如 HaLow / hailo / ESP-IDF / AWS IoT —— 客户开发者问题不可预判,见 codebase-analysis spec)。
+
 ### 数据源:Knowledge 仓库
 
 - 路径:`~/Documents/GitHub/Knowledge/知识库/`
 - 子目录:support / wiki-en / sales / 硬件 / 经验
 - 接入方式:FileSystemConnector,git pull + 文件 hash 比对
+- **support 精选范围**(Phase 1.5):仅 `2026-*/` `2025.2/` `experience/`(技术案例 + 经验);排除 TS_record / Req_record(索引表冗余)、`日常/`(客户敏感)、`报告/`(内部)、`wiki-*`(符号链接重复)、`files/`(附件)
+- **sales 目录**(Phase 2+):`commercial` 意图的资料来源(价格 / 渠道 / 促销),待纳入;过渡期从 `knowledge-internal` / `knowledge-public`(当前 disabled)核实
 
 ### 处理流程
 
@@ -460,11 +477,12 @@ CREATE TABLE llm_routing (
 
 | 模块 | 内容 |
 |---|---|
-| RAG 管线 | 检索 → 重排 → 生成 → 拒答 |
-| 查询处理 | 语言识别 + 长文本查询提取(>300 字符触发 LLM 提取核心问题)+ 多轮查询重写(§5 查询分解) |
+| RAG 管线 | 查询处理 → 意图分类(Phase 1.5 超前)→ 检索 → 重排 → 生成 → 拒答 |
+| 查询处理 | 语言识别 + 查询提取(所有查询,语义理解,无长度阈值)+ 查询改写(所有查询,首轮也改写)+ 多轮查询重写(§5) |
+| 意图分类 | `commercial` / `product` / `support` / `off_topic`;off_topic 拒答,product / support 降检索阈值(Phase 1.5,代码已超前) |
 | 依据可靠性检查 | rerank 分数阈值拒答(min_score 过滤,不足 3 条相关结果则拒答,§5 + §16 验收) |
 | Widget | 独立 JS,嵌入官网 + Wiki |
-| DataSourceConnector 框架 | GitHub + FileSystem 两个 Connector |
+| DataSourceConnector 框架 | LocalGit + FileSystem(LocalGit Phase 1.5 已超前替代 GitHub) |
 | 数据源配置 | YAML 配置文件(无 UI) |
 | 同步脚本 | cron + 日志入 Postgres |
 | 单套 Customization | system prompt 配置文件 |
@@ -480,10 +498,10 @@ CREATE TABLE llm_routing (
 | 同步监控面板 | 实时状态、失败原因、历史记录 |
 | Customization 管理 | 多套配置,按渠道绑定,实时预览 |
 | LLM 供应商管理 | 多供应商 CRUD,连通性测试,路由配置 |
-| 对话审查 | 匿名对话列表,多维过滤,Intent 标签 |
-| 语义分块 | 按标题/段落语义边界分块(替换 Phase 1 固定窗口) |
-| 数据源隔离 | chunk 级 channel_visibility 控制(TS_record 等内部记录不出现在 widget 渠道) |
-| chunk 元数据丰富化 | 为每个 chunk 添加 doc_section/chunk_type 等信号,供 rerank 加权 |
+| 对话审查 | 匿名对话列表,多维过滤,Intent 标签(Intent 标注 Phase 1.5 已超前) |
+| 语义分块 | 按标题 / 段落语义边界分块(**Phase 1.5 已实现**)+ 代码 tree-sitter AST 分块(已实现) |
+| 数据源隔离 | chunk 级 channel_visibility 控制(**Phase 1.5 已实现**,TS_record 等内部记录不出现在 widget 渠道) |
+| chunk 元数据丰富化 | doc_section / chunk_type 等信号(**Phase 1.5 已实现**,供 rerank 加权) |
 | 团队/RBAC | 用户管理,角色权限 |
 
 ### Phase 3 — 分析与优化
@@ -528,7 +546,7 @@ CREATE TABLE conversations (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     -- Phase 2 预留字段(Phase 1 建表时创建,默认 NULL)
-    intent_tag      VARCHAR(100),                             -- 意图标签(Phase 2 自动标注)
+    intent_tag      VARCHAR(100),                             -- 意图标签(Phase 1.5 已超前标注:commercial / product / support / off_topic)
     custom_tags     JSONB DEFAULT '[]',                       -- 自定义标签(Phase 2)
     customization_id VARCHAR(50),                             -- 关联的配置 ID(Phase 2)
 
@@ -553,7 +571,7 @@ CREATE TABLE source_clicks (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE,
     source_url      TEXT NOT NULL,
-    source_type     VARCHAR(20) NOT NULL,                     -- github | wiki | website | blog
+    source_type     VARCHAR(20) NOT NULL,                     -- 来源页类型:github | wiki | website | blog(不同于 sync_log.source_type 的连接器类型)
     product         VARCHAR(50),                              -- ne101 | ne301 | ...
     clicked_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -569,7 +587,7 @@ CREATE INDEX idx_source_clicks_source_url ON source_clicks (source_url);
 CREATE TABLE sync_log (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source_id       VARCHAR(100) NOT NULL,                    -- 对应 SourceConfig.id
-    source_type     VARCHAR(50) NOT NULL,                      -- github | filesystem | web_crawl | sdk
+    source_type     VARCHAR(50) NOT NULL,                      -- local_git | filesystem | sdk | web_crawl | github(原设计)
     status          VARCHAR(20) NOT NULL,                      -- 'success' | 'failed' | 'partial'
     started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     finished_at     TIMESTAMPTZ,
@@ -592,7 +610,7 @@ CREATE INDEX idx_sync_log_status ON sync_log (status, started_at DESC);
 -- 数据源配置(Phase 2 管理 UI 操作;Phase 1 可不写入,仅建表)
 CREATE TABLE data_sources (
     id              VARCHAR(100) PRIMARY KEY,                  -- 唯一标识
-    type            VARCHAR(50) NOT NULL,                      -- github | filesystem | web_crawl | sdk
+    type            VARCHAR(50) NOT NULL,                      -- local_git | filesystem | sdk | web_crawl | github(原设计)
     product         VARCHAR(50) NOT NULL,                      -- 产品线
     enabled         BOOLEAN DEFAULT true,
     config          JSONB NOT NULL,                            -- 类型特定配置
@@ -609,7 +627,7 @@ CREATE TABLE data_sources (
 -- Phase 1 可不写入,仅建表;Phase 2 多套配置 + 按渠道绑定
 CREATE TABLE customizations (
     id              VARCHAR(50) PRIMARY KEY,
-    name            VARCHAR(100) NOT NULL,                     -- 配置名称,如 "售前默认" "开发者技术"
+    name            VARCHAR(100) NOT NULL,                     -- 配置名称,如 "商务咨询" "产品方案" "开发者技术"(按意图,§5)
     -- 三层结构(参考 Kapa)
     system_prompt   TEXT NOT NULL,                             -- 完整 system prompt
     style_tone      TEXT,                                      -- 风格语气指令
@@ -665,7 +683,9 @@ CREATE TABLE users (
 
 ### 11.8 LLM 供应商(已在第 7 节定义)
 
-`llm_providers` 和 `llm_routing` 表见第 7 节,此处不重复。 表创建策略
+`llm_providers` 和 `llm_routing` 表见第 7 节,此处不重复。
+
+**表创建策略**
 
 | 表 | Phase 1 | 说明 |
 |---|---|---|
@@ -684,7 +704,7 @@ CREATE TABLE users (
 
 ## 12. 管线扩展接口(预留)
 
-### 12.1(Phase 3)
+### 12.1 剪枝(Phase 3)
 
 ```python
 class Pruner(Protocol):
@@ -706,7 +726,7 @@ class Pruner(Protocol):
 
 Phase 1 不实现,管线中预留位置。
 
-### 12.2(Phase 4)
+### 12.2 渠道适配器(Phase 4)
 
 ```python
 class ChannelAdapter(Protocol):
@@ -725,6 +745,34 @@ class ChannelAdapter(Protocol):
 ```
 
 `IncomingMessage` 已在第 3 节定义,`channel` 字段已预留所有渠道类型。
+
+### 12.3 符号检索(Phase 3+)
+
+`support` 意图(开发者代码层)需要**函数级精确召回**,文件级 dense + BM25 粒度不足。预留符号检索接口,实现方案待 brainstorm:
+
+```python
+class SymbolRetriever(Protocol):
+    """符号检索接口 — Phase 3+ 插入混合检索,提供函数 / 结构体 / 宏级召回"""
+
+    def retrieve_symbols(
+        self,
+        query: str,
+        product: str | None = None,
+        top_k: int = 20,
+    ) -> list[RetrievedSymbol]:
+        """按符号(函数 / 类 / 结构体 / 宏)召回,补充文件级召回的粒度不足"""
+        ...
+```
+
+候选实现(待评估):
+- **SCIP 索引**(lsif):精确,但 C/C++ 依赖 compile_commands.json,高风险
+- **tree-sitter 函数级分块**(Phase 1.5 已用于 chunk,扩展为可检索单元):低风险
+- **RRF 融合**文件级 + 符号级结果
+
+管线插入点:
+```
+双路检索(文件级)→ [符号检索(Phase 3+)] → RRF 融合 → 重排
+```
 
 ## 13. 隐私与数据安全
 
@@ -782,7 +830,8 @@ ask-ai/
 │   ├── connectors/              # 数据源 Connector 框架
 │   │   ├── base.py              # DataSourceConnector Protocol + RawDocument
 │   │   ├── registry.py          # ConnectorRegistry
-│   │   ├── github.py            # GitHubConnector
+│   │   ├── local_git.py         # LocalGitConnector(Phase 1.5,多分支)
+│   │   ├── github.py            # GitHubConnector(原设计,实际未用)
 │   │   └── filesystem.py        # FileSystemConnector
 │   ├── llm/                     # LLM 管理框架
 │   │   ├── base.py              # LLMProvider Protocol + LLMResponse
@@ -814,7 +863,7 @@ ask-ai/
 - 能采集匿名统计(热门问题、无答案问题、来源点击、反馈)
 - 访客输入的常见敏感信息能被脱敏
 - device 抽象在 macOS(mps/cpu)可跑,且可平滑迁移到 T4(cuda)
-- DataSourceConnector 框架可扩展(GitHub + FileSystem 已实现)
+- DataSourceConnector 框架可扩展(LocalGit + FileSystem 已实现,LocalGit Phase 1.5 超前替代 GitHub)
 - LLMProvider 框架可扩展(deepseek 已实现)
 - Widget 可通过 `<script>` 标签嵌入不同站点
 - LLM 输出经 XSS 清洗,来源链接经协议 + 域白名单校验(§13.2)
@@ -831,8 +880,11 @@ ask-ai/
 - macOS 开发机内存(建议 16G+)
 - MPS 上 BGE-m3 兼容性需实测
 - 首期优先验收的产品 / 技术问题清单
-- Knowledge 仓库各子目录的具体纳入范围
-- 各 GitHub 仓库的具体过滤规则(目录/文件类型)
+- ~~Knowledge 仓库各子目录的具体纳入范围~~ **已确认(2026-08-03)**:support 仅 `2026-*/` `2025.2/` `experience/`;代码仓库全量(含第三方 vendored SDK)
+- ~~各 GitHub 仓库的具体过滤规则~~ **已确认(2026-08-03)**:代码全量索引,不排除第三方;通过 local_git 多分支接入
+- **官网 / 商城 SDK 就绪时间**(Phase 2+ `commercial` / `product` 数据源)
+- **意图 4 分类代码迁移**:`product_question` → `commercial` / `product` / `support` / `off_topic`(Phase 1.5,代码待迁)
+- **函数级检索方案选型**:SCIP vs tree-sitter 函数级(Phase 3+,§12.3)
 
 ### 风险
 
