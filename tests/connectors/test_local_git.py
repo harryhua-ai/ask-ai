@@ -55,11 +55,21 @@ def tiny_repo(tmp_path):
 
 @pytest.fixture
 def tiny_repo_with_history(tmp_path):
-    """构造带多分支历史的微型 git 仓库,返回 (SourceConfig, repo_path)。
+    """构造带多分支历史 + 删除场景的微型 git 仓库,返回 (SourceConfig, repo_path)。
 
-    - main 分支:a.py + b.py,commit
-    - feat-x 分支:加 c.py,commit
+    分支与 commit 顺序:
+    - main:
+        1. init main  → a.py + b.py
+    - feat-x(从 init main 分出,不含 old.py 的 add/remove):
+        2. feat-x add c → c.py
+    - main(切回后追加删除场景):
+        3. add old    → old.py
+        4. remove old → git rm old.py(deleted)
     - 最终留在 main 分支(留给 connector 自己 checkout)
+
+    同时满足:
+    - fetch_changes(past) 包含 a.py/b.py/c.py(AMR 过滤后不含已删的 old.py)
+    - fetch_deleted(past) 包含 old.py 的 source_id(仅在 main 分支)
     """
     r = tmp_path / "hist_repo"
     r.mkdir()
@@ -68,11 +78,18 @@ def tiny_repo_with_history(tmp_path):
     (r / "b.py").write_text("b=2\n")
     _git(["add", "-A"], r)
     _git(["commit", "-q", "-m", "init main"], r)
+    # feat-x 分支(从 init main 分出,不含后续删除场景)
     _git(["checkout", "-q", "-b", "feat-x"], r)
     (r / "c.py").write_text("c=3\n")
     _git(["add", "-A"], r)
     _git(["commit", "-q", "-m", "feat-x add c"], r)
     _git(["checkout", "-q", "main"], r)
+    # main 上的删除场景:add old.py 后 git rm(仅 main 分支可见)
+    (r / "old.py").write_text("old=1\n")
+    _git(["add", "-A"], r)
+    _git(["commit", "-q", "-m", "add old"], r)
+    _git(["rm", "-q", "old.py"], r)
+    _git(["commit", "-q", "-m", "remove old"], r)
 
     cfg = SourceConfig(
         id="ne301",
@@ -209,7 +226,7 @@ def test_fetch_changes_full_fallback(cfg_factory):
 
 @pytest.mark.unit
 def test_fetch_deleted_returns_empty(cfg_factory):
-    """``fetch_deleted`` 始终返回空列表(简化)。"""
+    """``fetch_deleted`` 在无删除 commit 的仓库上应返回空列表。"""
     from datetime import UTC, datetime
 
     cfg = cfg_factory()
@@ -248,4 +265,20 @@ def test_fetch_changes_incremental_only_changed(tiny_repo_with_history):
     assert "a.py" in titles  # main 已有
     # since = 未来 → 无变更
     future = list(connector.fetch_changes(datetime.now(UTC) + timedelta(days=1)))
+    assert future == []
+
+
+@pytest.mark.unit
+def test_fetch_deleted_returns_removed(tiny_repo_with_history):
+    """fetch_deleted 返回 since 后删除文件的 source_id(含 old.py)。"""
+    from datetime import UTC, datetime, timedelta
+
+    cfg, _repo_path = tiny_repo_with_history
+    connector = LocalGitConnector(cfg)
+    deleted = connector.fetch_deleted(datetime.now(UTC) - timedelta(days=1))
+    assert any("old.py" in d for d in deleted), f"expected old.py in {deleted}"
+    # 每个 source_id 应是 {cfg.id}/{branch}/{rel} 格式
+    assert all(d.startswith("ne301/") for d in deleted)
+    # 未来 since → 无删除
+    future = connector.fetch_deleted(datetime.now(UTC) + timedelta(days=1))
     assert future == []
