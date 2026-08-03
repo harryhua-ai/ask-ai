@@ -621,3 +621,58 @@ def test_deterministic_uuid_stable_and_unique():
     assert u1 == u2, "同 key 应生成同 uuid(幂等基础)"
     assert u1 != u3, "不同 chunk 应不同 uuid"
     assert u1 != u4, "不同 branch 应不同 uuid"
+
+
+# --------------------------------------------------------------------------- #
+# 函数级符号检索:symbol Property + _build_props
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_ensure_collection_creates_symbol_properties():
+    """_ensure_collection 应创建 symbol_name/signature/node_type/tokens 4 个 TEXT property。"""
+    from unittest.mock import MagicMock
+    from backend.pipeline.ingest import IngestionPipeline
+    from weaviate.classes.config import DataType
+    mock_client = MagicMock()
+    mock_client.collections.exists.return_value = False
+    mock_client.collections.get.return_value = MagicMock()
+    pipeline = IngestionPipeline(embedder=MagicMock(), weaviate_client=mock_client)
+    pipeline._ensure_collection()
+    create_kwargs = mock_client.collections.create.call_args
+    property_names = [p.name if hasattr(p, "name") else p.get("name")
+                      for p in create_kwargs.kwargs.get("properties", [])]
+    assert "symbol_name" in property_names
+    assert "symbol_tokens" in property_names
+    assert "symbol_signature" in property_names
+    assert "symbol_node_type" in property_names
+    # 校验 DataType 均为 TEXT
+    for p in create_kwargs.kwargs.get("properties", []):
+        n = p.name if hasattr(p, "name") else p.get("name")
+        if n in ("symbol_name", "symbol_tokens", "symbol_signature", "symbol_node_type"):
+            dt = p.dataType if hasattr(p, "dataType") else p.get("dataType")
+            assert dt == DataType.TEXT
+
+
+@pytest.mark.unit
+def test_build_props_contains_symbol():
+    """_build_props 应把 Chunk 的 symbol_* 字段透传到 Weaviate properties。"""
+    from backend.pipeline.ingest import _build_props
+    from backend.pipeline.chunk import Chunk
+    from backend.connectors.base import RawDocument
+    doc = RawDocument(source_id="ne301/main.py", source_type="local_git",
+                      product="ne301", title="main.py", content="x", url="",
+                      metadata={"path": "main.py"}, content_hash="h", branch="main")
+    chunk = Chunk(text="t", document=doc, chunk_index=0, total_chunks=1,
+                  start_char=0, end_char=1, chunk_type="code",
+                  symbol_name="battery_read_i2c", symbol_tokens="battery read i2c",
+                  symbol_node_type="function_definition", symbol_signature="def ...")
+    props = _build_props(chunk, doc)
+    assert props["symbol_name"] == "battery_read_i2c"
+    assert props["symbol_tokens"] == "battery read i2c"
+    assert props["symbol_node_type"] == "function_definition"
+    assert props["symbol_signature"] == "def ..."
+    # 既有字段不回归
+    assert props["source_id"] == "ne301/main.py"
+    assert props["branch"] == "main"
+    assert props["chunk_type"] == "code"

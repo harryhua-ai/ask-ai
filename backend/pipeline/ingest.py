@@ -64,6 +64,40 @@ def _is_code(doc: RawDocument) -> bool:
     return ext in _CODE_LANG_MAP
 
 
+def _build_props(chunk: "Any", doc: RawDocument) -> dict:
+    """从 Chunk + RawDocument 构造 Weaviate properties(消除 3 处重复构造)。
+
+    覆盖 ingest_document 主路径 / batch 整体失败回退 / _ingest_doc_batch 三处
+    props 构造,统一字段集(含 symbol_* 元数据),避免漏写字段。
+
+    Args:
+        chunk: :class:`backend.pipeline.chunk.Chunk` 实例。
+        doc: 所属 :class:`RawDocument`。
+
+    Returns:
+        Weaviate object properties dict(含 source_id / product / text /
+        channel_visibility / branch / symbol_* 等全部字段)。
+    """
+    return {
+        "source_id": doc.source_id,
+        "source_type": doc.source_type,
+        "product": doc.product,
+        "title": doc.title,
+        "text": chunk.text,
+        "url": doc.url,
+        "chunk_index": chunk.chunk_index,
+        "content_hash": doc.content_hash,
+        "channel_visibility": list(chunk.channel_visibility),
+        "doc_section": chunk.doc_section,
+        "chunk_type": chunk.chunk_type,
+        "branch": doc.branch,
+        "symbol_name": chunk.symbol_name,
+        "symbol_signature": chunk.symbol_signature,
+        "symbol_node_type": chunk.symbol_node_type,
+        "symbol_tokens": chunk.symbol_tokens,
+    }
+
+
 class IngestionPipeline:
     """文档灌入管道:chunk → embed → 写 Weaviate(+ 可选 Postgres)。
 
@@ -147,6 +181,11 @@ class IngestionPipeline:
                     Property(name="chunk_type", data_type=DataType.TEXT),
                     # Task 6: 多分支元数据(P8),供检索时按 branch 过滤
                     Property(name="branch", data_type=DataType.TEXT),
+                    # 函数级符号检索:symbol 元数据独立 property
+                    Property(name="symbol_name", data_type=DataType.TEXT),
+                    Property(name="symbol_signature", data_type=DataType.TEXT),
+                    Property(name="symbol_node_type", data_type=DataType.TEXT),
+                    Property(name="symbol_tokens", data_type=DataType.TEXT),
                 ],
             )
 
@@ -198,22 +237,7 @@ class IngestionPipeline:
         uuid_list: list = []
         for _chunk, _vector in zip(chunks, vectors):
             _vec_list = np.asarray(_vector).tolist()
-            _props = {
-                "source_id": doc.source_id,
-                "source_type": doc.source_type,
-                "product": doc.product,
-                "title": doc.title,
-                "text": _chunk.text,
-                "url": doc.url,
-                "chunk_index": _chunk.chunk_index,
-                "content_hash": doc.content_hash,
-                # Phase 2A 新增
-                "channel_visibility": list(_chunk.channel_visibility),
-                "doc_section": _chunk.doc_section,
-                "chunk_type": _chunk.chunk_type,
-                # Task 6: 多分支元数据(P8)
-                "branch": doc.branch,
-            }
+            _props = _build_props(_chunk, doc)
             _det_uuid = _deterministic_uuid(doc.source_id, _chunk.chunk_index)
             props_list.append(_props)
             uuid_list.append(_det_uuid)
@@ -255,20 +279,7 @@ class IngestionPipeline:
             for _chunk, _vector in zip(chunks, vectors):
                 try:
                     _vec_list = np.asarray(_vector).tolist()
-                    _props = {
-                        "source_id": doc.source_id,
-                        "source_type": doc.source_type,
-                        "product": doc.product,
-                        "title": doc.title,
-                        "text": _chunk.text,
-                        "url": doc.url,
-                        "chunk_index": _chunk.chunk_index,
-                        "content_hash": doc.content_hash,
-                        "channel_visibility": list(_chunk.channel_visibility),
-                        "doc_section": _chunk.doc_section,
-                        "chunk_type": _chunk.chunk_type,
-                        "branch": doc.branch,
-                    }
+                    _props = _build_props(_chunk, doc)
                     _det_uuid = _deterministic_uuid(doc.source_id, _chunk.chunk_index)
                     try:
                         self._collection.data.insert(
@@ -400,20 +411,7 @@ class IngestionPipeline:
             o_start = len(all_objs)
             for chunk, vector in zip(chunks, vecs):
                 vec_list = np.asarray(vector).tolist()
-                props = {
-                    "source_id": doc.source_id,
-                    "source_type": doc.source_type,
-                    "product": doc.product,
-                    "title": doc.title,
-                    "text": chunk.text,
-                    "url": doc.url,
-                    "chunk_index": chunk.chunk_index,
-                    "content_hash": doc.content_hash,
-                    "channel_visibility": list(chunk.channel_visibility),
-                    "doc_section": chunk.doc_section,
-                    "chunk_type": chunk.chunk_type,
-                    "branch": doc.branch,
-                }
+                props = _build_props(chunk, doc)
                 det_uuid = _deterministic_uuid(doc.source_id, chunk.chunk_index)
                 all_props.append(props)
                 all_uuids.append(det_uuid)
