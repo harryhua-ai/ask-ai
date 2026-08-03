@@ -86,6 +86,11 @@ class Chunk:
     chunk_type: str = "paragraph"
     doc_section: str = ""
     channel_visibility: tuple[str, ...] = ("widget", "api")
+    # 函数级符号检索新增字段(均有默认值,兼容文档 chunk)
+    symbol_name: str = ""
+    symbol_signature: str = ""
+    symbol_node_type: str = ""
+    symbol_tokens: str = ""
 
 
 @dataclass(frozen=True)
