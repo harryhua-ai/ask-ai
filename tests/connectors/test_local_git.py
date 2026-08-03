@@ -7,7 +7,7 @@
 - file_types 白名单过滤
 - ExclusionPolicy 接入(.git 目录、构建目录被排除)
 - channel_visibility 透传
-- fetch_changes 全量回退 / fetch_deleted 返回空
+- fetch_changes 真增量(git log --since AMR) / fetch_deleted 返回空
 - 注册装饰器绑定 ``local_git``
 """
 
@@ -51,6 +51,40 @@ def tiny_repo(tmp_path):
     _git(["commit", "-q", "-m", "hw"], r)
     _git(["checkout", "-q", "main"], r)
     return r
+
+
+@pytest.fixture
+def tiny_repo_with_history(tmp_path):
+    """构造带多分支历史的微型 git 仓库,返回 (SourceConfig, repo_path)。
+
+    - main 分支:a.py + b.py,commit
+    - feat-x 分支:加 c.py,commit
+    - 最终留在 main 分支(留给 connector 自己 checkout)
+    """
+    r = tmp_path / "hist_repo"
+    r.mkdir()
+    _git(["init", "-q", "-b", "main"], r)
+    (r / "a.py").write_text("a=1\n")
+    (r / "b.py").write_text("b=2\n")
+    _git(["add", "-A"], r)
+    _git(["commit", "-q", "-m", "init main"], r)
+    _git(["checkout", "-q", "-b", "feat-x"], r)
+    (r / "c.py").write_text("c=3\n")
+    _git(["add", "-A"], r)
+    _git(["commit", "-q", "-m", "feat-x add c"], r)
+    _git(["checkout", "-q", "main"], r)
+
+    cfg = SourceConfig(
+        id="ne301",
+        type="local_git",
+        product="ne301",
+        enabled=True,
+        config={"repo_path": str(r), "file_types": [".py"]},
+        sync_interval="1h",
+        branches=("main", "feat-x"),
+        channel_visibility=("widget", "api"),
+    )
+    return cfg, r
 
 
 @pytest.fixture
@@ -163,7 +197,7 @@ def test_source_id_and_product_properties(cfg_factory):
 
 @pytest.mark.unit
 def test_fetch_changes_full_fallback(cfg_factory):
-    """Plan 1 简化:``fetch_changes`` 全量回退。"""
+    """``fetch_changes`` 早 since(过去)应返回与 ``fetch_all`` 等量的全部文件。"""
     from datetime import UTC, datetime
 
     cfg = cfg_factory()
@@ -175,7 +209,7 @@ def test_fetch_changes_full_fallback(cfg_factory):
 
 @pytest.mark.unit
 def test_fetch_deleted_returns_empty(cfg_factory):
-    """``fetch_deleted`` 始终返回空列表(Plan 1 简化)。"""
+    """``fetch_deleted`` 始终返回空列表(简化)。"""
     from datetime import UTC, datetime
 
     cfg = cfg_factory()
@@ -198,3 +232,20 @@ def test_content_hash_is_sha256(cfg_factory):
     cfg = cfg_factory()
     docs = list(LocalGitConnector(cfg).fetch_all())
     assert all(len(d.content_hash) == 64 for d in docs)
+
+
+@pytest.mark.unit
+def test_fetch_changes_incremental_only_changed(tiny_repo_with_history):
+    """fetch_changes(since) 只返回 since 之后变更的文件,不含未变更的。"""
+    from datetime import UTC, datetime, timedelta
+
+    cfg, _repo_path = tiny_repo_with_history
+    connector = LocalGitConnector(cfg)
+    # since = 过去(所有 commit 都在之后)→ 应返回全部变更文件
+    all_docs = list(connector.fetch_changes(datetime.now(UTC) - timedelta(days=1)))
+    titles = {d.metadata["path"] for d in all_docs}
+    assert "c.py" in titles  # feat-x 新增
+    assert "a.py" in titles  # main 已有
+    # since = 未来 → 无变更
+    future = list(connector.fetch_changes(datetime.now(UTC) + timedelta(days=1)))
+    assert future == []

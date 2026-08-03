@@ -4,16 +4,18 @@
 ``RawDocument``(``branch`` 字段已填,``source_id`` 格式为
 ``{cfg.id}/{branch}/{rel}``)。
 
-Plan 1 简化:
-- ``fetch_changes`` 全量回退(Plan 2/后续补 ``git diff`` 增量);
-- ``fetch_deleted`` 始终返回空列表。
+增量策略:
+- ``fetch_changes(since)``:对每个分支 ``git checkout`` 后用
+  ``git log --since=<since_iso> --name-only --diff-filter=AMR -M`` 拿变更
+  文件名,去重 + 过滤后 yield(只返回 since 之后 added/modified/renamed 的文件)。
+- ``fetch_deleted``:始终返回空列表(后续补 ``--diff-filter=D``)。
 """
 
 import hashlib
 import logging
 import subprocess
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from backend.connectors.base import DataSourceConnector, RawDocument
@@ -83,38 +85,61 @@ class LocalGitConnector(DataSourceConnector):
         for path in sorted(self._repo.rglob("*")):
             if not path.is_file() or ".git" in path.parts:
                 continue
-            ext = path.suffix.lower()
-            if ext not in self._file_types:
-                continue
             rel = str(path.relative_to(self._repo))
-            try:
-                size = path.stat().st_size
-            except OSError as e:
-                logger.warning("无法 stat 文件 %s: %s", path, e)
+            if not self._should_include_path(rel):
                 continue
-            if self._policy.should_exclude(rel, size):
-                continue
-            try:
-                content = path.read_text(encoding="utf-8", errors="replace")
-            except OSError as e:
-                logger.warning("无法读取文件 %s: %s", path, e)
-                continue
-            yield RawDocument(
-                source_id=f"{self._config.id}/{branch}/{rel}",
-                source_type="local_git",
-                product=self.product,
-                title=path.stem,
-                content=content,
-                url=f"file://{path.absolute()}",
-                metadata={
-                    "repo": str(self._repo),
-                    "branch": branch,
-                    "path": rel,
-                },
-                content_hash=hashlib.sha256(content.encode()).hexdigest(),
-                channel_visibility=self._channel_visibility,
-                branch=branch,
-            )
+            yield from self._fetch_one(branch, rel)
+
+    def _should_include_path(self, rel: str) -> bool:
+        """对相对路径做 file_types + ExclusionPolicy 过滤。
+
+        Args:
+            rel: 相对仓库根的路径(POSIX 风格)。
+
+        Returns:
+            True 表示保留,False 表示排除。
+        """
+        p = self._repo / rel
+        if p.suffix.lower() not in self._file_types:
+            return False
+        try:
+            size = p.stat().st_size
+        except OSError as e:
+            logger.warning("无法 stat 文件 %s: %s", p, e)
+            return False
+        return not self._policy.should_exclude(rel, size)
+
+    def _fetch_one(self, branch: str, rel: str) -> Iterator[RawDocument]:
+        """fetch 单个文件 → RawDocument(branch 字段已填)。
+
+        读取失败记录 warning 后跳过,不阻断整体抓取。
+
+        Args:
+            branch: 当前 checkout 的分支名。
+            rel: 相对仓库根的路径(POSIX 风格)。
+        """
+        p = self._repo / rel
+        try:
+            content = p.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            logger.warning("无法读取文件 %s: %s", p, e)
+            return
+        yield RawDocument(
+            source_id=f"{self._config.id}/{branch}/{rel}",
+            source_type="local_git",
+            product=self.product,
+            title=p.stem,
+            content=content,
+            url=f"file://{p.absolute()}",
+            metadata={
+                "repo": str(self._repo),
+                "branch": branch,
+                "path": rel,
+            },
+            content_hash=hashlib.sha256(content.encode()).hexdigest(),
+            channel_visibility=self._channel_visibility,
+            branch=branch,
+        )
 
     def fetch_all(self) -> Iterator[RawDocument]:
         """全量抓取:对每个分支执行 checkout 后遍历文件。
@@ -127,19 +152,42 @@ class LocalGitConnector(DataSourceConnector):
             yield from self._iter_files(branch)
 
     def fetch_changes(self, since: datetime) -> Iterator[RawDocument]:
-        """增量抓取(Plan 1 简化:全量回退)。
+        """增量抓取:对每个分支 ``git log --since`` 变更文件(AMR),过滤后 yield。
 
-        Plan 2 / 后续迭代再用 ``git diff`` 做真正的增量。
+        对每个分支执行 ``git checkout`` 后,用
+        ``git log --since=<since_iso> --name-only --pretty=format: --diff-filter=AMR -M``
+        拿变更文件名,去重,经 ``_should_include_path`` 过滤,经 ``_fetch_one``
+        构造 RawDocument。只 yield since 之后 added/modified/renamed 的文件。
 
         Args:
-            since: UTC 时间戳(Plan 1 未使用)。
+            since: UTC 时间戳,只抓该时间之后变更的文件。
         """
-        yield from self.fetch_all()
+        since_iso = since.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S")
+        for branch in self._branches:
+            self._checkout(branch)
+            result = subprocess.run(
+                [
+                    "git", "log", f"--since={since_iso}",
+                    "--name-only", "--pretty=format:",
+                    "--diff-filter=AMR", "-M",
+                ],
+                cwd=self._repo,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            changed = {ln.strip() for ln in result.stdout.splitlines() if ln.strip()}
+            for rel in sorted(changed):
+                if not self._should_include_path(rel):
+                    continue
+                yield from self._fetch_one(branch, rel)
 
     def fetch_deleted(self, since: datetime) -> list[str]:
-        """删除检测(Plan 1 简化:始终返回空列表)。
+        """删除检测(简化:始终返回空列表)。
+
+        后续迭代可用 ``--diff-filter=D`` 补真增量删除检测。
 
         Args:
-            since: UTC 时间戳(Plan 1 未使用)。
+            since: UTC 时间戳(当前未使用)。
         """
         return []
