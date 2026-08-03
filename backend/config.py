@@ -41,6 +41,8 @@ class Settings:
     config_dir: Path
     jwt_secret: str
     encryption_key: str
+    embedder_batch_size: int = 12
+    embedder_max_length: int = 8192
 
     @property
     def postgres_dsn(self) -> str:
@@ -71,6 +73,8 @@ def load_settings(config_dir: Path | None = None) -> Settings:
         deepseek_api_base=_env("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"),
         deepseek_model=_env("DEEPSEEK_MODEL", "deepseek-chat"),
         embedder_device=_env("EMBEDDER_DEVICE", "auto"),
+        embedder_batch_size=int(_env("EMBEDDER_BATCH_SIZE", "12")),
+        embedder_max_length=int(_env("EMBEDDER_MAX_LENGTH", "8192")),
         model_cache_dir=Path(_env("MODEL_CACHE_DIR", str(project_root / "models"))),
         github_token=_env("GITHUB_TOKEN"),
         api_host=_env("ASKAI_API_HOST", "0.0.0.0"),

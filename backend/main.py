@@ -129,12 +129,80 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await init_db(engine)
         app.state.session_factory = get_session_factory(engine)
 
+        # Seed: 确保 default customization + widget 绑定存在
+        from backend.auth.crypto import encrypt_api_key
+        from backend.auth.jwt import hash_password
+        from backend.db.models import (
+            Customization, CustomizationBinding, LLMProviderModel, LLMRouting, User,
+        )
+        from sqlalchemy import select as sa_select
+
+        prompt_cfg = load_yaml_config(settings.config_dir / "system_prompt.yaml")
+        async with app.state.session_factory() as session:
+            # Admin 用户
+            admin_email = os.environ.get("ADMIN_EMAIL", "admin@camthink.ai")
+            existing_admin = (await session.execute(
+                sa_select(User).where(User.email == admin_email)
+            )).scalar_one_or_none()
+            if not existing_admin:
+                session.add(User(
+                    email=admin_email,
+                    role="admin",
+                    password_hash=hash_password(os.environ.get("ADMIN_PASSWORD", "admin123")),
+                ))
+                logger.info("已创建 admin 用户: %s", admin_email)
+
+            # Default customization + widget 绑定
+            if not await session.get(Customization, "default"):
+                session.add(Customization(
+                    id="default",
+                    name="默认配置",
+                    system_prompt=prompt_cfg["system_prompt"],
+                    language=prompt_cfg.get("language", "auto"),
+                    assistant_name=prompt_cfg.get("assistant_name", "CamThink 助手"),
+                ))
+                session.add(CustomizationBinding(
+                    channel="widget",
+                    customization_id="default",
+                ))
+                logger.info("已创建 default customization + widget 绑定")
+            await session.commit()
+
+        # Seed: 将 YAML 中的 LLM 供应商 + 路由迁移到 DB(首次启动时)
+        llm_yaml = load_yaml_config(settings.config_dir / "llm_providers.yaml")
+        async with app.state.session_factory() as session:
+            for prov in llm_yaml.get("providers", []):
+                if not prov.get("enabled", True):
+                    continue
+                if await session.get(LLMProviderModel, prov["id"]):
+                    continue
+                cfg = dict(prov["config"])
+                if cfg.get("api_key"):
+                    cfg["api_key"] = encrypt_api_key(cfg["api_key"], settings.encryption_key)
+                session.add(LLMProviderModel(
+                    id=prov["id"],
+                    type=prov["type"],
+                    enabled=prov.get("enabled", True),
+                    config=cfg,
+                ))
+            for task, cfg in llm_yaml.get("routing", {}).items():
+                chain = cfg.get("chain", []) if isinstance(cfg, dict) else cfg
+                if await session.get(LLMRouting, task):
+                    continue
+                session.add(LLMRouting(task=task, chain=chain))
+            await session.commit()
+            logger.info("LLM 供应商 + 路由已迁移到 DB")
+
         # Weaviate
         weaviate_host, weaviate_port = _parse_weaviate_url(settings.weaviate_url)
         weaviate_client = weaviate.connect_to_local(host=weaviate_host, port=weaviate_port)
 
         # Embedder + Reranker
-        embedder = BGEEmbedder(device=settings.embedder_device)
+        embedder = BGEEmbedder(
+            device=settings.embedder_device,
+            batch_size=settings.embedder_batch_size,
+            max_length=settings.embedder_max_length,
+        )
         reranker = BGEReranker(device=settings.embedder_device)
         app.state.embedder = embedder
         app.state.reranker = reranker
