@@ -567,3 +567,32 @@ async def test_rag_intent_fail_open_proceeds():
 
     assert result.is_answered is True
     searcher.search.assert_called_once()
+
+
+@pytest.mark.unit
+async def test_rag_uses_symbol_recall_and_rrf():
+    """符号召回(用 extract_query 输出)+ hybrid(search_query)RRF 融合送 rerank。"""
+    a = _make_sr(text="a", source_id="s1")
+    b = _make_sr(text="b", source_id="s2")
+    searcher = MagicMock()
+    searcher.search.return_value = [a]           # hybrid 返回 [a]
+    searcher.search_symbols.return_value = [b]   # 符号召回返回 [b]
+    reranker = MagicMock()
+    reranker.rerank.return_value = [a, b]         # 透传,便于断言输入
+    llm = AsyncMock()
+    # classify_intent → extract_query → rewrite_query → generation
+    llm.generate.side_effect = [
+        _intent_response("product_question"),
+        _make_llm_response("i2c battery"),          # extract_query 输出(符号召回用)
+        _make_llm_response("i2c battery monitor"),  # rewrite_query 输出(hybrid 用)
+        _make_llm_response("answer"),
+    ]
+    rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="test")
+    await rag.answer("NE301 I2C 读电池监控", "widget")
+    # hybrid 用 search_query(rewrite 后),search_symbols 用 extracted(rewrite 前)
+    searcher.search.assert_called_once()
+    assert searcher.search.call_args.kwargs["query"] == "i2c battery monitor"
+    searcher.search_symbols.assert_called_once()
+    assert searcher.search_symbols.call_args.kwargs["query"] == "i2c battery"
+    # rerank 收到 RRF 融合结果(两路)
+    assert len(reranker.rerank.call_args.args[1]) == 2
