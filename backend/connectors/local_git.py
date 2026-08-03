@@ -8,7 +8,10 @@
 - ``fetch_changes(since)``:对每个分支 ``git checkout`` 后用
   ``git log --since=<since_iso> --name-only --diff-filter=AMR -M`` 拿变更
   文件名,去重 + 过滤后 yield(只返回 since 之后 added/modified/renamed 的文件)。
-- ``fetch_deleted``:始终返回空列表(后续补 ``--diff-filter=D``)。
+- ``fetch_deleted(since)``:对每个分支 ``git checkout`` 后用
+  ``git log --since=<since_iso> --name-only --pretty=format: --diff-filter=D``
+  拿被删文件名,去重 + 路径级过滤(后缀白名单 + ExclusionPolicy)后返回
+  source_id 列表(``{cfg.id}/{branch}/{rel}``)。
 """
 
 import hashlib
@@ -183,11 +186,52 @@ class LocalGitConnector(DataSourceConnector):
                 yield from self._fetch_one(branch, rel)
 
     def fetch_deleted(self, since: datetime) -> list[str]:
-        """删除检测(简化:始终返回空列表)。
+        """增量删除检测:对每分支 ``git log --diff-filter=D --since``,返回 source_id 列表。
 
-        后续迭代可用 ``--diff-filter=D`` 补真增量删除检测。
+        对每个分支执行 ``git checkout`` 后,用
+        ``git log --since=<since_iso> --name-only --pretty=format: --diff-filter=D``
+        拿被删文件名,去重,经路径级过滤(后缀白名单 + ExclusionPolicy)后返回。
+
+        注意:被删文件在当前工作区已不存在,无法 ``stat`` 取 size,因此不复用
+        ``_should_include_path``(它会因 ``OSError`` 返回 False),改为内联路径级
+        过滤,``ExclusionPolicy.should_exclude`` 的 ``size`` 参数传 ``0`` —— 这只
+        会让"非源码超大文件"规则失效,源码文件(.py/.ts/.go 等)本就不受 size 限制。
 
         Args:
-            since: UTC 时间戳(当前未使用)。
+            since: UTC 时间戳,只查该时间之后被删除(deleted)的文件。
+
+        Returns:
+            被删文件的 source_id 列表(``{cfg.id}/{branch}/{rel}``),去重。
         """
-        return []
+        since_iso = since.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S")
+        deleted: list[str] = []
+        seen: set[str] = set()
+        for branch in self._branches:
+            self._checkout(branch)
+            result = subprocess.run(
+                [
+                    "git", "log", f"--since={since_iso}",
+                    "--name-only", "--pretty=format:",
+                    "--diff-filter=D",
+                ],
+                cwd=self._repo,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            for raw in result.stdout.splitlines():
+                rel = raw.strip()
+                if not rel:
+                    continue
+                # 文件已删除无法 stat;用路径级过滤(后缀白名单 + ExclusionPolicy),
+                # size 传 0 让 size-based 规则不生效,源码文件不受影响。
+                p = self._repo / rel
+                if p.suffix.lower() not in self._file_types:
+                    continue
+                if self._policy.should_exclude(rel, 0):
+                    continue
+                sid = f"{self._config.id}/{branch}/{rel}"
+                if sid not in seen:
+                    deleted.append(sid)
+                    seen.add(sid)
+        return deleted
