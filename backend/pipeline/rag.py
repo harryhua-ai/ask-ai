@@ -320,7 +320,24 @@ class RAGOrchestrator:
             channel=channel,
         )
 
-        reranked = self._reranker.rerank(search_query, results, top_k=self._top_k)
+        # 独立符号 BM25 召回:用 extract_query 输出(绕过 rewrite 保标识符),
+        # 仅对代码符号字段(symbol_tokens)检索,与 hybrid 结果 RRF 融合。
+        # search_symbols 不可用 / 融合失败时退化为 hybrid 单路结果,不影响
+        # 主流程(非代码 query 天然无符号命中)。
+        fused = results
+        try:
+            symbol_results = self._searcher.search_symbols(
+                query=extracted,
+                limit=self._recall_limit,
+                product_filter=product_filter,
+                channel=channel,
+            )
+            from backend.retrieval.rrf import rrf_fuse
+            fused = rrf_fuse(results, symbol_results, k=60)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("符号召回/RRF 融合失败,回退 hybrid 单路:%s", str(exc)[:200])
+
+        reranked = self._reranker.rerank(search_query, fused, top_k=self._top_k)
 
         if self._pruner:
             reranked = await self._pruner.prune(search_query, reranked)
