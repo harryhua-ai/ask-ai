@@ -47,6 +47,8 @@ class BGEEmbedder(Embedder):
         device: str = "auto",
         model_name: str = "BAAI/bge-m3",
         cache_dir: Path | None = None,
+        batch_size: int = 12,
+        max_length: int = 8192,
     ):
         """加载 BGE-m3 模型权重。
 
@@ -58,6 +60,8 @@ class BGEEmbedder(Embedder):
         """
         self._device = detect_device(device)
         self._model_name = model_name
+        self._batch_size = batch_size
+        self._max_length = max_length
         self._dimension = 1024
         resolved_cache = cache_dir or Path(
             os.environ.get("MODEL_CACHE_DIR", Path(__file__).resolve().parents[2] / "models")
@@ -90,8 +94,8 @@ class BGEEmbedder(Embedder):
         """
         embeddings = self._model.encode(
             texts,
-            batch_size=12,
-            max_length=8192,
+            batch_size=self._batch_size,
+            max_length=self._max_length,
             return_dense=True,
             return_sparse=False,
             return_colbert_vecs=False,

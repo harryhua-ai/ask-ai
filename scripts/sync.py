@@ -257,7 +257,11 @@ async def run_sync(
         session_factory = get_session_factory(engine)
         configs = await _load_configs_from_db(session_factory)
         sync_session_factory = get_sync_session_factory(settings.postgres_dsn)
-        embedder = BGEEmbedder(device=settings.embedder_device)
+        embedder = BGEEmbedder(
+            device=settings.embedder_device,
+            batch_size=settings.embedder_batch_size,
+            max_length=settings.embedder_max_length,
+        )
         pipeline = IngestionPipeline(
             embedder,
             weaviate_client,

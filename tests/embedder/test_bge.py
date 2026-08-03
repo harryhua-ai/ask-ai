@@ -227,3 +227,13 @@ def test_reranker_single_document_returns_list():
     scores = reranker.rerank(query="test", documents=["only one doc"])
     assert isinstance(scores, list)
     assert len(scores) == 1
+
+def test_bge_embedder_accepts_batch_max_length():
+    """BGEEmbedder 接受 batch_size/max_length(GPU 大 batch 配置化)。"""
+    import inspect
+    from backend.embedder.bge import BGEEmbedder
+    sig = inspect.signature(BGEEmbedder.__init__)
+    assert "batch_size" in sig.parameters
+    assert "max_length" in sig.parameters
+    src = inspect.getsource(BGEEmbedder.embed)
+    assert "self._batch_size" in src and "self._max_length" in src
