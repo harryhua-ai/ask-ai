@@ -427,3 +427,17 @@ def test_search_combines_product_and_channel_filters():
 
     hybrid_kwargs = mock_collection.query.hybrid.call_args.kwargs
     assert "filters" in hybrid_kwargs
+
+
+# --------------------------------------------------------------------------- #
+# 函数级符号检索:SearchResult symbol 字段 + _to_search_result
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_search_result_symbol_defaults():
+    """SearchResult 新增 symbol 字段默认空串,兼容非代码 chunk。"""
+    r = SearchResult(text="t", source_id="s", source_type="local_git",
+                     product="ne301", title="T", url="", score=0.5, chunk_index=0)
+    assert r.symbol_name == ""
+    assert r.symbol_signature == ""
