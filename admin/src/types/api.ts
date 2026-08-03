@@ -53,6 +53,17 @@ export interface DataSource {
   updated_at: string;
 }
 
+/** preview-dirs 返回的目录项(供目录选择器渲染)。 */
+export interface PreviewDir {
+  name: string;
+  /** 相对 root_path 的相对路径(不泄露服务器绝对路径)。 */
+  path: string;
+  /** 该目录下可列子目录总数(供前端展示)。 */
+  children_count: number;
+  /** 第二层子目录(已限 50,懒展开时直接渲染)。 */
+  children?: PreviewDir[];
+}
+
 export interface SyncLog {
   id: string;
   source_id: string;
