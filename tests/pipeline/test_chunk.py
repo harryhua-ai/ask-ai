@@ -483,3 +483,17 @@ def test_semantic_chunk_empty_content_returns_empty():
     from backend.pipeline.chunk import chunk_document_semantic
     doc = _make_doc("")
     assert chunk_document_semantic(doc) == []
+
+
+def test_chunk_symbol_defaults_empty():
+    """Chunk 新增 symbol 字段默认空串,兼容文档 chunk。"""
+    from backend.connectors.base import RawDocument
+    doc = RawDocument(source_id="t", source_type="filesystem", product="x",
+                     title="T", content="c", url="", metadata={}, content_hash="h",
+                     branch="")
+    c = Chunk(text="x", document=doc, chunk_index=0, total_chunks=1,
+              start_char=0, end_char=1)
+    assert c.symbol_name == ""
+    assert c.symbol_signature == ""
+    assert c.symbol_node_type == ""
+    assert c.symbol_tokens == ""
