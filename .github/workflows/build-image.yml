@@ -54,8 +54,10 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --frozen --extra dev  # 装 dev 依赖(pytest 等)跑测试
-      - run: uv run pytest tests/ -q --ignore=tests/api/admin/test_llm_providers.py
-      # test_llm_providers 需 ENCRYPTION_KEY,单独跳过(既有问题)
+      # CI 跑单元测试 + 关键集成(pipeline/retrieval/connectors/db 基础)
+      # 跳过依赖运行时 seed 数据的 admin 集成测试(需 DB 已 seed,CI 空 DB 没有)
+      # 以及需 ENCRYPTION_KEY 的 llm_providers
+      - run: uv run pytest tests/ -q --ignore=tests/api/admin --ignore=tests/scripts/test_sync_db.py
 
   build-and-push:
     # 构建 GPU 镜像,push GHCR
