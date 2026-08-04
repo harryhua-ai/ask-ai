@@ -1,16 +1,38 @@
+# 构建上下文排除(减镜像体积 + 加速构建)
 .git
 .github
 __pycache__
-*.pyc
+**/*.pyc
+**/*.pyo
 .pytest_cache
 .coverage
 htmlcov
-node_modules
-widget/node_modules
-widget/dist
-models/
-docs/
+*.egg-info
+build/
+dist/
+.hypothesis/
+.ruff_cache/
+.mypy_cache/
 .superpowers/
 .claude/
+node_modules/
+widget/node_modules/
+widget/dist
+admin/node_modules/
+admin/dist
+.venv/
+docs/
 *.md
+*.log
+# 模型/语料不打进镜像(挂载)
+models/
+ask-ai-corpus/
+# 截图/临时
+*.png
+*.jpg
+*.jpeg
+*.gif
+.DS_Store
 .env
+.env.*
+!.env.example
