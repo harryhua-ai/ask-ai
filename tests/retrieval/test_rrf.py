@@ -60,3 +60,38 @@ def test_rrf_dedup_keeps_distinct_chunks_same_doc():
     assert len(out) == 2
     chunks = {r.chunk_index for r in out}
     assert chunks == {0, 1}
+
+
+@pytest.mark.unit
+def test_rrf_fuse_variadic_three_lists():
+    """三路融合:同一 chunk 出现在三路均 rank 0 时分数 = 3 * 1/(k+0+1)。"""
+    a = _sr("a", "doc/a", chunk_index=0)
+    out = rrf_fuse([a], [a], [a], k=60)
+    assert len(out) == 1
+    # a 在三路均 rank 0:3 * 1/61
+    assert out[0].source_id == "doc/a"
+    assert abs(out[0].score - 3 * (1.0 / (60 + 0 + 1))) < 1e-9
+
+
+@pytest.mark.unit
+def test_rrf_fuse_variadic_skips_empty_lists():
+    """空列表自动跳过,不贡献分数。"""
+    a = _sr("a", "doc/a", chunk_index=0)
+    b = _sr("b", "doc/b", chunk_index=0)
+    out = rrf_fuse([a], [], [b], k=60)
+    assert len(out) == 2
+
+
+@pytest.mark.unit
+def test_rrf_fuse_variadic_all_empty():
+    """全空 → []。"""
+    assert rrf_fuse([], [], [], k=60) == []
+
+
+@pytest.mark.unit
+def test_rrf_fuse_two_args_backward_compatible_score():
+    """2 参调用分数与公式 1/(k+rank+1) 逐位一致(向后兼容语义)。"""
+    a = _sr("a", "doc/a", chunk_index=0)
+    out = rrf_fuse([a], [], k=60)
+    assert len(out) == 1
+    assert abs(out[0].score - 1.0 / (60 + 0 + 1)) < 1e-9
