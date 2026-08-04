@@ -36,9 +36,10 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_DB: test
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
+          # 对齐 settings 默认(test_sync_db 用 ask_ai:changeme + POSTGRES_DB=ask_ai_test)
+          POSTGRES_DB: ask_ai_test
+          POSTGRES_USER: ask_ai
+          POSTGRES_PASSWORD: changeme
         ports: ["5432:5432"]
         options: >-
           --health-cmd pg_isready
