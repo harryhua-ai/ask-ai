@@ -12,19 +12,12 @@ export interface LoginResponse {
   user: User;
 }
 
-export type DataSourceType = "github" | "filesystem" | "local_git";
+export type DataSourceType = "github" | "filesystem";
 
-/** GitHub 数据源 config 形状。 */
+/** GitHub 数据源 config 形状(统一 git 类型:clone + fetch+reset + API SHA 感知)。 */
 export interface GithubSourceConfig {
-  owner?: string;
-  repo?: string;
-  branches?: string[];
-  file_types?: string[];
-}
-
-/** 本地 git 数据源 config 形状。 */
-export interface LocalGitSourceConfig {
-  repo_path?: string;
+  repo_url?: string;
+  clone_path?: string;
   branches?: string[];
   file_types?: string[];
   exclude_dirs?: string[];

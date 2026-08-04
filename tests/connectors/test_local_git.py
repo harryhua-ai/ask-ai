@@ -134,9 +134,10 @@ def cfg_factory(tiny_repo):
 
 
 @pytest.mark.unit
-def test_local_git_connector_registered():
-    """注册装饰器应将 "local_git" 类型绑定到 ConnectorRegistry。"""
-    assert "local_git" in ConnectorRegistry._connectors
+def test_local_git_not_registered():
+    """决策 2A:local_git 不再作为用户类型注册(github 统一为唯一 git 源)。"""
+    import backend.connectors.local_git  # noqa: F401
+    assert "local_git" not in ConnectorRegistry._connectors
 
 
 @pytest.mark.unit
