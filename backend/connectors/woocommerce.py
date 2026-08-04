@@ -19,8 +19,10 @@ config 缺失时 fallback 到 ``WOOCOMMERCE_*`` 环境变量,永不硬编码。
 import hashlib
 import logging
 import os
+import re
 from collections.abc import Iterator
 from datetime import datetime
+from html import unescape
 from html.parser import HTMLParser
 from typing import Any
 
@@ -60,11 +62,11 @@ class _HTMLTextExtractor(HTMLParser):
         self._parts: list[str] = []
         self._ignore_depth: int = 0  # >0 表示在 script/style 内
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:  # noqa: ARG002
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in ("script", "style"):
             self._ignore_depth += 1
 
-    def handle_endtag(self, tag: str) -> None:  # noqa: ARG002
+    def handle_endtag(self, tag: str) -> None:
         if tag in ("script", "style") and self._ignore_depth > 0:
             self._ignore_depth -= 1
 
@@ -77,6 +79,13 @@ class _HTMLTextExtractor(HTMLParser):
 
     def get_text(self) -> str:
         return " ".join(self._parts)
+
+
+# 残留标签清扫:匹配 ``<`` 后跟可选 ``/`` 与字母的畸形标签序列。
+# 用于清理 HTMLParser 未识别的畸形标签(如实体解码后泄露的 ``</strong >``、
+# 带属性的未闭合 ``<strong data-x>``)。不匹配 ``<5%``、``< -33%`` 等合法
+# 比较表达式(它们 ``<`` 后非字母)。
+_RESIDUAL_TAG_RE = re.compile(r"</?\s*[a-zA-Z][^>]*?>")
 
 
 class WooCommerceConnector:
@@ -143,14 +152,36 @@ class WooCommerceConnector:
 
     @staticmethod
     def _clean_html(html: str) -> str:
-        """HTML → 纯文本(去标签,跳过 script/style 内容,保留文本)。"""
+        """HTML → 纯文本(去标签,跳过 script/style 内容,保留文本)。
+
+        两阶段清洗:
+        1. ``_HTMLTextExtractor`` 处理标准标签 + 跳过 script/style 块内容
+        2. ``_RESIDUAL_TAG_RE`` 扫除 HTMLParser 漏掉的畸形标签残留
+           (如实体解码后泄露的 ``</strong >``、带属性未闭合标签),
+           同时不误伤合法的 ``<`` 比较符(``<5%``、``< -33%`` 等)
+
+        Args:
+            html: 原始 HTML 字符串(product.description / short_description)。
+
+        Returns:
+            纯文本(可能含合法的 ``<`` / ``>`` 比较符号,不含 HTML 标签)。
+        """
         extractor = _HTMLTextExtractor()
         extractor.feed(html or "")
-        return extractor.get_text()
+        text = extractor.get_text()
+        return _RESIDUAL_TAG_RE.sub("", text)
 
     @staticmethod
     def _category_to_product(categories: list[dict]) -> str:
         """category name → product 标识(无匹配 → commercial)。
+
+        WooCommerce API 返回的 category name 可能含 HTML 实体(如
+        ``Modules &amp; Dev Kits``),故先 ``html.unescape`` 解码再匹配。
+
+        多 category 产品(如 ``['AI Cameras', 'NE301']``)按列表顺序遍历,
+        先命中者胜出 — Real-Run 中 AI Cameras 通常排在 NE 前故归 aitoolstack,
+        与 plan M1 期望一致(aitoolstack = AI Cameras + Edge AI Boxes +
+        Modules & Dev Kits = 21)。
 
         Args:
             categories: product JSON 的 ``categories`` 字段
@@ -160,7 +191,7 @@ class WooCommerceConnector:
             product 标识(ne101/ne301/ne503/accessories/aitoolstack/commercial)。
         """
         for cat in categories or []:
-            name = (cat.get("name") or "").lower()
+            name = unescape(cat.get("name") or "").lower()
             if name in _CATEGORY_MAP:
                 return _CATEGORY_MAP[name]
         return "commercial"
@@ -175,7 +206,7 @@ class WooCommerceConnector:
         sku = p.get("sku", "")
         stock_status = p.get("stock_status", "")
         stock_qty = p.get("stock_quantity")
-        cats = [c.get("name", "") for c in p.get("categories", [])]
+        cats = [unescape(c.get("name", "")) for c in p.get("categories", [])]
         short_desc = self._clean_html(p.get("short_description", ""))
         desc = self._clean_html(p.get("description", ""))
         permalink = p.get("permalink", "")

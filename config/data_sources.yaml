@@ -141,3 +141,17 @@ sources:
       include_dirs: ["sales/", "硬件/", "经验/"]
       file_types: [".md", ".txt"]
     sync_interval: "1h"
+
+  - id: "woocommerce-mall"
+    type: "woocommerce"
+    product: "commercial"
+    enabled: true
+    channel_visibility: ["widget", "api"]
+    config:
+      store_url: "https://www.camthink.ai"
+      # 生产凭证从环境变量读(WOOCOMMERCE_CONSUMER_KEY / SECRET),
+      # connector 缺 config 时 fallback env,此处仅占位
+      consumer_key: "ck-placeholder-fill-from-env"
+      consumer_secret: "cs-placeholder-fill-from-env"
+      per_page: 100
+    sync_interval: "1h"

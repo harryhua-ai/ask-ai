@@ -155,6 +155,32 @@ def test_woocommerce_html_cleaning_strips_tags_and_skips_script_style():
 
 
 @pytest.mark.unit
+def test_woocommerce_html_cleaning_handles_malformed_tags_and_keeps_lt():
+    """畸形标签(``</strong >``、带属性未闭合)被清扫,合法 ``<`` 比较符保留。
+
+    Real-Run 发现 WooCommerce 产品描述含实体编码泄露的 ``</strong >``
+    (空格畸形标签,HTMLParser 不识别),以及合法的 ``<5%``、``< -33%``
+    比较文本。清洗须:删畸形标签残留,保留合法比较符号。
+    """
+    import backend.connectors.woocommerce  # noqa: F401
+
+    cfg = _make_config()
+    connector = ConnectorRegistry.create(cfg)
+    # 模拟 Real-Run 发现的真实畸形 HTML
+    html = (
+        "<p>Distortion &lt; 1% and haze &lt;5%.</p>"
+        "<p><strong>Spec</strong> text &lt;/strong &gt; leak</p>"
+    )
+    text = connector._clean_html(html)
+    # 畸形标签残留被删(</strong > 不在输出)
+    assert "</strong" not in text
+    assert "<strong" not in text
+    # 合法 < 比较符保留(语义信息)
+    assert "< 1%" in text or "<1%" in text
+    assert "<5%" in text
+
+
+@pytest.mark.unit
 def test_woocommerce_category_to_product_mapping():
     """category name → product 映射(NE301→ne301,无匹配→commercial)。"""
     import backend.connectors.woocommerce  # noqa: F401
@@ -165,3 +191,91 @@ def test_woocommerce_category_to_product_mapping():
     assert connector._category_to_product([{"name": "Accessories"}]) == "accessories"
     assert connector._category_to_product([{"name": "Unknown"}]) == "commercial"
     assert connector._category_to_product([]) == "commercial"
+
+
+@pytest.mark.unit
+def test_woocommerce_category_mapping_decodes_html_entities():
+    """WooCommerce API 返回的 category name 含 HTML 实体(``&amp;``),需解码。
+
+    Real-Run 发现 ``Modules &amp; Dev Kits`` 不解码会 miss 映射 → commercial,
+    应解码后匹配 ``modules & dev kits`` → aitoolstack。
+    """
+    import backend.connectors.woocommerce  # noqa: F401
+
+    cfg = _make_config()
+    connector = ConnectorRegistry.create(cfg)
+    # &amp; 实体 — Real-Run 真实数据
+    assert (
+        connector._category_to_product([{"name": "Modules &amp; Dev Kits"}])
+        == "aitoolstack"
+    )
+    # AI Cameras 实体安全
+    assert connector._category_to_product([{"name": "AI Cameras"}]) == "aitoolstack"
+    # 多 category:列表顺序遍历,先命中者胜出(Real-Run 中 AI Cameras 在 NE 前时→aitoolstack,
+    # 与 plan M1 期望 aitoolstack=AI Cameras(5)+Edge AI Boxes(2)+Modules&Dev Kits(14)=21 一致)
+    assert (
+        connector._category_to_product(
+            [{"name": "AI Cameras"}, {"name": "NE301"}]
+        )
+        == "aitoolstack"  # AI Cameras 在前,先命中
+    )
+    # 反序:NE301 在前 → ne301
+    assert (
+        connector._category_to_product(
+            [{"name": "NE301"}, {"name": "AI Cameras"}]
+        )
+        == "ne301"
+    )
+
+
+@pytest.mark.unit
+def test_woocommerce_env_fallback_reads_creds_from_env(monkeypatch):
+    """config 缺凭证时,fallback 到 WOOCOMMERCE_* 环境变量。"""
+    import backend.connectors.woocommerce  # noqa: F401
+
+    monkeypatch.setenv("WOOCOMMERCE_STORE_URL", "https://env.example.com")
+    monkeypatch.setenv("WOOCOMMERCE_CONSUMER_KEY", "ck_env")
+    monkeypatch.setenv("WOOCOMMERCE_CONSUMER_SECRET", "cs_env")
+    cfg = SourceConfig(
+        id="woocommerce-mall",
+        type="woocommerce",
+        product="commercial",
+        enabled=True,
+        config={},  # 无凭证,强制走 env
+        sync_interval="1h",
+    )
+    connector = ConnectorRegistry.create(cfg)
+    assert connector._store_url == "https://env.example.com"
+    assert connector._key == "ck_env"
+    assert connector._secret == "cs_env"
+
+
+@pytest.mark.unit
+def test_woocommerce_config_takes_precedence_over_env(monkeypatch):
+    """config 凭证优先于环境变量(防 env 污染覆盖显式配置)。"""
+    import backend.connectors.woocommerce  # noqa: F401
+
+    monkeypatch.setenv("WOOCOMMERCE_CONSUMER_KEY", "ck_env_should_lose")
+    cfg = _make_config(consumer_key="ck_config_wins")
+    connector = ConnectorRegistry.create(cfg)
+    assert connector._key == "ck_config_wins"
+
+
+@pytest.mark.unit
+def test_woocommerce_missing_creds_raises_value_error(monkeypatch):
+    """config 与 env 都无凭证 → ValueError(快速失败,不静默空 auth)。"""
+    import backend.connectors.woocommerce  # noqa: F401
+
+    monkeypatch.delenv("WOOCOMMERCE_STORE_URL", raising=False)
+    monkeypatch.delenv("WOOCOMMERCE_CONSUMER_KEY", raising=False)
+    monkeypatch.delenv("WOOCOMMERCE_CONSUMER_SECRET", raising=False)
+    cfg = SourceConfig(
+        id="woocommerce-mall",
+        type="woocommerce",
+        product="commercial",
+        enabled=True,
+        config={},  # 全空
+        sync_interval="1h",
+    )
+    with pytest.raises(ValueError, match="凭证缺失"):
+        ConnectorRegistry.create(cfg)
