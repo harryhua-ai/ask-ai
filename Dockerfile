@@ -2,21 +2,12 @@
 # ask-ai GPU 镜像(backend + sync worker 共用,不同 entrypoint)
 #
 # 多阶段构建:
-#   1. admin-builder:node build admin SPA → dist
+
 #   2. builder:cuda + uv 装依赖(torch cu128)
-#   3. runtime:拷贝 .venv + 代码 + admin/dist,精简
+
 #
 # GPU:CUDA 12.8 + cu128 torch(与 tesla-t4 driver 575/CUDA 12.9 兼容)
 # 模型/语料不打进镜像,容器启动时挂载(决策 2/3)
-
-# ---------- admin builder ----------
-FROM node:20-slim AS admin-builder
-WORKDIR /app
-COPY admin/package*.json ./admin/
-RUN cd admin && npm ci
-COPY admin/ ./admin/
-COPY widget/src/ ./widget/src/
-RUN cd admin && npm run build
 
 # ---------- python builder ----------
 FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu24.04 AS builder
@@ -66,8 +57,7 @@ WORKDIR /app
 # 从 builder 拷依赖(.venv)
 COPY --from=builder /app/.venv /app/.venv
 
-# 从 admin-builder 拷 admin SPA dist(backend main.py mount /admin → StaticFiles)
-COPY --from=admin-builder /app/admin/dist /app/admin/dist
+COPY admin/dist /app/admin/dist
 
 # 拷代码
 COPY backend/ ./backend/
