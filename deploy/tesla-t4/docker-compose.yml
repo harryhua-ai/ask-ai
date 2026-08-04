@@ -69,6 +69,8 @@ services:
     environment:
       # 生产配置(覆盖 .env 里的开发值)
       APP_MODE: prod
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
       POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER:-ask_ai}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-ask_ai}
       WEAVIATE_URL: http://weaviate:8080
       EMBEDDER_DEVICE: cuda
@@ -101,6 +103,8 @@ services:
     env_file:
       - ../../.env
     environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
       POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER:-ask_ai}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-ask_ai}
       WEAVIATE_URL: http://weaviate:8080
       EMBEDDER_DEVICE: cuda
@@ -134,6 +138,8 @@ services:
     env_file:
       - ../../.env
     environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
       POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER:-ask_ai}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-ask_ai}
       WEAVIATE_URL: http://weaviate:8080
       EMBEDDER_DEVICE: cuda
