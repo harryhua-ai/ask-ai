@@ -10,7 +10,7 @@ interface Props {
   onFeedback: (msgId: string, feedback: "up" | "down") => void;
 }
 
-export function MessageBubble({ message, isStreaming, apiUrl, conversationId, onFeedback }: Props) {
+export function MessageBubble({ message, isStreaming, onFeedback }: Props) {
   const [copied, setCopied] = useState(false);
   const isUser = message.type === "user";
 

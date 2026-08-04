@@ -9,7 +9,11 @@ export default defineConfig({
   base: "/admin/",
   plugins: [react()],
   resolve: {
-    alias: { "@": path.resolve(__dirname, "./src") },
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+      // 共享 widget 聊天组件(admin login 页嵌入,单一聊天窗口来源)
+      "@widget": path.resolve(__dirname, "../widget/src"),
+    },
   },
   server: {
     port: 5174,
