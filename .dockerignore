@@ -17,9 +17,7 @@ dist/
 .claude/
 node_modules/
 widget/node_modules/
-widget/dist
 admin/node_modules/
-admin/dist
 .venv/
 docs/
 *.md
