@@ -50,7 +50,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: uv sync --frozen
+      - run: uv sync --frozen --extra dev  # 装 dev 依赖(pytest 等)跑测试
       - run: uv run pytest tests/ -q --ignore=tests/api/admin/test_llm_providers.py
       # test_llm_providers 需 ENCRYPTION_KEY,单独跳过(既有问题)
 
