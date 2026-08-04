@@ -432,7 +432,57 @@ async def test_sync_one_falls_back_to_fetch_all_when_changes_empty():
 
 
 @pytest.mark.unit
-async def test_sync_one_populates_items_count_fields():
+async def test_sync_one_reindex_forces_fetch_all_bypassing_skip():
+    """reindex=True 时绕过增量 skip,强制 fetch_all(符号字段回填场景)。
+
+    即使 fetch_changes 返回空且 documents 表已有记录(正常会 skip),
+    reindex 模式仍应调 fetch_all + ingest_all 全量重灌。
+    """
+    from scripts.sync import _sync_one
+
+    cfg = _make_config(id="src-1")
+    pipeline = MagicMock()
+    pipeline.ingest_all.return_value = {"doc1": 2}
+    connector = MagicMock()
+    # fetch_changes 空(无近期变更)
+    connector.fetch_changes.return_value = iter([])
+    connector.fetch_all.return_value = iter([MagicMock(name="doc1")])
+    connector.fetch_deleted.return_value = []
+    session_factory, session = _make_async_session_factory()
+    # documents 表"已有记录"(count > 0)——正常路径会 skip,但 reindex 应绕过
+    session.execute = AsyncMock(
+        return_value=MagicMock(scalar=MagicMock(return_value=100))
+    )
+
+    with patch("scripts.sync.ConnectorRegistry.create", return_value=connector):
+        await _sync_one(cfg, pipeline, session_factory, reindex=True)
+
+    # reindex 应强制 fetch_all(绕过 skip)
+    connector.fetch_all.assert_called_once()
+    # ingest_all 应被调用(全量重灌)
+    pipeline.ingest_all.assert_called_once()
+
+
+@pytest.mark.unit
+async def test_sync_one_reindex_skips_fetch_changes():
+    """reindex=True 时不应调 fetch_changes(直接走 fetch_all)。"""
+    from scripts.sync import _sync_one
+
+    cfg = _make_config(id="src-1")
+    pipeline = MagicMock()
+    pipeline.ingest_all.return_value = {"doc1": 2}
+    connector = MagicMock()
+    connector.fetch_changes.return_value = iter([MagicMock(name="should-not-use")])
+    connector.fetch_all.return_value = iter([MagicMock(name="doc1")])
+    connector.fetch_deleted.return_value = []
+    session_factory, _ = _make_async_session_factory()
+
+    with patch("scripts.sync.ConnectorRegistry.create", return_value=connector):
+        await _sync_one(cfg, pipeline, session_factory, reindex=True)
+
+    # fetch_changes 不应被调用(reindex 直接 fetch_all)
+    connector.fetch_changes.assert_not_called()
+    connector.fetch_all.assert_called_once()
     """SyncLog 字段 items_new / items_updated / items_deleted 应正确填充。"""
     from scripts.sync import _sync_one
 
