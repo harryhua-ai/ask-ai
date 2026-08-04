@@ -51,6 +51,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
+# python3 软链(uv venv 的 python 指向 /usr/bin/python3,需建)
+RUN ln -sf /usr/bin/python3.12 /usr/bin/python3
+
 WORKDIR /app
 
 # 从 builder 拷依赖(.venv)
