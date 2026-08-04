@@ -23,14 +23,18 @@ from pathlib import Path
 
 from backend.connectors.base import DataSourceConnector, RawDocument
 from backend.connectors.exclusion import ExclusionPolicy
-from backend.connectors.registry import ConnectorRegistry, SourceConfig
+from backend.connectors.registry import SourceConfig
 
 logger = logging.getLogger(__name__)
 
 
-@ConnectorRegistry.register("local_git")
 class LocalGitConnector(DataSourceConnector):
-    """基于本地 Git 仓库的多分支数据源 Connector。
+    """基于本地 Git 仓库的多分支数据源 Connector(实现细节,不再 @register)。
+
+    决策 2A:``github`` 已统一为唯一 git 源类型,本类不再注册到 ConnectorRegistry;
+    保留类定义以承载历史测试覆盖(LocalGitConnector 直接构造,不经过 registry),
+    并作为 GitHubConnector 的 checkout+遍历逻辑参考 —— 新 github connector 用
+    fetch+reset 替代 checkout,修复了 staleness bug。
 
     通过 ``SourceConfig.config`` 提供以下参数:
 
