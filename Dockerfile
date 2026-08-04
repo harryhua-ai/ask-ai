@@ -15,7 +15,7 @@ WORKDIR /app
 COPY admin/package*.json ./admin/
 RUN cd admin && npm ci
 COPY admin/ ./admin/
-COPY widget/src/ ./widget/src/   # admin 引用 @widget/* (vite alias ../widget/src)
+COPY widget/src/ ./widget/src/
 RUN cd admin && npm run build
 
 # ---------- python builder ----------
