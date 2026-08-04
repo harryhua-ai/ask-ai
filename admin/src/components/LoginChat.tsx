@@ -1,8 +1,8 @@
 import { useState, useCallback } from "react";
-import type { WidgetConfig, ChatMessage } from "./types";
-import { useSSE } from "./hooks/useSSE";
-import { ChatPanel } from "./components/ChatPanel";
-import fabIcon from "./assets/CamThink.ai-black.png";
+import type { WidgetConfig, ChatMessage } from "@widget/types";
+import { useSSE } from "@widget/hooks/useSSE";
+import { ChatPanel } from "@widget/components/ChatPanel";
+import "@widget/styles/widget.css";
 
 const SUGGESTED_QUESTIONS = [
   "NE503 支持哪些接口?",
@@ -11,8 +11,19 @@ const SUGGESTED_QUESTIONS = [
   "AIToolStack 有哪些功能?",
 ];
 
-export function App({ config }: { config: WidgetConfig }) {
-  const [isOpen, setIsOpen] = useState(false);
+/**
+ * Login 页嵌入的聊天窗口(共享 widget 的 ChatPanel 组件,单一聊天窗口来源)。
+ *
+ * 免登录即可聊:连 /api/ask(channel=widget,匿名),不走 admin 鉴权。
+ * 与 widget.js 嵌外部站点共用同一套聊天 UI 组件(ChatPanel/MessageBubble/useSSE),
+ * 不重复实现。
+ *
+ * 与 widget 部署形态的区别:
+ * - widget:FAB 浮动按钮 + 展开面板,嵌外部站点
+ * - login chat:直接展开面板(login 页内嵌,无 FAB,无关闭)
+ */
+export function LoginChat() {
+  const config: WidgetConfig = { apiUrl: "/api" };  // vite proxy → backend 8000
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -30,7 +41,6 @@ export function App({ config }: { config: WidgetConfig }) {
     const assistantId = crypto.randomUUID();
     setMessages((prev) => [...prev, { id: assistantId, type: "assistant", content: "" }]);
 
-    // try/finally 确保 isStreaming 总是被重置,即使 fetch 抛错或 SSE 提前返回(resp.body 为空 / resp.ok 为 false)
     try {
       await ask(text, messages, "widget", {
         onSources: (sources, convId) => {
@@ -46,9 +56,7 @@ export function App({ config }: { config: WidgetConfig }) {
             ),
           );
         },
-        onDone: (convId) => {
-          setConversationId(convId);
-        },
+        onDone: (convId) => setConversationId(convId),
         onError: (errMsg) => {
           setMessages((prev) =>
             prev.map((m) =>
@@ -72,27 +80,17 @@ export function App({ config }: { config: WidgetConfig }) {
   }, [conversationId, config.apiUrl]);
 
   return (
-    <>
-      {!isOpen && (
-        <button
-          className="ask-ai-fab"
-          onClick={() => setIsOpen(true)}
-        >
-          <img className="ask-ai-fab-icon" src={fabIcon} alt="Ask AI" />
-        </button>
-      )}
-      {isOpen && (
-        <ChatPanel
-          config={config}
-          messages={messages}
-          isStreaming={isStreaming}
-          conversationId={conversationId}
-          suggestedQuestions={messages.length === 0 ? SUGGESTED_QUESTIONS : []}
-          onSend={handleSend}
-          onClose={() => setIsOpen(false)}
-          onFeedback={handleFeedback}
-        />
-      )}
-    </>
+    <div className="login-chat-wrapper" style={{ width: "100%", maxWidth: "420px", margin: "0 auto" }}>
+      <ChatPanel
+        config={config}
+        messages={messages}
+        isStreaming={isStreaming}
+        conversationId={conversationId}
+        suggestedQuestions={messages.length === 0 ? SUGGESTED_QUESTIONS : []}
+        onSend={handleSend}
+        onClose={() => { /* login 页无关闭按钮,ChatPanel 内关闭按钮保留但 no-op */ }}
+        onFeedback={handleFeedback}
+      />
+    </div>
   );
 }

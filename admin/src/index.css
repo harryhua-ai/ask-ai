@@ -24,3 +24,22 @@
     font-family: Manrope, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
 }
+
+/* ===== Login 页嵌入聊天窗口(ChatPanel,共享 widget 组件)===== */
+/* widget.css 的 .ask-ai-panel 默认 position: fixed 浮动,login 页需改为内嵌流式 */
+.login-chat-wrapper .ask-ai-panel {
+  position: relative;
+  bottom: auto;
+  right: auto;
+  width: 100%;
+  max-width: 420px;
+  height: 520px;
+  margin: 0 auto;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+/* login 页隐藏 ChatPanel 头部的关闭按钮(login 页无需关闭) */
+.login-chat-wrapper .ask-ai-header button {
+  display: none;
+}
