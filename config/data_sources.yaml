@@ -1,125 +1,130 @@
 sources:
+  # ---- GitHub 源(统一 git 类型:clone + fetch+reset + API SHA 感知)----
+  # schema: repo_url / clone_path / file_types 在 config;branches 在顶层(SourceConfig.branches)
+  # 注:旧 include_dirs 白名单不再支持(新 connector 用 ExclusionPolicy 的 exclude 黑名单 +
+  #     全仓库扫描)。如需收窄,改用 exclude_regex / exclude_dirs。
   - id: "github-wiki"
     type: "github"
     product: "wiki"
     enabled: true
+    branches: ["main"]
     config:
-      owner: "camthink-ai"
-      repo: "wiki-documents"
-      branch: "main"
+      repo_url: "https://github.com/camthink-ai/wiki-documents.git"
+      clone_path: "~/ask-ai-corpus/wiki-documents"
       file_types: [".md", ".mdx"]
-      include_dirs: ["docs/", "blog/", "i18n/"]
     sync_interval: "1h"
+    channel_visibility: ["widget", "api"]
 
   - id: "github-ne101"
     type: "github"
     product: "ne101"
     enabled: true
+    branches: ["hw-v1.2"]
     config:
-      owner: "camthink-ai"
-      repo: "lowpower_camera"
-      branch: "hw-v1.2"
+      repo_url: "https://github.com/camthink-ai/lowpower_camera.git"
+      clone_path: "~/ask-ai-corpus/lowpower_camera"
       file_types: [".md", ".h", ".c", ".txt"]
-      include_dirs: ["docs/", "examples/", "README.md"]
       exclude_regex: '_test\\.|\\.generated\\.'
     sync_interval: "1h"
+    channel_visibility: ["widget", "api"]
 
   - id: "github-ne301"
     type: "github"
     product: "ne301"
     enabled: true
+    branches: ["main"]
     config:
-      owner: "camthink-ai"
-      repo: "ne301"
-      branch: "main"
+      repo_url: "https://github.com/camthink-ai/ne301.git"
+      clone_path: "~/ask-ai-corpus/ne301"
       file_types: [".md", ".h", ".c", ".txt"]
-      include_dirs: ["docs/", "examples/", "README.md"]
     sync_interval: "1h"
+    channel_visibility: ["widget", "api"]
 
   - id: "github-ne503-sdk"
     type: "github"
     product: "ne503"
     enabled: true
+    branches: ["main"]
     config:
-      owner: "camthink-ai"
-      repo: "ne503-aipc-sdks"
-      branch: "main"
+      repo_url: "https://github.com/camthink-ai/ne503-aipc-sdks.git"
+      clone_path: "~/ask-ai-corpus/ne503-aipc-sdks"
       file_types: [".md", ".py", ".txt", ".yaml"]
-      include_dirs: ["docs/", "examples/", "README.md"]
     sync_interval: "1h"
+    channel_visibility: ["widget", "api"]
 
   - id: "github-ne503-hailo"
     type: "github"
     product: "ne503"
     enabled: true
+    branches: ["main"]
     config:
-      owner: "camthink-ai"
-      repo: "meta-hailo-os"
-      branch: "main"
+      repo_url: "https://github.com/camthink-ai/meta-hailo-os.git"
+      clone_path: "~/ask-ai-corpus/meta-hailo-os"
       file_types: [".md", ".sh", ".txt", ".yaml"]
-      include_dirs: ["docs/", "README.md"]
     sync_interval: "1h"
+    channel_visibility: ["widget", "api"]
 
   - id: "github-neomind"
     type: "github"
     product: "neomind"
     enabled: true
+    branches: ["main"]
     config:
-      owner: "camthink-ai"
-      repo: "NeoMind"
-      branch: "main"
+      repo_url: "https://github.com/camthink-ai/NeoMind.git"
+      clone_path: "~/ask-ai-corpus/NeoMind"
       file_types: [".md", ".rs", ".txt"]
-      include_dirs: ["docs/", "README.md"]
     sync_interval: "1h"
+    channel_visibility: ["widget", "api"]
 
   - id: "github-neomind-devicetypes"
     type: "github"
     product: "neomind"
     enabled: true
+    branches: ["main"]
     config:
-      owner: "camthink-ai"
-      repo: "NeoMind-DeviceTypes"
-      branch: "main"
+      repo_url: "https://github.com/camthink-ai/NeoMind-DeviceTypes.git"
+      clone_path: "~/ask-ai-corpus/NeoMind-DeviceTypes"
       file_types: [".md", ".ts", ".js", ".json"]
-      include_dirs: ["README.md"]
     sync_interval: "1h"
+    channel_visibility: ["widget", "api"]
 
   - id: "github-neomind-dashboard"
     type: "github"
     product: "neomind"
     enabled: true
+    branches: ["main"]
     config:
-      owner: "camthink-ai"
-      repo: "NeoMind-Dashboard-Components"
-      branch: "main"
+      repo_url: "https://github.com/camthink-ai/NeoMind-Dashboard-Components.git"
+      clone_path: "~/ask-ai-corpus/NeoMind-Dashboard-Components"
       file_types: [".md", ".tsx", ".ts"]
-      include_dirs: ["README.md", "docs/"]
     sync_interval: "1h"
+    channel_visibility: ["widget", "api"]
 
   - id: "github-neomind-extensions"
     type: "github"
     product: "neomind"
     enabled: true
+    branches: ["main"]
     config:
-      owner: "camthink-ai"
-      repo: "NeoMind-Extensions"
-      branch: "main"
+      repo_url: "https://github.com/camthink-ai/NeoMind-Extensions.git"
+      clone_path: "~/ask-ai-corpus/NeoMind-Extensions"
       file_types: [".md", ".rs"]
-      include_dirs: ["README.md", "docs/"]
     sync_interval: "1h"
+    channel_visibility: ["widget", "api"]
 
   - id: "github-aitoolstack"
     type: "github"
     product: "aitoolstack"
     enabled: true
+    branches: ["main"]
     config:
-      owner: "camthink-ai"
-      repo: "AIToolStack"
-      branch: "main"
+      repo_url: "https://github.com/camthink-ai/AIToolStack.git"
+      clone_path: "~/ask-ai-corpus/AIToolStack"
       file_types: [".md", ".py", ".txt"]
-      include_dirs: ["docs/", "README.md"]
     sync_interval: "1h"
+    channel_visibility: ["widget", "api"]
 
+  # ---- 文件系统源(schema 不变)----
   - id: "knowledge-public"
     type: "filesystem"
     product: "knowledge"
