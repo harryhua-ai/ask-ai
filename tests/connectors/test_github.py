@@ -223,3 +223,16 @@ def test_github_make_document_custom_visibility(tmp_path) -> None:
     conn = GitHubConnector(custom_cfg)
     doc = conn._make_document("a.py", "x", "main")
     assert doc.channel_visibility == ("api",)
+
+
+# ====================  local_git 不再注册(决策 2A)  ====================
+
+
+@pytest.mark.unit
+def test_local_git_not_registered() -> None:
+    """决策 2A:local_git 移除 @register 后不应出现在 ConnectorRegistry。
+
+    显式 import local_git 模块,确保即便有人误加回 @register 也会被本测试拦截。
+    """
+    import backend.connectors.local_git  # noqa: F401
+    assert "local_git" not in ConnectorRegistry._connectors
