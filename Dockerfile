@@ -35,6 +35,10 @@ COPY pyproject.toml uv.lock ./
 # uv sync 装依赖到 .venv(--frozen 锁版本,--no-dev 不装测试工具)
 RUN uv sync --frozen --no-dev
 
+# 强制重装 torch cu128(匹配 tesla-t4 CUDA 12.9 driver)
+# uv.lock 默认拉 pypi torch+cu130(需 driver 580+),tesla-t4 是 575.64.03 → CUDA unavailable
+RUN uv pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cu128 --reinstall-package torch
+
 # ---------- runtime ----------
 FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu24.04 AS runtime
 
