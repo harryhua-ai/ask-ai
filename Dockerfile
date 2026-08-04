@@ -11,11 +11,12 @@
 
 # ---------- admin builder ----------
 FROM node:20-slim AS admin-builder
-WORKDIR /admin
-COPY admin/package*.json ./
-RUN npm ci
-COPY admin/ ./
-RUN npm run build
+WORKDIR /app
+COPY admin/package*.json ./admin/
+RUN cd admin && npm ci
+COPY admin/ ./admin/
+COPY widget/src/ ./widget/src/   # admin 引用 @widget/* (vite alias ../widget/src)
+RUN cd admin && npm run build
 
 # ---------- python builder ----------
 FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu24.04 AS builder
@@ -66,7 +67,7 @@ WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 
 # 从 admin-builder 拷 admin SPA dist(backend main.py mount /admin → StaticFiles)
-COPY --from=admin-builder /admin/dist /app/admin/dist
+COPY --from=admin-builder /app/admin/dist /app/admin/dist
 
 # 拷代码
 COPY backend/ ./backend/
