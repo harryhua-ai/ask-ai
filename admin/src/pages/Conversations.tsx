@@ -20,14 +20,10 @@ import {
 } from "@/components/ui/table";
 
 const INTENT_LABELS: Record<string, string> = {
-  product_spec: "产品规格",
-  tech_support: "技术支持",
-  getting_started: "入门指南",
-  pricing: "价格咨询",
-  comparison: "产品对比",
-  api_reference: "API 参考",
-  documentation: "文档查询",
-  other: "其他",
+  commercial: "商务咨询",
+  product: "产品咨询",
+  support: "技术支持",
+  off_topic: "无关闲聊",
 };
 
 export default function Conversations() {

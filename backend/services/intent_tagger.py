@@ -13,19 +13,15 @@ from backend.db.models import Conversation
 
 logger = logging.getLogger(__name__)
 
-INTENT_CATEGORIES = [
-    "product_spec",  # 产品规格咨询
-    "tech_support",  # 技术支持/故障排查
-    "getting_started",  # 入门/快速开始
-    "pricing",  # 价格/购买
-    "comparison",  # 产品对比
-    "api_reference",  # API/SDK 参考
-    "documentation",  # 文档查询
-    "other",  # 其他
-]
+INTENT_CATEGORIES = ["commercial", "product", "support", "off_topic"]
 
 INTENT_PROMPT = f"""请分析以下用户问题，从这些意图类别中选择最合适的一个：
 {chr(10).join(f"- {c}" for c in INTENT_CATEGORIES)}
+
+- commercial: 价格/采购/渠道/库存/促销
+- product: 产品功能/参数/选型/方案/演示能力
+- support: 故障排查/集成/代码/调试
+- off_topic: 与 CamThink 无关的闲聊/通用知识
 
 只返回类别名称（不解释、不加引号）。
 
@@ -57,11 +53,11 @@ async def tag_single(
         )
         tag = resp.content.strip().lower().replace(" ", "_")
         if tag not in INTENT_CATEGORIES:
-            tag = "other"
+            tag = "off_topic"
         return tag
     except Exception:
         logger.exception("Intent 标注失败 conversation_id=%s", conversation_id)
-        return "other"
+        return "off_topic"
 
 
 async def tag_batch(

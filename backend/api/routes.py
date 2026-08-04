@@ -99,6 +99,7 @@ async def ask(
         language = "en"
         elapsed = 0
         token_emitted = False
+        intent: str | None = None
 
         try:
             async for chunk in rag.stream_answer(
@@ -125,6 +126,7 @@ async def ask(
                     is_answered = data["is_answered"]
                     language = data.get("language", "en")
                     elapsed = data.get("response_time_ms", 0)
+                    intent = data.get("intent")
         except Exception:
             # S5: LLM 流式生成中途异常(超时/网络错误)时,降级返回友好提示。
             # 200 响应头已发送,无法改写状态码,但通过 SSE token 事件通知客户端。
@@ -150,6 +152,7 @@ async def ask(
                     sources=sources,
                     is_answered=is_answered,
                     response_time_ms=elapsed,
+                    intent_tag=intent,
                 )
                 session.add(conv)
                 await session.commit()
