@@ -31,7 +31,9 @@ jobs:
     # 先跑测试,test fail 不出镜像
     runs-on: ubuntu-latest
     env:
-      TEST_DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
+      # 对齐 settings 默认(test_sync_db 用 settings.postgres_dsn=ask_ai:changeme)
+      # admin conftest 也读 TEST_DATABASE_URL → 统一 ask_ai:changeme + ask_ai_test
+      TEST_DATABASE_URL: postgresql+asyncpg://ask_ai:changeme@localhost:5432/ask_ai_test
     services:
       postgres:
         image: postgres:16-alpine
