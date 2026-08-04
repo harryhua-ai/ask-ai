@@ -142,12 +142,17 @@ async def _sync_one(
     *,
     triggered_by: str = "cron",
     dry_run: bool = False,
+    reindex: bool = False,
 ) -> None:
     """同步单个数据源:fetch → ingest → delete → 写 SyncLog。
 
     - 异常被捕获并记录到 SyncLog(status="failed"),**不向上传播**,
       避免一个数据源失败中断整个批次。
     - ``dry_run=True`` 时只列举文档数,不灌入向量库、不写 SyncLog。
+    - ``reindex=True`` 时绕过增量 skip 逻辑,强制 ``fetch_all()`` 全量重灌。
+      用于 schema 变更 / 符号字段回填等需要重分块的场景。配合 ``run_sync``
+      的 collection 删除,所有对象全新 insert(insert_many 批量写,不走
+      replace 回退,远程 tunnel 下性能可接受)。
     - ``finally`` 块确保无论成功 / 失败 / 异常都会写 SyncLog(除非 dry_run)。
 
     Args:
@@ -156,6 +161,7 @@ async def _sync_one(
         session_factory: 异步 SQLAlchemy 会话工厂(``async_sessionmaker``)。
         triggered_by: SyncLog.triggered_by 字段值,``"cron"`` 或 ``"manual"``。
         dry_run: True 时只列举文档数,不灌入 / 不写 SyncLog。
+        reindex: True 时强制全量重灌(绕过增量 skip)。
     """
     start = time.monotonic()
     log_entry = SyncLog(
@@ -169,23 +175,30 @@ async def _sync_one(
         connector = ConnectorRegistry.create(cfg)
         since = datetime.now(UTC) - timedelta(hours=24)
 
-        docs = list(connector.fetch_changes(since))
-        if not docs:
-            # 区分首次(无 documents 记录)vs 无变更(已有记录)
-            existing = await _count_documents(session_factory, cfg.id)
-            if existing > 0:
-                # 无变更跳过:不回退全量,不灌入,直接记 SyncLog 返回
-                logger.info(
-                    "数据源 %s 无变更,跳过(documents 已有 %d)", cfg.id, existing
-                )
-                log_entry.items_new = 0
-                log_entry.items_unchanged = existing
-                log_entry.finished_at = datetime.now(UTC)
-                log_entry.duration_ms = int((time.monotonic() - start) * 1000)
-                return
-            # 首次同步:documents 表无记录,回退到全量拉取
-            logger.info("数据源 %s 首次同步,回退到全量拉取", cfg.id)
+        if reindex:
+            # reindex 模式:绕过增量 skip,强制全量重灌(符号字段回填 /
+            # schema 变更)。collection 已由 run_sync 删除,此处 fetch_all
+            # 后全部走 insert_many 批量写,UUID 不冲突。
+            logger.info("reindex 模式:数据源 %s 强制全量重灌", cfg.id)
             docs = list(connector.fetch_all())
+        else:
+            docs = list(connector.fetch_changes(since))
+            if not docs:
+                # 区分首次(无 documents 记录)vs 无变更(已有记录)
+                existing = await _count_documents(session_factory, cfg.id)
+                if existing > 0:
+                    # 无变更跳过:不回退全量,不灌入,直接记 SyncLog 返回
+                    logger.info(
+                        "数据源 %s 无变更,跳过(documents 已有 %d)", cfg.id, existing
+                    )
+                    log_entry.items_new = 0
+                    log_entry.items_unchanged = existing
+                    log_entry.finished_at = datetime.now(UTC)
+                    log_entry.duration_ms = int((time.monotonic() - start) * 1000)
+                    return
+                # 首次同步:documents 表无记录,回退到全量拉取
+                logger.info("数据源 %s 首次同步,回退到全量拉取", cfg.id)
+                docs = list(connector.fetch_all())
 
         logger.info("数据源 %s 抓取到 %d 篇文档", cfg.id, len(docs))
 
@@ -317,6 +330,7 @@ async def run_sync(
                 session_factory,
                 triggered_by=triggered_by,
                 dry_run=dry_run,
+                reindex=reindex,
             )
     finally:
         # 无论成功 / 失败,都释放 Weaviate client 与 Postgres engine
