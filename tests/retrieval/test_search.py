@@ -479,3 +479,49 @@ def test_search_symbols_bm25_hits_symbol_tokens():
     assert bm25_kwargs["query"] == "I2C"
     assert "symbol_tokens^3" in bm25_kwargs["query_properties"]
     assert any(r.symbol_name == "BatteryReadI2C" for r in out)
+
+
+# --------------------------------------------------------------------------- #
+# search_bucket: BM25 + source_type / chunk_type 过滤(intent boost 桶)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_search_bucket_empty_query_returns_empty():
+    """空 query → [](不调 Weaviate)。"""
+    searcher = HybridSearcher(MagicMock(), MagicMock())
+    assert searcher.search_bucket("", source_types=["filesystem"]) == []
+
+
+@pytest.mark.unit
+def test_search_bucket_no_filters_returns_empty():
+    """source_types 和 chunk_types 都 None → [](无过滤桶无意义)。"""
+    searcher = HybridSearcher(MagicMock(), MagicMock())
+    assert searcher.search_bucket("cellular fail", source_types=None, chunk_types=None) == []
+
+
+@pytest.mark.unit
+def test_search_bucket_passes_source_type_filter():
+    """source_types 构造 any_of(equal) 过滤并传给 bm25。"""
+    client = MagicMock()
+    collection = MagicMock()
+    client.collections.get.return_value = collection
+    collection.query.bm25.return_value = MagicMock(objects=[])
+    searcher = HybridSearcher(client, MagicMock())
+    searcher.search_bucket("query", source_types=["filesystem"])
+    # bm25 被调用
+    assert collection.query.bm25.called
+    kwargs = collection.query.bm25.call_args.kwargs
+    assert kwargs["query_properties"] == ["text"]
+
+
+@pytest.mark.unit
+def test_search_bucket_passes_chunk_type_filter():
+    """chunk_types 构造 any_of(equal) 过滤。"""
+    client = MagicMock()
+    collection = MagicMock()
+    client.collections.get.return_value = collection
+    collection.query.bm25.return_value = MagicMock(objects=[])
+    searcher = HybridSearcher(client, MagicMock())
+    searcher.search_bucket("query", chunk_types=["paragraph", "heading"])
+    assert collection.query.bm25.called

@@ -500,14 +500,14 @@ async def test_rag_off_topic_rejects_without_search():
 
 @pytest.mark.unit
 async def test_rag_business_inquiry_rejects_without_search():
-    """意图为 business_inquiry 时不进入检索,直接拒绝。"""
+    """意图为 commercial(商务)时不进入检索,直接拒绝。"""
     sr = _make_sr()
     searcher = MagicMock()
     searcher.search.return_value = [sr]
     reranker = MagicMock()
     reranker.rerank.return_value = [sr]
     llm = AsyncMock()
-    llm.generate.return_value = _intent_response("business_inquiry")
+    llm.generate.return_value = _intent_response("commercial")
 
     rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="test")
     result = await rag.answer("价格多少?", "widget")
@@ -519,16 +519,18 @@ async def test_rag_business_inquiry_rejects_without_search():
 
 @pytest.mark.unit
 async def test_rag_product_question_answers_with_few_results():
-    """意图为 product_question 时,即使结果数 < min_results 仍尝试回答。"""
+    """意图为 product 时,即使结果数 < min_results 仍尝试回答。"""
     sr = _make_sr()
     searcher = MagicMock()
     searcher.search.return_value = [sr]
+    searcher.search_symbols.return_value = []
+    searcher.search_bucket.return_value = []
     reranker = MagicMock()
     reranker.rerank.return_value = [sr]  # 仅 1 条结果
     llm = AsyncMock()
     # classify_intent → extract_query → generation
     llm.generate.side_effect = [
-        _intent_response("product_question"),
+        _intent_response("product"),
         _make_llm_response("NE301 电池监控"),
         _make_llm_response("电池监控需要通过 I2C 读取"),
     ]
@@ -536,7 +538,7 @@ async def test_rag_product_question_answers_with_few_results():
     rag = RAGOrchestrator(
         searcher, reranker, llm,
         system_prompt="test",
-        min_results_to_answer=3,  # 正常阈值 3,但 product_question 降为 1
+        min_results_to_answer=3,  # 正常阈值 3,但 product 降为 1
     )
     result = await rag.answer("NE301 电池监控", "widget")
 
@@ -546,18 +548,21 @@ async def test_rag_product_question_answers_with_few_results():
 
 @pytest.mark.unit
 async def test_rag_intent_fail_open_proceeds():
-    """意图识别失败时 fail-open,正常进入 RAG 管线。"""
+    """意图识别失败时 fail-open 为 product,正常进入 RAG 管线。"""
     sr = _make_sr()
     searcher = MagicMock()
     searcher.search.return_value = [sr]
+    searcher.search_symbols.return_value = []
+    searcher.search_bucket.return_value = []
     reranker = MagicMock()
     reranker.rerank.return_value = [sr]
     llm = AsyncMock()
-    # classify_intent (fail-open) → extract_query → generation
+    # classify_intent (fail-open) → extract_query → rewrite_query → generation
     bad_resp = MagicMock()
     bad_resp.content = "NOT JSON"
     llm.generate.side_effect = [
         bad_resp,
+        _make_llm_response("NE301 配置"),
         _make_llm_response("NE301 配置"),
         _make_llm_response("answer"),
     ]
@@ -571,28 +576,163 @@ async def test_rag_intent_fail_open_proceeds():
 
 @pytest.mark.unit
 async def test_rag_uses_symbol_recall_and_rrf():
-    """符号召回(用 extract_query 输出)+ hybrid(search_query)RRF 融合送 rerank。"""
+    """符号召回(用 extract_query 输出)+ hybrid(search_query)+ boost 桶 RRF 融合送 rerank。
+
+    Note: rewrite_query 在无 conversation_history 时短路返回 extracted(见
+    backend/pipeline/query_rewrite.py:54),故此处 search_query == extracted ==
+    'i2c battery'。带 history 的 rewrite 行为由 query_rewrite 自身测试覆盖。
+    """
     a = _make_sr(text="a", source_id="s1")
     b = _make_sr(text="b", source_id="s2")
     searcher = MagicMock()
     searcher.search.return_value = [a]           # hybrid 返回 [a]
     searcher.search_symbols.return_value = [b]   # 符号召回返回 [b]
+    searcher.search_bucket.return_value = []      # product 桶空(不干扰断言)
     reranker = MagicMock()
     reranker.rerank.return_value = [a, b]         # 透传,便于断言输入
     llm = AsyncMock()
-    # classify_intent → extract_query → rewrite_query → generation
+    # classify_intent → extract_query → generation(rewrite 无 history 短路,不调 LLM)
     llm.generate.side_effect = [
-        _intent_response("product_question"),
-        _make_llm_response("i2c battery"),          # extract_query 输出(符号召回用)
-        _make_llm_response("i2c battery monitor"),  # rewrite_query 输出(hybrid 用)
+        _intent_response("product"),
+        _make_llm_response("i2c battery"),          # extract_query 输出
         _make_llm_response("answer"),
     ]
     rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="test")
     await rag.answer("NE301 I2C 读电池监控", "widget")
-    # hybrid 用 search_query(rewrite 后),search_symbols 用 extracted(rewrite 前)
+    # 无 history:rewrite_query 短路,search_query == extracted
     searcher.search.assert_called_once()
-    assert searcher.search.call_args.kwargs["query"] == "i2c battery monitor"
+    assert searcher.search.call_args.kwargs["query"] == "i2c battery"
     searcher.search_symbols.assert_called_once()
     assert searcher.search_symbols.call_args.kwargs["query"] == "i2c battery"
-    # rerank 收到 RRF 融合结果(两路)
+    # rerank 收到 RRF 融合结果(两路:hybrid [a] + symbol [b])
     assert len(reranker.rerank.call_args.args[1]) == 2
+
+
+# --------------------------------------------------------------------------- #
+# 意图 4 分类路由 + _retrieve_and_fuse parity + RAGAnswer.intent
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+async def test_rag_routes_commercial_to_reject_business():
+    """commercial 意图 → 检索前 REJECT_BUSINESS,不调 searcher。"""
+    rag, searcher, reranker, llm = _build_orchestrator()
+    llm.generate = AsyncMock(side_effect=[
+        # classify_intent 返回 commercial
+        _make_llm_response('{"category": "commercial", "reason": "价格"}'),
+    ])
+    result = await rag.answer("NE301 价格多少", channel="widget")
+    assert "销售团队" in result.answer
+    assert result.is_answered is False
+    searcher.search.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_rag_support_intent_triggers_search_bucket():
+    """support 意图 → search_bucket(source_types=['filesystem']) 被调。"""
+    sr = _make_sr()
+    rag, searcher, reranker, llm = _build_orchestrator(searcher_results=[sr])
+    searcher.search_symbols.return_value = []
+    searcher.search_bucket.return_value = []
+    # classify → support;extract/rewrite 正常;generate 给答案
+    llm.generate = AsyncMock(side_effect=[
+        _make_llm_response('{"category": "support", "reason": "故障"}'),
+        _make_llm_response("extracted"),
+        _make_llm_response("rewritten"),
+        _make_llm_response("answer"),
+    ])
+    await rag.answer("NE101 蜂窝网络注册失败", channel="widget")
+    searcher.search_bucket.assert_called_once()
+    kwargs = searcher.search_bucket.call_args.kwargs
+    assert kwargs.get("source_types") == ["filesystem"]
+
+
+@pytest.mark.unit
+async def test_rag_product_intent_triggers_docs_bucket():
+    """product 意图 → search_bucket(chunk_types=docs) 被调。"""
+    sr = _make_sr()
+    rag, searcher, reranker, llm = _build_orchestrator(searcher_results=[sr])
+    searcher.search_symbols.return_value = []
+    searcher.search_bucket.return_value = []
+    llm.generate = AsyncMock(side_effect=[
+        _make_llm_response('{"category": "product", "reason": "产品"}'),
+        _make_llm_response("extracted"),
+        _make_llm_response("rewritten"),
+        _make_llm_response("answer"),
+    ])
+    await rag.answer("NE301 功能", channel="widget")
+    searcher.search_bucket.assert_called_once()
+    assert searcher.search_bucket.call_args.kwargs.get("chunk_types") == [
+        "paragraph", "heading", "list", "table"
+    ]
+
+
+@pytest.mark.unit
+async def test_rag_answer_carries_intent_field():
+    """RAGAnswer.intent 正确填充(product)。"""
+    sr = _make_sr()
+    rag, searcher, reranker, llm = _build_orchestrator(searcher_results=[sr])
+    searcher.search_symbols.return_value = []
+    searcher.search_bucket.return_value = []
+    llm.generate = AsyncMock(side_effect=[
+        _make_llm_response('{"category": "product", "reason": "x"}'),
+        _make_llm_response("e"),
+        _make_llm_response("r"),
+        _make_llm_response("answer"),
+    ])
+    result = await rag.answer("NE301 功能", channel="widget")
+    assert result.intent == "product"
+
+
+@pytest.mark.unit
+async def test_rag_stream_complete_event_carries_intent():
+    """stream_answer complete 事件含 'intent' 字段。"""
+    sr = _make_sr()
+    rag, searcher, reranker, llm = _build_orchestrator(searcher_results=[sr])
+    searcher.search_symbols.return_value = []
+    searcher.search_bucket.return_value = []
+    llm.generate = AsyncMock(side_effect=[
+        _make_llm_response('{"category": "support", "reason": "x"}'),
+        _make_llm_response("e"),
+        _make_llm_response("r"),
+    ])
+
+    async def _fake_stream(messages, task=None):
+        for tok in ("ans",):
+            yield tok
+
+    llm.stream = MagicMock()
+    llm.stream.return_value = _fake_stream([], task="generation")
+
+    events = []
+    async for ev in rag.stream_answer("NE101 故障", channel="widget"):
+        events.append(json.loads(ev))
+
+    complete = [e for e in events if e["type"] == "complete"][0]
+    assert complete["intent"] == "support"
+
+
+@pytest.mark.unit
+async def test_rag_stream_answer_uses_symbol_and_bucket_parity():
+    """stream_answer 也调 search_symbols + search_bucket(与 answer parity)。"""
+    sr = _make_sr()
+    rag, searcher, reranker, llm = _build_orchestrator(searcher_results=[sr])
+    searcher.search_symbols.return_value = []
+    searcher.search_bucket.return_value = []
+    llm.generate = AsyncMock(side_effect=[
+        _make_llm_response('{"category": "product", "reason": "x"}'),
+        _make_llm_response("e"),
+        _make_llm_response("r"),
+    ])
+
+    async def _fake_stream(messages, task=None):
+        for tok in ("ans",):
+            yield tok
+
+    llm.stream = MagicMock()
+    llm.stream.return_value = _fake_stream([], task="generation")
+
+    async for _ in rag.stream_answer("NE301", channel="widget"):
+        pass
+    searcher.search_symbols.assert_called_once()
+    searcher.search_bucket.assert_called_once()

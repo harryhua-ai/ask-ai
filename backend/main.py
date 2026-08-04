@@ -294,6 +294,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             llm=router_llm,
             system_prompt=system_prompt,
             channel_customizations=channel_customizations,
+            intent_styles=prompt_config.get("intent_styles", {}),
             pruner=pruner,
             override_matcher=override_matcher,
         )

@@ -44,6 +44,16 @@ SOURCE_LABELS = {
     "filesystem": "[知识库]",
 }
 
+# Per-intent boost 桶配置:与主 hybrid 结果 RRF 融合,让 intent 相关 source 获得加权。
+# - support:故障案例/排查文档多 ingest 为 source_type="filesystem",提升其召回权重。
+# - product:产品功能/参数文档多分布于正文 chunk(paragraph/heading/list/table)。
+# - commercial:P1#5 接 WooCommerce 后启用 source_type="woocommerce"。
+INTENT_BOOST_FILTERS: dict[str, dict] = {
+    "support": {"source_types": ["filesystem"]},
+    "product": {"chunk_types": ["paragraph", "heading", "list", "table"]},
+    # "commercial": {"source_types": ["woocommerce"]},  # P1#5 启用
+}
+
 
 @dataclass(frozen=True)
 class RAGAnswer:
@@ -58,6 +68,8 @@ class RAGAnswer:
             便于上层做引用渲染 / 调试。
         language: 检测到的用户查询语言代码(如 ``zh-cn`` / ``en``)。
         response_time_ms: 端到端处理耗时(毫秒)。
+        intent: 命中的意图分类(``commercial`` / ``product`` / ``support`` /
+            ``off_topic``),便于上层落库 / 分析。
     """
 
     answer: str
@@ -66,6 +78,7 @@ class RAGAnswer:
     reranked_results: list[SearchResult]
     language: str
     response_time_ms: int
+    intent: str = "product"
 
 
 _I18N_PREFIXES = (
@@ -117,6 +130,7 @@ class RAGOrchestrator:
         min_results_to_answer: int = 3,
         channel_customizations: dict[str, str] | None = None,
         override_matcher: Any = None,  # Phase 3A: OverrideMatcher
+        intent_styles: dict[str, str] | None = None,
     ) -> None:
         """初始化 RAG 编排器。
 
@@ -135,6 +149,8 @@ class RAGOrchestrator:
                 渠道未命中时回退到 ``system_prompt``,确保 Phase 1 行为不变。
             override_matcher: 可选的人工答案覆盖匹配器(Phase 3A)。
                 命中时跳过整个 RAG 管线直接返回覆盖答案。
+            intent_styles: 意图到回答风格 prompt 片段的映射。在 channel base
+                prompt 之后正交叠加(空字符串 / 缺省时不附加)。
         """
         self._searcher = searcher
         self._reranker = reranker
@@ -148,6 +164,73 @@ class RAGOrchestrator:
         self._min_results = min_results_to_answer
         self._channel_customizations = channel_customizations or {}
         self._override_matcher = override_matcher
+        self._intent_styles = intent_styles or {}
+
+    async def _retrieve_and_fuse(
+        self,
+        extracted: str,
+        search_query: str,
+        intent_category: str,
+        *,
+        product_filter: str | None,
+        channel: str,
+    ) -> list[SearchResult]:
+        """统一检索 + 三路 RRF 融合(answer / stream_answer 共用,保证 parity)。
+
+        主 hybrid(search_query) + 符号 BM25(extracted) + intent boost 桶(extracted)
+        → 单次 rrf_fuse 三路融合。任一路异常 / 为空均降级,不中断主流程。
+
+        Args:
+            extracted: extract_query 输出(绕 rewrite,保标识符),用于符号召回
+                与 boost 桶召回。
+            search_query: rewrite_query 输出,用于主 hybrid 检索。
+            intent_category: 意图分类,决定 boost 桶配置(见 INTENT_BOOST_FILTERS)。
+            product_filter: 可选产品过滤;仅透传给主 hybrid 与符号召回。
+            channel: 渠道过滤;透传给三路检索的 channel_visibility。
+
+        Returns:
+            融合去重后的 :class:`SearchResult` 列表;融合失败时降级为主 hybrid 结果。
+        """
+        results = self._searcher.search(
+            query=search_query,
+            alpha=self._alpha,
+            limit=self._recall_limit,
+            product_filter=product_filter,
+            channel=channel,
+        )
+
+        symbol_results: list[SearchResult] = []
+        try:
+            symbol_results = self._searcher.search_symbols(
+                query=extracted,
+                limit=self._recall_limit,
+                product_filter=product_filter,
+                channel=channel,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("符号召回失败,降级:%s", str(exc)[:200])
+
+        bucket_results: list[SearchResult] = []
+        bucket_cfg = INTENT_BOOST_FILTERS.get(intent_category)
+        if bucket_cfg:
+            try:
+                # boost 桶跨产品(support 案例存为 product="knowledge"),不透传 product_filter
+                bucket_results = self._searcher.search_bucket(
+                    query=extracted,
+                    limit=self._recall_limit,
+                    channel=channel,
+                    **bucket_cfg,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("boost 桶召回失败,降级:%s", str(exc)[:200])
+
+        from backend.retrieval.rrf import rrf_fuse
+
+        try:
+            return rrf_fuse(results, symbol_results, bucket_results, k=60)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("RRF 融合失败,降级 hybrid 单路:%s", str(exc)[:200])
+            return results
 
     def _build_context(self, results: list[SearchResult]) -> str:
         """把重排后的候选拼接成 LLM 上下文文本。
@@ -172,18 +255,26 @@ class RAGOrchestrator:
         language: str,
         history: list[dict] | None,
         channel: str = "widget",
+        intent: str = "product",
     ) -> list[dict]:
         """构造 OpenAI 风格的 messages 列表。
 
         结构:``system → (截断后的 history) → user``。
         history 截断到最近 ``conversation_max_turns * 2`` 条消息。
 
+        system_prompt 由 channel(base)与 intent(风格)正交叠加:
+        先取渠道专属 prompt(未命中回退默认),再附加意图风格片段(若有)。
+
         Args:
             channel: 渠道标识。当 ``channel_customizations`` 命中该渠道时,
                 使用渠道专属 system_prompt;否则回退到默认 ``self._system_prompt``,
                 确保 Phase 1 行为不变。
+            intent: 意图分类。命中 ``intent_styles`` 时在 base prompt 之后附加
+                对应风格片段;未命中 / 空串时不附加(零回归)。
         """
-        system_prompt = self._channel_customizations.get(channel, self._system_prompt)
+        base = self._channel_customizations.get(channel, self._system_prompt)
+        style = self._intent_styles.get(intent, "")
+        system_prompt = f"{base}\n\n{style}" if style else base
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
         if history:
             # 每轮对话 = 1 user + 1 assistant,故 max_turns * 2 为消息条数上限
@@ -284,9 +375,10 @@ class RAGOrchestrator:
                     reranked_results=[],
                     language=language,
                     response_time_ms=elapsed,
+                    intent="product",
                 )
 
-        # 意图识别:拒绝无关查询,产品问题降低检索阈值
+        # 意图识别(4 分类):off_topic / commercial 直接拒答;product/support 进入检索
         intent = await classify_intent(query, self._llm)
         if intent.category == "off_topic":
             elapsed = int((time.monotonic() - start) * 1000)
@@ -297,8 +389,9 @@ class RAGOrchestrator:
                 reranked_results=[],
                 language=language,
                 response_time_ms=elapsed,
+                intent=intent.category,
             )
-        if intent.category == "business_inquiry":
+        if intent.category == "commercial":
             elapsed = int((time.monotonic() - start) * 1000)
             return RAGAnswer(
                 answer=REJECT_BUSINESS,
@@ -307,35 +400,22 @@ class RAGOrchestrator:
                 reranked_results=[],
                 language=language,
                 response_time_ms=elapsed,
+                intent=intent.category,
             )
-        effective_min = 1 if intent.category == "product_question" else self._min_results
+        # product / support 进入 RAG 管线;product 降低检索阈值(能力咨询容忍少结果)
+        effective_min = 1 if intent.category in ("product", "support") else self._min_results
 
         extracted = await extract_query(query, self._llm)
         search_query = await rewrite_query(extracted, conversation_history, self._llm)
-        results = self._searcher.search(
-            query=search_query,
-            alpha=self._alpha,
-            limit=self._recall_limit,
+
+        # 统一检索 + 三路 RRF 融合(hybrid + symbol + intent boost 桶)
+        fused = await self._retrieve_and_fuse(
+            extracted,
+            search_query,
+            intent.category,
             product_filter=product_filter,
             channel=channel,
         )
-
-        # 独立符号 BM25 召回:用 extract_query 输出(绕过 rewrite 保标识符),
-        # 仅对代码符号字段(symbol_tokens)检索,与 hybrid 结果 RRF 融合。
-        # search_symbols 不可用 / 融合失败时退化为 hybrid 单路结果,不影响
-        # 主流程(非代码 query 天然无符号命中)。
-        fused = results
-        try:
-            symbol_results = self._searcher.search_symbols(
-                query=extracted,
-                limit=self._recall_limit,
-                product_filter=product_filter,
-                channel=channel,
-            )
-            from backend.retrieval.rrf import rrf_fuse
-            fused = rrf_fuse(results, symbol_results, k=60)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("符号召回/RRF 融合失败,回退 hybrid 单路:%s", str(exc)[:200])
 
         reranked = self._reranker.rerank(search_query, fused, top_k=self._top_k)
 
@@ -351,10 +431,13 @@ class RAGOrchestrator:
                 reranked_results=[],
                 language=language,
                 response_time_ms=elapsed,
+                intent=intent.category,
             )
 
         context = self._build_context(reranked)
-        messages = self._build_messages(query, context, language, conversation_history, channel)
+        messages = self._build_messages(
+            query, context, language, conversation_history, channel, intent=intent.category,
+        )
 
         llm_response = await self._llm.generate(messages, task="generation")
         sources = self._extract_sources(reranked)
@@ -367,6 +450,7 @@ class RAGOrchestrator:
             reranked_results=reranked,
             language=language,
             response_time_ms=elapsed,
+            intent=intent.category,
         )
 
     async def stream_answer(
@@ -415,10 +499,11 @@ class RAGOrchestrator:
                     "is_answered": True,
                     "language": language,
                     "response_time_ms": elapsed,
+                    "intent": "product",
                 })
                 return
 
-        # 意图识别:拒绝无关查询,产品问题降低检索阈值
+        # 意图识别(4 分类):off_topic / commercial 直接拒答;product/support 进入检索
         intent = await classify_intent(query, self._llm)
         if intent.category == "off_topic":
             elapsed = int((time.monotonic() - start) * 1000)
@@ -430,10 +515,11 @@ class RAGOrchestrator:
                     "is_answered": False,
                     "language": language,
                     "response_time_ms": elapsed,
+                    "intent": intent.category,
                 }
             )
             return
-        if intent.category == "business_inquiry":
+        if intent.category == "commercial":
             elapsed = int((time.monotonic() - start) * 1000)
             yield json.dumps(
                 {
@@ -443,28 +529,30 @@ class RAGOrchestrator:
                     "is_answered": False,
                     "language": language,
                     "response_time_ms": elapsed,
+                    "intent": intent.category,
                 }
             )
             return
-        effective_min = 1 if intent.category == "product_question" else self._min_results
+        effective_min = 1 if intent.category in ("product", "support") else self._min_results
 
         t0 = time.monotonic()
         extracted = await extract_query(query, self._llm)
         search_query = await rewrite_query(extracted, conversation_history, self._llm)
         rewrite_ms = int((time.monotonic() - t0) * 1000)
 
+        # 统一检索 + 三路 RRF 融合(与 answer 共用 _retrieve_and_fuse,保证 parity)
         t1 = time.monotonic()
-        results = self._searcher.search(
-            query=search_query,
-            alpha=self._alpha,
-            limit=self._recall_limit,
+        fused = await self._retrieve_and_fuse(
+            extracted,
+            search_query,
+            intent.category,
             product_filter=product_filter,
             channel=channel,
         )
         search_ms = int((time.monotonic() - t1) * 1000)
 
         t2 = time.monotonic()
-        reranked = self._reranker.rerank(search_query, results, top_k=self._top_k)
+        reranked = self._reranker.rerank(search_query, fused, top_k=self._top_k)
         rerank_ms = int((time.monotonic() - t2) * 1000)
 
         if self._pruner:
@@ -480,12 +568,15 @@ class RAGOrchestrator:
                     "is_answered": False,
                     "language": language,
                     "response_time_ms": elapsed,
+                    "intent": intent.category,
                 }
             )
             return
 
         context = self._build_context(reranked)
-        messages = self._build_messages(query, context, language, conversation_history, channel)
+        messages = self._build_messages(
+            query, context, language, conversation_history, channel, intent=intent.category,
+        )
         sources = self._extract_sources(reranked)
 
         yield json.dumps({"type": "sources", "sources": sources})
@@ -524,6 +615,7 @@ class RAGOrchestrator:
                 "is_answered": True,
                 "language": language,
                 "response_time_ms": elapsed,
+                "intent": intent.category,
                 "timing": {
                     "rewrite_ms": rewrite_ms,
                     "search_ms": search_ms,
