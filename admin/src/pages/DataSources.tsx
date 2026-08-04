@@ -19,18 +19,18 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@
 import { DirPicker } from "@/components/DirPicker";
 import type { DataSource } from "@/types/api";
 
-const SOURCE_TYPES = ["github", "filesystem", "local_git"] as const;
+// 决策 2A:github 为唯一 git 源类型(local_git 降为实现细节,不再暴露给用户)
+const SOURCE_TYPES = ["github", "filesystem"] as const;
 type SourceType = (typeof SOURCE_TYPES)[number];
 
 const formSchema = z.object({
   id: z.string().min(1, "ID 必填"),
-  type: z.enum(["github", "filesystem", "local_git"]),
+  type: z.enum(["github", "filesystem"]),
   product: z.string().min(1, "产品线必填"),
   enabled: z.boolean(),
   sync_interval: z.string().regex(/^\d+[hm]$/, "格式如 24h 或 30m"),
-  owner: z.string().optional(),
-  repo: z.string().optional(),
-  repo_path: z.string().optional(),
+  repo_url: z.string().optional(),
+  clone_path: z.string().optional(),
   root_path: z.string().optional(),
   branches: z.string().optional(),
   file_types: z.string().optional(),
@@ -48,9 +48,8 @@ const EMPTY_FORM: FormValues = {
   product: "",
   enabled: true,
   sync_interval: "24h",
-  owner: "",
-  repo: "",
-  repo_path: "",
+  repo_url: "",
+  clone_path: "",
   root_path: "",
   branches: "main",
   file_types: "",
@@ -68,19 +67,19 @@ function splitComma(s: string | undefined): string[] {
     .filter(Boolean);
 }
 
+/** repo_url → {owner, repo}(与后端 _REPO_URL_RE 一致),用于"拉取分支"预览。 */
+function parseRepoUrl(url: string): { owner: string; repo: string } | null {
+  const m = url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i);
+  return m ? { owner: m[1], repo: m[2] } : null;
+}
+
 /** 把表单值组装成后端 config dict(按 type 分发)。 */
 function buildConfig(v: FormValues): Record<string, unknown> {
   switch (v.type) {
     case "github":
       return {
-        owner: v.owner || "",
-        repo: v.repo || "",
-        branches: splitComma(v.branches),
-        file_types: splitComma(v.file_types),
-      };
-    case "local_git":
-      return {
-        repo_path: v.repo_path || "",
+        repo_url: v.repo_url || "",
+        clone_path: v.clone_path || "",
         branches: splitComma(v.branches),
         file_types: splitComma(v.file_types),
         exclude_dirs: splitComma(v.exclude_dirs),
@@ -116,9 +115,8 @@ function dsToForm(ds: DataSource): FormValues {
     product: ds.product,
     enabled: ds.enabled,
     sync_interval: ds.sync_interval,
-    owner: toStr(cfg.owner),
-    repo: toStr(cfg.repo),
-    repo_path: toStr(cfg.repo_path),
+    repo_url: toStr(cfg.repo_url),
+    clone_path: toStr(cfg.clone_path),
     root_path: toStr(cfg.root_path),
     branches: toStr(cfg.branches) || "main",
     file_types: toStr(cfg.file_types),
@@ -200,16 +198,16 @@ export default function DataSources() {
   };
 
   const handlePullBranches = async () => {
-    const owner = getValues("owner");
-    const repo = getValues("repo");
-    if (!owner || !repo) {
-      setBranchError("请先填写 owner 和 repo");
+    const repoUrl = getValues("repo_url") || "";
+    const parsed = parseRepoUrl(repoUrl);
+    if (!parsed) {
+      setBranchError("请先填写合法 repo_url(如 https://github.com/camthink-ai/ne301.git)");
       return;
     }
     setBranchLoading(true);
     setBranchError(null);
     try {
-      const branches = await fetchPreviewBranches(owner, repo);
+      const branches = await fetchPreviewBranches(parsed.owner, parsed.repo);
       setValue("branches", branches.join(", "));
     } catch (err) {
       setBranchError(err instanceof Error ? err.message : "拉取分支失败");
@@ -267,15 +265,13 @@ export default function DataSources() {
 
           {type === "github" && (
             <div className="space-y-3 border-t pt-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label>Owner</Label>
-                  <Input {...register("owner")} placeholder="camthink-ai" />
-                </div>
-                <div className="space-y-1">
-                  <Label>Repo</Label>
-                  <Input {...register("repo")} placeholder="ask-ai" />
-                </div>
+              <div className="space-y-1">
+                <Label>仓库 URL</Label>
+                <Input {...register("repo_url")} placeholder="https://github.com/camthink-ai/ne301.git" />
+              </div>
+              <div className="space-y-1">
+                <Label>Clone 路径 (可选,默认 ~/ask-ai-corpus/仓库名)</Label>
+                <Input {...register("clone_path")} placeholder="~/ask-ai-corpus/ne301" />
               </div>
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
@@ -293,32 +289,15 @@ export default function DataSources() {
                 <Input {...register("branches")} placeholder="main, hw-v1.2" />
                 {branchError && <p className="text-xs text-destructive">{branchError}</p>}
               </div>
-              <div className="space-y-1">
-                <Label>文件类型 (逗号分隔,留空=全部)</Label>
-                <Input {...register("file_types")} placeholder=".md, .py" />
-              </div>
-            </div>
-          )}
-
-          {type === "local_git" && (
-            <div className="space-y-3 border-t pt-3">
-              <div className="space-y-1">
-                <Label>仓库路径</Label>
-                <Input {...register("repo_path")} placeholder="/srv/repos/ask-ai" />
-              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <Label>分支 (逗号分隔)</Label>
-                  <Input {...register("branches")} placeholder="main, hw-v1.2" />
-                </div>
-                <div className="space-y-1">
-                  <Label>文件类型 (逗号分隔)</Label>
+                  <Label>文件类型 (逗号分隔,留空=全部)</Label>
                   <Input {...register("file_types")} placeholder=".md, .py" />
                 </div>
-              </div>
-              <div className="space-y-1">
-                <Label>排除目录 (逗号分隔)</Label>
-                <Input {...register("exclude_dirs")} placeholder=".git, node_modules" />
+                <div className="space-y-1">
+                  <Label>排除目录 (逗号分隔)</Label>
+                  <Input {...register("exclude_dirs")} placeholder=".git, node_modules" />
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
