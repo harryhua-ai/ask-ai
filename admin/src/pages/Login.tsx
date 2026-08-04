@@ -4,7 +4,6 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { LoginChat } from "@/components/LoginChat";
 
 export default function Login() {
   const { login } = useAuth();
@@ -60,8 +59,6 @@ export default function Login() {
           </Button>
         </form>
       </div>
-      {/* 聊天窗口:FAB 右下角浮动 + 点击弹出(共享 widget App,单一聊天窗口来源) */}
-      <LoginChat />
     </div>
   );
 }
