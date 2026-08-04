@@ -230,6 +230,86 @@ class HybridSearcher:
         )
         return [self._to_search_result(o) for o in resp.objects]
 
+    def search_bucket(
+        self,
+        query: str,
+        source_types: list[str] | None = None,
+        chunk_types: list[str] | None = None,
+        limit: int = 30,
+        product_filter: str | None = None,
+        channel: str | None = None,
+    ) -> list[SearchResult]:
+        """BM25 召回(对 text 字段),按 source_type / chunk_type 过滤(boost 桶)。
+
+        用于 per-intent 软路由:与主 hybrid 结果 RRF 融合,让 intent 相关 source
+        (如 support 案例 filesystem、产品文档 docs)获得加权。query 用 extract_query
+        输出(绕 rewrite,保关键词)。
+
+        source_type / chunk_type 是 TEXT 标量属性(非数组),用 ``equal`` + ``Filter.any_of``
+        合并多值(避免 contains_any 对多 token 值如 ``local_git`` 分词静默失效)。
+
+        Args:
+            query: 查询文本(通常为 extract_query 输出)。空 / 纯空白返回 ``[]``。
+            source_types: 可选 source_type 白名单(如 ``["filesystem"]``)。
+            chunk_types: 可选 chunk_type 白名单(如 ``["paragraph","heading","list","table"]``)。
+                **source_types 和 chunk_types 都为 None 时返回 ``[]``**(无过滤桶无意义)。
+            limit: 返回结果数上限。
+            product_filter: 可选产品名过滤(boost 桶通常跨产品,调用方一般不传)。
+            channel: 可选渠道过滤;非空时附加 channel_visibility contains_any。
+
+        Returns:
+            :class:`SearchResult` 列表。
+        """
+        if not query or not query.strip():
+            logger.info("空 query,跳过 boost 桶 BM25 检索")
+            return []
+        if not source_types and not chunk_types:
+            logger.info("boost 桶无 source_types/chunk_types 过滤,跳过(无意义)")
+            return []
+
+        collection = self._client.collections.get(self._class_name)
+        from weaviate.classes.query import Filter
+
+        filters_list: list = []
+        if source_types:
+            # TEXT 标量属性:equal + any_of 合并(OR 语义)
+            filters_list.append(
+                Filter.any_of(
+                    [Filter.by_property("source_type").equal(st) for st in source_types]
+                )
+            )
+        if chunk_types:
+            filters_list.append(
+                Filter.any_of(
+                    [Filter.by_property("chunk_type").equal(ct) for ct in chunk_types]
+                )
+            )
+        if product_filter:
+            filters_list.append(Filter.by_property("product").equal(product_filter))
+        if channel:
+            filters_list.append(
+                Filter.by_property("channel_visibility").contains_any([channel])
+            )
+
+        filters = (
+            filters_list[0]
+            if len(filters_list) == 1
+            else Filter.all_of(filters_list)
+        )
+
+        resp = collection.query.bm25(
+            query=query,
+            query_properties=["text"],
+            limit=limit,
+            filters=filters,
+            return_properties=[
+                "source_id", "source_type", "product", "title", "url", "text",
+                "chunk_index", "chunk_type", "doc_section", "channel_visibility",
+                "symbol_name", "symbol_signature", "branch",
+            ],
+        )
+        return [self._to_search_result(o) for o in resp.objects]
+
     def _to_search_result(self, obj: Any) -> SearchResult:
         """Weaviate 对象 → SearchResult(含 symbol 字段,search_symbols 复用)。
 
