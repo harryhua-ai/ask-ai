@@ -33,13 +33,13 @@ export function ChatPanel({ config, messages, isStreaming, conversationId, sugge
   return (
     <div className="ask-ai-panel">
       <div className="ask-ai-header" style={{ backgroundColor: "#000000" }}>
-        <span>Ask AI</span>
+        <span>Ask Camthink.ai</span>
         <button onClick={onClose} style={{ float: "right", background: "none", border: "none", color: "white", cursor: "pointer" }}>✕</button>
       </div>
       <div className="ask-ai-messages">
         {messages.length === 0 && (
           <div style={{ color: "#6b7280", fontSize: "14px", textAlign: "center", marginTop: "20px" }}>
-            你好!我是 Ask AI,有什么可以帮你?
+            你好!我是 Ask Camthink.ai,有什么可以帮你?
           </div>
         )}
         {messages.map((msg) => (
