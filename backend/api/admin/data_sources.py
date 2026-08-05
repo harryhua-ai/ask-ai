@@ -4,6 +4,7 @@ import asyncio
 import os
 from pathlib import Path
 from typing import Annotated
+from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -87,13 +88,14 @@ async def list_data_sources(
 async def create_data_source(
     req: DataSourceCreate, _: EditorDep, request: Request
 ) -> DataSourceOut:
-    """创建数据源（admin / editor）。"""
+    """创建数据源（admin / editor）。id 可选，缺省时按 product+短 hash 自动生成。"""
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    source_id = req.id or f"{req.product}-{uuid4().hex[:8]}"
     async with factory() as session:
-        existing = await session.execute(select(DataSource).where(DataSource.id == req.id))
+        existing = await session.execute(select(DataSource).where(DataSource.id == source_id))
         if existing.scalar_one_or_none():
             raise HTTPException(status_code=409, detail="数据源 ID 已存在")
-        ds = DataSource(**req.model_dump())
+        ds = DataSource(**{**req.model_dump(exclude_unset=True), "id": source_id})
         session.add(ds)
         await session.commit()
         await session.refresh(ds)
