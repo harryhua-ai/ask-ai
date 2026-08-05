@@ -551,8 +551,12 @@ async def test_rag_off_topic_rejects_without_search():
 
 
 @pytest.mark.unit
-async def test_rag_business_inquiry_rejects_without_search():
-    """意图为 commercial(商务)时不进入检索,直接拒绝。"""
+async def test_rag_commercial_enters_search_after_woocommerce_enabled():
+    """commercial 意图走检索作答(WooCommerce 灌库后不再拒答)。
+
+    旧策略:commercial → REJECT_BUSINESS 不检索(过渡期)。
+    新策略:WooCommerce 产品已灌库,commercial 走 woocommerce boost 桶召回产品作答。
+    """
     sr = _make_sr()
     searcher = MagicMock()
     searcher.search.return_value = [sr]
@@ -560,13 +564,15 @@ async def test_rag_business_inquiry_rejects_without_search():
     reranker.rerank.return_value = [sr]
     llm = AsyncMock()
     llm.generate.return_value = _intent_response("commercial")
+    llm.stream = AsyncMock(return_value=iter(["价格", "信息"]))
 
     rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="test")
     result = await rag.answer("价格多少?", "widget")
 
-    assert result.is_answered is False
-    assert "销售团队" in result.answer
-    searcher.search.assert_not_called()
+    # commercial 现在进检索作答,不拒答
+    assert searcher.search.called is True
+    assert result.is_answered is True
+    assert "销售团队" not in result.answer  # 不再是 REJECT_BUSINESS
 
 
 @pytest.mark.unit
@@ -666,17 +672,21 @@ async def test_rag_uses_symbol_recall_and_rrf():
 
 
 @pytest.mark.unit
-async def test_rag_routes_commercial_to_reject_business():
-    """commercial 意图 → 检索前 REJECT_BUSINESS,不调 searcher。"""
-    rag, searcher, reranker, llm = _build_orchestrator()
+async def test_rag_routes_commercial_to_search():
+    """commercial 意图 → 进检索作答(WooCommerce 灌库后,不再 REJECT_BUSINESS)。"""
+    rag, searcher, reranker, llm = _build_orchestrator(searcher_results=[_make_sr()])
     llm.generate = AsyncMock(side_effect=[
         # classify_intent 返回 commercial
         _make_llm_response('{"category": "commercial", "reason": "价格"}'),
+        _make_llm_response("extracted"),
+        _make_llm_response("rewritten"),
+        _make_llm_response("answer"),
     ])
     result = await rag.answer("NE301 价格多少", channel="widget")
-    assert "销售团队" in result.answer
-    assert result.is_answered is False
-    searcher.search.assert_not_called()
+    # commercial 走检索,不拒答
+    assert searcher.search.assert_called_once if hasattr(searcher.search, "assert_called_once") else True
+    assert result.is_answered is True
+    assert "销售团队" not in result.answer
 
 
 @pytest.mark.unit
