@@ -12,8 +12,11 @@ pytest-asyncio 默认按 function 创建事件循环，导致 engine 跨 loop �
 import os
 
 import pytest_asyncio
+from sqlalchemy import select
 
+from backend.auth.crypto import encrypt_api_key
 from backend.config import load_settings
+from backend.db.models import LLMProviderModel, LLMRouting
 from backend.db.session import get_engine, get_session_factory, init_db
 
 
@@ -33,6 +36,41 @@ async def _setup_app_state():
     dsn = os.environ.get("TEST_DATABASE_URL", settings.postgres_dsn)
     engine = get_engine(dsn)
     await init_db(engine)
-    app.state.session_factory = get_session_factory(engine)
+    factory = get_session_factory(engine)
+    app.state.session_factory = factory
+
+    # Seed：在测试库中灌入 LLM 供应商 + 路由基线数据。
+    # 现有 admin 测试(test_list_providers_includes_deepseek_and_masks_key /
+    # test_list_routing_includes_migrated)依赖 deepseek 供应商 +
+    # generation / query_decomposition 路由存在。生产环境这些数据由
+    # main.py lifespan 首启 seed，测试库无人 seed，故在此补齐。
+    # 只在缺失时插入（幂等），chain 保持旧字符串格式以匹配现有断言
+    # （list_routing 端点原样返回 DB 值，不经过归一化）。
+    async with factory() as session:
+        if not (await session.execute(
+            select(LLMProviderModel).where(LLMProviderModel.id == "deepseek")
+        )).scalar_one_or_none():
+            session.add(LLMProviderModel(
+                id="deepseek",
+                type="openai_compatible",
+                enabled=True,
+                config={
+                    "api_base": "https://api.deepseek.com/v1",
+                    "api_key": encrypt_api_key("sk-test-seed", settings.encryption_key),
+                    "model": "deepseek-chat",
+                    "max_tokens": 4096,
+                    "temperature": 0.3,
+                },
+            ))
+        for task, chain in (
+            ("generation", ["deepseek"]),
+            ("query_decomposition", ["deepseek"]),
+        ):
+            if not (await session.execute(
+                select(LLMRouting).where(LLMRouting.task == task)
+            )).scalar_one_or_none():
+                session.add(LLMRouting(task=task, chain=chain))
+        await session.commit()
+
     yield
     await engine.dispose()
