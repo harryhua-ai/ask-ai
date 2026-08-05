@@ -244,3 +244,62 @@
     right: 16px;
   }
 }
+
+/* Phase 1a: 附件上传 + chip 样式 */
+.ask-ai-attachment-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 12px;
+}
+.ask-ai-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #f0f0f0;
+  border: 1px solid #dbdbdb;
+  border-radius: 12px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: #333333;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ask-ai-attachment-chip-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #6b7280;
+  font-size: 11px;
+  padding: 0 0 0 2px;
+  line-height: 1;
+}
+.ask-ai-attachment-chip-remove:hover {
+  color: #000000;
+}
+.ask-ai-upload-error {
+  padding: 4px 12px;
+  font-size: 12px;
+  color: #b91c1c;
+}
+.ask-ai-attach-btn {
+  background: none;
+  border: none;
+  color: #000000;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0 8px;
+  line-height: 1;
+}
+.ask-ai-attach-btn:disabled {
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+.ask-ai-bubble-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}

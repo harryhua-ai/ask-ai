@@ -15,9 +15,18 @@ export interface WidgetConfig {
 
 export type MessageType = "user" | "assistant";
 
+export interface AttachmentRef {
+  id: string;
+  filename: string;
+  kind: string;
+  status: "uploading" | "ready" | "failed";
+  error?: string;
+}
+
 export interface ChatMessage {
   id: string;
   type: MessageType;
   content: string;
   sources?: SourceLink[];
+  attachments?: AttachmentRef[];
 }

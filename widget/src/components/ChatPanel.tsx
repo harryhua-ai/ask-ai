@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import type { WidgetConfig, ChatMessage } from "../types";
+import type { WidgetConfig, ChatMessage, AttachmentRef } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { SuggestedQuestions } from "./SuggestedQuestions";
 
@@ -9,14 +9,18 @@ interface Props {
   isStreaming: boolean;
   conversationId: string | null;
   suggestedQuestions: string[];
-  onSend: (text: string) => void;
+  onSend: (text: string, attachmentIds: string[]) => void;
   onClose: () => void;
   onFeedback: (msgId: string, feedback: "up" | "down") => void;
+  onUpload: (files: File[]) => Promise<AttachmentRef[]>;
 }
 
-export function ChatPanel({ config, messages, isStreaming, conversationId, suggestedQuestions, onSend, onClose, onFeedback }: Props) {
+export function ChatPanel({ config, messages, isStreaming, conversationId, suggestedQuestions, onSend, onClose, onFeedback, onUpload }: Props) {
   const [input, setInput] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState<AttachmentRef[]>([]);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const messagesEnd = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     messagesEnd.current?.scrollIntoView({ behavior: "smooth" });
@@ -24,10 +28,31 @@ export function ChatPanel({ config, messages, isStreaming, conversationId, sugge
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (input.trim() && !isStreaming) {
-      onSend(input.trim());
+    if ((input.trim() || pendingAttachments.length) && !isStreaming) {
+      onSend(input.trim(), pendingAttachments.map((a) => a.id));
       setInput("");
+      setPendingAttachments([]);
+      setUploadError(null);
     }
+  };
+
+  const handlePickFiles = () => fileInput.current?.click();
+
+  const handleFilesChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = ""; // 允许重复选同一文件
+    if (!files.length) return;
+    setUploadError(null);
+    try {
+      const uploaded = await onUpload(files);
+      setPendingAttachments((prev) => [...prev, ...uploaded]);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Upload failed");
+    }
+  };
+
+  const removeAttachment = (id: string) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
   };
 
   return (
@@ -53,11 +78,49 @@ export function ChatPanel({ config, messages, isStreaming, conversationId, sugge
           />
         ))}
         {suggestedQuestions.length > 0 && (
-          <SuggestedQuestions questions={suggestedQuestions} onSelect={onSend} />
+          <SuggestedQuestions questions={suggestedQuestions} onSelect={(q) => onSend(q, [])} />
         )}
         <div ref={messagesEnd} />
       </div>
+      {pendingAttachments.length > 0 && (
+        <div className="ask-ai-attachment-chips">
+          {pendingAttachments.map((att) => (
+            <span key={att.id} className="ask-ai-attachment-chip">
+              📎 {att.filename}
+              <button
+                type="button"
+                className="ask-ai-attachment-chip-remove"
+                onClick={() => removeAttachment(att.id)}
+                aria-label={`Remove ${att.filename}`}
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {uploadError && (
+        <div className="ask-ai-upload-error">{uploadError}</div>
+      )}
       <form className="ask-ai-input" onSubmit={handleSubmit}>
+        <input
+          type="file"
+          multiple
+          accept=".txt,.log"
+          ref={fileInput}
+          onChange={handleFilesChange}
+          style={{ display: "none" }}
+        />
+        <button
+          type="button"
+          className="ask-ai-attach-btn"
+          onClick={handlePickFiles}
+          disabled={isStreaming}
+          aria-label="Attach log file"
+          title="Attach .txt or .log"
+        >
+          +
+        </button>
         <input
           type="text"
           value={input}
@@ -65,7 +128,7 @@ export function ChatPanel({ config, messages, isStreaming, conversationId, sugge
           placeholder="输入你的问题..."
           disabled={isStreaming}
         />
-        <button type="submit" style={{ backgroundColor: "#000000" }} disabled={isStreaming || !input.trim()}>
+        <button type="submit" style={{ backgroundColor: "#000000" }} disabled={isStreaming || (!input.trim() && pendingAttachments.length === 0)}>
           发送
         </button>
       </form>
