@@ -99,6 +99,27 @@ async def ask(
 
         return EventSourceResponse(declined())
 
+    # Phase 1a:附件加载 + 归属校验(同步返回 422/403,不进 SSE)
+    attachment_objs: list[Attachment] = []
+    if req.attachments:
+        expected_owner = req.session_id or ""
+        if req.channel == "widget" and not expected_owner:
+            raise HTTPException(422, "session_id required for widget attachments")
+        async with session_factory() as s:
+            for att_id_str in req.attachments:
+                try:
+                    att_id = uuid.UUID(att_id_str)
+                except ValueError:
+                    raise HTTPException(422, f"Invalid attachment id: {att_id_str}")
+                att = await s.get(Attachment, att_id)
+                if not att:
+                    raise HTTPException(422, f"Unknown attachment: {att_id_str}")
+                # 归属校验:widget 用 session_id(admin 走 /api/admin/upload,owner_id=user.id,
+                # 经 admin 鉴权端点单独处理;此处 widget 路径强制匹配 session_id)
+                if att.owner_id != expected_owner:
+                    raise HTTPException(403, "Attachment access denied")
+                attachment_objs.append(att)
+
     async def event_generator() -> Any:
         conversation_id = str(uuid.uuid4())
         full_answer = ""
@@ -114,6 +135,7 @@ async def ask(
                 query=masked_message,
                 channel=req.channel,
                 conversation_history=req.conversation_history,
+                attachments=attachment_objs or None,
             ):
                 data = json.loads(chunk)
                 evt_type = data["type"]
