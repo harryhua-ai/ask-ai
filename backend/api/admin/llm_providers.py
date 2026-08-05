@@ -277,50 +277,6 @@ async def test_provider(provider_id: str, _: EditorDep, request: Request) -> Con
         )
 
 
-async def _build_llm_state_for_reload(
-    settings, factory
-) -> tuple[dict, dict, list[str]]:
-    """从 DB 读 enabled providers + routing → 解密 → 构造 provider 实例。
-
-    供 reload 端点使用（后续 Task 5 会把启动逻辑也抽成共用函数）。
-
-    Returns:
-        (providers_dict, routing_dict, skipped_ids)
-    """
-    from backend.services.config_loader import load_llm_config_from_db
-
-    db_config = await load_llm_config_from_db(factory)
-    if db_config is None:
-        return {}, {}, []
-
-    providers_list, routing_dict = db_config
-    providers: dict[str, object] = {}
-    skipped: list[str] = []
-    for prov in providers_list:
-        cfg = dict(prov["config"])
-        if cfg.get("api_key"):
-            try:
-                cfg["api_key"] = decrypt_api_key(cfg["api_key"], settings.encryption_key)
-            except ValueError:
-                pass  # 旧数据可能是明文
-        try:
-            provider = LLMRegistry.create(
-                prov["type"],
-                provider_id=prov["id"],
-                api_base=cfg.get("api_base", ""),
-                api_key=cfg.get("api_key", ""),
-                model=cfg.get("model", ""),
-                max_tokens=cfg.get("max_tokens", 4096),
-                temperature=cfg.get("temperature", 0.3),
-            )
-        except Exception:
-            logger.exception("reload 时供应商构造失败: id=%s", prov["id"])
-            skipped.append(prov["id"])
-            continue
-        providers[prov["id"]] = provider
-    return providers, routing_dict, skipped
-
-
 @router.post("/llm-providers/reload")
 async def reload_providers(_: EditorDep, request: Request) -> dict:
     """从 DB 重读供应商/路由，调 app.state.llm.reconfigure 热重载。
@@ -328,10 +284,13 @@ async def reload_providers(_: EditorDep, request: Request) -> dict:
     DB 全空时返回 400（避免清空线上 router）。
     单个 provider 构造失败记 skipped，不影响整体 reload。
     """
+    # 函数级 import 避免循环依赖（main.py 已 import 本模块）
+    from backend.main import _build_llm_state
+
     settings = request.app.state.settings
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
 
-    providers, routing, skipped = await _build_llm_state_for_reload(settings, factory)
+    providers, routing, skipped = await _build_llm_state(settings, factory)
     if not providers:
         raise HTTPException(
             status_code=400,
