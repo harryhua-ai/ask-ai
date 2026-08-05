@@ -1,7 +1,7 @@
 """用户意图识别模块。
 
 在 RAG 管线的检索之前执行,用 LLM 判断用户查询属于以下 4 类意图之一:
-- commercial: 价格/采购/报价/渠道/库存/商务合作(过渡期拒答,P1#5 接 WooCommerce 后作答)
+- commercial: 价格/采购/报价/渠道/库存/商务合作(WooCommerce 产品已灌库,走 woocommerce boost 桶作答)
 - product: CamThink 产品功能/参数/规格/选型/方案/竞品对比/适配/演示能力咨询
 - support: 故障排查/报错/集成/二次开发/代码/调试/寄存器/固件(L1-L3,含开发者)
 - off_topic: 与 CamThink 产品无关的闲聊/天气/通用知识/纯竞品咨询

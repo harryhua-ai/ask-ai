@@ -412,19 +412,10 @@ class RAGOrchestrator:
                 response_time_ms=elapsed,
                 intent=intent.category,
             )
-        if intent.category == "commercial":
-            elapsed = int((time.monotonic() - start) * 1000)
-            return RAGAnswer(
-                answer=REJECT_BUSINESS,
-                sources=[],
-                is_answered=False,
-                reranked_results=[],
-                language=language,
-                response_time_ms=elapsed,
-                intent=intent.category,
-            )
-        # product / support 进入 RAG 管线;product 降低检索阈值(能力咨询容忍少结果)
-        effective_min = 1 if intent.category in ("product", "support") else self._min_results
+        # commercial/product/support 进入 RAG 管线
+        # (commercial 原「过渡期拒答」已废:WooCommerce 产品已灌库,走 woocommerce boost 桶作答)
+        # product/commercial/support 降低检索阈值(能力咨询/购买咨询容忍少结果)
+        effective_min = 1 if intent.category in ("product", "support", "commercial") else self._min_results
 
         extracted = await extract_query(query, self._llm)
         search_query = await rewrite_query(extracted, conversation_history, self._llm)
@@ -525,8 +516,10 @@ class RAGOrchestrator:
                 })
                 return
 
-        # 意图识别(4 分类):off_topic / commercial 直接拒答;product/support 进入检索
-        # 评审 C1:有附件时跳过 off_topic/commercial 拒答——「分析这个日志」这类泛化
+        # 意图识别(4 分类):off_topic 直接拒答;commercial/product/support 进入检索
+        # (commercial 原「过渡期拒答」策略已废:WooCommerce 产品数据已灌库,commercial
+        #  意图走 woocommerce boost 桶召回产品信息作答,不再拒答。intent.py 注释同步)
+        # 评审 C1:有附件时跳过 off_topic 拒答——「分析这个日志」这类泛化
         # 日志排查语会被判 off_topic,但附件就是 context,必须放行。
         intent = await classify_intent(query, self._llm)
         if not attachments:
@@ -544,26 +537,12 @@ class RAGOrchestrator:
                     }
                 )
                 return
-            if intent.category == "commercial":
-                elapsed = int((time.monotonic() - start) * 1000)
-                yield json.dumps(
-                    {
-                        "type": "complete",
-                        "answer": REJECT_BUSINESS,
-                        "sources": [],
-                        "is_answered": False,
-                        "language": language,
-                        "response_time_ms": elapsed,
-                        "intent": intent.category,
-                    }
-                )
-                return
         # 评审 C1 第二道门:有附件时 effective_min=0,即使检索为空也走生成(附件作 fallback)
         has_attachments = bool(attachments)
         if has_attachments:
             effective_min = 0
         else:
-            effective_min = 1 if intent.category in ("product", "support") else self._min_results
+            effective_min = 1 if intent.category in ("product", "support", "commercial") else self._min_results
 
         t0 = time.monotonic()
         extracted = await extract_query(query, self._llm)
