@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from backend.api.admin.analytics import router as analytics_router
 from backend.api.admin.answer_overrides import router as answer_overrides_router
+from backend.api.admin.attachments import router as attachments_router
 from backend.api.admin.auth import router as auth_router
 from backend.api.admin.conversations import router as conversations_router
 from backend.api.admin.customizations import router as customizations_router
@@ -22,3 +23,4 @@ admin_router.include_router(llm_providers_router)
 admin_router.include_router(conversations_router)
 admin_router.include_router(answer_overrides_router)
 admin_router.include_router(analytics_router)
+admin_router.include_router(attachments_router)
