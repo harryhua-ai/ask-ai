@@ -51,6 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN ln -sf /usr/bin/python3.12 /usr/bin/python3
+RUN git config --global --add safe.directory '*'
 
 WORKDIR /app
 
