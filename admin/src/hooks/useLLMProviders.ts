@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
-import type { LLMProvider, LLMRouting } from "@/types/api";
+import type { LLMChainItem, LLMProvider, LLMRouting } from "@/types/api";
 
 /** 连通性测试端点返回结构(与后端 ConnectivityTestResult 对齐)。 */
 export interface ConnectivityTestResult {
@@ -52,7 +52,7 @@ export function useTestProvider() {
 export function useUpdateRouting() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ task, chain }: { task: string; chain: string[] }) =>
+    mutationFn: ({ task, chain }: { task: string; chain: LLMChainItem[] }) =>
       apiFetch<{ status: string }>(`/llm-routing/${task}`, { method: "PUT", body: JSON.stringify({ chain }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["llm-routing"] }),
   });
@@ -69,5 +69,54 @@ export function useLocalModels() {
   return useQuery({
     queryKey: ["local-models"],
     queryFn: () => apiFetch<LocalModel[]>("/local-models"),
+  });
+}
+
+export function useUpdateProvider() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      ...patch
+    }: {
+      id: string;
+      type?: string;
+      enabled?: boolean;
+      config?: Record<string, unknown>;
+    }) =>
+      apiFetch<LLMProvider>(`/llm-providers/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["llm-providers"] }),
+  });
+}
+
+export interface ReloadResult {
+  status: string;
+  providers_count: number;
+  routing: Record<string, unknown>;
+  skipped: string[];
+}
+
+export function useReloadProviders() {
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<ReloadResult>("/llm-providers/reload", { method: "POST" }),
+  });
+}
+
+export interface FetchModelsResult {
+  provider_id: string;
+  models: string[];
+  error: string | null;
+}
+
+export function useFetchModels() {
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<FetchModelsResult>(`/llm-providers/${id}/fetch-models`, {
+        method: "POST",
+      }),
   });
 }
