@@ -510,3 +510,129 @@ async def test_connectivity_test_handles_failure(auth_headers):
     assert "connection" not in body["error"].lower(), "不应包含原始异常文本"
     assert "sk-mock" not in body["error"], "错误消息中绝不包含 api_key"
     assert "Bearer" not in body["error"], "错误消息中绝不包含 auth header 片段"
+
+
+# ===== Task 4: reload + fetch-models 端点测试 =====
+# 沿用文件既有的 auth_headers fixture 和 _TEST_PROV_PREFIX 惯例，
+# 仅使用 test-prov / test- 前缀的 id/task，不触碰迁移的 deepseek / generation。
+
+from backend.auth.crypto import encrypt_api_key  # noqa: E402
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_reload_reconfigures_router(auth_headers):
+    """reload 端点调 app.state.llm.reconfigure，DB 中的 provider 进 router。"""
+    factory = app.state.session_factory
+    async with factory() as session:
+        session.add(LLMProviderModel(
+            id="test-prov-reload", type="openai_compatible", enabled=True,
+            config={"api_base": "https://api.test.com/v1", "api_key": "k",
+                    "model": "m1", "available_models": ["m1"]},
+        ))
+        session.add(LLMRouting(task="test-reload-task",
+                               chain=[{"provider": "test-prov-reload", "model": None}]))
+        await session.commit()
+
+    # 用假 router 捕获 reconfigure 调用
+    fake_router = AsyncMock()
+    fake_router.reconfigure = AsyncMock()
+    app.state.llm = fake_router
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/admin/llm-providers/reload", headers=auth_headers)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert body["providers_count"] >= 1
+        assert "test-reload-task" in body["routing"]
+    finally:
+        # 清理：恢复真实 router 引用（避免污染后续测试）
+        del app.state.llm
+        async with factory() as session:
+            await session.execute(delete(LLMProviderModel).where(LLMProviderModel.id == "test-prov-reload"))
+            await session.execute(delete(LLMRouting).where(LLMRouting.task == "test-reload-task"))
+            await session.commit()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_reload_skips_invalid_provider(auth_headers):
+    """构造失败的 provider 记入 skipped，reload 仍成功。"""
+    factory = app.state.session_factory
+    async with factory() as session:
+        # 未注册的 type → LLMRegistry.create 抛 KeyError
+        session.add(LLMProviderModel(
+            id="test-prov-bad-type", type="nonexistent_type", enabled=True,
+            config={"api_base": "", "api_key": "", "model": ""},
+        ))
+        await session.commit()
+
+    fake_router = AsyncMock()
+    fake_router.reconfigure = AsyncMock()
+    app.state.llm = fake_router
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/admin/llm-providers/reload", headers=auth_headers)
+        assert resp.status_code == 200
+        assert "test-prov-bad-type" in resp.json()["skipped"]
+    finally:
+        del app.state.llm
+        async with factory() as session:
+            await session.execute(delete(LLMProviderModel).where(LLMProviderModel.id == "test-prov-bad-type"))
+            await session.commit()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_fetch_models_returns_list(auth_headers):
+    """fetch-models 调 list_models 并返回 models 列表(mock 网络调用)。"""
+    factory = app.state.session_factory
+    async with factory() as session:
+        session.add(LLMProviderModel(
+            id="test-prov-fetch", type="openai_compatible", enabled=True,
+            config={"api_base": "https://api.test.com/v1",
+                    "api_key": encrypt_api_key("sk-test", app.state.settings.encryption_key),
+                    "model": "m1"},
+        ))
+        await session.commit()
+
+    with patch("backend.llm.deepseek.DeepseekProvider.list_models",
+               new=AsyncMock(return_value=["m1", "m2"])):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/admin/llm-providers/test-prov-fetch/fetch-models",
+                                     headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["models"] == ["m1", "m2"]
+
+    async with factory() as session:
+        await session.execute(delete(LLMProviderModel).where(LLMProviderModel.id == "test-prov-fetch"))
+        await session.commit()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_fetch_models_sanitizes_error(auth_headers):
+    """list_models 抛错时返回脱敏消息，不泄露异常细节。"""
+    factory = app.state.session_factory
+    async with factory() as session:
+        session.add(LLMProviderModel(
+            id="test-prov-fetch-err", type="openai_compatible", enabled=True,
+            config={"api_base": "https://api.test.com/v1",
+                    "api_key": encrypt_api_key("sk-test", app.state.settings.encryption_key),
+                    "model": "m1"},
+        ))
+        await session.commit()
+
+    with patch("backend.llm.deepseek.DeepseekProvider.list_models",
+               new=AsyncMock(side_effect=Exception("secret internal detail with sk-leak"))):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/admin/llm-providers/test-prov-fetch-err/fetch-models",
+                                     headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["models"] == []
+    assert "secret" not in body.get("error", "")
+    assert "sk-leak" not in body.get("error", "")
+
+    async with factory() as session:
+        await session.execute(delete(LLMProviderModel).where(LLMProviderModel.id == "test-prov-fetch-err"))
+        await session.commit()

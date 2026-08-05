@@ -275,3 +275,116 @@ async def test_provider(provider_id: str, _: EditorDep, request: Request) -> Con
             latency_ms=None,
             error=f"LLM 连通性测试失败({type(exc).__name__})",
         )
+
+
+async def _build_llm_state_for_reload(
+    settings, factory
+) -> tuple[dict, dict, list[str]]:
+    """从 DB 读 enabled providers + routing → 解密 → 构造 provider 实例。
+
+    供 reload 端点使用（后续 Task 5 会把启动逻辑也抽成共用函数）。
+
+    Returns:
+        (providers_dict, routing_dict, skipped_ids)
+    """
+    from backend.services.config_loader import load_llm_config_from_db
+
+    db_config = await load_llm_config_from_db(factory)
+    if db_config is None:
+        return {}, {}, []
+
+    providers_list, routing_dict = db_config
+    providers: dict[str, object] = {}
+    skipped: list[str] = []
+    for prov in providers_list:
+        cfg = dict(prov["config"])
+        if cfg.get("api_key"):
+            try:
+                cfg["api_key"] = decrypt_api_key(cfg["api_key"], settings.encryption_key)
+            except ValueError:
+                pass  # 旧数据可能是明文
+        try:
+            provider = LLMRegistry.create(
+                prov["type"],
+                provider_id=prov["id"],
+                api_base=cfg.get("api_base", ""),
+                api_key=cfg.get("api_key", ""),
+                model=cfg.get("model", ""),
+                max_tokens=cfg.get("max_tokens", 4096),
+                temperature=cfg.get("temperature", 0.3),
+            )
+        except Exception:
+            logger.exception("reload 时供应商构造失败: id=%s", prov["id"])
+            skipped.append(prov["id"])
+            continue
+        providers[prov["id"]] = provider
+    return providers, routing_dict, skipped
+
+
+@router.post("/llm-providers/reload")
+async def reload_providers(_: EditorDep, request: Request) -> dict:
+    """从 DB 重读供应商/路由，调 app.state.llm.reconfigure 热重载。
+
+    DB 全空时返回 400（避免清空线上 router）。
+    单个 provider 构造失败记 skipped，不影响整体 reload。
+    """
+    settings = request.app.state.settings
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+
+    providers, routing, skipped = await _build_llm_state_for_reload(settings, factory)
+    if not providers:
+        raise HTTPException(
+            status_code=400,
+            detail="无可启用的供应商，reload 已取消（保留现有配置）",
+        )
+
+    request.app.state.llm.reconfigure(providers, routing)
+    logger.info("LLM 已热重载（%d 个供应商，跳过 %d 个）", len(providers), len(skipped))
+    return {
+        "status": "ok",
+        "providers_count": len(providers),
+        "routing": routing,
+        "skipped": skipped,
+    }
+
+
+@router.post("/llm-providers/{provider_id}/fetch-models")
+async def fetch_models(provider_id: str, _: EditorDep, request: Request) -> dict:
+    """调供应商 GET /models 拉取可用模型列表。
+
+    失败返回脱敏错误（不泄露 key/内部异常，同 test 端点策略）。
+    """
+    settings = request.app.state.settings
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        provider = await session.execute(
+            select(LLMProviderModel).where(LLMProviderModel.id == provider_id)
+        )
+        provider = provider.scalar_one_or_none()
+        if provider is None:
+            raise HTTPException(status_code=404, detail="供应商不存在")
+
+    config = dict(provider.config)
+    if config.get("api_key"):
+        try:
+            config["api_key"] = decrypt_api_key(config["api_key"], settings.encryption_key)
+        except ValueError:
+            pass
+
+    try:
+        llm = LLMRegistry.create(
+            provider.type,
+            provider_id=provider.id,
+            api_base=config.get("api_base", ""),
+            api_key=config.get("api_key", ""),
+            model=config.get("model", ""),
+        )
+        models = await llm.list_models()
+        return {"provider_id": provider_id, "models": models, "error": None}
+    except Exception as exc:
+        logger.exception("拉取模型失败: provider_id=%s", provider_id)
+        return {
+            "provider_id": provider_id,
+            "models": [],
+            "error": f"拉取模型失败({type(exc).__name__})",
+        }
