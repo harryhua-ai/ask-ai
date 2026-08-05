@@ -12,7 +12,7 @@ export function useDataSources() {
 export function useCreateDataSource() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: Partial<DataSource> & { id: string; type: string; product: string }) =>
+    mutationFn: (data: Partial<DataSource> & { id?: string; type: string; product: string }) =>
       apiFetch<DataSource>("/data-sources", { method: "POST", body: JSON.stringify(data) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["data-sources"] }),
   });

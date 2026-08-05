@@ -20,12 +20,13 @@ import { DirPicker } from "@/components/DirPicker";
 import type { DataSource } from "@/types/api";
 
 // 决策 2A:github 为唯一 git 源类型(local_git 降为实现细节,不再暴露给用户)
-const SOURCE_TYPES = ["github", "filesystem"] as const;
+// Task 4:woocommerce 进数据源类型枚举
+const SOURCE_TYPES = ["github", "filesystem", "woocommerce"] as const;
 type SourceType = (typeof SOURCE_TYPES)[number];
 
 const formSchema = z.object({
-  id: z.string().min(1, "ID 必填"),
-  type: z.enum(["github", "filesystem"]),
+  id: z.string().optional(),
+  type: z.enum(["github", "filesystem", "woocommerce"]),
   product: z.string().min(1, "产品线必填"),
   enabled: z.boolean(),
   sync_interval: z.string().regex(/^\d+[hm]$/, "格式如 24h 或 30m"),
@@ -38,7 +39,29 @@ const formSchema = z.object({
   exclude_dirs: z.string().optional(),
   exclude_regex: z.string().optional(),
   max_file_size: z.string().optional(),
+  store_url: z.string().optional(),
+  consumer_key: z.string().optional(),
+  consumer_secret: z.string().optional(),
 });
+
+// Task 3:类型 + 产品线中文可读名映射(未知值降级原始 key)
+const TYPE_LABELS: Record<string, string> = {
+  github: "代码仓库",
+  filesystem: "文件目录",
+  woocommerce: "商城",
+};
+
+const PRODUCT_LABELS: Record<string, string> = {
+  ne301: "NE301 边缘相机",
+  ne101: "NE101 低功耗相机",
+  ne503: "NE503 AI 相机",
+  ng4500: "NG4500 边缘网关",
+  neomind: "NeoMind 平台",
+  wiki: "官方文档",
+  aitoolstack: "AI Tool Stack",
+  knowledge: "支持案例",
+  commercial: "商城",
+};
 
 type FormValues = z.infer<typeof formSchema>;
 
@@ -57,6 +80,9 @@ const EMPTY_FORM: FormValues = {
   exclude_dirs: "",
   exclude_regex: "",
   max_file_size: "",
+  store_url: "",
+  consumer_key: "",
+  consumer_secret: "",
 };
 
 function splitComma(s: string | undefined): string[] {
@@ -95,6 +121,14 @@ function buildConfig(v: FormValues): Record<string, unknown> {
         exclude_regex: v.exclude_regex || "",
         max_file_size: v.max_file_size ? Number(v.max_file_size) : undefined,
       };
+    case "woocommerce":
+      return {
+        store_url: v.store_url || "",
+        consumer_key: v.consumer_key || "",
+        consumer_secret: v.consumer_secret || "",
+      };
+    default:
+      return {};
   }
 }
 
@@ -124,6 +158,9 @@ function dsToForm(ds: DataSource): FormValues {
     exclude_dirs: toStr(cfg.exclude_dirs),
     exclude_regex: toStr(cfg.exclude_regex),
     max_file_size: cfg.max_file_size != null ? String(cfg.max_file_size) : "",
+    store_url: toStr(cfg.store_url),
+    consumer_key: toStr(cfg.consumer_key),
+    consumer_secret: toStr(cfg.consumer_secret),
   };
 }
 
@@ -185,8 +222,9 @@ export default function DataSources() {
         config,
       });
     } else {
+      // id 可选:用户没填则不传,后端按 product+短 hash 自动生成
       await createDs.mutateAsync({
-        id: v.id,
+        ...(v.id ? { id: v.id } : {}),
         type: v.type,
         product: v.product,
         enabled: v.enabled,
@@ -229,12 +267,7 @@ export default function DataSources() {
       </div>
       {showForm && (
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-3 rounded-lg border bg-card p-4">
-          <div className="grid grid-cols-3 gap-3">
-            <div className="space-y-1">
-              <Label>ID</Label>
-              <Input {...register("id")} disabled={editingId !== null} />
-              {errors.id && <p className="text-xs text-destructive">{errors.id.message}</p>}
-            </div>
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label>类型</Label>
               <select className="h-10 w-full rounded-md border px-3" {...register("type")}>
@@ -355,6 +388,25 @@ export default function DataSources() {
             </div>
           )}
 
+          {type === "woocommerce" && (
+            <div className="space-y-3 border-t pt-3">
+              <div className="space-y-1">
+                <Label>店铺地址</Label>
+                <Input {...register("store_url")} placeholder="https://camthink.ai" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label>Consumer Key</Label>
+                  <Input {...register("consumer_key")} placeholder="ck_..." />
+                </div>
+                <div className="space-y-1">
+                  <Label>Consumer Secret</Label>
+                  <Input type="password" {...register("consumer_secret")} placeholder="cs_..." />
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-2">
             <Button type="submit" disabled={createDs.isPending || updateDs.isPending}>
               {editingId ? "保存" : "创建"}
@@ -367,9 +419,8 @@ export default function DataSources() {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>ID</TableHead>
-            <TableHead>类型</TableHead>
             <TableHead>产品线</TableHead>
+            <TableHead>类型</TableHead>
             <TableHead>状态</TableHead>
             <TableHead>同步间隔</TableHead>
             <TableHead>操作</TableHead>
@@ -378,17 +429,16 @@ export default function DataSources() {
         <TableBody>
           {isLoading ? (
             <TableRow>
-              <TableCell colSpan={6} className="text-center">加载中...</TableCell>
+              <TableCell colSpan={5} className="text-center">加载中...</TableCell>
             </TableRow>
           ) : sources?.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="text-center text-muted-foreground">暂无数据源</TableCell>
+              <TableCell colSpan={5} className="text-center text-muted-foreground">暂无数据源</TableCell>
             </TableRow>
           ) : sources?.map((ds) => (
             <TableRow key={ds.id}>
-              <TableCell className="font-mono text-sm">{ds.id}</TableCell>
-              <TableCell>{ds.type}</TableCell>
-              <TableCell>{ds.product}</TableCell>
+              <TableCell title={ds.product}>{PRODUCT_LABELS[ds.product] ?? ds.product}</TableCell>
+              <TableCell>{TYPE_LABELS[ds.type] ?? ds.type}</TableCell>
               <TableCell>
                 <Badge
                   variant={ds.enabled ? "success" : "destructive"}
