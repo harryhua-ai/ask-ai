@@ -16,7 +16,7 @@ from pathlib import Path
 
 import requests
 
-API = "http://localhost:8000/api/ask"
+DEFAULT_API = "http://localhost:8000/api/ask"
 SUPPORT = Path.home() / "Documents/GitHub/Knowledge/知识库/support"
 CASE_DIRS = ["2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2025.2", "experience"]
 
@@ -65,11 +65,11 @@ def load_cases(limit: int) -> list[dict]:
     return cases
 
 
-def ask(question: str, timeout: int = 90) -> dict:
+def ask(question: str, api: str = DEFAULT_API, timeout: int = 90) -> dict:
     sources, answer = [], []
     try:
         with requests.post(
-            API, json={"message": question, "channel": "widget"},
+            api, json={"message": question, "channel": "widget"},
             stream=True, timeout=timeout,
         ) as r:
             r.raise_for_status()
@@ -100,14 +100,16 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=20)
     ap.add_argument("--out", default="e2e_real_results.json")
+    ap.add_argument("--api", default=DEFAULT_API,
+                   help=f"API 端点(默认 {DEFAULT_API};远程用 https://wiki-data.camthink.ai/api/ask)")
     args = ap.parse_args()
 
     cases = load_cases(args.limit)
-    print(f"加载 {len(cases)} 个真实案例\n" + "=" * 70)
+    print(f"加载 {len(cases)} 个真实案例\nAPI: {args.api}\n" + "=" * 70)
     results = []
     for i, c in enumerate(cases, 1):
         print(f"\n[{i}/{len(cases)}] {c['file']}")
-        res = ask(c["problem"])
+        res = ask(c["problem"], api=args.api)
         res.update({"file": c["file"], "title": c["title"],
                    "problem": c["problem"], "source_answer": c["source_answer"]})
         results.append(res)
