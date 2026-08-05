@@ -13,12 +13,14 @@ from backend.db.models import Customization, CustomizationBinding, LLMProviderMo
 
 async def load_llm_config_from_db(
     factory: async_sessionmaker[AsyncSession],
-) -> tuple[list[dict], dict[str, list[str]]] | None:
+) -> tuple[list[dict], dict[str, list[dict]]] | None:
     """从 DB 加载 LLM 供应商和路由配置。
 
     Returns:
         (providers_list, routing_dict) 或 None(DB 为空时)。
         providers_list 格式与 llm_providers.yaml 的 providers 字段一致。
+        routing_dict 的 chain 元素已归一化为 {"provider", "model"} 对象
+        (兼容旧字符串格式数据)。
     """
     async with factory() as session:
         providers = (
@@ -33,8 +35,24 @@ async def load_llm_config_from_db(
     providers_list = [
         {"id": p.id, "type": p.type, "enabled": p.enabled, "config": p.config} for p in providers
     ]
-    routing = {r.task: list(r.chain) for r in routing_rows}
+    routing = {
+        r.task: [_normalize_chain_item(item) for item in r.chain]
+        for r in routing_rows
+    }
     return providers_list, routing
+
+
+def _normalize_chain_item(item: Any) -> dict:
+    """将 chain 元素归一化为 {provider, model} 对象。
+
+    旧格式(字符串)→ {provider: str, model: None};
+    新格式(对象)→ 补全缺失的 model key。
+
+    保证 LLMRouter 消费方拿到的永远是 dict，不受 DB 中历史字符串数据影响。
+    """
+    if isinstance(item, str):
+        return {"provider": item, "model": None}
+    return {"provider": item["provider"], "model": item.get("model")}
 
 
 async def load_customizations_from_db(
