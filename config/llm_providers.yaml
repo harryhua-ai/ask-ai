@@ -6,11 +6,21 @@ providers:
       api_base: "${DEEPSEEK_API_BASE}"
       api_key: "${DEEPSEEK_API_KEY}"
       model: "${DEEPSEEK_MODEL}"
+      available_models:
+        - "${DEEPSEEK_MODEL}"
       max_tokens: 4096
       temperature: 0.3
 
 routing:
   generation:
-    chain: ["deepseek"]
-  query_decomposition:
-    chain: ["deepseek"]
+    chain:
+      - provider: "deepseek"
+        model: "${DEEPSEEK_MODEL}"
+  query_rewrite:
+    chain:
+      - provider: "deepseek"
+        model: null
+  intent:
+    chain:
+      - provider: "deepseek"
+        model: null
