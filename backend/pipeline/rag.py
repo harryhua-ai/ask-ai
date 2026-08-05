@@ -262,6 +262,8 @@ class RAGOrchestrator:
         history: list[dict] | None,
         channel: str = "widget",
         intent: str = "product",
+        log_text: str = "",
+        image_context: str = "",
     ) -> list[dict]:
         """构造 OpenAI 风格的 messages 列表。
 
@@ -285,11 +287,17 @@ class RAGOrchestrator:
         if history:
             # 每轮对话 = 1 user + 1 assistant,故 max_turns * 2 为消息条数上限
             messages.extend(history[-self._max_turns * 2 :])
+        # 附件段(条件拼接,空则不出现;Phase 1a 仅 log_text,image_context 1b)
+        attachment_section = ""
+        if log_text:
+            attachment_section += f"\n\n## 用户上传的日志\n\n{log_text}"
+        if image_context:
+            attachment_section += f"\n\n## 用户上传的截图分析\n\n{image_context}"
         user_content = f"""请根据以下检索到的官方资料回答问题。
 
 ## 检索到的资料
 
-{context}
+{context}{attachment_section}
 
 ## 问题
 
@@ -472,6 +480,7 @@ class RAGOrchestrator:
         channel: str = "widget",
         conversation_history: list[dict] | None = None,
         product_filter: str | None = None,
+        attachments: list | None = None,
     ) -> AsyncIterator[str]:
         """流式生成 RAG 答案,Yield JSON 字符串事件。
 
@@ -517,36 +526,44 @@ class RAGOrchestrator:
                 return
 
         # 意图识别(4 分类):off_topic / commercial 直接拒答;product/support 进入检索
+        # 评审 C1:有附件时跳过 off_topic/commercial 拒答——「分析这个日志」这类泛化
+        # 日志排查语会被判 off_topic,但附件就是 context,必须放行。
         intent = await classify_intent(query, self._llm)
-        if intent.category == "off_topic":
-            elapsed = int((time.monotonic() - start) * 1000)
-            yield json.dumps(
-                {
-                    "type": "complete",
-                    "answer": REJECT_OFF_TOPIC,
-                    "sources": [],
-                    "is_answered": False,
-                    "language": language,
-                    "response_time_ms": elapsed,
-                    "intent": intent.category,
-                }
-            )
-            return
-        if intent.category == "commercial":
-            elapsed = int((time.monotonic() - start) * 1000)
-            yield json.dumps(
-                {
-                    "type": "complete",
-                    "answer": REJECT_BUSINESS,
-                    "sources": [],
-                    "is_answered": False,
-                    "language": language,
-                    "response_time_ms": elapsed,
-                    "intent": intent.category,
-                }
-            )
-            return
-        effective_min = 1 if intent.category in ("product", "support") else self._min_results
+        if not attachments:
+            if intent.category == "off_topic":
+                elapsed = int((time.monotonic() - start) * 1000)
+                yield json.dumps(
+                    {
+                        "type": "complete",
+                        "answer": REJECT_OFF_TOPIC,
+                        "sources": [],
+                        "is_answered": False,
+                        "language": language,
+                        "response_time_ms": elapsed,
+                        "intent": intent.category,
+                    }
+                )
+                return
+            if intent.category == "commercial":
+                elapsed = int((time.monotonic() - start) * 1000)
+                yield json.dumps(
+                    {
+                        "type": "complete",
+                        "answer": REJECT_BUSINESS,
+                        "sources": [],
+                        "is_answered": False,
+                        "language": language,
+                        "response_time_ms": elapsed,
+                        "intent": intent.category,
+                    }
+                )
+                return
+        # 评审 C1 第二道门:有附件时 effective_min=0,即使检索为空也走生成(附件作 fallback)
+        has_attachments = bool(attachments)
+        if has_attachments:
+            effective_min = 0
+        else:
+            effective_min = 1 if intent.category in ("product", "support") else self._min_results
 
         t0 = time.monotonic()
         extracted = await extract_query(query, self._llm)
@@ -586,9 +603,17 @@ class RAGOrchestrator:
             )
             return
 
-        context = self._build_context(reranked)
+        context = self._build_context(reranked) if reranked else ""
+        # 附件日志文本(Phase 1a:直接拼接,截断在 extract_log_text 入库时已做)
+        log_text = ""
+        if attachments:
+            for att in attachments:
+                if getattr(att, "kind", None) == "log" and getattr(att, "extracted_text", None):
+                    log_text += att.extracted_text + "\n---\n"
+                # kind == "image" 1a 不处理(Phase 1b vision)
         messages = self._build_messages(
             query, context, language, conversation_history, channel, intent=intent.category,
+            log_text=log_text, image_context="",
         )
         sources = self._extract_sources(reranked)
 
