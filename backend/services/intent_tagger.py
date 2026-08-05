@@ -49,7 +49,7 @@ async def tag_single(
     ]
     try:
         resp = await llm.generate(
-            messages, task="query_decomposition", max_tokens=20, temperature=0.0
+            messages, task="intent", max_tokens=20, temperature=0.0
         )
         tag = resp.content.strip().lower().replace(" ", "_")
         if tag not in INTENT_CATEGORIES:
