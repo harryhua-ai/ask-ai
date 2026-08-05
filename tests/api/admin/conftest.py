@@ -15,8 +15,8 @@ import pytest_asyncio
 from sqlalchemy import select
 
 from backend.auth.crypto import encrypt_api_key
-from backend.config import load_settings
-from backend.db.models import LLMProviderModel, LLMRouting
+from backend.config import load_settings, load_yaml_config
+from backend.db.models import Customization, CustomizationBinding, LLMProviderModel, LLMRouting
 from backend.db.session import get_engine, get_session_factory, init_db
 
 
@@ -73,6 +73,20 @@ async def _setup_app_state():
                 session.add(LLMRouting(task=task, chain=chain))
             else:
                 existing_route.chain = chain  # 强制刷新为对象格式
+
+        # default customization + widget 绑定（test_customizations 依赖）
+        if not (await session.execute(
+            select(Customization).where(Customization.id == "default")
+        )).scalar_one_or_none():
+            prompt_cfg = load_yaml_config(settings.config_dir / "system_prompt.yaml")
+            session.add(Customization(
+                id="default",
+                name="默认配置",
+                system_prompt=prompt_cfg["system_prompt"],
+                language=prompt_cfg.get("language", "auto"),
+                assistant_name=prompt_cfg.get("assistant_name", "CamThink 助手"),
+            ))
+            session.add(CustomizationBinding(channel="widget", customization_id="default"))
         await session.commit()
 
     yield
