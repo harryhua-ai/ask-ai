@@ -27,6 +27,10 @@ class AskRequest(BaseModel):
     language: str | None = None
     channel: str = Field(default="widget", pattern="^(widget|discord|whatsapp|mcp)$")
     conversation_history: list[dict] = Field(default_factory=list, max_length=MAX_HISTORY_ITEMS)
+    # Phase 1a:widget 匿名会话标识(localStorage UUID),用于附件归属校验
+    session_id: str | None = Field(default=None, max_length=200)
+    # Phase 1a:附件 id 列表(UUID 字符串),归属校验在 /ask 端点做
+    attachments: list[str] = Field(default_factory=list, max_length=5)
 
     @field_validator("conversation_history")
     @classmethod
