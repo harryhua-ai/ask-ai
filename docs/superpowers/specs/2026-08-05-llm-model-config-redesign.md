@@ -63,6 +63,7 @@ class LLMRouter:
         self._routing = routing
 
     async def generate(self, messages, task="generation", **kwargs):
+        last_error = None
         for item in self._get_chain(task):  # item = {provider, model?}
             pid, model = item["provider"], item.get("model")
             provider = self._providers.get(pid)
@@ -72,10 +73,13 @@ class LLMRouter:
                 if await provider.health_check():
                     call_kwargs = {**kwargs, "model": model} if model else kwargs
                     return await provider.generate(messages, **call_kwargs)
-            except Exception:
+            except Exception as e:  # noqa: BLE001 - 故障切换需捕获所有异常
+                last_error = e
                 continue
-        raise RuntimeError(f"All LLM providers unavailable for task={task}")
+        raise RuntimeError(f"All LLM providers unavailable for task={task}: {last_error}")
 ```
+
+> 注:`generate` 在循环内逐迭代通过 `self._providers.get()` 读取 providers 字典。reconfigure 整体替换 dict 引用,每次 `.get()` 原子无损坏;但若 reconfigure 恰好落在两次迭代之间的 await 处,单次 generate 可能跨新旧 providers 快照(无数据损坏,仅是 provider 可能中途变化)。异步单线程下该窗口极短,风险可忽略。
 
 **main.py 抽公共函数**:
 
@@ -140,10 +144,10 @@ def _normalize_chain_item(item) -> dict:
 
 新增 `scripts/migrate_llm_chain_format.py`(幂等,dry-run):
 
-1. `llm_providers`:available_models 为空 → 从 config.model 初始化 `[config.model]`。
+1. `llm_providers`:available_models 为空 → 从 config.model 初始化 `[config.model]`。若 config.model 不在 available_models 中(用户编辑后漂移),强制纳入并作为默认;两者皆空则跳过该 provider,记 skipped。
 2. `llm_routing`:chain 元素是 str → 转成 `{provider: str, model: null}`。
 3. `llm_routing`:task=`query_decomposition` → 删除(intent_tagger 的历史命名错误)。
-4. `llm_routing`:确保 `intent` 路由存在(实时 `intent.py` + 离线 `intent_tagger.py` 都走它)。不存在则从 generation chain 复制一份,让用户后续在 UI 改成 flash。
+4. `llm_routing`:确保 `intent` 路由存在(实时 `intent.py` + 离线 `intent_tagger.py` 都走它)。不存在则从 generation chain 复制一份(若 generation 也不存在则 skip + 记 skipped,不凭空创建),让用户后续在 UI 改成 flash。
 5. `llm_routing`:确保 `query_rewrite` 路由存在(查询提取/改写)。同上,不存在则复制 generation chain。
 
 ### 3.3 task 名统一与独立路由
@@ -180,7 +184,7 @@ async def list_models(self) -> list[str]:
 新端点 `POST /llm-providers/{provider_id}/fetch-models`(admin/editor):
 - 解密 DB 中 api_key → 构造临时 provider → 调 list_models → 返回模型 id 列表。
 - 失败返回脱敏错误(不泄露 key/内部异常,同 test 端点策略)。
-- **前端用途**:编辑弹窗"🔄 从 API 拉取"按钮 → 候选列表 → 用户勾选 → 存入 available_models。手填兜底(供应商不支持 `/models` 时)。
+- **前端用途**:编辑弹窗"从 API 拉取"按钮(图标用 lucide `RefreshCw`,非 emoji)→ 候选列表 → 用户勾选 → 存入 available_models。手填兜底(供应商不支持 `/models` 时)。
 
 ---
 
@@ -251,7 +255,7 @@ async def list_models(self) -> list[str]:
 - **API Base**:输入框(等宽)。
 - **API Key**:回显 `********` + 加密说明("显示 ******** = 已加密,清空后粘贴新 key 才更换")。后端防覆盖逻辑保留。
 - **可用模型**(新增):列表式编辑,★ 标默认(第 1 个),可增/删/拖序。
-  - "🔄 从 API 拉取"按钮 → 候选列表(带过滤搜索)→ 勾选加入。前提:已填 api_base + api_key。
+  - "从 API 拉取"按钮(图标 lucide `RefreshCw`)→ 候选列表(带过滤搜索)→ 勾选加入。前提:已填 api_base + api_key。
   - "手动添加"兜底(不支持 `/models` 的供应商)。
 - **底部**:"测试连通"按钮(配完 key 即时验证)+ 取消/保存。
 
@@ -295,10 +299,10 @@ radio 列表选已有供应商(停用的灰显)+ "新建..."入口。选完指�
 
 | token | 值 | 现有值 |
 |---|---|---|
-| 字体 | Manrope(已全局,`index.css` L20) | Manrope ✓ 无需改 |
+| 字体 | Manrope(已全局,`index.css` L24) | Manrope ✓ 无需改 |
 | `--radius` | `0.5rem`(8px) | 0.5rem ✓ 无需改 |
 | `--primary` | `0 0% 9%`(近黑 #111) | 0 0% 9% ✓ 已是 |
-| `--border` | `0 0% 89.8%`(#dbdbdb 系) | 接近,微调 |
+| `--border` | `0 0% 89.8%`(#dbdbdb 系) | 0 0% 89.8% ✓ 已是 |
 | 卡片圆角 | `rounded-lg`(8px) | ✓ 已用 |
 | 卡片 padding | `p-4`(16px) | ✓ 已用 |
 | 网格 gap | `gap-3`(12px) | ✓ 已用 |
@@ -306,7 +310,7 @@ radio 列表选已有供应商(停用的灰显)+ "新建..."入口。选完指�
 | 按钮次操作 | `outline`(描边) | ✓ |
 
 **发现**:admin 全局 token 与 widget 风格**已高度吻合**(Manrope/8px 圆角/近黑 primary/outline 次按钮均已是现状)。主要差异在:
-- widget 的软阴影 `box-shadow: 0 2px 8px rgba(0,0,0,0.12)` → 给 primary 按钮和弹窗加上。
+- widget 的软阴影(widget.css 实际值:FAB `box-shadow: 0 4px 12px rgba(0,0,0,0.15)`)→ 给 primary 按钮和弹窗加上。
 - 统一图标用 lucide(部分页面已用,需全量走查)。
 
 ### 6.2 走查范围
@@ -330,6 +334,7 @@ radio 列表选已有供应商(停用的灰显)+ "新建..."入口。选完指�
 | fetch-models 网络/key 错误 | 返回脱敏错误(同 test 端点),完整异常仅 server 日志 |
 | api_key 编辑留 `********` | 后端剔除占位符,保留 DB 旧密文(现有逻辑) |
 | available_models 为空 | chain item model 回退 provider.config.model |
+| available_models 与 config.model 同时为空(迁移前异常数据) | provider.generate 不传 model 参数(交由供应商 API 报错或用其默认);UI 标红该 provider 提示"未配置模型" |
 | 剪枝首次启用 | LLMPruner 启动时创建,reload 不创建。UI 黄色警告 badge"首启需重启" |
 | 移除链路项 | 二次确认 popover |
 | query_rewrite/intent 路由未配 | LLMRouter 回退 generation(现有逻辑) |
@@ -424,3 +429,57 @@ radio 列表选已有供应商(停用的灰显)+ "新建..."入口。选完指�
 ## 修订记录
 
 - 2026-08-05 初稿。基于代码核查 + 可视化审核定稿(8 轮 mockup 迭代)。
+- 2026-08-05 Dual Review Round 1 修复(见下方审核日志)。
+
+<!-- 以上为文档正文,以下为审核修复记录 -->
+
+---
+
+## Dual Review Log
+
+### Round 1 — 2026-08-05 · 单路两阶段(独立 sub-agent)
+
+| # | 级别 | 阶段 | 标准性质 | 位置 | 问题 | 修复动作 |
+|---|------|------|---------|------|------|---------|
+| 1 | MEDIUM | P1 | 事实核查 | §6.1 正文 | widget 软阴影引用值 `0 2px 8px rgba(0,0,0,0.12)` 在 widget.css 中不存在(实际 FAB 是 `0 4px 12px rgba(0,0,0,0.15)`) | 改为引用真实值 |
+| 2 | MEDIUM | P2 | 机械检测 | §3.4 + §5.4② vs §5.6 | "🔄 从 API 拉取"emoji 与 §5.6"禁用 emoji 占位"自相矛盾 | 改为 lucide `RefreshCw` 图标 + 文字 |
+| 3 | LOW | P1 | 事实核查 | §6.1 表"字体"行 | Manrope 标注 `index.css L20`,实际 L24(偏差 4 行) | 改为 L24 |
+| 4 | LOW | P2 | 主观意见 | §3.1 reconfigure | 两行赋值理论并发窗口 | 不改(GIL 下单 dict 赋值原子,风险可忽略;注释已说明) |
+| 5 | LOW | P2 | 主观意见 | §7 错误处理表 | available_models 与 config.model 同时为空未定义 | 补一行边界处理 |
+| 6 | LOW | P2 | 主观意见 | 附录"方案 C" | 未列方案 A/B 对比 | 不改(决策记录已自洽,3.1 消费点审计表已隐含否决理由) |
+
+**本轮修复**: 4 个(#1/#2/#3/#5)| **保留不改**: 2 个(#4/#6,主观且可接受)| **累计修复**: 4 个
+
+**Phase 1 事实核查**: 34 项可证伪声明,32 项已核实一致,2 项不符已修(阴影值/行号)
+**Phase 2 质量判断**: UI 图标位 emoji 矛盾已修;主观建议 2 条保留
+
+---
+
+### Round 2 — 2026-08-05 · 单路两阶段(独立 sub-agent 复审)
+
+**Round 1 修复验证**: 4 项全部落地正确(逐一对代码核实)。
+
+| # | 级别 | 阶段 | 标准性质 | 位置 | 问题 | 修复动作 |
+|---|------|------|---------|------|------|---------|
+| 1 | MEDIUM | P1 | 事实核查 | §6.1 L301 | `--border` 行标"接近,微调",实际已是 `0 0% 89.8%`(与目标完全相等),体例矛盾 | 改为 `✓ 已是` |
+| 2 | LOW | P2 | 主观意见 | §3.1 generate 片段 | 丢弃 last_error 上下文(现状 registry.py:67 有),故障根因被吞 | 补 `last_error = e` + 终态带上下文 |
+| 3 | LOW | P2 | 主观意见 | §3.1 reconfigure 注释 | "不混"过度宣称;generate 跨迭代重读 _providers,reconfigure 落 await 间隙时单次调用可见新旧交替 | 改注释为准确描述(跨迭代可能交替但无损坏)。Round 1 判"不改",Round 2 部分不同意——注释是可证伪的不准确陈述,修成本极低,采纳 |
+| 4 | LOW | P2 | 机械检测 | 审核日志标题 | `## 🔍 Dual Review Log` 的 🔍 是 Round 1 追加日志时引入的 emoji | 改纯文字 `Dual Review Log` |
+| 5 | LOW | P2 | 边界遗漏 | §3.2 迁移步骤 | (a) config.model 不在 available_models 时默认未定义;(b) 复制 generation chain 时 generation 缺失未定义 | 步骤 1 补"强制纳入/两者皆空 skip";步骤 4 补"generation 不存在则 skip + 记 skipped" |
+| 6 | LOW | P2 | 机械检测 | §3.1/§3.3 表格符号 | ❌/✅/★ 为状态标记 | 不改(文档惯例的状态符号,非 UI 图标 emoji,与 §5.6"禁用 emoji 占位"本义不冲突) |
+
+**本轮修复**: 5 个(#1/#2/#3/#4/#5)| **保留不改**: 1 个(#6)| **累计修复**: 9 个
+
+**Phase 1 事实核查**: 新查 DeepseekProvider kwargs 支持、7 个 lucide 图标名真实性、6 处 task 行号复验、PATCH 占位符逻辑、RAG/Pruner 引用锁定 — 全部一致;border 行事实矛盾已修
+**Phase 2 质量判断**: 修复 Round 1 遗留的注释不准确 + 边界遗漏;机械检测仅剩文档惯例状态符号
+
+---
+
+### 汇总
+
+- **收敛轮次**: 2
+- **累计修复**: 9 个(CRITICAL 0 / HIGH 0 / MEDIUM 3 / LOW 6;按标准性质:事实核查 4 / 机械检测 2 / 主观意见 3)
+- **审核模式**: 单路两阶段(独立 sub-agent)
+- **Phase 1 事实核查**: ✅ 通过(34+ 项声明核实,关键代码引用全部精确命中)
+- **Phase 2 质量判断**: ✅ 通过
+- **完成时间**: 2026-08-05
