@@ -52,8 +52,8 @@ class DataSourceOut(BaseModel):
 
 
 class DataSourceCreate(BaseModel):
-    id: str = Field(..., min_length=1, max_length=100)
-    type: str = Field(..., pattern="^(github|filesystem|local_git|web_crawl|sdk)$")
+    id: str | None = Field(default=None, max_length=100)
+    type: str = Field(..., pattern="^(github|filesystem|local_git|web_crawl|sdk|woocommerce)$")
     product: str = Field(..., min_length=1, max_length=50)
     enabled: bool = True
     config: dict = Field(default_factory=dict)
@@ -61,7 +61,7 @@ class DataSourceCreate(BaseModel):
 
 
 class DataSourceUpdate(BaseModel):
-    type: str | None = Field(default=None, pattern="^(github|filesystem|local_git|web_crawl|sdk)$")
+    type: str | None = Field(default=None, pattern="^(github|filesystem|local_git|web_crawl|sdk|woocommerce)$")
     product: str | None = None
     enabled: bool | None = None
     config: dict | None = None
