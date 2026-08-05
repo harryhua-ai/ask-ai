@@ -30,3 +30,15 @@ logs/
 .claude/
 .coverage
 .playwright-mcp/
+
+# 调试截图(开发期临时 UI 截图,不入库)
+*-screenshot.png
+widget-*.png
+admin-*.png
+kapa-*.png
+
+# 根目录误生成的 lock(项目 package.json 在 widget/ 和 admin/ 子目录)
+/package-lock.json
+
+# 临时进度快照(auto-dev CHECKPOINT,会话级临时文件)
+/CHECKPOINT.md
