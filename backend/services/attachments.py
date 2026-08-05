@@ -7,6 +7,8 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
+import chardet
+
 logger = logging.getLogger(__name__)
 
 # Phase 1a 允许的扩展名(仅日志)
@@ -66,3 +68,36 @@ def compute_storage_path(att_id, ext: str, base_dir: str = "data/attachments") -
     """按日期分目录的存储路径:data/attachments/YYYY-MM-DD/<id><ext>。"""
     date_dir = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return Path(base_dir) / date_dir / f"{att_id}{ext}"
+
+
+LOG_MAX_CHARS: int = 100_000  # 提取阶段上限(避免乱码撑爆 DB);超限走截断(1a)
+
+
+def _detect_and_decode(raw: bytes) -> tuple[str, str | None]:
+    """尝试 UTF-8 → UTF-8-sig → GBK → UTF-16 → chardet 检测,返回 (text, warning)。"""
+    for enc in ("utf-8", "utf-8-sig", "gbk", "utf-16"):
+        try:
+            return raw.decode(enc), None
+        except UnicodeDecodeError:
+            continue
+    guessed = chardet.detect(raw).get("encoding") or "utf-8"
+    try:
+        return raw.decode(guessed, errors="replace"), f"guessed encoding: {guessed}"
+    except Exception:
+        return raw.decode("utf-8", errors="replace"), "decode failed, lossy"
+
+
+def extract_log_text(path: Path) -> tuple[str, str | None]:
+    """读取日志文件 → (text, parse_warning)。截断超 LOG_MAX_CHARS。
+
+    本身不做 PII 脱敏(纯文本提取);PII 在 _extract_and_persist 入库前 mask_pii。
+    """
+    raw = path.read_bytes()
+    text, warning = _detect_and_decode(raw)
+    # 去控制字符(保留换行/制表)
+    text = "".join(c for c in text if c in "\n\t" or unicodedata.category(c)[0] != "C")
+    if len(text) > LOG_MAX_CHARS:
+        text = text[:LOG_MAX_CHARS]
+        warning = (warning + "; " if warning else "") + f"truncated at {LOG_MAX_CHARS} chars"
+    return text, warning
+
