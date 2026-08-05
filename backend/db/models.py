@@ -90,6 +90,9 @@ class Conversation(Base):
     clicks: Mapped[list["SourceClick"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan"
     )
+    attachments: Mapped[list["Attachment"]] = relationship(
+        back_populates="conversation", lazy="raise"
+    )
 
 
 class SourceClick(Base):
@@ -226,6 +229,33 @@ class QuestionCluster(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class Attachment(Base):
+    """聊天附件(日志/截图),作为会话补充上下文。
+
+    Phase 1a 仅处理日志(kind="log");图片(kind="image")字段预留,1b 接入 vision。
+    """
+
+    __tablename__ = "attachments"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    owner_type: Mapped[str] = mapped_column(String(20), nullable=False)  # widget_anon | admin
+    owner_id: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)  # log | image
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    storage_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parse_warning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    vision_done: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    conversation: Mapped["Conversation | None"] = relationship(back_populates="attachments")
 
 
 # 索引(对齐设计文档 §11 SQL DDL)
