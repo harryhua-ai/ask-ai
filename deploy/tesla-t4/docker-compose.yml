@@ -80,7 +80,7 @@ services:
       TRANSFORMERS_OFFLINE: "1"
     volumes:
       # 决策 2:corpus 挂载(sync worker 也用)
-      - /home/ubuntu/ask-ai-corpus:/home/ubuntu/ask-ai-corpus:ro
+      - /home/ubuntu/ask-ai-corpus:/home/ubuntu/ask-ai-corpus
       - /home/ubuntu/knowledge-support:/home/ubuntu/knowledge-support:ro
       # 决策 3:models 挂载(BGE-m3 + reranker,不打进镜像)
       - /home/ubuntu/ask-ai/models:/models:ro
@@ -114,7 +114,7 @@ services:
       HF_HOME: /models
       TRANSFORMERS_OFFLINE: "1"
     volumes:
-      - /home/ubuntu/ask-ai-corpus:/home/ubuntu/ask-ai-corpus:ro
+      - /home/ubuntu/ask-ai-corpus:/home/ubuntu/ask-ai-corpus
       - /home/ubuntu/knowledge-support:/home/ubuntu/knowledge-support:ro
       - /home/ubuntu/ask-ai/models:/models:ro
     depends_on:
@@ -150,7 +150,7 @@ services:
       HF_HOME: /models
       TRANSFORMERS_OFFLINE: "1"
     volumes:
-      - /home/ubuntu/ask-ai-corpus:/home/ubuntu/ask-ai-corpus:ro
+      - /home/ubuntu/ask-ai-corpus:/home/ubuntu/ask-ai-corpus
       - /home/ubuntu/knowledge-support:/home/ubuntu/knowledge-support:ro
       - /home/ubuntu/ask-ai/models:/models:ro
     depends_on:
