@@ -12,9 +12,10 @@
 import json
 import logging
 import uuid
+from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import update
@@ -22,8 +23,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
 from backend.api.schemas import AskRequest, ClickRequest, FeedbackRequest
-from backend.db.models import Conversation, SourceClick
+from backend.db.models import Attachment, Conversation, SourceClick
 from backend.pipeline.rag import RAGOrchestrator
+from backend.services.attachments import (
+    MAX_ATTACHMENTS_PER_MESSAGE,
+    compute_storage_path,
+    extract_log_text,
+    sanitize_filename,
+    validate_upload_file,
+)
 from backend.utils.budget import BudgetLimiter, estimate_tokens
 from backend.utils.pii import mask_pii
 
@@ -196,3 +204,127 @@ async def click(
         session.add(click_log)
         await session.commit()
     return {"status": "ok"}
+
+
+# --------------------------------------------------------------------------- #
+# POST /api/upload —— 聊天附件上传(Phase 1a:仅日志)
+# --------------------------------------------------------------------------- #
+
+
+def _attachments_base_dir() -> Path:
+    """存储根目录(ATTACHMENTS_DIR 覆盖,默认 data/attachments)。"""
+    import os
+
+    return Path(os.environ.get("ATTACHMENTS_DIR", "data/attachments"))
+
+
+@router.post("/upload")
+@limiter.limit("10/minute")
+async def upload_attachments_widget(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    session_factory: SessionFactoryDep,
+    session_id: str = Form(...),
+    files: list[UploadFile] = File(...),
+) -> dict[str, Any]:
+    """widget 匿名上传:固定 owner_type=widget_anon,owner_id=session_id。"""
+    if len(files) > MAX_ATTACHMENTS_PER_MESSAGE:
+        raise HTTPException(422, f"Too many files (max {MAX_ATTACHMENTS_PER_MESSAGE})")
+    return await _do_upload(
+        files, "widget_anon", session_id, background_tasks, session_factory
+    )
+
+
+async def _do_upload(
+    files: list[UploadFile],
+    owner_type: str,
+    owner_id: str,
+    background_tasks: BackgroundTasks,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> dict[str, Any]:
+    """共享上传逻辑:校验 + 落盘 + DB + 异步提取。
+
+    fail-open:单文件失败记录 ok=False,不阻塞其他文件;全部失败返回 422。
+    """
+    results: list[dict[str, Any]] = []
+    base_dir = _attachments_base_dir()
+
+    for f in files:
+        first_bytes = await f.read(512)
+        await f.seek(0)
+        content = await f.read()
+        ok, kind, mime, err = validate_upload_file(f.filename or "", first_bytes, len(content))
+        if not ok:
+            results.append({"ok": False, "filename": f.filename, "error": err})
+            continue
+
+        clean_name = sanitize_filename(f.filename or "upload")
+        att = Attachment(
+            id=uuid.uuid4(),
+            owner_type=owner_type,
+            owner_id=owner_id,
+            filename=clean_name,
+            mime_type=mime,
+            kind=kind,
+            size_bytes=len(content),
+        )
+        ext = Path(clean_name).suffix.lower()
+        storage_path = compute_storage_path(att.id, ext, base_dir=str(base_dir))
+        storage_path.parent.mkdir(parents=True, exist_ok=True)
+        storage_path.write_bytes(content)
+        att.storage_path = str(storage_path)
+
+        if kind == "log":
+            background_tasks.add_task(
+                _extract_and_persist, att.id, str(storage_path), session_factory
+            )
+            status = "processing"
+        else:
+            status = "ready"  # 图片 1b 才启用(1a 校验已拒)
+
+        async with session_factory() as s:
+            s.add(att)
+            await s.commit()
+
+        results.append(
+            {
+                "ok": True,
+                "id": str(att.id),
+                "filename": att.filename,
+                "kind": kind,
+                "mime_type": mime,
+                "size_bytes": att.size_bytes,
+                "status": status,
+            }
+        )
+
+    if all(not r["ok"] for r in results):
+        raise HTTPException(422, "All files rejected")
+    return {"attachments": results}
+
+
+async def _extract_and_persist(
+    att_id: uuid.UUID,
+    storage_path: str,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """BackgroundTask:提取日志文本 + mask_pii + 写 extracted_text。
+
+    两层 fail-open:提取异常 / 持久化异常都仅记录日志,extracted_text 留 None,
+    ask 时该附件贡献空 log_text,不阻塞整次问答。
+    """
+    try:
+        text, warning = extract_log_text(Path(storage_path))
+        masked = mask_pii(text)
+    except Exception as e:  # noqa: BLE001 — BackgroundTask 兜底
+        logger.warning("log extract failed att=%s: %s", att_id, e)
+        masked, warning = "", f"extract failed: {e}"
+    try:
+        async with session_factory() as s:
+            att = await s.get(Attachment, att_id)
+            if att:
+                att.extracted_text = masked
+                att.parse_warning = warning
+                await s.commit()
+    except Exception as e:  # noqa: BLE001 — BackgroundTask 兜底
+        logger.warning("persist extracted_text failed att=%s: %s", att_id, e)
