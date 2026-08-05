@@ -116,6 +116,50 @@ def _build_llm_router(config_dir: Path) -> LLMRouter:
     return LLMRouter(providers, routing)
 
 
+async def _build_llm_state(
+    settings, factory
+) -> tuple[dict[str, object], dict[str, list[dict]], list[str]]:
+    """从 DB 读 enabled providers + routing → 解密 → 构造 provider 实例。
+
+    启动时与 reload 端点共用此函数（单一数据源）。
+
+    Returns:
+        (providers_dict, routing_dict, skipped_ids)。
+        providers 为空时调用方应决定是否回退 / 报错。
+    """
+    db_config = await load_llm_config_from_db(factory)
+    if db_config is None:
+        return {}, {}, []
+    providers_list, routing_dict = db_config
+    providers: dict[str, object] = {}
+    skipped: list[str] = []
+    for prov in providers_list:
+        cfg = dict(prov["config"])
+        if cfg.get("api_key"):
+            try:
+                cfg["api_key"] = decrypt_api_key(cfg["api_key"], settings.encryption_key)
+            except ValueError:
+                pass  # 旧数据可能是明文，保持原样继续尝试
+        try:
+            provider = LLMRegistry.create(
+                prov["type"],
+                provider_id=prov["id"],
+                api_base=cfg.get("api_base", ""),
+                api_key=cfg.get("api_key", ""),
+                model=cfg.get("model", ""),
+                max_tokens=cfg.get("max_tokens", 4096),
+                temperature=cfg.get("temperature", 0.3),
+            )
+        except Exception:
+            logger.exception(
+                "LLM 供应商构造失败，已跳过: id=%s type=%s", prov["id"], prov["type"]
+            )
+            skipped.append(prov["id"])
+            continue
+        providers[prov["id"]] = provider
+    return providers, routing_dict, skipped
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """应用生命周期:启动时接线,关闭时释放资源。"""
@@ -208,44 +252,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.reranker = reranker
         app.state.weaviate_class_name = settings.weaviate_class_name
 
-        # LLM:优先从 DB 加载(Task 16),为空时回退 YAML(Phase 1 兼容)
-        db_config = await load_llm_config_from_db(app.state.session_factory)
-        if db_config:
-            providers_list, routing_dict = db_config
-            providers: dict[str, object] = {}
-            settings_enc = settings.encryption_key
-            for prov in providers_list:
-                cfg = dict(prov["config"])
-                if cfg.get("api_key"):
-                    try:
-                        cfg["api_key"] = decrypt_api_key(cfg["api_key"], settings_enc)
-                    except ValueError:
-                        pass  # 旧数据可能是明文,保持原样继续尝试
-                try:
-                    provider = LLMRegistry.create(
-                        prov["type"],
-                        provider_id=prov["id"],
-                        api_base=cfg.get("api_base", ""),
-                        api_key=cfg.get("api_key", ""),
-                        model=cfg.get("model", ""),
-                        max_tokens=cfg.get("max_tokens", 4096),
-                        temperature=cfg.get("temperature", 0.3),
-                    )
-                except Exception:
-                    # 单个供应商构造失败(未注册的 type / 配置非法)不阻塞启动,
-                    # 跳过该供应商,其余正常加载。
-                    logger.exception(
-                        "LLM 供应商构造失败,已跳过: id=%s type=%s",
-                        prov["id"],
-                        prov["type"],
-                    )
-                    continue
-                providers[prov["id"]] = provider
+        # LLM:优先从 DB 加载，为空时回退 YAML(Phase 1 兼容)
+        providers, routing_dict, skipped = await _build_llm_state(
+            settings, app.state.session_factory
+        )
+        if providers:
             router_llm = LLMRouter(providers, routing_dict)
-            logger.info("LLM 配置已从 DB 加载(%d 个供应商)", len(providers))
+            logger.info(
+                "LLM 配置已从 DB 加载（%d 个供应商，跳过 %d 个）", len(providers), len(skipped)
+            )
         else:
             router_llm = _build_llm_router(settings.config_dir)
-            logger.info("LLM 配置已从 YAML 加载(DB 为空)")
+            logger.info("LLM 配置已从 YAML 加载（DB 为空）")
         app.state.llm = router_llm
 
         # System prompt
