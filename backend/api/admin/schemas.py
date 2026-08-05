@@ -171,17 +171,27 @@ class LLMProviderUpdate(BaseModel):
     config: dict | None = None
 
 
+class LLMChainItem(BaseModel):
+    """LLM 路由链元素:{provider, model}。
+
+    provider: 供应商 id;model: 该任务用的 model,None = 用 provider 默认。
+    """
+
+    provider: str
+    model: str | None = None
+
+
 class LLMRoutingOut(BaseModel):
     """LLM 路由输出 schema。"""
 
     task: str
-    chain: list[str]
+    chain: list[LLMChainItem | str] = []  # 兼容旧字符串格式(过渡期)
 
 
 class LLMRoutingUpdate(BaseModel):
     """LLM 路由更新 schema。"""
 
-    chain: list[str]
+    chain: list[LLMChainItem | str] = []  # 兼容旧字符串格式写入(过渡期)
 
 
 class ConnectivityTestResult(BaseModel):

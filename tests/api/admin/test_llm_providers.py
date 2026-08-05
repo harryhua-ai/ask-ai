@@ -386,9 +386,9 @@ async def test_list_routing_includes_migrated(auth_headers):
     tasks = {r["task"] for r in data}
     assert "generation" in tasks, "Task 9 generation 路由丢失"
     assert "query_decomposition" in tasks, "Task 9 query_decomposition 路由丢失"
-    # 迁移的 generation 链路必须指向 deepseek
+    # 迁移的 generation 链路必须指向 deepseek（对象格式 {provider, model}）
     gen_route = next(r for r in data if r["task"] == "generation")
-    assert gen_route["chain"] == ["deepseek"]
+    assert gen_route["chain"] == [{"provider": "deepseek", "model": None}]
 
 
 async def test_update_routing_creates_and_updates(auth_headers):
