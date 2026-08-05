@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import type { ChatMessage, SourceLink } from "../types";
+import type { AttachmentRef, ChatMessage, SourceLink } from "../types";
 
 interface SSECallbacks {
   onSources: (sources: SourceLink[], conversationId: string) => void;
@@ -8,13 +8,54 @@ interface SSECallbacks {
   onError: (message: string) => void;
 }
 
+// widget 匿名会话标识(localStorage UUID,无服务端签发)
+function getSessionId(): string {
+  let s = localStorage.getItem("ask_ai_session_id");
+  if (!s) {
+    s = crypto.randomUUID();
+    localStorage.setItem("ask_ai_session_id", s);
+  }
+  return s;
+}
+
 // SSE 流式接收 hook:解析 event/data 行,分发到对应回调
 export function useSSE(apiUrl: string) {
+  const uploadFiles = useCallback(async (files: File[]): Promise<AttachmentRef[]> => {
+    if (files.length === 0) return [];
+    const fd = new FormData();
+    fd.append("session_id", getSessionId());
+    for (const f of files) fd.append("files", f);
+    const resp = await fetch(`${apiUrl}/api/upload`, {
+      method: "POST",
+      body: fd,
+    });
+    if (!resp.ok) {
+      throw new Error(`Upload failed: ${resp.status}`);
+    }
+    const data = await resp.json();
+    const items: AttachmentRef[] = (data.attachments || []).map(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (a: any) => ({
+        id: a.id,
+        filename: a.filename,
+        kind: a.kind,
+        status: a.ok ? "ready" : "failed",
+        error: a.error,
+      }),
+    );
+    const failed = items.filter((a) => a.status === "failed");
+    if (failed.length === items.length && items.length > 0) {
+      throw new Error(failed[0]?.error || "All files rejected");
+    }
+    return items;
+  }, [apiUrl]);
+
   const ask = useCallback(async (
     message: string,
     history: ChatMessage[],
     channel: string,
     callbacks: SSECallbacks,
+    attachments: string[] = [],
   ) => {
     const conversationHistory = history.map((m) => ({
       role: m.type === "user" ? "user" : "assistant",
@@ -28,6 +69,8 @@ export function useSSE(apiUrl: string) {
         message,
         channel,
         conversation_history: conversationHistory.slice(-10),
+        session_id: getSessionId(),
+        attachments,
       }),
     });
 
@@ -36,7 +79,9 @@ export function useSSE(apiUrl: string) {
       console.error(`SSE 请求失败: ${resp.status}`);
       const msg = resp.status === 422
         ? "问题内容过长或格式有误,请精简后重试。"
-        : "服务暂时不可用,请稍后再试。";
+        : resp.status === 403
+          ? "无权访问所选附件。"
+          : "服务暂时不可用,请稍后再试。";
       callbacks.onError(msg);
       return;
     }
@@ -82,5 +127,5 @@ export function useSSE(apiUrl: string) {
     }
   }, [apiUrl]);
 
-  return { ask };
+  return { ask, uploadFiles };
 }

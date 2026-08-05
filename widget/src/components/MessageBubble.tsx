@@ -26,6 +26,15 @@ export function MessageBubble({ message, isStreaming, onFeedback }: Props) {
 
   return (
     <div className={isUser ? "ask-ai-bubble-user" : "ask-ai-bubble-assistant"}>
+      {isUser && message.attachments && message.attachments.length > 0 && (
+        <div className="ask-ai-bubble-attachments">
+          {message.attachments.map((att) => (
+            <span key={att.id} className="ask-ai-attachment-chip">
+              📎 {att.filename}
+            </span>
+          ))}
+        </div>
+      )}
       {!isUser && isStreaming && !message.content ? (
         <div className="ask-ai-typing">
           <span className="ask-ai-typing-dot" />

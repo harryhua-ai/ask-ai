@@ -16,13 +16,16 @@ export function App({ config }: { config: WidgetConfig }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const { ask } = useSSE(config.apiUrl);
+  const { ask, uploadFiles } = useSSE(config.apiUrl);
 
-  const handleSend = useCallback(async (text: string) => {
+  const handleSend = useCallback(async (text: string, attachmentIds: string[]) => {
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
       type: "user",
       content: text,
+      attachments: attachmentIds.length
+        ? attachmentIds.map((id) => ({ id, filename: id.slice(0, 8), kind: "log", status: "ready" as const }))
+        : undefined,
     };
     setMessages((prev) => [...prev, userMsg]);
     setIsStreaming(true);
@@ -56,7 +59,7 @@ export function App({ config }: { config: WidgetConfig }) {
             ),
           );
         },
-      });
+      }, attachmentIds);
     } finally {
       setIsStreaming(false);
     }
@@ -91,6 +94,7 @@ export function App({ config }: { config: WidgetConfig }) {
           onSend={handleSend}
           onClose={() => setIsOpen(false)}
           onFeedback={handleFeedback}
+          onUpload={uploadFiles}
         />
       )}
     </>
