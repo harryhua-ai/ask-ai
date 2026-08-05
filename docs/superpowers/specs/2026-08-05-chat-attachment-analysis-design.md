@@ -129,6 +129,8 @@ ask-ai 当前是纯文本 RAG 系统（FastAPI + Weaviate + DeepSeek），聊天
 
 职责：同步校验 + 落盘 + 写 DB；日志文本提取异步（`BackgroundTasks`）；截图直接 `ready`（vision 推迟到问答）。
 
+**同步返回 status 语义**：日志返回 `status="processing"`（提取中，前端 chip 显示 spinner，提取完转 ready）；截图返回 `status="ready"`（原图已落盘即可发问，vision 推迟到 `/api/ask`）。
+
 ### 4.2 校验规则
 
 | 规则 | widget 匿名 | admin 登录 |
@@ -153,6 +155,7 @@ ask-ai 当前是纯文本 RAG 系统（FastAPI + Weaviate + DeepSeek），聊天
 - widget：`session_id` 前端生成（localStorage UUID），upload 与 ask 一致；ask 时校验 `attachment.owner_id == session_id`。
 - admin：JWT 拿 `user_id`，校验归属。
 - 越权引用 **403**。
+- **匿名模型局限**：widget 的 `session_id` 由前端生成、无服务端签发，攻击者可枚举 UUID 引用他人匿名附件。因此匿名附件的 `owner_id` 校验是**防误用**（不同浏览器/会话不串附件），**非防恶意越权**。如需更强保护，对 widget 附件额外加签名 token + 短时效（实施时评估，不阻塞 Phase 1a）。
 
 ### 4.5 异步预处理
 
@@ -164,7 +167,7 @@ ask-ai 当前是纯文本 RAG 系统（FastAPI + Weaviate + DeepSeek），聊天
 
 ## 5. RAG 编排：Vision + 上下文注入 + 超限 fallback
 
-### 5.1 `stream_answer` 改动（`backend/pipeline/rag.py:456`）
+### 5.1 `stream_answer` 改动（`backend/pipeline/rag.py:469`）
 
 签名新增 `attachments: list[Attachment] | None`，在 generation 前插入附件预处理：
 
@@ -174,10 +177,17 @@ for att in attachments:
         log_text += extract_or_retrieve(att, query)
     elif att.kind == "image":
         if not att.vision_done:
-            desc = await self._llm.stream(
-                build_vision_messages(att, query), task="vision")
+            # vision 走 LLMRouter.stream(task="vision"),为 async generator
+            # 需聚合为完整字符串后缓存(勿照抄 desc = await ...stream(...))
+            desc = "".join([c async for c in self._llm.stream(
+                build_vision_messages(att, query), task="vision")])
             att.extracted_text = desc; att.vision_done = True
-            await db.commit()  # 缓存复用
+            # session 传递（实施必做，否则缓存丢失）:
+            #   (1) RAGOrchestrator 当前 __init__ 只注入 searcher/reranker/llm,
+            #       无 session_factory —— 需新增注入,或 stream_answer 形参传入;
+            #   (2) att.extracted_text = desc 的 vision 缓存写入必须在该 session
+            #       作用域内 commit 才持久化(否则请求结束 session 关闭、下次同图重跑)。
+            #   具体由调用方 routes.py(路由层持有 session_factory)负责 commit。
         image_context += att.extracted_text
 
 messages = self._build_messages(
@@ -209,12 +219,13 @@ def extract_or_retrieve(att, query):
 
 - **阈值**：`LOG_FULL_THRESHOLD`（待查 v4-pro 实际上下文窗口后定具体数值；占位 300_000 tokens）。
 - **fallback 检索**：按行/固定大小分块（如 500 行/块），用现有 `BGEEmbedder` 嵌入，按 query 召回 top-K 块拼接。**不进 Weaviate**（临时数据，问答后丢弃）。
+- **注意**：`BGEEmbedder.embed`（`bge.py:86`）是**同步**方法，在 async `stream_answer` 内直接调用会阻塞事件循环——需用 `asyncio.to_thread` 包装，或预提取。
 - **拼接顺序**：日志在前、图片描述在后，放 user message 的 context 段。
 - **PII**：日志文本注入前复用 `mask_pii`（`backend/utils/pii.py:18`，`routes.py:80` 已用于 message）。
 
-### 5.4 `_build_messages` 改动（`backend/pipeline/rag.py:251`）
+### 5.4 `_build_messages` 改动（`backend/pipeline/rag.py:257`）
 
-`rag.py:282-300` 的 f-string 拼接新增两段：
+`rag.py:288-307` 的 `user_content` f-string 拼接新增两段（现有 f-string 起于 288，`messages.append` 在 307）：
 
 ```
 user_content = f"""
@@ -232,10 +243,13 @@ User question: {query}
 
 content 仍是 `str`（generation 模型吃纯文本；vision 已在前置步骤转描述）。**只有 vision 调用用多模态 content list，generation 仍是 str**，改动最小。
 
+**注入位置（实施注意）**：现有 `user_content` 是固定中文 Markdown 模板（`## 检索到的资料` / `## 问题` / `## 要求`，`rag.py:288-307`）。不要替换模板结构，而是在 `## 检索到的资料` 段后追加 `[User uploaded log]` / `[User uploaded screenshot analysis]` 子段，保留原 Markdown 结构与"## 要求"规则段。
+
 ### 5.5 LLM 抽象层改动
 
 核查结论（`backend/llm/`）：
-- `DeepseekProvider.stream`（`deepseek.py:84`）原样透传 `messages`，多模态 dict 无需改 HTTP 层。
+- `DeepseekProvider.stream`（`deepseek.py:74`）原样透传 `messages`，多模态 dict 无需改 HTTP 层。
+- `DeepseekProvider.generate`（`deepseek.py:47`）、构造（`:27`）、`@LLMRegistry.register("openai_compatible")`（`:19`）。
 - `LLMRouter` 按 task 字典查找（`registry.py:48-50`），新增 task 不需改代码。
 - 新增 `task="vision"` 落点：
   1. routing 表（YAML `config/llm_providers.yaml` 或 DB `llm_routing`，DB 优先）加 `vision` 条目。
@@ -255,7 +269,7 @@ content 仍是 `str`（generation 模型吃纯文本；vision 已在前置步骤
 | `+` 附件按钮 | 内联 SVG 细线 `plus`，圆形 32×32，`color:#888888`，hover 底色 `#f9f9f9` + 文字 `#333333` |
 | 发送按钮 | 圆形 32×32，`background:#000000`，白色 arrow-up SVG |
 | 附件 chip | `border-radius:8px`；`background:#f9f9f9`；border `#dbdbdb`；高 30px |
-| chip 失败态 | border `#dc2626` + 红 ✕，hover tooltip 显示原因 |
+| chip 失败态 | **新增色** border `#dc2626` + 红 ✕，hover tooltip 显示原因（现有 widget.css 无此色值，本次新引入用于错误态） |
 | chip 上传中 | 14px spinner，文字 `Uploading…` |
 | 图标 | 全部内联 SVG，不引入图标库 |
 | 文案 | 全英文（placeholder `Ask a question…`、提示、错误、aria-label） |
@@ -269,6 +283,7 @@ content 仍是 `str`（generation 模型吃纯文本；vision 已在前置步骤
   - `ask(message, history, attachments)`：请求体加 `attachments`。
   - `upload(files, sessionId)`：新方法，调 `/api/upload`。
 - **session_id**：前端首次生成 UUID 存 localStorage，upload 与 ask 都带。
+- **附件 chip 存储**：随消息存前端 state，**刷新即丢失**（与现有 widget 历史"纯内存、无会话恢复"行为一致；不额外做持久化回填）。
 - **样式**：追加到 `widget/src/styles/widget.css`（原生 CSS，无新框架），复用现有 CSS 变量。
 - **admin**：复用 widget `App`（`admin/src/components/LoginChat.tsx` 现状），自动获得。
 
@@ -347,6 +362,7 @@ content 仍是 `str`（generation 模型吃纯文本；vision 已在前置步骤
 - 清理任务
 - 越权校验、归属校验
 - `ChatMessage` 扩展 + MessageBubble 附件展示
+- **图片处理（1a）**：`accept` 暂限 `txt/log`（不开放图片选项），避免用户上传图片后无 vision 能处理；1b 接入 vision 后再开放图片 `accept`。
 
 ### Phase 1b（截图 vision，待 provider 确定）
 
@@ -364,3 +380,65 @@ content 仍是 `str`（generation 模型吃纯文本；vision 已在前置步骤
 1. `LOG_FULL_THRESHOLD` 具体数值——待查 `deepseek-v4-pro` 实际上下文窗口。
 2. vision provider 具体型号——用户待定，通过 admin API 热配。
 3. 文件 URL 服务方式细节（签名 URL vs 内网端点鉴权）——实施时定。
+
+<!-- 以上为文档正文,以下为审核修复记录 -->
+
+---
+
+## 🔍 Dual Review Log
+
+### Round 1 — 2026-08-05 · 单路两阶段（独立 sub-agent）
+
+| # | 级别 | 阶段 | 标准性质 | 位置 | 问题 | 修复动作 |
+|---|------|------|---------|------|------|---------|
+| 1 | HIGH | P1 | 事实核查 | §5.1 | stream_answer 行号 456 错（实际 469） | 改为 rag.py:469 |
+| 2 | HIGH | P1 | 事实核查 | §5.5 | deepseek.py:84 stream 错（实际 74） | 改为 74，补 generate:47/构造:27/register:19 |
+| 3 | HIGH | P1 | 事实核查 | §5.5 | deepseek.py:56 generate 错（实际 47） | 同上合并修复 |
+| 4 | MEDIUM | P1 | 事实核查 | §5.4 | _build_messages 行号 251 错（实际 257） | 改为 257 |
+| 5 | MEDIUM | P1 | 事实核查 | §5.4 | f-string 行号 282-300 错（实际 288-307） | 改为 288-307（核实：起 288，append 307） |
+| 6 | MEDIUM | P2 | 主观意见 | §5.1 | vision `stream` 是 async generator，伪代码 `desc = await ...stream()` 会卡 | 注明需聚合 `"".join([c async for c in ...])` |
+| 7 | MEDIUM | P2 | 主观意见 | §5.1 | `await db.commit()` 假设 orchestrator 持有 session，实际未注入 | 注明 session 传递路径需由路由层负责 |
+| 8 | LOW | P2 | 机械检测 | §6.1 | #dc2626 未标注为新增色，与"沿用现有配色"矛盾 | 标注为新增色（用于错误态） |
+| 9 | LOW | P2 | 主观意见 | §4.4 | widget 匿名 session_id 鉴权弱（可枚举） | 注明为"防误用非防恶意"，签名 token 留待评估 |
+
+**本轮修复**: 9 个（HIGH 3 / MEDIUM 4 / LOW 2） | **累计修复**: 9 个
+
+---
+
+### 汇总
+
+- **收敛轮次**: 1（单轮即清零 CRITICAL/HIGH；修复后无新增问题）
+- **累计修复**: 9 个（事实核查 5 / 机械检测 1 / 主观 3）
+- **审核模式**: 单路两阶段（独立 sub-agent）
+- **Phase 1 事实核查**: ✅ 通过（修复 5 处行号硬错后）
+- **Phase 2 质量判断**: ✅ 通过（2 处实施陷阱已注明，鉴权局限已标注）
+- **完成时间**: 2026-08-05
+
+### Round 2 — 2026-08-05 · 单路两阶段（修复验证 + 残留深挖）
+
+**修复验证**：Round 1 的 9 处修复全部 grep/read 核实通过（rag.py:469/257/288-307、deepseek.py:74/47/27/19、registry/budget/pii/routes 均准确），无新引入事实错误。✅
+
+| # | 级别 | 阶段 | 标准性质 | 位置 | 问题 | 修复动作 |
+|---|------|------|---------|------|------|---------|
+| 1 | MEDIUM | P2 | 主观意见 | §4.1 | status 语义未厘清（日志该 processing、截图该 ready） | §4.1 显式标注日志=processing/截图=ready |
+| 2 | MEDIUM | P2 | 主观意见 | §5.1 | session 注入路径不够具体（orchestrator 无 session_factory，缓存会丢） | §5.1 列明两个必要改动 + 路由层 commit |
+| 3 | LOW | P2 | 主观意见 | §5.3 | BGEEmbedder.embed 同步，在 async 内阻塞事件循环 | 注明需 asyncio.to_thread 包装 |
+| 4 | LOW | P2 | 主观意见 | §5.4 | 伪代码结构与真实中文 Markdown 模板不对应 | 注明在 ## 检索到的资料 段后追加子段，保留原模板 |
+| 5 | LOW | P2 | 主观意见 | §6.2 | 历史附件回填未声明（刷新丢失） | 注明随前端 state，刷新丢（与现有一致） |
+| 6 | LOW | P2 | 主观意见 | §10 | Phase 1a 与图片 accept 张力（1a 无 vision） | 1a accept 暂限 txt/log，1b 开放图片 |
+
+**本轮修复**: 6 个（MEDIUM 2 / LOW 4） | **累计修复**: 15 个
+
+---
+
+### 汇总（收敛）
+
+- **收敛轮次**: 2
+- **累计修复**: 15 个（事实核查 5 / 机械检测 1 / 主观 9）
+- **审核模式**: 单路两阶段（独立 sub-agent）
+- **Phase 1 事实核查**: ✅ 通过（Round 1 修 5 处行号硬错；Round 2 验证全过，无新事实错）
+- **Phase 2 质量判断**: ✅ 通过（Round 1 修 2 实施陷阱；Round 2 修 2 实施路径 + 4 边缘提示）
+- **残留**: 0 CRITICAL / 0 HIGH / 0 MEDIUM；仅余设计层可接受的待定项（§11）
+- **完成时间**: 2026-08-05
+
+**收敛依据**：两轮均无 CRITICAL/HIGH，第二轮新发现全部为"实施路径不够具体"的可补注说明（已修），无逻辑矛盾。文档核心设计（上传/问答解耦、fail-open、vision 缓存、fallback 检索、归属校验、Phase 拆分）逻辑自洽，所有行号事实对齐代码现实。
