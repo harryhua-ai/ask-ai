@@ -99,3 +99,23 @@ class DeepseekProvider:
     async def health_check(self) -> bool:
         """仅校验 API Key 是否已配置,不发起实际请求。"""
         return bool(self._api_key)
+
+    async def list_models(self) -> list[str]:
+        """调 GET {api_base}/models 拉取可用模型 id 列表。
+
+        供 admin "从 API 拉取"功能使用。调用方负责异常脱敏。
+
+        Returns:
+            模型 id 字符串列表(如 ["deepseek-v4-pro", "deepseek-v4-flash"])。
+
+        Raises:
+            httpx.HTTPStatusError: 非 2xx(如 key 无效 401)。
+            httpx.RequestError: 网络错误。
+        """
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"{self._api_base}/models",
+                headers={"Authorization": f"Bearer {self._api_key}"},
+            )
+            resp.raise_for_status()
+            return [m["id"] for m in resp.json()["data"]]
