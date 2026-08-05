@@ -56,8 +56,9 @@ jobs:
       - run: uv sync --frozen --extra dev  # 装 dev 依赖(pytest 等)跑测试
       # CI 跑单元测试 + 关键集成(pipeline/retrieval/connectors/db 基础)
       # 跳过依赖运行时 seed 数据的 admin 集成测试(需 DB 已 seed,CI 空 DB 没有)
-      # 以及需 ENCRYPTION_KEY 的 llm_providers
-      - run: uv run pytest tests/ -q --ignore=tests/api/admin --ignore=tests/scripts/test_sync_db.py
+      # 以及需 ENCRYPTION_KEY 的 llm_providers、需 HF 模型缓存的 embedder(CI 无 HF 访问)
+      # 以及需运行服务的 e2e(打 /api/ask)
+      - run: uv run pytest tests/ -q --ignore=tests/api/admin --ignore=tests/scripts/test_sync_db.py --ignore=tests/embedder --ignore=tests/e2e
 
   build-and-push:
     # 构建 GPU 镜像,push GHCR
