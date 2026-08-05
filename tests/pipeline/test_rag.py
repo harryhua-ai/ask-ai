@@ -258,6 +258,58 @@ async def test_rag_deduplicates_sources_by_url():
 
 
 @pytest.mark.unit
+async def test_rag_filters_internal_sources_from_public_list():
+    """filesystem(内部 support 案例)不进对外 sources 列表,但其他公开源保留。"""
+    public_sr = _make_sr(
+        text="public doc",
+        source_id="s1",
+        title="NE101 README",
+        url="https://github.com/camthink-ai/ne101/README.md",
+        source_type="github",
+    )
+    internal_sr = _make_sr(
+        text="internal case",
+        source_id="s2",
+        title="NE101-电源适配器电压咨询",
+        url="file:///home/ubuntu/knowledge-support/2026-04/NE101-电源.md",
+        source_type="filesystem",
+    )
+
+    rag, _, _, _ = _build_orchestrator(
+        searcher_results=[public_sr, internal_sr],
+        reranked_results=[public_sr, internal_sr],
+    )
+
+    result = await rag.answer("NE101 power supply", "widget")
+
+    # filesystem 被过滤,只留 github 公开源
+    assert len(result.sources) == 1
+    assert result.sources[0]["type"] == "github"
+    assert all(s["type"] != "filesystem" for s in result.sources)
+
+
+@pytest.mark.unit
+async def test_rag_filters_all_internal_when_no_public_source():
+    """全 filesystem 召回时,sources 为空(内部源不外露,不补足)。"""
+    internal_sr = _make_sr(
+        text="internal only",
+        source_id="s1",
+        title="内部案例",
+        url="file:///home/ubuntu/knowledge-support/case.md",
+        source_type="filesystem",
+    )
+
+    rag, _, _, _ = _build_orchestrator(
+        searcher_results=[internal_sr],
+        reranked_results=[internal_sr],
+    )
+
+    result = await rag.answer("query", "widget")
+
+    assert result.sources == []
+
+
+@pytest.mark.unit
 async def test_rag_stream_answer_emits_sources_then_tokens_then_complete():
     """stream_answer 正常序列:sources → token(s) → complete。"""
     sr = _make_sr(text="hello world", url="https://example.com/a")

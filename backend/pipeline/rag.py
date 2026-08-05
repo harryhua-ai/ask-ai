@@ -44,6 +44,12 @@ SOURCE_LABELS = {
     "filesystem": "[知识库]",
 }
 
+# 对外展示的 source 类型白名单(终端用户可见的 sources 列表)。
+# filesystem(support 内部案例)不对外展示(内部客户工单路径不外露),
+# 但仍参与检索与生成(LLM 用它当依据,只是不进 sources 返回)。
+# 官网(website)接入后自动纳入。代码仓库(local_git)属 GitHub 公开 repo,纳入。
+PUBLIC_SOURCE_TYPES: frozenset[str] = frozenset({"local_git", "github", "woocommerce", "website"})
+
 # Per-intent boost 桶配置:与主 hybrid 结果 RRF 融合,让 intent 相关 source 获得加权。
 # - support:故障案例/排查文档多 ingest 为 source_type="filesystem",提升其召回权重。
 # - product:产品功能/参数文档多分布于正文 chunk(paragraph/heading/list/table)。
@@ -51,7 +57,7 @@ SOURCE_LABELS = {
 INTENT_BOOST_FILTERS: dict[str, dict] = {
     "support": {"source_types": ["filesystem"]},
     "product": {"chunk_types": ["paragraph", "heading", "list", "table"]},
-    # "commercial": {"source_types": ["woocommerce"]},  # P1#5 启用
+    "commercial": {"source_types": ["woocommerce"]},
 }
 
 
@@ -302,20 +308,27 @@ class RAGOrchestrator:
         return messages
 
     def _extract_sources(self, results: list[SearchResult]) -> list[dict]:
-        """从重排结果中提取来源元数据,按归一化路径去重。
+        """从重排结果中提取来源元数据,按归一化路径去重 + 过滤内部源。
 
         同一文档的多个翻译版本(如 ``docs/`` 与 ``i18n/en/...``)只保留
         rerank 分数最高的那个,避免来源列表出现重复条目。
+
+        **对外源白名单**:只返回 ``PUBLIC_SOURCE_TYPES`` 中的类型(github/woocommerce/
+        官网等公开源)。filesystem(support 内部案例)虽参与检索与生成,但不作为
+        对外展示的 source(避免内部客户工单路径外泄)。过滤不补足——若某问题召回
+        的公开源不足 5 条,sources 列表就短,不强行用内部源填充。
 
         Args:
             results: 重排后的 SearchResult 列表(rerank 降序)。
 
         Returns:
-            去重后的来源字典列表,字段:``url`` / ``title`` / ``type`` / ``product``。
+            去重 + 过滤后的来源字典列表,字段:``url`` / ``title`` / ``type`` / ``product``。
         """
         seen: set[str] = set()
         sources: list[dict] = []
         for r in results:
+            if r.source_type not in PUBLIC_SOURCE_TYPES:
+                continue
             norm = _normalize_source_path(r.url)
             if norm in seen:
                 continue
