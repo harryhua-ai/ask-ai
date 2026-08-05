@@ -63,13 +63,16 @@ async def _setup_app_state():
                 },
             ))
         for task, chain in (
-            ("generation", ["deepseek"]),
-            ("query_decomposition", ["deepseek"]),
+            ("generation", [{"provider": "deepseek", "model": None}]),
+            ("query_decomposition", [{"provider": "deepseek", "model": None}]),
         ):
-            if not (await session.execute(
+            existing_route = (await session.execute(
                 select(LLMRouting).where(LLMRouting.task == task)
-            )).scalar_one_or_none():
+            )).scalar_one_or_none()
+            if existing_route is None:
                 session.add(LLMRouting(task=task, chain=chain))
+            else:
+                existing_route.chain = chain  # 强制刷新为对象格式
         await session.commit()
 
     yield
