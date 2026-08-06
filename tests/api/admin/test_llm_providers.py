@@ -421,15 +421,17 @@ async def test_delete_provider_and_404(auth_headers):
 
 
 async def test_list_routing_includes_migrated(auth_headers):
-    """GET /api/admin/llm-routing 列出路由,含 Task 9 迁移的 generation / query_decomposition。"""
+    """GET /api/admin/llm-routing 列出路由,含 generation / intent / query_rewrite。"""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/api/admin/llm-routing", headers=auth_headers)
     assert resp.status_code == 200
     data = resp.json()
     tasks = {r["task"] for r in data}
-    assert "generation" in tasks, "Task 9 generation 路由丢失"
-    assert "query_decomposition" in tasks, "Task 9 query_decomposition 路由丢失"
+    assert "generation" in tasks, "generation 路由丢失"
+    assert "intent" in tasks, "intent 路由丢失"
+    assert "query_rewrite" in tasks, "query_rewrite 路由丢失"
+    assert "query_decomposition" not in tasks, "历史命名错误路由应已被迁移脚本删除"
     # 迁移的 generation 链路必须指向 deepseek（对象格式 {provider, model}）
     gen_route = next(r for r in data if r["task"] == "generation")
     assert gen_route["chain"] == [{"provider": "deepseek", "model": None}]

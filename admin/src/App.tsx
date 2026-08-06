@@ -3,6 +3,7 @@ import { AuthProvider } from "@/hooks/useAuth";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Layout } from "@/components/Layout";
 import { LoginChat } from "@/components/LoginChat";
+import { Toaster } from "@/components/ui/toast";
 import Login from "@/pages/Login";
 import Users from "@/pages/Users";
 import DataSources from "@/pages/DataSources";
@@ -16,8 +17,8 @@ import Analytics from "@/pages/Analytics";
 export default function App() {
   return (
     <AuthProvider>
-      {/* 全局聊天窗口(FAB 右下角浮动):login 页 + 登录后所有页面都存在 */}
       <LoginChat />
+      <Toaster />
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route
