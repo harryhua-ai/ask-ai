@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Check, ChevronDown, ChevronUp, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 interface ChainChipProps {
   order: number;
@@ -17,75 +19,46 @@ interface ChainChipProps {
 export function ChainChip(props: ChainChipProps) {
   const [open, setOpen] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setConfirmingRemove(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
 
   return (
-    <div style={{ position: "relative", display: "inline-block" }}>
-      <span
+    <div ref={ref} className="relative inline-block">
+      <button
         onClick={() => setOpen(!open)}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 6,
-          border: "2px solid #000",
-          borderRadius: 999,
-          padding: "4px 9px",
-          fontSize: 12,
-          fontWeight: 600,
-          cursor: "pointer",
-          background: "#fff",
-        }}
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors",
+          open
+            ? "border-primary bg-primary text-primary-foreground"
+            : "border-border bg-card hover:bg-accent",
+        )}
       >
-        <span
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 14,
-            height: 14,
-            borderRadius: "50%",
-            background: "#000",
-            color: "#fff",
-            fontSize: 8,
-            fontWeight: 700,
-          }}
-        >
+        <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-primary text-primary-foreground text-[8px] font-bold">
           {props.order}
         </span>
         {props.providerId}
-        <span
-          style={{
-            fontSize: 10,
-            fontFamily: "ui-monospace,monospace",
-            color: "#666",
-            background: "#f4f4f5",
-            border: "1px solid #e4e4e7",
-            borderRadius: 4,
-            padding: "1px 5px",
-          }}
-        >
+        <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
           {props.model ?? "默认"}
         </span>
-      </span>
+      </button>
 
       {open && !confirmingRemove && (
-        <div
-          style={{
-            position: "absolute",
-            top: "100%",
-            left: 0,
-            zIndex: 10,
-            background: "#fff",
-            border: "1px solid #e4e4e7",
-            borderRadius: 10,
-            boxShadow: "0 8px 28px rgba(0,0,0,0.14)",
-            width: 220,
-            marginTop: 4,
-          }}
-        >
-          <div style={{ padding: "8px 12px", borderBottom: "1px solid #f4f4f5" }}>
-            <div style={{ fontSize: 10, color: "#999", textTransform: "uppercase" }}>切换 model</div>
+        <div className="absolute left-0 top-full z-10 mt-1 w-56 rounded-lg border bg-popover shadow-lg">
+          <div className="border-b px-3 py-2">
+            <span className="text-[10px] uppercase text-muted-foreground">切换 model</span>
           </div>
-          <div style={{ padding: "4px 0" }}>
+          <div className="py-1">
             {props.availableModels.map((m) => (
               <button
                 key={m}
@@ -93,22 +66,14 @@ export function ChainChip(props: ChainChipProps) {
                   props.onChangeModel(m);
                   setOpen(false);
                 }}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  width: "100%",
-                  padding: "4px 12px",
-                  border: "none",
-                  background: "transparent",
-                  cursor: "pointer",
-                  fontSize: 12,
-                  fontFamily: "ui-monospace,monospace",
-                  textAlign: "left",
-                }}
+                className={cn(
+                  "flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-xs transition-colors hover:bg-accent",
+                )}
               >
-                {props.model === m && <Check size={12} />}
-                <span style={{ visibility: props.model === m ? "visible" : "hidden" }} />
+                {props.model === m && <Check className="h-3 w-3 shrink-0" />}
+                <span className={props.model === m ? "" : "invisible"}>
+                  <Check className="h-3 w-3" />
+                </span>
                 {m}
               </button>
             ))}
@@ -117,69 +82,33 @@ export function ChainChip(props: ChainChipProps) {
                 props.onChangeModel(null);
                 setOpen(false);
               }}
-              style={{
-                display: "block",
-                width: "100%",
-                padding: "4px 12px",
-                border: "none",
-                background: "transparent",
-                cursor: "pointer",
-                fontSize: 12,
-                textAlign: "left",
-                color: "#666",
-              }}
+              className="block w-full px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent"
             >
               默认
             </button>
           </div>
-          <div
-            style={{
-              padding: "8px 12px",
-              borderTop: "1px solid #f4f4f5",
-              display: "flex",
-              justifyContent: "space-between",
-            }}
-          >
+          <div className="flex items-center justify-between border-t px-3 py-2">
             <button
               onClick={() => setConfirmingRemove(true)}
-              style={{
-                color: "#dc2626",
-                border: "none",
-                background: "transparent",
-                cursor: "pointer",
-                fontSize: 12,
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
-              }}
+              className="flex items-center gap-1 text-xs text-destructive transition-opacity hover:opacity-80"
             >
-              <X size={12} />
+              <X className="h-3 w-3" />
               移出链路
             </button>
-            <div style={{ display: "flex", gap: 4 }}>
+            <div className="flex gap-1">
               <button
                 disabled={!props.canMoveUp}
                 onClick={props.onMoveUp}
-                style={{
-                  border: "1px solid #e4e4e7",
-                  borderRadius: 5,
-                  background: "#fff",
-                  cursor: "pointer",
-                }}
+                className="rounded border p-0.5 transition-colors hover:bg-accent disabled:opacity-30"
               >
-                <ChevronUp size={12} />
+                <ChevronUp className="h-3 w-3" />
               </button>
               <button
                 disabled={!props.canMoveDown}
                 onClick={props.onMoveDown}
-                style={{
-                  border: "1px solid #e4e4e7",
-                  borderRadius: 5,
-                  background: "#fff",
-                  cursor: "pointer",
-                }}
+                className="rounded border p-0.5 transition-colors hover:bg-accent disabled:opacity-30"
               >
-                <ChevronDown size={12} />
+                <ChevronDown className="h-3 w-3" />
               </button>
             </div>
           </div>
@@ -187,54 +116,27 @@ export function ChainChip(props: ChainChipProps) {
       )}
 
       {open && confirmingRemove && (
-        <div
-          style={{
-            position: "absolute",
-            top: "100%",
-            left: 0,
-            zIndex: 10,
-            background: "#fff",
-            border: "1px solid #e4e4e7",
-            borderRadius: 10,
-            boxShadow: "0 8px 28px rgba(0,0,0,0.14)",
-            padding: 12,
-            marginTop: 4,
-            fontSize: 12,
-          }}
-        >
-          <div style={{ marginBottom: 8 }}>确定移除 {props.providerId}?</div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
+        <div className="absolute left-0 top-full z-10 mt-1 w-56 rounded-lg border bg-popover p-3 shadow-lg text-xs">
+          <div className="mb-2">确定移除 {props.providerId}?</div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => setConfirmingRemove(false)}
-              style={{
-                border: "1px solid #e4e4e7",
-                borderRadius: 6,
-                padding: "4px 10px",
-                background: "#fff",
-                cursor: "pointer",
-                fontSize: 12,
-              }}
             >
               取消
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
               onClick={() => {
                 props.onRemove();
                 setOpen(false);
                 setConfirmingRemove(false);
               }}
-              style={{
-                background: "#dc2626",
-                color: "#fff",
-                border: "none",
-                borderRadius: 6,
-                padding: "4px 10px",
-                cursor: "pointer",
-                fontSize: 12,
-              }}
             >
               移除
-            </button>
+            </Button>
           </div>
         </div>
       )}

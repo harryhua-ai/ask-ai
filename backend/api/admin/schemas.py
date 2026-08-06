@@ -54,6 +54,7 @@ class DataSourceOut(BaseModel):
     sync_interval: str
     created_at: str
     updated_at: str
+    last_sync: str | None = None
 
 
 class DataSourceCreate(BaseModel):

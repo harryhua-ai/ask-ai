@@ -44,6 +44,8 @@ export interface DataSource {
   sync_interval: string;
   created_at: string;
   updated_at: string;
+  /** 最近一次同步时间(由后端从 sync_log 聚合,无记录为 null)。 */
+  last_sync: string | null;
 }
 
 /** preview-dirs 返回的目录项(供目录选择器渲染)。 */

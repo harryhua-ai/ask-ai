@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { RefreshCw, SlidersHorizontal, Info } from "lucide-react";
+import { toast } from "sonner";
+import { RefreshCw, SlidersHorizontal, Info, Plus } from "lucide-react";
 import {
   useLLMProviders,
   useLLMRouting,
@@ -10,10 +11,14 @@ import {
   useToggleProvider,
   useCreateProvider,
 } from "@/hooks/useLLMProviders";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { ChainChip } from "@/components/ChainChip";
 import { ProviderCredentialDialog } from "@/components/ProviderCredentialDialog";
 import { ProviderEditDialog } from "@/components/ProviderEditDialog";
 import { AddToTaskDialog } from "@/components/AddToTaskDialog";
+import { cn } from "@/lib/utils";
 import type { LLMChainItem } from "@/types/api";
 
 const READONLY_CARDS = [
@@ -28,7 +33,6 @@ const CONFIGURABLE_TASKS = [
   { key: "generation", title: "生成", order: 4 },
 ];
 
-/** 取某 task 的 chain（统一为 LLMChainItem[] 对象格式）。 */
 function getChain(
   routing: { task: string; chain: LLMChainItem[] | string[] }[] | undefined,
   task: string,
@@ -56,20 +60,14 @@ export default function LLMProviders() {
 
   const editProvider = providers?.find((p) => p.id === editId);
 
-  // reload 反馈（项目无 toast 库，用内联状态条）
-  const [reloadMsg, setReloadMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
   useEffect(() => {
     if (reload.isSuccess && reload.data) {
-      setReloadMsg({
-        type: "success",
-        text: `已应用变更：${reload.data.providers_count} 个供应商生效`,
-      });
+      toast.success(`已应用变更：${reload.data.providers_count} 个供应商生效`);
     } else if (reload.isError) {
-      setReloadMsg({ type: "error", text: "重载失败，配置未生效（详见服务端日志）" });
+      toast.error("重载失败，配置未生效（详见服务端日志）");
     }
   }, [reload.isSuccess, reload.isError, reload.data]);
 
-  /** 更新某 task 的整条 chain。 */
   const replaceChain = (task: string, chain: LLMChainItem[]) => {
     updateRouting.mutate({ task, chain });
   };
@@ -113,114 +111,106 @@ export default function LLMProviders() {
   };
 
   return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 18 }}>
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 700 }}>模型配置</h1>
-          <p style={{ fontSize: 13, color: "#888" }}>
+          <h1 className="text-xl font-bold">模型配置</h1>
+          <p className="text-sm text-muted-foreground">
             按流水线环节配置各阶段模型 · 改完点应用变更生效
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => setCredOpen(true)} style={outlineBtnStyle}>
-            <SlidersHorizontal size={13} />
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => setCredOpen(true)}>
+            <SlidersHorizontal className="mr-1.5 h-3.5 w-3.5" />
             供应商凭证
-          </button>
-          <button
-            onClick={() => reload.mutate()}
-            disabled={reload.isPending}
-            style={primaryBtnStyle}
-          >
-            <RefreshCw size={13} />
+          </Button>
+          <Button size="sm" onClick={() => reload.mutate()} disabled={reload.isPending}>
+            <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", reload.isPending && "animate-spin")} />
             {reload.isPending ? "重载中..." : "应用变更"}
-          </button>
+          </Button>
         </div>
       </div>
 
-      {reloadMsg && (
-        <div
-          style={{
-            padding: "8px 12px",
-            borderRadius: 8,
-            fontSize: 13,
-            marginBottom: 12,
-            background: reloadMsg.type === "success" ? "#ecfdf5" : "#fef2f2",
-            color: reloadMsg.type === "success" ? "#059669" : "#dc2626",
-            border: `1px solid ${reloadMsg.type === "success" ? "#a7f3d0" : "#fecaca"}`,
-          }}
-        >
-          {reloadMsg.text}
-        </div>
-      )}
-
-      {/* 6 环节网格 */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        {/* 行1：只读 */}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {READONLY_CARDS.map((c) => {
           const m = localModels?.find((x) => x.role === c.key);
           return (
-            <div key={c.key} style={{ ...cardStyle, background: "#fafafa" }}>
-              <Info size={12} style={{ float: "right", color: "#bbb" }} />
-              <div style={{ fontWeight: 700, fontSize: 12 }}>
-                {c.title} <code style={codeStyle}>{c.id}</code>
-              </div>
-              <div style={{ fontFamily: "ui-monospace,monospace", fontSize: 13 }}>
-                {m?.model_name ?? "未加载"}
-              </div>
-              <div style={{ fontSize: 11, color: "#999" }}>{m?.device}</div>
-            </div>
+            <Card key={c.key} className="bg-muted/50">
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold uppercase text-muted-foreground">{c.title}</span>
+                    <Badge variant="secondary" className="font-mono text-[10px]">{c.id}</Badge>
+                  </div>
+                  <Info className="h-3 w-3 text-muted-foreground/50" />
+                </div>
+                <div className="mt-1 font-mono text-sm">{m?.model_name ?? "未加载"}</div>
+                <div className="text-xs text-muted-foreground">{m?.device}</div>
+              </CardContent>
+            </Card>
           );
         })}
 
-        {/* 行2-3：可配任务 */}
         {CONFIGURABLE_TASKS.map((t) => {
           const chain = getChain(routing, t.key);
           return (
-            <div key={t.key} style={cardStyle}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <div style={{ fontWeight: 700, fontSize: 13 }}>
-                  {t.order && <span style={numStyle}>{t.order}</span>}
-                  {t.title} <code style={codeStyle}>{t.key}</code>
+            <Card key={t.key}>
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm font-bold">
+                    <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[9px] text-primary-foreground">
+                      {t.order}
+                    </span>
+                    {t.title}
+                    <Badge variant="secondary" className="font-mono text-[10px]">{t.key}</Badge>
+                  </div>
+                  {t.needsRestart && (
+                    <Badge variant="outline" className="text-[10px] text-amber-700">首启需重启</Badge>
+                  )}
                 </div>
-                {t.needsRestart && <span style={warnBadgeStyle}>首启需重启</span>}
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                {chain.map((item, i) => {
-                  const prov = providers?.find((p) => p.id === item.provider);
-                  const avail =
-                    (prov &&
-                      ((prov.config as Record<string, unknown>).available_models as string[])) ??
-                    [];
-                  return (
-                    <ChainChip
-                      key={item.provider + i}
-                      order={i + 1}
-                      providerId={item.provider}
-                      model={item.model}
-                      availableModels={avail}
-                      canMoveUp={i > 0}
-                      canMoveDown={i < chain.length - 1}
-                      onChangeModel={(m) => handleChangeModel(t.key, i, m)}
-                      onRemove={() => handleRemoveFromTask(t.key, i)}
-                      onMoveUp={() => handleMove(t.key, i, i - 1)}
-                      onMoveDown={() => handleMove(t.key, i, i + 1)}
-                    />
-                  );
-                })}
-                <button onClick={() => setAddTask(t.key)} style={addBtnStyle}>
-                  + 添加
-                </button>
-              </div>
-            </div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {chain.map((item, i) => {
+                    const prov = providers?.find((p) => p.id === item.provider);
+                    const avail =
+                      (prov &&
+                        ((prov.config as Record<string, unknown>).available_models as string[])) ??
+                      [];
+                    return (
+                      <ChainChip
+                        key={item.provider + i}
+                        order={i + 1}
+                        providerId={item.provider}
+                        model={item.model}
+                        availableModels={avail}
+                        canMoveUp={i > 0}
+                        canMoveDown={i < chain.length - 1}
+                        onChangeModel={(m) => handleChangeModel(t.key, i, m)}
+                        onRemove={() => handleRemoveFromTask(t.key, i)}
+                        onMoveUp={() => handleMove(t.key, i, i - 1)}
+                        onMoveDown={() => handleMove(t.key, i, i + 1)}
+                      />
+                    );
+                  })}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1 rounded-full border-dashed text-xs text-muted-foreground"
+                    onClick={() => setAddTask(t.key)}
+                  >
+                    <Plus className="h-3 w-3" />
+                    添加
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           );
         })}
       </div>
 
-      <p style={{ textAlign: "center", fontSize: 11, color: "#999", marginTop: 12 }}>
+      <p className="text-center text-xs text-muted-foreground">
         意图分类(1) → 查询处理(2) → 向量+排序检索 → 剪枝(3) → 生成(4)
       </p>
 
-      {/* 弹窗 */}
       {credOpen && (
         <ProviderCredentialDialog
           providers={providers ?? []}
@@ -231,7 +221,6 @@ export default function LLMProviders() {
           onDelete={() => {}}
           onToggle={(id, enabled) => toggleProvider.mutate({ id, enabled })}
           onAdd={() => {
-            // 新增供应商：跳到凭证弹窗内的简易创建（沿用 createProvider）
             const id = window.prompt("新供应商 ID");
             if (id) {
               createProvider.mutate({
@@ -262,73 +251,3 @@ export default function LLMProviders() {
     </div>
   );
 }
-
-const cardStyle: React.CSSProperties = {
-  border: "1px solid #dbdbdb",
-  borderRadius: 11,
-  padding: "12px 15px",
-};
-const codeStyle: React.CSSProperties = {
-  background: "#f4f4f5",
-  borderRadius: 4,
-  padding: "0 5px",
-  fontSize: 10,
-  fontFamily: "ui-monospace,monospace",
-};
-const numStyle: React.CSSProperties = {
-  display: "inline-flex",
-  width: 16,
-  height: 16,
-  borderRadius: "50%",
-  background: "#000",
-  color: "#fff",
-  fontSize: 9,
-  alignItems: "center",
-  justifyContent: "center",
-  marginRight: 6,
-};
-const warnBadgeStyle: React.CSSProperties = {
-  fontSize: 10,
-  color: "#b45309",
-  background: "#fef3c7",
-  border: "1px solid #fde68a",
-  borderRadius: 4,
-  padding: "1px 6px",
-};
-const primaryBtnStyle: React.CSSProperties = {
-  background: "#000",
-  color: "#fff",
-  border: "none",
-  borderRadius: 10,
-  padding: "8px 14px",
-  fontSize: 13,
-  fontWeight: 600,
-  cursor: "pointer",
-  display: "flex",
-  alignItems: "center",
-  gap: 7,
-};
-const outlineBtnStyle: React.CSSProperties = {
-  background: "#fff",
-  color: "#333",
-  border: "1px solid #dbdbdb",
-  borderRadius: 10,
-  padding: "8px 13px",
-  fontSize: 13,
-  cursor: "pointer",
-  display: "flex",
-  alignItems: "center",
-  gap: 6,
-};
-const addBtnStyle: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 4,
-  border: "1px dashed #ccc",
-  borderRadius: 999,
-  padding: "4px 9px",
-  fontSize: 11,
-  color: "#888",
-  cursor: "pointer",
-  background: "#fff",
-};
