@@ -7,7 +7,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from backend.auth.jwt import create_access_token, hash_password
-from backend.db.models import DataSource, User
+from backend.db.models import DataSource, SyncLog, User
 from backend.main import app
 
 # 所有 admin API 测试共享 session 级事件循环（与 conftest 的 session fixture 对齐）
@@ -34,6 +34,7 @@ async def auth_headers():
     # 清理：仅删除本测试创建的数据源和用户，避免破坏 Task 9 迁移的共享 dev 数据
     async with factory() as session:
         await session.execute(DataSource.__table__.delete().where(DataSource.id == "test-source"))
+        await session.execute(SyncLog.__table__.delete().where(SyncLog.source_id == "test-source"))
         await session.execute(User.__table__.delete().where(User.id == user_id))
         await session.commit()
 
@@ -55,6 +56,42 @@ async def test_create_and_list_data_source(auth_headers):
         resp = await client.get("/api/admin/data-sources", headers=auth_headers)
         assert resp.status_code == 200
         assert any(s["id"] == "test-source" for s in resp.json())
+
+
+async def test_list_data_sources_includes_latest_sync(auth_headers):
+    """list 端点聚合 sync_log 最新一条,返回 last_sync(同步时间并入数据源页面)。"""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/admin/data-sources",
+            json={
+                "id": "test-source",
+                "type": "github",
+                "product": "test",
+                "config": {"repo_url": "https://github.com/camthink-ai/test.git"},
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+
+    factory = app.state.session_factory
+    async with factory() as session:
+        session.add(
+            SyncLog(
+                source_id="test-source",
+                source_type="github",
+                status="success",
+                triggered_by="cron",
+            )
+        )
+        await session.commit()
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/admin/data-sources", headers=auth_headers)
+        assert resp.status_code == 200
+        entry = next(s for s in resp.json() if s["id"] == "test-source")
+        assert entry["last_sync"] is not None, "最新同步时间应从 sync_log 聚合返回"
+        assert "T" in entry["last_sync"] or " " in entry["last_sync"]
 
 
 async def test_preview_dirs_lists_subdirs(tmp_path, auth_headers):

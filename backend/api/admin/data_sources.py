@@ -8,13 +8,13 @@ from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.api.admin.schemas import DataSourceCreate, DataSourceOut, DataSourceUpdate
 from backend.auth.dependencies import CurrentUser, require_role
 from backend.connectors.db_adapter import to_source_config
-from backend.db.models import DataSource
+from backend.db.models import DataSource, SyncLog
 
 router = APIRouter(prefix="/data-sources", tags=["数据源管理"])
 EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
@@ -57,7 +57,7 @@ def _count_listable_subdirs(path: Path) -> int:
         return 0
 
 
-def _to_out(ds: DataSource) -> DataSourceOut:
+def _to_out(ds: DataSource, last_sync: str | None = None) -> DataSourceOut:
     """将 DataSource ORM 对象转换为 DataSourceOut schema。"""
     return DataSourceOut(
         id=ds.id,
@@ -68,6 +68,7 @@ def _to_out(ds: DataSource) -> DataSourceOut:
         sync_interval=ds.sync_interval,
         created_at=ds.created_at.isoformat() if ds.created_at else "",
         updated_at=ds.updated_at.isoformat() if ds.updated_at else "",
+        last_sync=last_sync,
     )
 
 
@@ -76,12 +77,31 @@ async def list_data_sources(
     _: Annotated[CurrentUser, Depends(require_role("admin", "editor", "viewer"))],
     request: Request,
 ) -> list[DataSourceOut]:
-    """列出全部数据源（viewer+ 可访问）。"""
+    """列出全部数据源（viewer+ 可访问），并聚合每个源最新一次同步时间。"""
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
         result = await session.execute(select(DataSource).order_by(DataSource.id))
         sources = result.scalars().all()
-    return [_to_out(s) for s in sources]
+        if not sources:
+            return []
+        # 每个 source 的最新一次同步(无论成功/失败/部分成功,都是"最近一次尝试")
+        rows = (
+            await session.execute(
+                select(SyncLog.source_id, func.max(SyncLog.started_at))
+                .where(SyncLog.source_id.in_([s.id for s in sources]))
+                .group_by(SyncLog.source_id)
+            )
+        ).all()
+        latest_by_source = {row[0]: row[1] for row in rows}
+    return [
+        _to_out(
+            s,
+            last_sync=latest_by_source[s.id].isoformat()
+            if latest_by_source.get(s.id) is not None
+            else None,
+        )
+        for s in sources
+    ]
 
 
 @router.post("", response_model=DataSourceOut, status_code=201)
