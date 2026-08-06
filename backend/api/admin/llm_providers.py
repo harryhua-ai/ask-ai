@@ -28,6 +28,7 @@ from backend.api.admin.schemas import (
     LLMProviderUpdate,
     LLMRoutingOut,
     LLMRoutingUpdate,
+    validate_llm_api_base,
 )
 from backend.auth.crypto import decrypt_api_key, encrypt_api_key
 from backend.auth.dependencies import CurrentUser, require_role
@@ -47,20 +48,25 @@ async def list_local_models(_: ViewerDep, request: Request) -> list[dict]:
     models: list[dict] = []
     embedder = getattr(request.app.state, "embedder", None)
     if embedder is not None:
-        models.append({
-            "role": "embedding",
-            "model_name": getattr(embedder, "_model_name", "BAAI/bge-m3"),
-            "device": getattr(embedder, "_device", "unknown"),
-            "dimension": getattr(embedder, "_dimension", 1024),
-        })
+        models.append(
+            {
+                "role": "embedding",
+                "model_name": getattr(embedder, "_model_name", "BAAI/bge-m3"),
+                "device": getattr(embedder, "_device", "unknown"),
+                "dimension": getattr(embedder, "_dimension", 1024),
+            }
+        )
     reranker = getattr(request.app.state, "reranker", None)
     if reranker is not None:
-        models.append({
-            "role": "reranking",
-            "model_name": getattr(reranker, "_model_name", "BAAI/bge-reranker-v2-m3"),
-            "device": getattr(reranker, "_device", "unknown"),
-        })
+        models.append(
+            {
+                "role": "reranking",
+                "model_name": getattr(reranker, "_model_name", "BAAI/bge-reranker-v2-m3"),
+                "device": getattr(reranker, "_device", "unknown"),
+            }
+        )
     return models
+
 
 # 所有需要在响应中脱敏、在写入时加密的敏感字段名
 SENSITIVE_KEYS = {"api_key", "secret", "token", "password"}
@@ -115,7 +121,7 @@ async def create_provider(req: LLMProviderCreate, _: EditorDep, request: Request
     响应中返回脱敏后的 ``"********"`` 占位符。
     """
     settings = request.app.state.settings
-    encrypted_config = _encrypt_sensitive(req.config, settings.encryption_key)
+    encrypted_config = _encrypt_sensitive(req.config.model_dump(), settings.encryption_key)
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
         existing = await session.execute(
@@ -129,7 +135,7 @@ async def create_provider(req: LLMProviderCreate, _: EditorDep, request: Request
         session.add(provider)
         await session.commit()
     return LLMProviderOut(
-        id=req.id, type=req.type, enabled=req.enabled, config=_mask_config(req.config)
+        id=req.id, type=req.type, enabled=req.enabled, config=_mask_config(req.config.model_dump())
     )
 
 
@@ -162,11 +168,14 @@ async def update_provider(
         if req.config:
             # 仅加密新传入的敏感字段;"********" 占位符会被 _encrypt_sensitive 原样保留,
             # 随后在此处被剔除,避免用占位符覆盖 DB 中的真实密文。
-            new_encrypted = _encrypt_sensitive(req.config, settings.encryption_key)
+            # exclude_unset=True：只取客户端显式传入的字段，避免默认值覆盖 DB 原值（部分更新语义）
+            new_encrypted = _encrypt_sensitive(
+                req.config.model_dump(exclude_unset=True), settings.encryption_key
+            )
             new_encrypted = {
                 k: v
                 for k, v in new_encrypted.items()
-                if not (k in SENSITIVE_KEYS and v == "********")
+                if not (k in SENSITIVE_KEYS and (v == "********" or v == ""))
             }
             provider.config = {**provider.config, **new_encrypted}
         await session.commit()
@@ -216,10 +225,12 @@ async def update_routing(
     async with factory() as session:
         route = await session.execute(select(LLMRouting).where(LLMRouting.task == task))
         route = route.scalar_one_or_none()
+        # Pydantic 对象转 dict 才能写 JSONB
+        chain = [item.model_dump() for item in req.chain]
         if route:
-            route.chain = req.chain
+            route.chain = chain
         else:
-            session.add(LLMRouting(task=task, chain=req.chain))
+            session.add(LLMRouting(task=task, chain=chain))
         await session.commit()
     return {"status": "ok"}
 
@@ -247,7 +258,19 @@ async def test_provider(provider_id: str, _: EditorDep, request: Request) -> Con
         try:
             config["api_key"] = decrypt_api_key(config["api_key"], settings.encryption_key)
         except ValueError:
-            pass  # 可能是明文(旧数据),保持原样继续尝试
+            logger.warning("api_key 解密失败，按明文兼容继续: provider_id=%s", provider_id)
+
+    # 与 fetch-models 相同：连通性测试也会携带解密后的 key，请求前必须防 SSRF
+    try:
+        validate_llm_api_base(config.get("api_base", ""))
+    except ValueError:
+        logger.warning("test_provider api_base 校验失败: provider_id=%s", provider_id)
+        return ConnectivityTestResult(
+            provider_id=provider_id,
+            success=False,
+            latency_ms=None,
+            error="api_base 校验失败",
+        )
 
     try:
         start = time.monotonic()
@@ -265,7 +288,7 @@ async def test_provider(provider_id: str, _: EditorDep, request: Request) -> Con
         return ConnectivityTestResult(
             provider_id=provider_id, success=ok, latency_ms=latency, error=None
         )
-    except Exception as exc:  # 连通性测试需兜底所有异常并返回结构化结果
+    except Exception:  # 连通性测试需兜底所有异常并返回结构化结果
         # 完整异常仅记录到服务端日志(可能含 URL / auth header,不可外泄)
         logger.exception("LLM 连通性测试失败: provider_id=%s", provider_id)
         # 返回脱敏的通用错误消息 + 异常类型名,绝不外泄 str(exc)
@@ -273,5 +296,84 @@ async def test_provider(provider_id: str, _: EditorDep, request: Request) -> Con
             provider_id=provider_id,
             success=False,
             latency_ms=None,
-            error=f"LLM 连通性测试失败({type(exc).__name__})",
+            error="LLM 连通性测试失败（详见服务端日志）",
         )
+
+
+@router.post("/llm-providers/reload")
+async def reload_providers(_: EditorDep, request: Request) -> dict:
+    """从 DB 重读供应商/路由，调 app.state.llm.reconfigure 热重载。
+
+    DB 全空时返回 400（避免清空线上 router）。
+    单个 provider 构造失败记 skipped，不影响整体 reload。
+    """
+    # 函数级 import 避免循环依赖（main.py 已 import 本模块）
+    from backend.main import _build_llm_state
+
+    settings = request.app.state.settings
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+
+    providers, routing, skipped, _ = await _build_llm_state(settings, factory)
+    if not providers:
+        raise HTTPException(
+            status_code=400,
+            detail="无可启用的供应商，reload 已取消（保留现有配置）",
+        )
+
+    request.app.state.llm.reconfigure(providers, routing)
+    logger.info("LLM 已热重载（%d 个供应商，跳过 %d 个）", len(providers), len(skipped))
+    return {
+        "status": "ok",
+        "providers_count": len(providers),
+        "routing": routing,
+        "skipped": skipped,
+    }
+
+
+@router.post("/llm-providers/{provider_id}/fetch-models")
+async def fetch_models(provider_id: str, _: EditorDep, request: Request) -> dict:
+    """调供应商 GET /models 拉取可用模型列表。
+
+    失败返回脱敏错误（不泄露 key/内部异常，同 test 端点策略）。
+    """
+    settings = request.app.state.settings
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        provider = await session.execute(
+            select(LLMProviderModel).where(LLMProviderModel.id == provider_id)
+        )
+        provider = provider.scalar_one_or_none()
+        if provider is None:
+            raise HTTPException(status_code=404, detail="供应商不存在")
+
+    config = dict(provider.config)
+    if config.get("api_key"):
+        try:
+            config["api_key"] = decrypt_api_key(config["api_key"], settings.encryption_key)
+        except ValueError:
+            logger.warning("api_key 解密失败，按明文兼容继续: provider_id=%s", provider_id)
+
+    # revalidate api_base：防绕过 schema 直接改库后的 SSRF / 凭证外泄
+    try:
+        validate_llm_api_base(config.get("api_base", ""))
+    except ValueError:
+        logger.warning("fetch_models api_base 校验失败: provider_id=%s", provider_id)
+        return {"provider_id": provider_id, "models": [], "error": "api_base 校验失败"}
+
+    try:
+        llm = LLMRegistry.create(
+            provider.type,
+            provider_id=provider.id,
+            api_base=config.get("api_base", ""),
+            api_key=config.get("api_key", ""),
+            model=config.get("model", ""),
+        )
+        models = await llm.list_models()
+        return {"provider_id": provider_id, "models": models, "error": None}
+    except Exception:
+        logger.exception("拉取模型失败: provider_id=%s", provider_id)
+        return {
+            "provider_id": provider_id,
+            "models": [],
+            "error": "拉取模型失败（详见服务端日志）",
+        }

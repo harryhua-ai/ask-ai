@@ -1,217 +1,334 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { RefreshCw, SlidersHorizontal, Info } from "lucide-react";
 import {
   useLLMProviders,
   useLLMRouting,
-  useCreateProvider,
-  useToggleProvider,
-  useTestProvider,
-  useUpdateRouting,
   useLocalModels,
-  type ConnectivityTestResult,
+  useReloadProviders,
+  useUpdateProvider,
+  useUpdateRouting,
+  useToggleProvider,
+  useCreateProvider,
 } from "@/hooks/useLLMProviders";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
+import { ChainChip } from "@/components/ChainChip";
+import { ProviderCredentialDialog } from "@/components/ProviderCredentialDialog";
+import { ProviderEditDialog } from "@/components/ProviderEditDialog";
+import { AddToTaskDialog } from "@/components/AddToTaskDialog";
+import type { LLMChainItem } from "@/types/api";
+
+const READONLY_CARDS = [
+  { key: "embedding", title: "向量模型", id: "embedding" },
+  { key: "reranking", title: "排序模型", id: "rerank" },
+];
+
+const CONFIGURABLE_TASKS = [
+  { key: "intent", title: "意图分类", order: 1 },
+  { key: "query_rewrite", title: "查询处理", order: 2 },
+  { key: "pruning", title: "剪枝", order: 3, needsRestart: true },
+  { key: "generation", title: "生成", order: 4 },
+];
+
+/** 取某 task 的 chain（统一为 LLMChainItem[] 对象格式）。 */
+function getChain(
+  routing: { task: string; chain: LLMChainItem[] | string[] }[] | undefined,
+  task: string,
+): LLMChainItem[] {
+  const r = routing?.find((x) => x.task === task);
+  if (!r) return [];
+  return r.chain.map((item) =>
+    typeof item === "string" ? { provider: item, model: null } : item,
+  );
+}
 
 export default function LLMProviders() {
-  const { data: providers, isLoading } = useLLMProviders();
+  const { data: providers } = useLLMProviders();
   const { data: routing } = useLLMRouting();
   const { data: localModels } = useLocalModels();
-  const createProvider = useCreateProvider();
-  const toggleProvider = useToggleProvider();
-  const testProvider = useTestProvider();
+  const reload = useReloadProviders();
+  const updateProvider = useUpdateProvider();
   const updateRouting = useUpdateRouting();
+  const toggleProvider = useToggleProvider();
+  const createProvider = useCreateProvider();
 
-  const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({
-    id: "",
-    type: "openai_compatible",
-    config_text:
-      '{"api_base":"","api_key":"","model":"","max_tokens":4096,"temperature":0.3}',
-  });
-  const [testResults, setTestResults] = useState<
-    Record<string, ConnectivityTestResult>
-  >({});
-  /** 正在进行连通性测试的供应商 ID,用于逐行显示 loading 状态。 */
-  const [testingId, setTestingId] = useState<string | null>(null);
+  const [credOpen, setCredOpen] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [addTask, setAddTask] = useState<string | null>(null);
 
-  const handleTest = async (id: string) => {
-    setTestingId(id);
-    try {
-      const result = await testProvider.mutateAsync(id);
-      setTestResults((prev) => ({ ...prev, [id]: result }));
-    } finally {
-      setTestingId(null);
+  const editProvider = providers?.find((p) => p.id === editId);
+
+  // reload 反馈（项目无 toast 库，用内联状态条）
+  const [reloadMsg, setReloadMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  useEffect(() => {
+    if (reload.isSuccess && reload.data) {
+      setReloadMsg({
+        type: "success",
+        text: `已应用变更：${reload.data.providers_count} 个供应商生效`,
+      });
+    } else if (reload.isError) {
+      setReloadMsg({ type: "error", text: "重载失败，配置未生效（详见服务端日志）" });
     }
+  }, [reload.isSuccess, reload.isError, reload.data]);
+
+  /** 更新某 task 的整条 chain。 */
+  const replaceChain = (task: string, chain: LLMChainItem[]) => {
+    updateRouting.mutate({ task, chain });
+  };
+
+  const handleRemoveFromTask = (task: string, index: number) => {
+    const chain = getChain(routing, task);
+    replaceChain(task, chain.filter((_, j) => j !== index));
+  };
+
+  const handleChangeModel = (task: string, index: number, model: string | null) => {
+    const chain = getChain(routing, task);
+    replaceChain(
+      task,
+      chain.map((it, j) => (j === index ? { ...it, model } : it)),
+    );
+  };
+
+  const handleMove = (task: string, from: number, to: number) => {
+    const chain = getChain(routing, task);
+    if (to < 0 || to >= chain.length) return;
+    const next = [...chain];
+    [next[from], next[to]] = [next[to], next[from]];
+    replaceChain(task, next);
+  };
+
+  const handleAddToTask = (providerId: string, model: string | null) => {
+    if (!addTask) return;
+    const chain = getChain(routing, addTask);
+    replaceChain(addTask, [...chain, { provider: providerId, model }]);
+    setAddTask(null);
+  };
+
+  const handleSaveProvider = (patch: {
+    type?: string;
+    enabled?: boolean;
+    config: Record<string, unknown>;
+  }) => {
+    if (!editProvider) return;
+    updateProvider.mutate({ id: editProvider.id, ...patch });
+    setEditId(null);
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">LLM 供应商管理</h1>
-        <Button onClick={() => setShowCreate(!showCreate)}>新增供应商</Button>
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 18 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 700 }}>模型配置</h1>
+          <p style={{ fontSize: 13, color: "#888" }}>
+            按流水线环节配置各阶段模型 · 改完点应用变更生效
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setCredOpen(true)} style={outlineBtnStyle}>
+            <SlidersHorizontal size={13} />
+            供应商凭证
+          </button>
+          <button
+            onClick={() => reload.mutate()}
+            disabled={reload.isPending}
+            style={primaryBtnStyle}
+          >
+            <RefreshCw size={13} />
+            {reload.isPending ? "重载中..." : "应用变更"}
+          </button>
+        </div>
       </div>
 
-      {/* 本地模型 */}
-      {localModels && localModels.length > 0 && (
-        <div className="rounded-lg border bg-card p-4">
-          <h2 className="mb-3 text-lg font-semibold">本地模型</h2>
-          <div className="space-y-2">
-            {localModels.map((m) => (
-              <div
-                key={m.role}
-                className="flex items-center gap-3 rounded-md border bg-muted/30 px-3 py-2"
-              >
-                <Badge variant="secondary">{m.role}</Badge>
-                <span className="font-mono text-sm">{m.model_name}</span>
-                <span className="text-sm text-muted-foreground">
-                  device: {m.device}
-                </span>
-                {m.dimension && (
-                  <span className="text-sm text-muted-foreground">
-                    dim: {m.dimension}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
+      {reloadMsg && (
+        <div
+          style={{
+            padding: "8px 12px",
+            borderRadius: 8,
+            fontSize: 13,
+            marginBottom: 12,
+            background: reloadMsg.type === "success" ? "#ecfdf5" : "#fef2f2",
+            color: reloadMsg.type === "success" ? "#059669" : "#dc2626",
+            border: `1px solid ${reloadMsg.type === "success" ? "#a7f3d0" : "#fecaca"}`,
+          }}
+        >
+          {reloadMsg.text}
         </div>
       )}
 
-      {/* 路由配置 */}
-      <div className="rounded-lg border bg-card p-4">
-        <h2 className="mb-3 text-lg font-semibold">路由配置</h2>
-        {routing?.map((r) => (
-          <div key={r.task} className="mb-2 flex items-center gap-2">
-            <Badge variant="outline" className="min-w-[160px]">
-              {r.task}
-            </Badge>
-            <Input
-              className="flex-1"
-              defaultValue={r.chain.join(", ")}
-              onBlur={(e) => {
-                const chain = e.target.value
-                  .split(",")
-                  .map((s) => s.trim())
-                  .filter(Boolean);
-                if (chain.join(",") !== r.chain.join(",")) {
-                  updateRouting.mutate({ task: r.task, chain });
-                }
-              }}
-            />
-          </div>
-        ))}
-      </div>
-
-      {/* 新增供应商表单 */}
-      {showCreate && (
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            await createProvider.mutateAsync({
-              id: form.id,
-              type: form.type,
-              config: JSON.parse(form.config_text),
-            });
-            setShowCreate(false);
-          }}
-          className="space-y-3 rounded-lg border bg-card p-4"
-        >
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>ID</Label>
-              <Input
-                value={form.id}
-                onChange={(e) => setForm({ ...form, id: e.target.value })}
-                required
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>类型</Label>
-              <select
-                className="h-10 w-full rounded-md border px-3"
-                value={form.type}
-                onChange={(e) => setForm({ ...form, type: e.target.value })}
-              >
-                <option value="openai_compatible">openai_compatible</option>
-                <option value="anthropic">anthropic</option>
-                <option value="openai">openai</option>
-              </select>
-            </div>
-          </div>
-          <div className="space-y-1">
-            <Label>配置 (JSON,含 api_key)</Label>
-            <Textarea
-              className="font-mono text-sm"
-              rows={5}
-              value={form.config_text}
-              onChange={(e) =>
-                setForm({ ...form, config_text: e.target.value })
-              }
-            />
-          </div>
-          <Button type="submit" disabled={createProvider.isPending}>
-            创建
-          </Button>
-        </form>
-      )}
-
-      {/* 供应商列表 */}
-      <div className="space-y-2">
-        {isLoading ? (
-          <div className="text-center">加载中...</div>
-        ) : (
-          providers?.map((p) => {
-            const result = testResults[p.id];
-            const isTestingThis = testingId === p.id;
-            return (
-              <div
-                key={p.id}
-                className="flex items-center justify-between rounded-lg border bg-card p-4"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="font-mono font-medium">{p.id}</span>
-                  <Badge variant="outline">{p.type}</Badge>
-                  <Badge
-                    variant={p.enabled ? "success" : "destructive"}
-                    className="cursor-pointer"
-                    onClick={() =>
-                      toggleProvider.mutate({ id: p.id, enabled: !p.enabled })
-                    }
-                  >
-                    {p.enabled ? "启用" : "禁用"}
-                  </Badge>
-                  <span className="text-sm text-muted-foreground">
-                    model: {String(p.config.model || "-")}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  {result && (
-                    <Badge
-                      variant={result.success ? "success" : "destructive"}
-                      title={result.error || undefined}
-                    >
-                      {result.success
-                        ? `${result.latency_ms ?? "-"}ms`
-                        : "失败"}
-                    </Badge>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={isTestingThis}
-                    onClick={() => handleTest(p.id)}
-                  >
-                    {isTestingThis ? "测试中..." : "测试连通性"}
-                  </Button>
-                </div>
+      {/* 6 环节网格 */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        {/* 行1：只读 */}
+        {READONLY_CARDS.map((c) => {
+          const m = localModels?.find((x) => x.role === c.key);
+          return (
+            <div key={c.key} style={{ ...cardStyle, background: "#fafafa" }}>
+              <Info size={12} style={{ float: "right", color: "#bbb" }} />
+              <div style={{ fontWeight: 700, fontSize: 12 }}>
+                {c.title} <code style={codeStyle}>{c.id}</code>
               </div>
-            );
-          })
-        )}
+              <div style={{ fontFamily: "ui-monospace,monospace", fontSize: 13 }}>
+                {m?.model_name ?? "未加载"}
+              </div>
+              <div style={{ fontSize: 11, color: "#999" }}>{m?.device}</div>
+            </div>
+          );
+        })}
+
+        {/* 行2-3：可配任务 */}
+        {CONFIGURABLE_TASKS.map((t) => {
+          const chain = getChain(routing, t.key);
+          return (
+            <div key={t.key} style={cardStyle}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <div style={{ fontWeight: 700, fontSize: 13 }}>
+                  {t.order && <span style={numStyle}>{t.order}</span>}
+                  {t.title} <code style={codeStyle}>{t.key}</code>
+                </div>
+                {t.needsRestart && <span style={warnBadgeStyle}>首启需重启</span>}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                {chain.map((item, i) => {
+                  const prov = providers?.find((p) => p.id === item.provider);
+                  const avail =
+                    (prov &&
+                      ((prov.config as Record<string, unknown>).available_models as string[])) ??
+                    [];
+                  return (
+                    <ChainChip
+                      key={item.provider + i}
+                      order={i + 1}
+                      providerId={item.provider}
+                      model={item.model}
+                      availableModels={avail}
+                      canMoveUp={i > 0}
+                      canMoveDown={i < chain.length - 1}
+                      onChangeModel={(m) => handleChangeModel(t.key, i, m)}
+                      onRemove={() => handleRemoveFromTask(t.key, i)}
+                      onMoveUp={() => handleMove(t.key, i, i - 1)}
+                      onMoveDown={() => handleMove(t.key, i, i + 1)}
+                    />
+                  );
+                })}
+                <button onClick={() => setAddTask(t.key)} style={addBtnStyle}>
+                  + 添加
+                </button>
+              </div>
+            </div>
+          );
+        })}
       </div>
+
+      <p style={{ textAlign: "center", fontSize: 11, color: "#999", marginTop: 12 }}>
+        意图分类(1) → 查询处理(2) → 向量+排序检索 → 剪枝(3) → 生成(4)
+      </p>
+
+      {/* 弹窗 */}
+      {credOpen && (
+        <ProviderCredentialDialog
+          providers={providers ?? []}
+          onEdit={(id) => {
+            setEditId(id);
+            setCredOpen(false);
+          }}
+          onDelete={() => {}}
+          onToggle={(id, enabled) => toggleProvider.mutate({ id, enabled })}
+          onAdd={() => {
+            // 新增供应商：跳到凭证弹窗内的简易创建（沿用 createProvider）
+            const id = window.prompt("新供应商 ID");
+            if (id) {
+              createProvider.mutate({
+                id,
+                type: "openai_compatible",
+                config: { api_base: "", api_key: "", model: "", available_models: [] },
+              });
+            }
+          }}
+          onClose={() => setCredOpen(false)}
+        />
+      )}
+      {editProvider && (
+        <ProviderEditDialog
+          provider={editProvider}
+          onSave={handleSaveProvider}
+          onClose={() => setEditId(null)}
+        />
+      )}
+      {addTask && (
+        <AddToTaskDialog
+          task={addTask}
+          availableProviders={providers ?? []}
+          onAdd={handleAddToTask}
+          onClose={() => setAddTask(null)}
+        />
+      )}
     </div>
   );
 }
+
+const cardStyle: React.CSSProperties = {
+  border: "1px solid #dbdbdb",
+  borderRadius: 11,
+  padding: "12px 15px",
+};
+const codeStyle: React.CSSProperties = {
+  background: "#f4f4f5",
+  borderRadius: 4,
+  padding: "0 5px",
+  fontSize: 10,
+  fontFamily: "ui-monospace,monospace",
+};
+const numStyle: React.CSSProperties = {
+  display: "inline-flex",
+  width: 16,
+  height: 16,
+  borderRadius: "50%",
+  background: "#000",
+  color: "#fff",
+  fontSize: 9,
+  alignItems: "center",
+  justifyContent: "center",
+  marginRight: 6,
+};
+const warnBadgeStyle: React.CSSProperties = {
+  fontSize: 10,
+  color: "#b45309",
+  background: "#fef3c7",
+  border: "1px solid #fde68a",
+  borderRadius: 4,
+  padding: "1px 6px",
+};
+const primaryBtnStyle: React.CSSProperties = {
+  background: "#000",
+  color: "#fff",
+  border: "none",
+  borderRadius: 10,
+  padding: "8px 14px",
+  fontSize: 13,
+  fontWeight: 600,
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  gap: 7,
+};
+const outlineBtnStyle: React.CSSProperties = {
+  background: "#fff",
+  color: "#333",
+  border: "1px solid #dbdbdb",
+  borderRadius: 10,
+  padding: "8px 13px",
+  fontSize: 13,
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+};
+const addBtnStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  border: "1px dashed #ccc",
+  borderRadius: 999,
+  padding: "4px 9px",
+  fontSize: 11,
+  color: "#888",
+  cursor: "pointer",
+  background: "#fff",
+};
