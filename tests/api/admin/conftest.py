@@ -55,8 +55,10 @@ async def _setup_app_state():
     # Seed：在测试库中灌入 LLM 供应商 + 路由基线数据。
     # 现有 admin 测试(test_list_providers_includes_deepseek_and_masks_key /
     # test_list_routing_includes_migrated)依赖 deepseek 供应商 +
-    # generation / query_decomposition 路由存在。生产环境这些数据由
-    # main.py lifespan 首启 seed，测试库无人 seed，故在此补齐。
+    # generation / intent / query_rewrite 路由存在。生产环境这些数据由
+    # main.py lifespan 首启 seed / scripts/migrate_llm_chain_format.py 建立，
+    # 测试库无人 seed，故在此补齐。query_decomposition 是已被迁移脚本删除的
+    # 历史命名错误，不在此 seed。
     # 只在缺失时插入（幂等），chain 保持旧字符串格式以匹配现有断言
     # （list_routing 端点原样返回 DB 值，不经过归一化）。
     async with factory() as session:
@@ -79,7 +81,8 @@ async def _setup_app_state():
             )
         for task, chain in (
             ("generation", [{"provider": "deepseek", "model": None}]),
-            ("query_decomposition", [{"provider": "deepseek", "model": None}]),
+            ("intent", [{"provider": "deepseek", "model": None}]),
+            ("query_rewrite", [{"provider": "deepseek", "model": None}]),
         ):
             existing_route = (
                 await session.execute(select(LLMRouting).where(LLMRouting.task == task))
@@ -88,6 +91,14 @@ async def _setup_app_state():
                 session.add(LLMRouting(task=task, chain=chain))
             else:
                 existing_route.chain = chain  # 强制刷新为对象格式
+
+        # 清理历史命名错误路由(query_decomposition,与迁移脚本步骤 3 一致)
+        legacy = await session.execute(
+            select(LLMRouting).where(LLMRouting.task == "query_decomposition")
+        )
+        legacy_route = legacy.scalar_one_or_none()
+        if legacy_route is not None:
+            await session.delete(legacy_route)
 
         # default customization + widget 绑定（test_customizations 依赖）
         if not (

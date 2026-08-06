@@ -47,6 +47,7 @@ const formSchema = z.object({
 // Task 3:类型 + 产品线中文可读名映射(未知值降级原始 key)
 const TYPE_LABELS: Record<string, string> = {
   github: "代码仓库",
+  local_git: "代码仓库",
   filesystem: "文件目录",
   woocommerce: "商城",
 };
@@ -91,6 +92,15 @@ function splitComma(s: string | undefined): string[] {
     .split(",")
     .map((t) => t.trim())
     .filter(Boolean);
+}
+
+/** ISO 时间 → 本地可读时间(如 "07-31 14:30")，非法/空输入返回 "—"。 */
+function formatSyncTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 /** repo_url → {owner, repo}(与后端 _REPO_URL_RE 一致),用于"拉取分支"预览。 */
@@ -142,6 +152,12 @@ function dsToForm(ds: DataSource): FormValues {
   const known = (SOURCE_TYPES as readonly string[]).includes(ds.type)
     ? (ds.type as SourceType)
     : "github";
+  // 历史 local_git 源在 DB 中 config 仍为 repo_path 结构;
+  // 编辑时归一为 github 表单,同时把 repo_path 等价转换为
+  // repo_url + clone_path(与 scripts/migrate_github_source_schema.py
+  // build_github_config 同规则),避免"类型变了但配置字段丢了"。
+  const repoPath = toStr(cfg.repo_path);
+  const repoName = repoPath.split("/").filter(Boolean).pop() ?? "";
   return {
     ...EMPTY_FORM,
     id: ds.id,
@@ -149,8 +165,8 @@ function dsToForm(ds: DataSource): FormValues {
     product: ds.product,
     enabled: ds.enabled,
     sync_interval: ds.sync_interval,
-    repo_url: toStr(cfg.repo_url),
-    clone_path: toStr(cfg.clone_path),
+    repo_url: toStr(cfg.repo_url) || (repoPath ? `https://github.com/camthink-ai/${repoName}.git` : ""),
+    clone_path: toStr(cfg.clone_path) || repoPath,
     root_path: toStr(cfg.root_path),
     branches: toStr(cfg.branches) || "main",
     file_types: toStr(cfg.file_types),
@@ -423,21 +439,25 @@ export default function DataSources() {
             <TableHead>类型</TableHead>
             <TableHead>状态</TableHead>
             <TableHead>同步间隔</TableHead>
+            <TableHead>最新同步</TableHead>
             <TableHead>操作</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {isLoading ? (
             <TableRow>
-              <TableCell colSpan={5} className="text-center">加载中...</TableCell>
+              <TableCell colSpan={6} className="text-center">加载中...</TableCell>
             </TableRow>
           ) : sources?.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={5} className="text-center text-muted-foreground">暂无数据源</TableCell>
+              <TableCell colSpan={6} className="text-center text-muted-foreground">暂无数据源</TableCell>
             </TableRow>
           ) : sources?.map((ds) => (
             <TableRow key={ds.id}>
-              <TableCell title={ds.product}>{PRODUCT_LABELS[ds.product] ?? ds.product}</TableCell>
+              <TableCell>
+                <div className="leading-tight">{PRODUCT_LABELS[ds.product] ?? ds.product}</div>
+                <div className="text-xs text-muted-foreground">{ds.id}</div>
+              </TableCell>
               <TableCell>{TYPE_LABELS[ds.type] ?? ds.type}</TableCell>
               <TableCell>
                 <Badge
@@ -449,6 +469,9 @@ export default function DataSources() {
                 </Badge>
               </TableCell>
               <TableCell>{ds.sync_interval}</TableCell>
+              <TableCell>
+                <span title={ds.last_sync ?? "暂无同步记录"}>{formatSyncTime(ds.last_sync)}</span>
+              </TableCell>
               <TableCell className="space-x-2">
                 <Button
                   size="sm"
