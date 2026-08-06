@@ -1,10 +1,17 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import DataSources from "@/pages/DataSources";
 import { useDataSources, useTriggerSync } from "@/hooks/useDataSources";
 
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+}));
+
+import { toast } from "sonner";
+
 afterEach(cleanup);
+beforeEach(() => vi.clearAllMocks());
 
 // Mock 网络层 hooks,避免真实 fetch
 vi.mock("@/hooks/useDataSources", () => ({
@@ -225,5 +232,47 @@ describe("DataSources", () => {
     expect(syncBtn).toBeDisabled();
     fireEvent.click(syncBtn);
     expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("#44 后台同步完成(last_sync 推进):提示完成且按钮恢复为「同步」", () => {
+    const ds = {
+      id: "ne301-docs",
+      type: "github",
+      product: "ne301",
+      enabled: true,
+      config: {},
+      sync_interval: "24h",
+      last_sync: null,
+      created_at: "2026-07-01T00:00:00Z",
+      updated_at: "2026-07-01T00:00:00Z",
+    };
+    const mutate = vi.fn();
+    vi.mocked(useTriggerSync).mockReturnValue({ mutate, isPending: false });
+    vi.mocked(useDataSources).mockReturnValue({ data: [ds], isLoading: false });
+    const qc = new QueryClient();
+    const view = render(
+      <QueryClientProvider client={qc}>
+        <DataSources />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByText("同步"));
+    expect(screen.getByText("同步中...")).toBeInTheDocument();
+
+    // 模拟 5s 轮询返回:后台 _sync_one 写入 SyncLog → list 聚合 last_sync 推进到触发时刻之后
+    const updated = {
+      ...ds,
+      last_sync: new Date(Date.now() + 60000).toISOString(),
+    };
+    vi.mocked(useDataSources).mockReturnValue({ data: [updated], isLoading: false });
+    view.rerender(
+      <QueryClientProvider client={qc}>
+        <DataSources />
+      </QueryClientProvider>,
+    );
+
+    expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("同步完成"));
+    expect(screen.getByText("同步")).toBeInTheDocument();
+    expect(screen.queryByText("同步中...")).not.toBeInTheDocument();
   });
 });
