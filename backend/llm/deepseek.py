@@ -118,4 +118,5 @@ class DeepseekProvider:
                 headers={"Authorization": f"Bearer {self._api_key}"},
             )
             resp.raise_for_status()
-            return [m["id"] for m in resp.json()["data"]]
+            data = resp.json().get("data") or []
+            return [m["id"] for m in data if isinstance(m, dict) and "id" in m]

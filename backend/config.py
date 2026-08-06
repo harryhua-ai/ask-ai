@@ -58,10 +58,28 @@ def _env(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 
 
+def _validate_prod_secrets(settings: Settings) -> None:
+    """prod 模式强制安全配置；dev/test 跳过。
+
+    ENCRYPTION_KEY 为空会导致 api_key 加密失效（写侧 fail-closed，
+    但读侧静默 fallback 把密文当明文用）；JWT_SECRET 用默认值会让
+    token 可被公开已知密钥伪造。两者在 prod 必须显式设置。
+    """
+    if os.environ.get("APP_MODE", "dev") != "prod":
+        return
+    issues: list[str] = []
+    if not settings.encryption_key or len(settings.encryption_key.encode()) < 32:
+        issues.append("ENCRYPTION_KEY 必须非空且 ≥32 字节")
+    if settings.jwt_secret == "dev-secret-change-in-production":
+        issues.append("JWT_SECRET 不能使用默认值")
+    if issues:
+        raise RuntimeError("prod 安全配置校验失败: " + "; ".join(issues))
+
+
 def load_settings(config_dir: Path | None = None) -> Settings:
     """从环境变量加载 Settings 实例。"""
     project_root = Path(__file__).resolve().parent.parent
-    return Settings(
+    settings = Settings(
         postgres_host=_env("POSTGRES_HOST", "localhost"),
         postgres_port=int(_env("POSTGRES_PORT", "5432")),
         postgres_db=_env("POSTGRES_DB", "ask_ai"),
@@ -84,6 +102,8 @@ def load_settings(config_dir: Path | None = None) -> Settings:
         jwt_secret=_env("JWT_SECRET", "dev-secret-change-in-production"),
         encryption_key=_env("ENCRYPTION_KEY", ""),
     )
+    _validate_prod_secrets(settings)
+    return settings
 
 
 def _expand_env(value: Any) -> Any:

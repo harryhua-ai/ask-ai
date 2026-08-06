@@ -1,6 +1,6 @@
-"""从 Postgres 加载运行时配置(LLM 供应商、Customization)。
+"""从 Postgres 加载运行时配置（LLM 供应商、Customization）。
 
-启动时调用,优先从 DB 读取;DB 为空时回退到 YAML(Phase 1 兼容)。
+启动时调用，优先从 DB 读取；DB 没有任何供应商记录时返回 None。
 """
 
 from typing import Any
@@ -23,22 +23,17 @@ async def load_llm_config_from_db(
         (兼容旧字符串格式数据)。
     """
     async with factory() as session:
-        providers = (
-            (await session.execute(select(LLMProviderModel).where(LLMProviderModel.enabled)))
-            .scalars()
-            .all()
-        )
+        providers = (await session.execute(select(LLMProviderModel))).scalars().all()
         if not providers:
             return None
+        enabled_providers = [p for p in providers if p.enabled]
         routing_rows = (await session.execute(select(LLMRouting))).scalars().all()
 
     providers_list = [
-        {"id": p.id, "type": p.type, "enabled": p.enabled, "config": p.config} for p in providers
+        {"id": p.id, "type": p.type, "enabled": p.enabled, "config": p.config}
+        for p in enabled_providers
     ]
-    routing = {
-        r.task: [_normalize_chain_item(item) for item in r.chain]
-        for r in routing_rows
-    }
+    routing = {r.task: [_normalize_chain_item(item) for item in r.chain] for r in routing_rows}
     return providers_list, routing
 
 

@@ -50,9 +50,7 @@ async def migrate_providers_available_models(factory, dry_run: bool) -> list[str
                 cfg["available_models"] = [default_model]
             elif default_model and default_model not in avail:
                 # 强制纳入作默认（放首位）
-                cfg["available_models"] = [default_model] + [
-                    m for m in avail if m != default_model
-                ]
+                cfg["available_models"] = [default_model] + [m for m in avail if m != default_model]
             else:
                 continue  # 无需变更
             logger.info("[%s] available_models → %s", prov.id, cfg["available_models"])
@@ -82,6 +80,13 @@ async def migrate_routing_chain_format(factory, dry_run: bool) -> list[str]:
     return changed
 
 
+def _normalize(chain: list) -> list[dict]:
+    """归一化 chain 元素（旧字符串格式 → 对象格式），用于语义比较。"""
+    return [
+        {"provider": c, "model": None} if isinstance(c, str) else dict(c) for c in (chain or [])
+    ]
+
+
 async def cleanup_query_decomposition(factory, dry_run: bool) -> list[str]:
     """步骤 3:删除 query_decomposition 路由（历史命名错误）。"""
     removed: list[str] = []
@@ -91,6 +96,16 @@ async def cleanup_query_decomposition(factory, dry_run: bool) -> list[str]:
         )
         route = route.scalar_one_or_none()
         if route:
+            # 若 query_decomposition 有自定义 chain（与 generation 语义不同），
+            # 删除会丢弃自定义配置——dry-run 时显式提示，让管理员知情
+            gen = await session.execute(select(LLMRouting).where(LLMRouting.task == "generation"))
+            gen_chain = gen.scalar_one_or_none()
+            if gen_chain is not None and _normalize(route.chain) != _normalize(gen_chain.chain):
+                logger.warning(
+                    "query_decomposition 存在自定义 chain（与 generation 不同），"
+                    "删除后将丢弃: %s",
+                    route.chain,
+                )
             logger.info("删除 query_decomposition 路由（历史命名错误）")
             if not dry_run:
                 await session.delete(route)

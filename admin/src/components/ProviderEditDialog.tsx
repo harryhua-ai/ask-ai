@@ -19,7 +19,7 @@ export function ProviderEditDialog({ provider, onSave, onClose }: Props) {
     (cfg.available_models as string[] | undefined) ??
     (cfg.model ? [cfg.model as string] : []);
   const [apiBase, setApiBase] = useState((cfg.api_base as string) ?? "");
-  const [apiKey, setApiKey] = useState((cfg.api_key as string) ?? "********");
+  const [apiKey, setApiKey] = useState("");
   const [models, setModels] = useState<string[]>(initialModels);
   const [fetchResult, setFetchResult] = useState<string[] | null>(null);
   const [newModel, setNewModel] = useState("");
@@ -39,16 +39,19 @@ export function ProviderEditDialog({ provider, onSave, onClose }: Props) {
   };
 
   const handleSave = () => {
+    const config: Record<string, unknown> = {
+      ...cfg,
+      api_base: apiBase,
+      model: models[0] ?? cfg.model,
+      available_models: models,
+    };
+    // 空 key 不放入 patch，后端因此保留 DB 中的现有密钥
+    if (apiKey) config.api_key = apiKey;
+    else delete config.api_key;
     onSave({
       type: provider.type,
       enabled: provider.enabled,
-      config: {
-        ...cfg,
-        api_base: apiBase,
-        api_key: apiKey,
-        model: models[0] ?? cfg.model,
-        available_models: models,
-      },
+      config,
     });
   };
 
@@ -83,11 +86,13 @@ export function ProviderEditDialog({ provider, onSave, onClose }: Props) {
         />
 
         <label>
-          API Key <small>不改则保留(显示 ******** = 已加密)</small>
+          API Key <small>留空则保留当前密钥</small>
         </label>
         <input
+          type="password"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
+          placeholder="留空则不修改"
           style={inputStyle}
         />
 
