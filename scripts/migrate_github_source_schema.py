@@ -28,6 +28,7 @@
 
 import argparse
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -116,8 +117,8 @@ async def main() -> int:
                 print(f"            file_types = {new_config['file_types']}")
             else:
                 await conn.execute(
-                    text("UPDATE data_sources SET type='github', config=:c WHERE id=:id"),
-                    {"c": new_config, "id": ds_id},
+                    text("UPDATE data_sources SET type='github', config=CAST(:c AS jsonb) WHERE id=:id"),
+                    {"c": json.dumps(new_config), "id": ds_id},
                 )
                 print(f"  migrated {ds_id}: {repo_url} branches={new_config['branches']}")
             migrated += 1
