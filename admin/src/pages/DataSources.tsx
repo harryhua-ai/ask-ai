@@ -9,6 +9,7 @@ import {
   useDeleteDataSource,
   useToggleDataSource,
   useTriggerSync,
+  useTriggerSyncAll,
   fetchPreviewBranches,
 } from "@/hooks/useDataSources";
 import { Button } from "@/components/ui/button";
@@ -45,24 +46,12 @@ const formSchema = z.object({
   consumer_secret: z.string().optional(),
 });
 
-// Task 3:类型 + 产品线中文可读名映射(未知值降级原始 key)
+// Task 3:类型中文可读名映射(未知值降级原始 key)
 const TYPE_LABELS: Record<string, string> = {
   github: "代码仓库",
   local_git: "代码仓库",
   filesystem: "文件目录",
   woocommerce: "商城",
-};
-
-const PRODUCT_LABELS: Record<string, string> = {
-  ne301: "NE301 边缘相机",
-  ne101: "NE101 低功耗相机",
-  ne503: "NE503 AI 相机",
-  ng4500: "NG4500 边缘网关",
-  neomind: "NeoMind 平台",
-  wiki: "官方文档",
-  aitoolstack: "AI Tool Stack",
-  knowledge: "支持案例",
-  commercial: "商城",
 };
 
 type FormValues = z.infer<typeof formSchema>;
@@ -102,6 +91,73 @@ function formatSyncTime(iso: string | null | undefined): string {
   if (Number.isNaN(d.getTime())) return "—";
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** config 取字符串字段(非字符串/缺失返回空串)。 */
+function cfgStr(cfg: Record<string, unknown>, key: string): string {
+  const v = cfg[key];
+  return typeof v === "string" ? v : "";
+}
+
+/**
+ * github/local_git 源的仓库 URL:优先 config.repo_url;
+ * 历史 local_git 源 DB 里只有 repo_path(本地 clone 路径),按 camthink-ai 约定
+ * 由 repo_path 末段重建 repo_url(与 dsToForm 编辑回填同规则),不裸显本地路径。
+ */
+function githubRepoUrl(ds: DataSource): string {
+  const cfg = ds.config || {};
+  const explicit = cfgStr(cfg, "repo_url");
+  if (explicit) return explicit;
+  const repoPath = cfgStr(cfg, "repo_path");
+  if (!repoPath) return "";
+  const repoName = repoPath.split("/").filter(Boolean).pop() ?? "";
+  return repoName ? `https://github.com/camthink-ai/${repoName}.git` : "";
+}
+
+/**
+ * 按数据源类型取"来源地址"副标题:
+ * github/local_git → githubRepoUrl(由 repo_path 重建,不裸显本地路径),
+ * filesystem → root_path,woocommerce → store_url。
+ * href 非 null 表示是可点击 URL(http 开头)。
+ */
+function sourceLocation(ds: DataSource): { text: string; href: string | null } {
+  const cfg = ds.config || {};
+  let text = "";
+  switch (ds.type) {
+    case "github":
+    case "local_git":
+      text = githubRepoUrl(ds);
+      break;
+    case "filesystem":
+      text = cfgStr(cfg, "root_path");
+      break;
+    case "woocommerce":
+      text = cfgStr(cfg, "store_url");
+      break;
+  }
+  return { text, href: text.startsWith("http") ? text : null };
+}
+
+/** 产品线列的来源地址副标题:URL 渲染为可点击链接(新标签),本地路径/缺失渲染为纯文本。 */
+function SourceLocationLine({ ds }: { ds: DataSource }) {
+  const { text, href } = sourceLocation(ds);
+  if (!text) return <div className="max-w-[280px] truncate text-xs text-muted-foreground">—</div>;
+  if (href)
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="block max-w-[280px] truncate text-xs text-muted-foreground underline-offset-2 hover:underline"
+      >
+        {text}
+      </a>
+    );
+  return (
+    <div className="max-w-[280px] truncate text-xs text-muted-foreground" title={text}>
+      {text}
+    </div>
+  );
 }
 
 /** repo_url → {owner, repo}(与后端 _REPO_URL_RE 一致),用于"拉取分支"预览。 */
@@ -158,7 +214,6 @@ function dsToForm(ds: DataSource): FormValues {
   // repo_url + clone_path(与 scripts/migrate_github_source_schema.py
   // build_github_config 同规则),避免"类型变了但配置字段丢了"。
   const repoPath = toStr(cfg.repo_path);
-  const repoName = repoPath.split("/").filter(Boolean).pop() ?? "";
   return {
     ...EMPTY_FORM,
     id: ds.id,
@@ -166,7 +221,7 @@ function dsToForm(ds: DataSource): FormValues {
     product: ds.product,
     enabled: ds.enabled,
     sync_interval: ds.sync_interval,
-    repo_url: toStr(cfg.repo_url) || (repoPath ? `https://github.com/camthink-ai/${repoName}.git` : ""),
+    repo_url: githubRepoUrl(ds),
     clone_path: toStr(cfg.clone_path) || repoPath,
     root_path: toStr(cfg.root_path),
     branches: toStr(cfg.branches) || "main",
@@ -192,10 +247,14 @@ export default function DataSources() {
   const deleteDs = useDeleteDataSource();
   const toggleDs = useToggleDataSource();
   const triggerSync = useTriggerSync();
+  const triggerSyncAll = useTriggerSyncAll();
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [branchLoading, setBranchLoading] = useState(false);
   const [branchError, setBranchError] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [fetchedBranches, setFetchedBranches] = useState<string[]>([]);
+  const [syncCustom, setSyncCustom] = useState(false);
 
   const {
     register,
@@ -211,18 +270,29 @@ export default function DataSources() {
   });
   const type = watch("type");
   const rootPath = watch("root_path");
+  const selectedBranches = splitComma(watch("branches"));
+  const syncInterval = watch("sync_interval");
+  const syncSelect =
+    syncCustom || !["1h", "12h", "24h"].includes(syncInterval) ? "__custom" : syncInterval;
 
   const openCreate = () => {
     reset(EMPTY_FORM);
     setEditingId(null);
     setBranchError(null);
+    setFetchedBranches([]);
+    setSyncCustom(false);
+    setShowAdvanced(false);
     setShowForm(true);
   };
 
   const openEdit = (ds: DataSource) => {
-    reset(dsToForm(ds));
+    const fv = dsToForm(ds);
+    reset(fv);
     setEditingId(ds.id);
     setBranchError(null);
+    setFetchedBranches([]);
+    setSyncCustom(!["1h", "12h", "24h"].includes(fv.sync_interval));
+    setShowAdvanced(false);
     setShowForm(true);
   };
 
@@ -267,12 +337,19 @@ export default function DataSources() {
     setBranchError(null);
     try {
       const branches = await fetchPreviewBranches(parsed.owner, parsed.repo);
-      setValue("branches", branches.join(", "));
+      setFetchedBranches(branches);
     } catch (err) {
       setBranchError(err instanceof Error ? err.message : "拉取分支失败");
     } finally {
       setBranchLoading(false);
     }
+  };
+
+  const toggleBranch = (b: string) => {
+    const next = selectedBranches.includes(b)
+      ? selectedBranches.filter((x) => x !== b)
+      : [...selectedBranches, b];
+    setValue("branches", next.join(", "), { shouldDirty: true });
   };
 
   const handleDelete = async (id: string) => {
@@ -286,24 +363,62 @@ export default function DataSources() {
     triggerSync.mutate(ds.id);
   };
 
-  // 后端 trigger_sync 为 fire-and-forget,需轮询 list 检测 last_sync 推进以判定完成。
+  const handleSyncAll = async () => {
+    // 后端顺序同步所有启用源(一个后台任务,避免并发 GPU OOM);
+    // 把返回的 source_ids 批量入 syncingIds + triggeredAt,复用现有轮询逐个检测完成。
+    const data = await triggerSyncAll.mutateAsync();
+    if (data.count === 0) return;
+    const now = Date.now();
+    setSyncingIds((prev) => {
+      const next = new Set(prev);
+      data.source_ids.forEach((id) => next.add(id));
+      return next;
+    });
+    setTriggeredAt((prev) => {
+      const next = { ...prev };
+      data.source_ids.forEach((id) => {
+        next[id] = now;
+      });
+      return next;
+    });
+  };
+
+  // 后端 trigger_sync 为 fire-and-forget,需轮询 list 检测 last_sync 推进以判定结束;
+  // 再按 last_sync_status 区分成功/失败,失败时带 error_detail。
   useEffect(() => {
     if (syncingIds.size === 0) return;
     const now = Date.now();
     const completed: string[] = [];
+    const failed: { id: string; error: string | null }[] = [];
     const stale: string[] = [];
     for (const id of syncingIds) {
       const ds = sources?.find((s) => s.id === id);
       const ts = ds?.last_sync ? new Date(ds.last_sync).getTime() : 0;
       const triggered = triggeredAt[id] ?? 0;
-      if (ts && ts > triggered) completed.push(id);
-      else if (now - triggered > 5 * 60 * 1000) stale.push(id);
+      if (ts && ts > triggered) {
+        // last_sync 推进 → 同步尝试已结束,按 status 区分成功/失败
+        if (ds?.last_sync_status === "failed") {
+          failed.push({ id, error: ds.last_sync_error ?? null });
+        } else {
+          completed.push(id);
+        }
+      } else if (now - triggered > 5 * 60 * 1000) {
+        stale.push(id);
+      }
     }
     if (completed.length > 0) {
       completed.forEach((id) => toast.success(`同步完成:${id}`));
       setSyncingIds((prev) => {
         const next = new Set(prev);
         completed.forEach((id) => next.delete(id));
+        return next;
+      });
+    }
+    if (failed.length > 0) {
+      failed.forEach(({ id, error }) => toast.error(`同步失败:${error || id}`));
+      setSyncingIds((prev) => {
+        const next = new Set(prev);
+        failed.forEach(({ id }) => next.delete(id));
         return next;
       });
     }
@@ -321,7 +436,16 @@ export default function DataSources() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">数据源管理</h1>
-        <Button onClick={openCreate}>新增数据源</Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={handleSyncAll}
+            disabled={triggerSyncAll.isPending || syncingIds.size > 0}
+          >
+            {triggerSyncAll.isPending ? "触发中..." : "同步全部"}
+          </Button>
+          <Button onClick={openCreate}>新增数据源</Button>
+        </div>
       </div>
       {showForm && (
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-3 rounded-lg border bg-card p-4">
@@ -340,17 +464,42 @@ export default function DataSources() {
               {errors.product && <p className="text-xs text-destructive">{errors.product.message}</p>}
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label>同步间隔</Label>
-              <Input {...register("sync_interval")} placeholder="24h / 30m" />
+              <select
+                aria-label="同步间隔"
+                className="h-10 w-full rounded-md border px-3"
+                value={syncSelect}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "__custom") {
+                    setSyncCustom(true);
+                    setValue("sync_interval", "", { shouldDirty: true });
+                  } else {
+                    setSyncCustom(false);
+                    setValue("sync_interval", v, { shouldDirty: true });
+                  }
+                }}
+              >
+                <option value="1h">1 小时</option>
+                <option value="12h">12 小时</option>
+                <option value="24h">1 天</option>
+                <option value="__custom">自定义</option>
+              </select>
+              {syncSelect === "__custom" && (
+                <Input {...register("sync_interval")} placeholder="30m / 48h" />
+              )}
               {errors.sync_interval && (
                 <p className="text-xs text-destructive">{errors.sync_interval.message}</p>
               )}
             </div>
-            <div className="flex items-center gap-2 pt-6">
-              <input id="ds-enabled" type="checkbox" {...register("enabled")} />
-              <Label htmlFor="ds-enabled">启用</Label>
+            <div className="space-y-1">
+              <Label>状态</Label>
+              <div className="flex h-10 items-center gap-2">
+                <input id="ds-enabled" type="checkbox" {...register("enabled")} />
+                <Label htmlFor="ds-enabled" className="font-normal">启用</Label>
+              </div>
             </div>
           </div>
 
@@ -358,7 +507,15 @@ export default function DataSources() {
             <div className="space-y-3 border-t pt-3">
               <div className="space-y-1">
                 <Label>仓库 URL</Label>
-                <Input {...register("repo_url")} placeholder="https://github.com/camthink-ai/ne301.git" />
+                <Input
+                  {...register("repo_url", {
+                    onChange: () => {
+                      setFetchedBranches([]);
+                      setBranchError(null);
+                    },
+                  })}
+                  placeholder="https://github.com/camthink-ai/ne301.git"
+                />
               </div>
               <div className="space-y-1">
                 <Label>Clone 路径 (可选,默认 ~/ask-ai-corpus/仓库名)</Label>
@@ -366,7 +523,7 @@ export default function DataSources() {
               </div>
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <Label>分支 (逗号分隔)</Label>
+                  <Label>分支</Label>
                   <Button
                     type="button"
                     size="sm"
@@ -377,7 +534,24 @@ export default function DataSources() {
                     {branchLoading ? "拉取中..." : "拉取分支"}
                   </Button>
                 </div>
-                <Input {...register("branches")} placeholder="main, hw-v1.2" />
+                {fetchedBranches.length > 0 ? (
+                  <div className="max-h-48 overflow-y-auto rounded-md border p-2">
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {fetchedBranches.map((b) => (
+                        <label key={b} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={selectedBranches.includes(b)}
+                            onChange={() => toggleBranch(b)}
+                          />
+                          <span className="truncate">{b}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <Input {...register("branches")} placeholder="main, hw-v1.2" />
+                )}
                 {branchError && <p className="text-xs text-destructive">{branchError}</p>}
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -388,16 +562,6 @@ export default function DataSources() {
                 <div className="space-y-1">
                   <Label>排除目录 (逗号分隔)</Label>
                   <Input {...register("exclude_dirs")} placeholder=".git, node_modules" />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label>排除正则</Label>
-                  <Input {...register("exclude_regex")} placeholder="(test|spec)_" />
-                </div>
-                <div className="space-y-1">
-                  <Label>最大文件大小 (字节)</Label>
-                  <Input type="number" {...register("max_file_size")} placeholder="1048576" />
                 </div>
               </div>
             </div>
@@ -427,21 +591,9 @@ export default function DataSources() {
                   <Input {...register("include_dirs")} placeholder="docs, guides" />
                 )}
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label>排除目录 (逗号分隔)</Label>
-                  <Input {...register("exclude_dirs")} placeholder=".git, tmp" />
-                </div>
-                <div className="space-y-1">
-                  <Label>排除正则</Label>
-                  <Input {...register("exclude_regex")} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label>最大文件大小 (字节)</Label>
-                  <Input type="number" {...register("max_file_size")} />
-                </div>
+              <div className="space-y-1">
+                <Label>排除目录 (逗号分隔)</Label>
+                <Input {...register("exclude_dirs")} placeholder=".git, tmp" />
               </div>
             </div>
           )}
@@ -465,16 +617,39 @@ export default function DataSources() {
             </div>
           )}
 
-          <div className="flex gap-2">
+          {(type === "github" || type === "filesystem") && (
+            <div className="space-y-2 border-t pt-3">
+              <button
+                type="button"
+                className="text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => setShowAdvanced((v) => !v)}
+              >
+                {showAdvanced ? "▾ 隐藏高级选项" : "▸ 高级选项(排除正则 / 最大文件大小)"}
+              </button>
+              <div className={showAdvanced ? "grid grid-cols-2 gap-3" : "hidden"}>
+                <div className="space-y-1">
+                  <Label>排除正则</Label>
+                  <Input {...register("exclude_regex")} placeholder="(test|spec)_" />
+                </div>
+                <div className="space-y-1">
+                  <Label>最大文件大小 (字节)</Label>
+                  <Input type="number" {...register("max_file_size")} placeholder="1048576" />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 border-t pt-3">
+            <Button type="button" variant="outline" onClick={closeForm}>取消</Button>
             <Button type="submit" disabled={createDs.isPending || updateDs.isPending}>
               {editingId ? "保存" : "创建"}
             </Button>
-            <Button type="button" variant="outline" onClick={closeForm}>取消</Button>
           </div>
         </form>
       )}
 
-      <Table>
+      {!showForm && (
+        <Table>
         <TableHeader>
           <TableRow>
             <TableHead>产品线</TableHead>
@@ -497,8 +672,8 @@ export default function DataSources() {
           ) : sources?.map((ds) => (
             <TableRow key={ds.id}>
               <TableCell>
-                <div className="leading-tight">{PRODUCT_LABELS[ds.product] ?? ds.product}</div>
-                <div className="text-xs text-muted-foreground">{ds.id}</div>
+                <div className="leading-tight">{ds.product}</div>
+                <SourceLocationLine ds={ds} />
               </TableCell>
               <TableCell>{TYPE_LABELS[ds.type] ?? ds.type}</TableCell>
               <TableCell>
@@ -539,6 +714,7 @@ export default function DataSources() {
           ))}
         </TableBody>
       </Table>
+      )}
     </div>
   );
 }

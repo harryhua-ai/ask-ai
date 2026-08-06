@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import DataSources from "@/pages/DataSources";
-import { useDataSources, useTriggerSync } from "@/hooks/useDataSources";
+import { useDataSources, useTriggerSync, fetchPreviewBranches, useTriggerSyncAll } from "@/hooks/useDataSources";
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
@@ -21,12 +21,14 @@ vi.mock("@/hooks/useDataSources", () => ({
   useDeleteDataSource: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useToggleDataSource: () => ({ mutate: vi.fn() }),
   useTriggerSync: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  useTriggerSyncAll: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   fetchPreviewBranches: vi.fn(),
 }));
 
 afterEach(() => {
   vi.mocked(useDataSources).mockReturnValue({ data: [], isLoading: false });
   vi.mocked(useTriggerSync).mockReset();
+  vi.mocked(useTriggerSyncAll).mockReset();
 });
 
 function renderWithSources(sources: unknown[]) {
@@ -101,6 +103,59 @@ describe("DataSources", () => {
     expect(screen.getByDisplayValue(".md, .py")).toBeInTheDocument();
   });
 
+  it("github 拉取分支后:复选框供选择,已配置分支预选,勾选/取消更新值", async () => {
+    vi.mocked(fetchPreviewBranches).mockResolvedValue(["main", "hw-v1.2", "dev"]);
+    const ds = {
+      id: "ne301-docs",
+      type: "github",
+      product: "ne301",
+      enabled: true,
+      config: { repo_url: "https://github.com/camthink-ai/ne301.git", branches: ["main"] },
+      sync_interval: "24h",
+      created_at: "2026-07-01T00:00:00Z",
+      updated_at: "2026-07-01T00:00:00Z",
+      last_sync: null,
+    };
+    renderWithSources([ds]);
+    fireEvent.click(screen.getByText("编辑"));
+    fireEvent.click(screen.getByText("拉取分支"));
+    // 拉取后渲染复选框(远端 3 个分支)
+    const mainChk = await screen.findByRole("checkbox", { name: "main" });
+    const hwChk = screen.getByRole("checkbox", { name: "hw-v1.2" });
+    const devChk = screen.getByRole("checkbox", { name: "dev" });
+    // 已配置的 main 预选,其余未选
+    expect(mainChk).toBeChecked();
+    expect(hwChk).not.toBeChecked();
+    expect(devChk).not.toBeChecked();
+    // 勾选 dev → 选中
+    fireEvent.click(devChk);
+    expect(devChk).toBeChecked();
+    // 取消 main → 不再选中
+    fireEvent.click(mainChk);
+    expect(mainChk).not.toBeChecked();
+  });
+
+  it("同步间隔:预设下拉(1h/12h/1天) + 自定义显示文本输入", () => {
+    renderWithSources([]);
+    fireEvent.click(screen.getByText("新增数据源"));
+    const select = screen.getByLabelText("同步间隔");
+    // 默认 24h = "1 天" 预设
+    expect(select).toHaveValue("24h");
+    // 切 1h
+    fireEvent.change(select, { target: { value: "1h" } });
+    expect(select).toHaveValue("1h");
+    // 切自定义 → 文本输入出现,初始为空
+    fireEvent.change(select, { target: { value: "__custom" } });
+    const input = screen.getByPlaceholderText("30m / 48h");
+    expect(input).toBeInTheDocument();
+    expect(input).toHaveValue("");
+    fireEvent.change(input, { target: { value: "30m" } });
+    expect(input).toHaveValue("30m");
+    // 切回预设 → 文本输入消失
+    fireEvent.change(select, { target: { value: "12h" } });
+    expect(screen.queryByPlaceholderText("30m / 48h")).not.toBeInTheDocument();
+  });
+
   it("#2 表格对 local_git 源显示中文类型标签(代码仓库),不裸显英文", () => {
     const localGitDs = {
       id: "ne301-docs-local",
@@ -117,13 +172,13 @@ describe("DataSources", () => {
     expect(screen.queryByText("local_git")).not.toBeInTheDocument();
   });
 
-  it("#3 同名产品线多源:每行显示源 ID 副标题用于区分", () => {
+  it("#3 同名产品线多源:产品线列副标题按类型显示 repo_url/root_path 用于区分", () => {
     const dsA = {
       id: "neomind-docs",
       type: "github",
       product: "neomind",
       enabled: true,
-      config: {},
+      config: { repo_url: "https://github.com/camthink-ai/neomind-docs.git" },
       sync_interval: "24h",
       created_at: "2026-07-01T00:00:00Z",
       updated_at: "2026-07-01T00:00:00Z",
@@ -134,17 +189,40 @@ describe("DataSources", () => {
       type: "filesystem",
       product: "neomind",
       enabled: true,
-      config: {},
+      config: { root_path: "/data/neomind-sdk" },
       sync_interval: "24h",
       created_at: "2026-07-01T00:00:00Z",
       updated_at: "2026-07-01T00:00:00Z",
       last_sync: null,
     };
     renderWithSources([dsA, dsB]);
-    // 两行同名产品线下,ID 作为副标题区分
-    expect(screen.getAllByText("NeoMind 平台").length).toBe(2);
-    expect(screen.getByText("neomind-docs")).toBeInTheDocument();
-    expect(screen.getByText("neomind-sdk")).toBeInTheDocument();
+    // 两行同名产品线下,产品线统一显示裸 product key(与编辑框一致,不再查中文标签)
+    expect(screen.getAllByText("neomind").length).toBe(2);
+    expect(screen.getByText("https://github.com/camthink-ai/neomind-docs.git")).toBeInTheDocument();
+    expect(screen.getByText("/data/neomind-sdk")).toBeInTheDocument();
+    // 源 ID 不裸显在产品线列
+    expect(screen.queryByText("neomind-docs")).not.toBeInTheDocument();
+    expect(screen.queryByText("neomind-sdk")).not.toBeInTheDocument();
+  });
+
+  it("代码仓库源缺 repo_url 时:副标题由 repo_path 重建 github 链接,不裸显本地路径", () => {
+    // 历史 local_git 源 DB 里只有 repo_path(本地 clone 路径),没有 repo_url
+    const ds = {
+      id: "ne301-docs-local",
+      type: "local_git",
+      product: "ne301",
+      enabled: true,
+      config: { repo_path: "~/ask-ai-corpus/ne301" },
+      sync_interval: "24h",
+      created_at: "2026-07-01T00:00:00Z",
+      updated_at: "2026-07-01T00:00:00Z",
+      last_sync: null,
+    };
+    renderWithSources([ds]);
+    // 由 repo_path 末段按 camthink-ai 约定重建 github 链接(与编辑表单 dsToForm 同规则)
+    expect(screen.getByText("https://github.com/camthink-ai/ne301.git")).toBeInTheDocument();
+    // 不再把本地 clone 路径当副标题裸显
+    expect(screen.queryByText("~/ask-ai-corpus/ne301")).not.toBeInTheDocument();
   });
 
   it("最新同步列:显示最近一次同步时间,无记录显示占位符", () => {
@@ -274,5 +352,93 @@ describe("DataSources", () => {
     expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("同步完成"));
     expect(screen.getByText("同步")).toBeInTheDocument();
     expect(screen.queryByText("同步中...")).not.toBeInTheDocument();
+  });
+
+  it("#B 后台同步失败(last_sync 推进但 status=failed):提示同步失败,不误报完成", () => {
+    const ds = {
+      id: "ne301-local",
+      type: "github",
+      product: "ne301",
+      enabled: true,
+      config: { repo_url: "https://github.com/camthink-ai/ne301.git" },
+      sync_interval: "24h",
+      last_sync: null,
+      last_sync_status: null,
+      last_sync_error: null,
+      created_at: "2026-07-01T00:00:00Z",
+      updated_at: "2026-07-01T00:00:00Z",
+    };
+    const mutate = vi.fn();
+    vi.mocked(useTriggerSync).mockReturnValue({ mutate, isPending: false });
+    vi.mocked(useDataSources).mockReturnValue({ data: [ds], isLoading: false });
+    const qc = new QueryClient();
+    const view = render(
+      <QueryClientProvider client={qc}>
+        <DataSources />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByText("同步"));
+    expect(screen.getByText("同步中...")).toBeInTheDocument();
+
+    // 模拟轮询返回:后台同步失败,sync_log 仍写了一行(started_at 推进,status=failed,error_detail='local_git')
+    const updated = {
+      ...ds,
+      last_sync: new Date(Date.now() + 60000).toISOString(),
+      last_sync_status: "failed",
+      last_sync_error: "local_git",
+    };
+    vi.mocked(useDataSources).mockReturnValue({ data: [updated], isLoading: false });
+    view.rerender(
+      <QueryClientProvider client={qc}>
+        <DataSources />
+      </QueryClientProvider>,
+    );
+
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("同步失败"));
+    expect(toast.success).not.toHaveBeenCalledWith(expect.stringContaining("同步完成"));
+    expect(screen.getByText("同步")).toBeInTheDocument();
+  });
+
+  it("同步全部:触发后端顺序同步,把返回 source_ids 批量入 syncingIds", async () => {
+    const dsA = {
+      id: "ne301-docs",
+      type: "github",
+      product: "ne301",
+      enabled: true,
+      config: {},
+      sync_interval: "24h",
+      last_sync: null,
+      created_at: "2026-07-01T00:00:00Z",
+      updated_at: "2026-07-01T00:00:00Z",
+    };
+    const dsB = {
+      id: "ne503-docs",
+      type: "github",
+      product: "ne503",
+      enabled: true,
+      config: {},
+      sync_interval: "24h",
+      last_sync: null,
+      created_at: "2026-07-01T00:00:00Z",
+      updated_at: "2026-07-01T00:00:00Z",
+    };
+    const mutateAllAsync = vi.fn().mockResolvedValue({
+      status: "syncing",
+      source_ids: ["ne301-docs", "ne503-docs"],
+      count: 2,
+    });
+    vi.mocked(useTriggerSyncAll).mockReturnValue({
+      mutateAsync: mutateAllAsync,
+      isPending: false,
+    });
+    renderWithSources([dsA, dsB]);
+
+    fireEvent.click(screen.getByText("同步全部"));
+    await waitFor(() => expect(mutateAllAsync).toHaveBeenCalled());
+    // 两行均进入"同步中..."
+    expect(await screen.findAllByText("同步中...")).toHaveLength(2);
+    // syncingIds>0 时「同步全部」按钮禁用,避免并发触发
+    expect(screen.getByText("同步全部")).toBeDisabled();
   });
 });
