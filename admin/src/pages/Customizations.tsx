@@ -44,7 +44,7 @@ export default function Customizations() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold">Customization 管理</h1>
+      <h1 className="text-2xl font-bold">对话接入</h1>
 
       {/* 渠道绑定矩阵 */}
       <div className="rounded-lg border bg-card p-4">
@@ -77,7 +77,7 @@ export default function Customizations() {
         </div>
       </div>
 
-      {/* Customization 列表 */}
+      {/* 对话接入 列表 */}
       <div className="space-y-3">
         {isLoading ? (
           <div className="text-center">加载中...</div>
