@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import DataSources from "@/pages/DataSources";
-import { useDataSources } from "@/hooks/useDataSources";
+import { useDataSources, useTriggerSync } from "@/hooks/useDataSources";
 
 afterEach(cleanup);
 
@@ -13,12 +13,13 @@ vi.mock("@/hooks/useDataSources", () => ({
   useUpdateDataSource: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteDataSource: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useToggleDataSource: () => ({ mutate: vi.fn() }),
-  useTriggerSync: () => ({ mutate: vi.fn(), isPending: false }),
+  useTriggerSync: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   fetchPreviewBranches: vi.fn(),
 }));
 
 afterEach(() => {
   vi.mocked(useDataSources).mockReturnValue({ data: [], isLoading: false });
+  vi.mocked(useTriggerSync).mockReset();
 });
 
 function renderWithSources(sources: unknown[]) {
@@ -165,5 +166,64 @@ describe("DataSources", () => {
     renderWithSources([withSync, noSync]);
     expect(screen.getByText("08-01 18:30")).toBeInTheDocument();
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  });
+
+  it("#44 点击某行「同步」:仅触发该源,仅该行进入同步中状态", () => {
+    const dsA = {
+      id: "neomind-docs",
+      type: "github",
+      product: "neomind",
+      enabled: true,
+      config: {},
+      sync_interval: "24h",
+      last_sync: null,
+      created_at: "2026-07-01T00:00:00Z",
+      updated_at: "2026-07-01T00:00:00Z",
+    };
+    const dsB = {
+      id: "neomind-sdk",
+      type: "filesystem",
+      product: "neomind",
+      enabled: true,
+      config: {},
+      sync_interval: "24h",
+      last_sync: null,
+      created_at: "2026-07-01T00:00:00Z",
+      updated_at: "2026-07-01T00:00:00Z",
+    };
+    const mutate = vi.fn();
+    vi.mocked(useTriggerSync).mockReturnValue({ mutate, isPending: false });
+    renderWithSources([dsA, dsB]);
+
+    const syncButtons = screen.getAllByText("同步");
+    expect(syncButtons).toHaveLength(2);
+    fireEvent.click(syncButtons[0]);
+
+    expect(mutate).toHaveBeenCalledWith("neomind-docs");
+    // 仅该行进入"同步中...", 另一行保持"同步"可独立操作
+    expect(screen.getByText("同步中...")).toBeInTheDocument();
+    expect(screen.getAllByText("同步")).toHaveLength(1);
+  });
+
+  it("#44 禁用源:同步按钮不可点击", () => {
+    const ds = {
+      id: "ne301-docs",
+      type: "github",
+      product: "ne301",
+      enabled: false,
+      config: {},
+      sync_interval: "24h",
+      last_sync: null,
+      created_at: "2026-07-01T00:00:00Z",
+      updated_at: "2026-07-01T00:00:00Z",
+    };
+    const mutate = vi.fn();
+    vi.mocked(useTriggerSync).mockReturnValue({ mutate, isPending: false });
+    renderWithSources([ds]);
+
+    const syncBtn = screen.getByText("同步") as HTMLButtonElement;
+    expect(syncBtn).toBeDisabled();
+    fireEvent.click(syncBtn);
+    expect(mutate).not.toHaveBeenCalled();
   });
 });

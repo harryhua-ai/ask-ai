@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { DirPicker } from "@/components/DirPicker";
 import type { DataSource } from "@/types/api";
+import { toast } from "sonner";
 
 // 决策 2A:github 为唯一 git 源类型(local_git 降为实现细节,不再暴露给用户)
 // Task 4:woocommerce 进数据源类型枚举
@@ -181,7 +182,11 @@ function dsToForm(ds: DataSource): FormValues {
 }
 
 export default function DataSources() {
-  const { data: sources, isLoading } = useDataSources();
+  const [syncingIds, setSyncingIds] = useState<Set<string>>(() => new Set());
+  const [triggeredAt, setTriggeredAt] = useState<Record<string, number>>(() => ({}));
+  const { data: sources, isLoading } = useDataSources({
+    refetchInterval: syncingIds.size > 0 ? 5000 : false,
+  });
   const createDs = useCreateDataSource();
   const updateDs = useUpdateDataSource();
   const deleteDs = useDeleteDataSource();
@@ -274,6 +279,43 @@ export default function DataSources() {
     if (!window.confirm(`确定删除数据源 ${id} 吗?`)) return;
     await deleteDs.mutateAsync(id);
   };
+
+  const handleSync = (ds: DataSource) => {
+    setSyncingIds((prev) => new Set(prev).add(ds.id));
+    setTriggeredAt((prev) => ({ ...prev, [ds.id]: Date.now() }));
+    triggerSync.mutate(ds.id);
+  };
+
+  // 后端 trigger_sync 为 fire-and-forget,需轮询 list 检测 last_sync 推进以判定完成。
+  useEffect(() => {
+    if (syncingIds.size === 0) return;
+    const now = Date.now();
+    const completed: string[] = [];
+    const stale: string[] = [];
+    for (const id of syncingIds) {
+      const ds = sources?.find((s) => s.id === id);
+      const ts = ds?.last_sync ? new Date(ds.last_sync).getTime() : 0;
+      const triggered = triggeredAt[id] ?? 0;
+      if (ts && ts > triggered) completed.push(id);
+      else if (now - triggered > 5 * 60 * 1000) stale.push(id);
+    }
+    if (completed.length > 0) {
+      completed.forEach((id) => toast.success(`同步完成:${id}`));
+      setSyncingIds((prev) => {
+        const next = new Set(prev);
+        completed.forEach((id) => next.delete(id));
+        return next;
+      });
+    }
+    if (stale.length > 0) {
+      stale.forEach((id) => toast.warning(`同步超时,请稍后在「最新同步」列确认:${id}`));
+      setSyncingIds((prev) => {
+        const next = new Set(prev);
+        stale.forEach((id) => next.delete(id));
+        return next;
+      });
+    }
+  }, [sources, syncingIds, triggeredAt]);
 
   return (
     <div className="space-y-4">
@@ -476,10 +518,10 @@ export default function DataSources() {
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={triggerSync.isPending || !ds.enabled}
-                  onClick={() => triggerSync.mutate(ds.id)}
+                  disabled={syncingIds.has(ds.id) || !ds.enabled}
+                  onClick={() => handleSync(ds)}
                 >
-                  同步
+                  {syncingIds.has(ds.id) ? "同步中..." : "同步"}
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => openEdit(ds)}>
                   编辑

@@ -1,11 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import type { DataSource, PreviewDir } from "@/types/api";
 
-export function useDataSources() {
+export function useDataSources(options?: { refetchInterval?: number | false }) {
   return useQuery({
     queryKey: ["data-sources"],
     queryFn: () => apiFetch<DataSource[]>("/data-sources"),
+    refetchInterval: options?.refetchInterval,
   });
 }
 
@@ -45,8 +47,18 @@ export function useToggleDataSource() {
 }
 
 export function useTriggerSync() {
+  const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => apiFetch<{ status: string }>(`/data-sources/${id}/sync`, { method: "POST" }),
+    mutationFn: (id: string) =>
+      apiFetch<{ status: string; source_id: string }>(`/data-sources/${id}/sync`, { method: "POST" }),
+    onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: ["data-sources"] });
+      toast.success(`已触发同步:${id}(后台进行中,完成后「最新同步」列自动刷新)`);
+    },
+    onError: (err) => {
+      const msg = err instanceof Error ? err.message : "未知错误";
+      toast.error(`同步触发失败:${msg}`);
+    },
   });
 }
 
