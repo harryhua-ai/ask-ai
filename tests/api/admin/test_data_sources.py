@@ -162,3 +162,82 @@ async def test_preview_branches(auth_headers, monkeypatch):
     assert resp.status_code == 200
     data = resp.json()
     assert data["branches"] == ["main", "hw-v1.2"]
+
+
+async def test_sync_all_returns_enabled_source_ids_skips_disabled(auth_headers, monkeypatch):
+    """sync-all 返回启用源 id+count、跳过禁用源;后台任务不实际执行(防 weaviate/embedder)。"""
+    from unittest.mock import MagicMock
+
+    import backend.api.admin.data_sources as mod
+    from backend.main import app
+
+    # 防后台任务真实执行(_run_all 需 weaviate_client+embedder,测试期未初始化):
+    # 把 data_sources 模块内的 asyncio 名重绑到假对象,create_task 只捕获并关闭
+    # 协程、不调度。不 patch 全局 asyncio,避免破坏 httpx/anyio 自身的任务调度。
+    class _FakeAsyncio:
+        @staticmethod
+        def create_task(coro):
+            coro.close()
+            return MagicMock()
+
+    monkeypatch.setattr(mod, "asyncio", _FakeAsyncio)
+
+    # ASGITransport 不跑 lifespan,app.state.embedder/weaviate_* 未初始化;
+    # 端点在 create_task 前会读这些属性,设占位避免 AttributeError
+    app.state.embedder = None
+    app.state.weaviate_client = None
+    app.state.weaviate_class_name = getattr(
+        app.state.settings, "weaviate_class_name", "AskAIChunk"
+    )
+
+    factory = app.state.session_factory
+    # 前置清理:防历史失败残留(上次 finally 未跑导致主键冲突)
+    async with factory() as session:
+        await session.execute(
+            DataSource.__table__.delete().where(
+                DataSource.id.in_(["test-sync-enabled", "test-sync-disabled"])
+            )
+        )
+        await session.commit()
+    async with factory() as session:
+        session.add(
+            DataSource(
+                id="test-sync-enabled",
+                type="filesystem",
+                product="test",
+                enabled=True,
+                config={"root_path": "/tmp"},
+                sync_interval="24h",
+            )
+        )
+        session.add(
+            DataSource(
+                id="test-sync-disabled",
+                type="filesystem",
+                product="test",
+                enabled=False,
+                config={"root_path": "/tmp"},
+                sync_interval="24h",
+            )
+        )
+        await session.commit()
+
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/api/admin/data-sources/sync-all", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "syncing"
+        assert "test-sync-enabled" in data["source_ids"]
+        assert "test-sync-disabled" not in data["source_ids"]  # 跳过禁用
+        assert data["count"] == len(data["source_ids"])
+        assert data["count"] >= 1
+    finally:
+        async with factory() as session:
+            await session.execute(
+                DataSource.__table__.delete().where(
+                    DataSource.id.in_(["test-sync-enabled", "test-sync-disabled"])
+                )
+            )
+            await session.commit()

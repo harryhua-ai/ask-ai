@@ -3,7 +3,7 @@
 import asyncio
 import os
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import uuid4
 
 import httpx
@@ -57,7 +57,12 @@ def _count_listable_subdirs(path: Path) -> int:
         return 0
 
 
-def _to_out(ds: DataSource, last_sync: str | None = None) -> DataSourceOut:
+def _to_out(
+    ds: DataSource,
+    last_sync: str | None = None,
+    last_sync_status: str | None = None,
+    last_sync_error: str | None = None,
+) -> DataSourceOut:
     """将 DataSource ORM 对象转换为 DataSourceOut schema。"""
     return DataSourceOut(
         id=ds.id,
@@ -69,6 +74,8 @@ def _to_out(ds: DataSource, last_sync: str | None = None) -> DataSourceOut:
         created_at=ds.created_at.isoformat() if ds.created_at else "",
         updated_at=ds.updated_at.isoformat() if ds.updated_at else "",
         last_sync=last_sync,
+        last_sync_status=last_sync_status,
+        last_sync_error=last_sync_error,
     )
 
 
@@ -84,21 +91,49 @@ async def list_data_sources(
         sources = result.scalars().all()
         if not sources:
             return []
-        # 每个 source 的最新一次同步(无论成功/失败/部分成功,都是"最近一次尝试")
+        # 每个 source 的最新一次同步(无论成功/失败,都是"最近一次尝试")+ 其 status/error
+        # 用 MAX(started_at) 子查询 join 回 sync_log,取该行的 status/error_detail
+        latest_sub = (
+            select(SyncLog.source_id, func.max(SyncLog.started_at).label("max_started"))
+            .where(SyncLog.source_id.in_([s.id for s in sources]))
+            .group_by(SyncLog.source_id)
+            .subquery()
+        )
         rows = (
             await session.execute(
-                select(SyncLog.source_id, func.max(SyncLog.started_at))
-                .where(SyncLog.source_id.in_([s.id for s in sources]))
-                .group_by(SyncLog.source_id)
+                select(
+                    SyncLog.source_id,
+                    SyncLog.status,
+                    SyncLog.error_detail,
+                    SyncLog.started_at,
+                )
+                .join(
+                    latest_sub,
+                    (SyncLog.source_id == latest_sub.c.source_id)
+                    & (SyncLog.started_at == latest_sub.c.max_started),
+                )
             )
         ).all()
-        latest_by_source = {row[0]: row[1] for row in rows}
+        latest_by_source = {
+            row[0]: {"started_at": row[3], "status": row[1], "error_detail": row[2]}
+            for row in rows
+        }
     return [
         _to_out(
             s,
-            last_sync=latest_by_source[s.id].isoformat()
-            if latest_by_source.get(s.id) is not None
-            else None,
+            last_sync=(
+                latest_by_source[s.id]["started_at"].isoformat()
+                if s.id in latest_by_source
+                else None
+            ),
+            last_sync_status=(
+                latest_by_source[s.id]["status"] if s.id in latest_by_source else None
+            ),
+            last_sync_error=(
+                latest_by_source[s.id]["error_detail"]
+                if s.id in latest_by_source
+                else None
+            ),
         )
         for s in sources
     ]
@@ -257,3 +292,50 @@ async def trigger_sync(source_id: str, _: EditorDep, request: Request) -> dict[s
     # 后台任务不阻塞响应；异常在 _sync_one 内已被捕获并写入 SyncLog
     asyncio.create_task(_run())
     return {"status": "syncing", "source_id": source_id}
+
+
+@router.post("/sync-all")
+async def trigger_sync_all(_: EditorDep, request: Request) -> dict[str, Any]:
+    """一键同步所有启用的数据源(后台顺序执行,立即返回)。
+
+    一个后台任务**顺序**跑所有 enabled 源(复用单个 IngestionPipeline,
+    避免并发 BGE embed 导致 GPU OOM —— tesla-t4 共享 GPU、batch ≤16 约束)。
+    每源独立写 sync_log,前端按现有 5s 轮询逐个检测完成并 toast。
+    禁用源不参与(与单源 trigger_sync 的 enabled 校验一致)。
+    """
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        result = await session.execute(
+            select(DataSource).where(DataSource.enabled.is_(True)).order_by(DataSource.id)
+        )
+        sources = result.scalars().all()
+        if not sources:
+            return {"status": "noop", "source_ids": [], "count": 0}
+        cfgs = [to_source_config(s) for s in sources]
+
+    # 捕获到局部变量,避免后台任务引用已结束的 request 对象
+    settings = request.app.state.settings
+    embedder = request.app.state.embedder
+    weaviate_client = request.app.state.weaviate_client
+    weaviate_class_name = request.app.state.weaviate_class_name
+
+    async def _run_all() -> None:
+        """后台任务:构造单个 pipeline,顺序 _sync_one 每个 enabled 源。
+
+        _sync_one 内部捕获异常并写 sync_log(不向上传播),单源失败不影响后续源。
+        """
+        from backend.db.session import get_sync_session_factory
+        from backend.pipeline.ingest import IngestionPipeline
+        from scripts.sync import _sync_one
+
+        pipeline = IngestionPipeline(
+            embedder,
+            weaviate_client,
+            class_name=weaviate_class_name,
+            session_factory=get_sync_session_factory(settings.postgres_dsn),
+        )
+        for cfg in cfgs:
+            await _sync_one(cfg, pipeline, factory, triggered_by="manual")
+
+    asyncio.create_task(_run_all())
+    return {"status": "syncing", "source_ids": [c.id for c in cfgs], "count": len(cfgs)}
