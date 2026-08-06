@@ -10,7 +10,7 @@ const NAV_ITEMS = [
   { to: "/data-sources", icon: Database, label: "数据源", roles: ["admin", "editor", "viewer"] },
   { to: "/sync-logs", icon: Activity, label: "同步监控", roles: ["admin", "editor", "viewer"] },
   { to: "/customizations", icon: Palette, label: "Customization", roles: ["admin", "editor", "viewer"] },
-  { to: "/llm-providers", icon: Cpu, label: "LLM 供应商", roles: ["admin", "editor", "viewer"] },
+  { to: "/llm-providers", icon: Cpu, label: "模型配置", roles: ["admin", "editor", "viewer"] },
   { to: "/conversations", icon: MessageSquare, label: "对话审查", roles: ["admin", "editor", "viewer"] },
   { to: "/answer-overrides", icon: CheckSquare, label: "答案覆盖", roles: ["admin", "editor", "viewer"] },
   { to: "/analytics", icon: BarChart3, label: "分析仪表盘", roles: ["admin", "editor", "viewer"] },

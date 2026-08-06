@@ -91,9 +91,16 @@ export interface LLMProvider {
   config: Record<string, unknown>;
 }
 
+/** LLM 路由链元素:{provider, model}。model 为 null = 用 provider 默认。 */
+export interface LLMChainItem {
+  provider: string;
+  model: string | null;
+}
+
 export interface LLMRouting {
   task: string;
-  chain: string[];
+  /** chain 元素为 {provider, model} 对象(过渡期兼容旧字符串格式)。 */
+  chain: LLMChainItem[] | string[];
 }
 
 export interface Conversation {

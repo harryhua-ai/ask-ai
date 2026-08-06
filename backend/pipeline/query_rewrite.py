@@ -67,7 +67,7 @@ async def rewrite_query(
         prompt = _REWRITE_PROMPT.format(history=history_text, query=query)
         response = await llm.generate(
             [{"role": "user", "content": prompt}],
-            task="generation",
+            task="query_rewrite",
         )
         rewritten = response.content.strip().strip('"').strip("'")
         if rewritten and rewritten != query:
@@ -116,7 +116,7 @@ async def extract_query(query: str, llm: Any) -> str:
         prompt = _EXTRACT_PROMPT.format(query=query)
         response = await llm.generate(
             [{"role": "user", "content": prompt}],
-            task="generation",
+            task="query_rewrite",
         )
         extracted = response.content.strip().strip('"').strip("'")
         if extracted:

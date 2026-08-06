@@ -37,46 +37,72 @@ class LLMRegistry:
 class LLMRouter:
     """多供应商路由器。
 
-    按任务类型选取有序供应商链路,依次尝试 health_check + generate,
-    首个成功者返回结果;全部失败时抛出 RuntimeError。
+    按任务类型选取有序供应商链路，依次尝试 health_check + generate，
+    首个成功者返回结果；全部失败时抛出 RuntimeError。
+
+    chain 元素为 {"provider": str, "model": str | None} 对象：
+    - provider: 供应商 id
+    - model: 该任务使用的 model，None = 用 provider 默认 model
+
+    通过 reconfigure() 整体替换内部 providers/routing 字典，
+    使启动时锁住 router 引用的组件(RAG/Pruner)也能看到新配置。
     """
 
-    def __init__(self, providers: dict[str, LLMProvider], routing: dict[str, list[str]]):
+    def __init__(
+        self, providers: dict[str, LLMProvider], routing: dict[str, list[dict]]
+    ):
         self._providers = providers
         self._routing = routing
 
-    def _get_chain(self, task: str) -> list[str]:
-        """根据任务名返回对应供应商 ID 链路,缺省回退到 generation。"""
+    def reconfigure(
+        self, providers: dict[str, LLMProvider], routing: dict[str, list[dict]]
+    ) -> None:
+        """整体替换 providers/routing(整 dict 引用替换，不改旧 dict 内容)。
+
+        每次内部读 self._providers.get() 原子无损坏；异步单线程下，
+        reconfigure 落在两次迭代 await 间隙时，单次 generate 可能跨
+        新旧 providers 快照(无数据损坏，仅 provider 可能中途变化)，
+        窗口极短，风险可忽略。
+        """
+        self._providers = providers
+        self._routing = routing
+
+    def _get_chain(self, task: str) -> list[dict]:
+        """根据任务名返回对应链路，缺省回退到 generation。"""
         return self._routing.get(task, self._routing.get("generation", []))
 
     async def generate(self, messages: list[dict], task: str = "generation", **kwargs):
         """按链路顺序尝试各供应商的同步生成。"""
-        chain = self._get_chain(task)
         last_error = None
-        for provider_id in chain:
-            provider = self._providers.get(provider_id)
+        for item in self._get_chain(task):
+            pid, model = item["provider"], item.get("model")
+            provider = self._providers.get(pid)
             if provider is None:
                 continue
             try:
                 if await provider.health_check():
-                    return await provider.generate(messages, **kwargs)
+                    call_kwargs = {**kwargs, "model": model} if model else kwargs
+                    return await provider.generate(messages, **call_kwargs)
             except Exception as e:  # noqa: BLE001 - 故障切换需捕获所有异常
                 last_error = e
                 continue
-        raise RuntimeError(f"All LLM providers unavailable: {last_error}")
+        raise RuntimeError(f"All LLM providers unavailable for task={task}: {last_error}")
 
     async def stream(self, messages: list[dict], task: str = "generation", **kwargs):
         """按链路顺序尝试各供应商的流式生成。"""
-        chain = self._get_chain(task)
-        for provider_id in chain:
-            provider = self._providers.get(provider_id)
+        last_error = None
+        for item in self._get_chain(task):
+            pid, model = item["provider"], item.get("model")
+            provider = self._providers.get(pid)
             if provider is None:
                 continue
             try:
                 if await provider.health_check():
-                    async for chunk in provider.stream(messages, **kwargs):
+                    call_kwargs = {**kwargs, "model": model} if model else kwargs
+                    async for chunk in provider.stream(messages, **call_kwargs):
                         yield chunk
                     return
-            except Exception:  # noqa: BLE001, S112 - 故障切换需捕获所有异常
+            except Exception as e:  # noqa: BLE001, S112 - 故障切换需捕获所有异常
+                last_error = e
                 continue
-        raise RuntimeError("All LLM providers unavailable")
+        raise RuntimeError(f"All LLM providers unavailable for task={task}: {last_error}")
