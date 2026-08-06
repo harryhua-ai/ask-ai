@@ -1,5 +1,15 @@
 import { useState } from "react";
-import { X, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 import type { LLMProvider } from "@/types/api";
 
 interface Props {
@@ -18,119 +28,83 @@ export function AddToTaskDialog({ task, availableProviders, onAdd, onClose }: Pr
     : [];
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.4)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 50,
-      }}
-    >
-      <div
-        style={{
-          background: "#fff",
-          borderRadius: 8,
-          padding: 24,
-          width: 380,
-          maxWidth: "90vw",
-          boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <h3>添加到 · {task}</h3>
-          <button onClick={onClose}>
-            <X size={16} />
-          </button>
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>添加到 · {task}</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label>选供应商</Label>
+            {availableProviders.map((p) => {
+              const pModels = ((p.config as Record<string, unknown>).available_models as string[]) ?? [];
+              return (
+                <div
+                  key={p.id}
+                  onClick={() => {
+                    if (!p.enabled) return;
+                    setSelected(p.id);
+                    setModel(pModels.length > 0 ? pModels[0] : null);
+                  }}
+                  className={cn(
+                    "flex items-center gap-2.5 rounded-md border p-2.5 transition-colors",
+                    selected === p.id
+                      ? "border-primary border-2"
+                      : "border-border",
+                    p.enabled ? "cursor-pointer hover:bg-accent" : "cursor-not-allowed opacity-50",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "h-3.5 w-3.5 shrink-0 rounded-full border-2",
+                      selected === p.id
+                        ? "border-primary border-4 bg-primary"
+                        : "border-muted-foreground",
+                    )}
+                  />
+                  <span className="text-sm font-semibold">{p.id}</span>
+                  {!p.enabled && (
+                    <span className="text-xs text-muted-foreground">已停用</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {provider && models.length > 0 && (
+            <div className="space-y-2">
+              <Label>用哪个 model</Label>
+              <div className="flex gap-1.5 flex-wrap">
+                {models.map((m: string) => (
+                  <button
+                    key={m}
+                    onClick={() => setModel(m)}
+                    className={cn(
+                      "rounded-md border px-2.5 py-1 font-mono text-xs transition-colors",
+                      model === m
+                        ? "border-primary border-2 bg-primary text-primary-foreground"
+                        : "border-border hover:bg-accent",
+                    )}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        <label>选供应商</label>
-        {availableProviders.map((p) => {
-          const pModels = ((p.config as Record<string, unknown>).available_models as string[]) ?? [];
-          return (
-            <div
-              key={p.id}
-              onClick={() => {
-                setSelected(p.id);
-                // 选中供应商时默认选其第一个 model（若有）
-                setModel(pModels.length > 0 ? pModels[0] : null);
-              }}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "8px 10px",
-                border: selected === p.id ? "2px solid #000" : "1px solid #e4e4e7",
-                borderRadius: 6,
-                cursor: p.enabled ? "pointer" : "not-allowed",
-                opacity: p.enabled ? 1 : 0.5,
-                margin: "4px 0",
-              }}
-            >
-              <span
-                style={{
-                  width: 14,
-                  height: 14,
-                  borderRadius: "50%",
-                  border: selected === p.id ? "4px solid #000" : "1.5px solid #999",
-                }}
-              />
-              <span style={{ fontSize: 12, fontWeight: 600 }}>{p.id}</span>
-              {!p.enabled && <small>已停用</small>}
-            </div>
-          );
-        })}
-
-        {provider && models.length > 0 && (
-          <>
-            <label>用哪个 model</label>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {models.map((m: string) => (
-                <button
-                  key={m}
-                  onClick={() => setModel(m)}
-                  style={{
-                    border: model === m ? "2px solid #000" : "1px solid #e4e4e7",
-                    borderRadius: 6,
-                    padding: "4px 9px",
-                    fontSize: 11,
-                    fontFamily: "ui-monospace,monospace",
-                    cursor: "pointer",
-                    background: "#fff",
-                  }}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-          <button
+        <DialogFooter>
+          <Button
             onClick={() => selected && onAdd(selected, model)}
             disabled={!selected}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              background: selected ? "#000" : "#ccc",
-              color: "#fff",
-              border: "none",
-              borderRadius: 8,
-              padding: "7px 14px",
-              cursor: selected ? "pointer" : "not-allowed",
-              fontSize: 12,
-              fontWeight: 600,
-            }}
           >
-            <Plus size={14} />
+            <Plus className="mr-1.5 h-4 w-4" />
             添加到链路
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

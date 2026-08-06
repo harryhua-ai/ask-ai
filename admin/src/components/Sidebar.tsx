@@ -17,7 +17,7 @@ const NAV_ITEMS = [
   { to: "/users", icon: Users, label: "用户管理", roles: ["admin"] },
 ];
 
-export function Sidebar() {
+export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { user } = useAuth();
   const items = NAV_ITEMS.filter((item) => user && item.roles.includes(user.role));
   return (
@@ -31,10 +31,13 @@ export function Sidebar() {
             key={to}
             to={to}
             end={to === "/"}
+            onClick={onNavigate}
             className={({ isActive }) =>
               cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                isActive ? "bg-primary text-primary-foreground" : "hover:bg-muted",
+                "group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                isActive
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
               )
             }
           >

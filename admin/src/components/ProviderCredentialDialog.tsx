@@ -1,4 +1,12 @@
-import { Plus, X } from "lucide-react";
+import { Plus, Pencil, Trash2, Power } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import type { LLMProvider } from "@/types/api";
 
 interface Props {
@@ -19,129 +27,72 @@ export function ProviderCredentialDialog({
   onClose,
 }: Props) {
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.4)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 50,
-      }}
-    >
-      <div
-        style={{
-          background: "#fff",
-          borderRadius: 8,
-          padding: 24,
-          width: 480,
-          maxWidth: "90vw",
-          boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h3>供应商凭证</h3>
-          <button onClick={onClose}>
-            <X size={16} />
-          </button>
-        </div>
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>供应商凭证</DialogTitle>
+        </DialogHeader>
 
-        {providers.map((p) => {
-          const cfg = p.config as Record<string, unknown>;
-          const modelCount = ((cfg.available_models as string[]) ?? []).length;
-          return (
-            <div
-              key={p.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "10px 0",
-                borderBottom: "1px solid #f4f4f5",
-                opacity: p.enabled ? 1 : 0.5,
-              }}
-            >
-              <span
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: "50%",
-                  background: p.enabled ? "#000" : "#ccc",
-                }}
-              />
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>{p.id}</div>
-                <div style={{ fontSize: 10, color: "#999" }}>
-                  {p.type} · {modelCount} 个模型{!p.enabled && " · 已停用"}
+        <div className="space-y-2">
+          {providers.map((p) => {
+            const cfg = p.config as Record<string, unknown>;
+            const modelCount = ((cfg.available_models as string[]) ?? []).length;
+            return (
+              <div
+                key={p.id}
+                className={cn(
+                  "flex items-center gap-3 rounded-lg border p-3 transition-colors",
+                  p.enabled ? "bg-card" : "bg-muted/50 opacity-60",
+                )}
+              >
+                <span
+                  className={cn(
+                    "h-2 w-2 shrink-0 rounded-full",
+                    p.enabled ? "bg-emerald-500" : "bg-muted-foreground/30",
+                  )}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold">{p.id}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {p.type} · {modelCount} 个模型{!p.enabled && " · 已停用"}
+                  </div>
                 </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onEdit(p.id)}
+                >
+                  <Pencil className="mr-1 h-3 w-3" />
+                  编辑
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onToggle(p.id, !p.enabled)}
+                >
+                  <Power className="mr-1 h-3 w-3" />
+                  {p.enabled ? "停用" : "启用"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => onDelete(p.id)}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
               </div>
-              <button
-                onClick={() => onEdit(p.id)}
-                style={{
-                  fontSize: 11,
-                  padding: "4px 8px",
-                  border: "1px solid #e4e4e7",
-                  borderRadius: 6,
-                  background: "#fff",
-                  cursor: "pointer",
-                }}
-              >
-                编辑
-              </button>
-              <button
-                onClick={() => onToggle(p.id, !p.enabled)}
-                style={{
-                  fontSize: 11,
-                  padding: "4px 8px",
-                  border: "1px solid #e4e4e7",
-                  borderRadius: 6,
-                  background: "#fff",
-                  cursor: "pointer",
-                }}
-              >
-                {p.enabled ? "停用" : "启用"}
-              </button>
-              <button
-                onClick={() => onDelete(p.id)}
-                style={{
-                  fontSize: 11,
-                  padding: "4px 8px",
-                  border: "1px solid #e4e4e7",
-                  borderRadius: 6,
-                  color: "#dc2626",
-                  background: "#fff",
-                  cursor: "pointer",
-                }}
-              >
-                删除
-              </button>
-            </div>
-          );
-        })}
-
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-          <button
-            onClick={onAdd}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              background: "#000",
-              color: "#fff",
-              border: "none",
-              borderRadius: 8,
-              padding: "7px 14px",
-              cursor: "pointer",
-              fontSize: 12,
-              fontWeight: 600,
-            }}
-          >
-            <Plus size={14} />
-            新增供应商
-          </button>
+            );
+          })}
         </div>
-      </div>
-    </div>
+
+        <div className="flex justify-end pt-2">
+          <Button onClick={onAdd}>
+            <Plus className="mr-1.5 h-4 w-4" />
+            新增供应商
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
