@@ -1,6 +1,6 @@
 import { NavLink } from "react-router-dom";
 import {
-  Database, Activity, Palette, Cpu, MessageSquare, Users, LayoutDashboard, CheckSquare, BarChart3,
+  Database, Palette, Cpu, MessageSquare, Users, LayoutDashboard, CheckSquare, BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -8,7 +8,6 @@ import { useAuth } from "@/hooks/useAuth";
 const NAV_ITEMS = [
   { to: "/", icon: LayoutDashboard, label: "概览", roles: ["admin", "editor", "viewer"] },
   { to: "/data-sources", icon: Database, label: "数据源", roles: ["admin", "editor", "viewer"] },
-  { to: "/sync-logs", icon: Activity, label: "同步监控", roles: ["admin", "editor", "viewer"] },
   { to: "/customizations", icon: Palette, label: "Customization", roles: ["admin", "editor", "viewer"] },
   { to: "/llm-providers", icon: Cpu, label: "模型配置", roles: ["admin", "editor", "viewer"] },
   { to: "/conversations", icon: MessageSquare, label: "对话审查", roles: ["admin", "editor", "viewer"] },

@@ -7,7 +7,6 @@ import { Toaster } from "@/components/ui/toast";
 import Login from "@/pages/Login";
 import Users from "@/pages/Users";
 import DataSources from "@/pages/DataSources";
-import SyncLogs from "@/pages/SyncLogs";
 import Customizations from "@/pages/Customizations";
 import LLMProviders from "@/pages/LLMProviders";
 import Conversations from "@/pages/Conversations";
@@ -29,7 +28,6 @@ export default function App() {
                 <Routes>
                   <Route path="/" element={<Navigate to="/data-sources" replace />} />
                   <Route path="/data-sources" element={<DataSources />} />
-                  <Route path="/sync-logs" element={<SyncLogs />} />
                   <Route path="/customizations" element={<Customizations />} />
                   <Route path="/llm-providers" element={<LLMProviders />} />
                   <Route path="/conversations" element={<Conversations />} />
