@@ -46,6 +46,10 @@ export interface DataSource {
   updated_at: string;
   /** 最近一次同步时间(由后端从 sync_log 聚合,无记录为 null)。 */
   last_sync: string | null;
+  /** 最近一次同步的状态(success/failed/...),无记录为 null。 */
+  last_sync_status: string | null;
+  /** 最近一次同步失败时的错误明细(无记录或成功时为 null)。 */
+  last_sync_error: string | null;
 }
 
 /** preview-dirs 返回的目录项(供目录选择器渲染)。 */

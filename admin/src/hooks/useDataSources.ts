@@ -62,6 +62,30 @@ export function useTriggerSync() {
   });
 }
 
+export function useTriggerSyncAll() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<{ status: string; source_ids: string[]; count: number }>(`/data-sources/sync-all`, {
+        method: "POST",
+      }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["data-sources"] });
+      if (data.count === 0) {
+        toast.warning("没有可同步的启用数据源");
+      } else {
+        toast.success(
+          `已触发同步全部 ${data.count} 个数据源(后台顺序进行,逐个完成时提示)`,
+        );
+      }
+    },
+    onError: (err) => {
+      const msg = err instanceof Error ? err.message : "未知错误";
+      toast.error(`同步触发失败:${msg}`);
+    },
+  });
+}
+
 /** 预览 GitHub 仓库分支列表(供前端多选填充)。 */
 export async function fetchPreviewBranches(owner: string, repo: string): Promise<string[]> {
   const data = await apiFetch<{ branches: string[] }>(
