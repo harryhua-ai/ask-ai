@@ -37,21 +37,20 @@ function renderDialog(props: Partial<Parameters<typeof ProviderEditDialog>[0]> =
 }
 
 describe("ProviderEditDialog", () => {
-  it("api_key 回显 ********，不改则提交时为 ********(后端剔除)", () => {
+  it("api_key 不回显真实值，留空保存时不覆盖已有密钥", () => {
     const onSave = vi.fn();
     renderDialog({ onSave });
+    expect(screen.queryByDisplayValue("********")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("留空则不修改")).toBeInTheDocument();
     fireEvent.click(screen.getByText("保存"));
-    expect(onSave).toHaveBeenCalledWith(
-      expect.objectContaining({
-        config: expect.objectContaining({ api_key: "********" }),
-      }),
-    );
+    const saved = onSave.mock.calls[0][0];
+    expect(saved.config).not.toHaveProperty("api_key");
   });
 
-  it("清空 api_key 再填新值才提交新值", () => {
+  it("填入新 api_key 才提交新值", () => {
     const onSave = vi.fn();
     renderDialog({ onSave });
-    const keyInput = screen.getByDisplayValue("********");
+    const keyInput = screen.getByPlaceholderText("留空则不修改");
     fireEvent.change(keyInput, { target: { value: "sk-newkey" } });
     fireEvent.click(screen.getByText("保存"));
     expect(onSave).toHaveBeenCalledWith(

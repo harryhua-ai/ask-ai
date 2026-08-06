@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { RefreshCw, SlidersHorizontal, Info } from "lucide-react";
 import {
   useLLMProviders,
@@ -55,6 +55,19 @@ export default function LLMProviders() {
   const [addTask, setAddTask] = useState<string | null>(null);
 
   const editProvider = providers?.find((p) => p.id === editId);
+
+  // reload 反馈（项目无 toast 库，用内联状态条）
+  const [reloadMsg, setReloadMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  useEffect(() => {
+    if (reload.isSuccess && reload.data) {
+      setReloadMsg({
+        type: "success",
+        text: `已应用变更：${reload.data.providers_count} 个供应商生效`,
+      });
+    } else if (reload.isError) {
+      setReloadMsg({ type: "error", text: "重载失败，配置未生效（详见服务端日志）" });
+    }
+  }, [reload.isSuccess, reload.isError, reload.data]);
 
   /** 更新某 task 的整条 chain。 */
   const replaceChain = (task: string, chain: LLMChainItem[]) => {
@@ -123,6 +136,22 @@ export default function LLMProviders() {
           </button>
         </div>
       </div>
+
+      {reloadMsg && (
+        <div
+          style={{
+            padding: "8px 12px",
+            borderRadius: 8,
+            fontSize: 13,
+            marginBottom: 12,
+            background: reloadMsg.type === "success" ? "#ecfdf5" : "#fef2f2",
+            color: reloadMsg.type === "success" ? "#059669" : "#dc2626",
+            border: `1px solid ${reloadMsg.type === "success" ? "#a7f3d0" : "#fecaca"}`,
+          }}
+        >
+          {reloadMsg.text}
+        </div>
+      )}
 
       {/* 6 环节网格 */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>

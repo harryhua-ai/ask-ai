@@ -30,6 +30,19 @@ async def _setup_app_state():
     """
     from backend.main import app
 
+    # 测试请求使用 example.com 模拟供应商地址；显式加入 allowlist，避免测试依赖生产代码放行任意域名。
+    os.environ["LLM_ALLOWED_HOSTS"] = ",".join(
+        {
+            "api.example.com",
+            "a.example.com",
+            "b.example.com",
+            "orig.example.com",
+            "delete.example.com",
+            "mock.example.com",
+            "api.test.com",
+            "empty-key.example.com",
+        }
+    )
     settings = load_settings()
     app.state.settings = settings
 
@@ -47,45 +60,49 @@ async def _setup_app_state():
     # 只在缺失时插入（幂等），chain 保持旧字符串格式以匹配现有断言
     # （list_routing 端点原样返回 DB 值，不经过归一化）。
     async with factory() as session:
-        if not (await session.execute(
-            select(LLMProviderModel).where(LLMProviderModel.id == "deepseek")
-        )).scalar_one_or_none():
-            session.add(LLMProviderModel(
-                id="deepseek",
-                type="openai_compatible",
-                enabled=True,
-                config={
-                    "api_base": "https://api.deepseek.com/v1",
-                    "api_key": encrypt_api_key("sk-test-seed", settings.encryption_key),
-                    "model": "deepseek-chat",
-                    "max_tokens": 4096,
-                    "temperature": 0.3,
-                },
-            ))
+        if not (
+            await session.execute(select(LLMProviderModel).where(LLMProviderModel.id == "deepseek"))
+        ).scalar_one_or_none():
+            session.add(
+                LLMProviderModel(
+                    id="deepseek",
+                    type="openai_compatible",
+                    enabled=True,
+                    config={
+                        "api_base": "https://api.deepseek.com/v1",
+                        "api_key": encrypt_api_key("sk-test-seed", settings.encryption_key),
+                        "model": "deepseek-chat",
+                        "max_tokens": 4096,
+                        "temperature": 0.3,
+                    },
+                )
+            )
         for task, chain in (
             ("generation", [{"provider": "deepseek", "model": None}]),
             ("query_decomposition", [{"provider": "deepseek", "model": None}]),
         ):
-            existing_route = (await session.execute(
-                select(LLMRouting).where(LLMRouting.task == task)
-            )).scalar_one_or_none()
+            existing_route = (
+                await session.execute(select(LLMRouting).where(LLMRouting.task == task))
+            ).scalar_one_or_none()
             if existing_route is None:
                 session.add(LLMRouting(task=task, chain=chain))
             else:
                 existing_route.chain = chain  # 强制刷新为对象格式
 
         # default customization + widget 绑定（test_customizations 依赖）
-        if not (await session.execute(
-            select(Customization).where(Customization.id == "default")
-        )).scalar_one_or_none():
+        if not (
+            await session.execute(select(Customization).where(Customization.id == "default"))
+        ).scalar_one_or_none():
             prompt_cfg = load_yaml_config(settings.config_dir / "system_prompt.yaml")
-            session.add(Customization(
-                id="default",
-                name="默认配置",
-                system_prompt=prompt_cfg["system_prompt"],
-                language=prompt_cfg.get("language", "auto"),
-                assistant_name=prompt_cfg.get("assistant_name", "CamThink 助手"),
-            ))
+            session.add(
+                Customization(
+                    id="default",
+                    name="默认配置",
+                    system_prompt=prompt_cfg["system_prompt"],
+                    language=prompt_cfg.get("language", "auto"),
+                    assistant_name=prompt_cfg.get("assistant_name", "CamThink 助手"),
+                )
+            )
             session.add(CustomizationBinding(channel="widget", customization_id="default"))
         await session.commit()
 

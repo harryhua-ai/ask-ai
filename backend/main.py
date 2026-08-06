@@ -42,6 +42,7 @@ import backend.connectors.github
 # 导入 LLM provider 以触发 @LLMRegistry.register
 import backend.llm.deepseek  # noqa: F401
 from backend.api.admin.router import admin_router
+from backend.api.admin.schemas import validate_llm_api_base
 from backend.api.routes import router as api_router
 from backend.auth.crypto import decrypt_api_key
 from backend.config import load_settings, load_yaml_config
@@ -116,20 +117,28 @@ def _build_llm_router(config_dir: Path) -> LLMRouter:
     return LLMRouter(providers, routing)
 
 
+def _has_available_pruning_provider(
+    routing_chain: list[dict], providers: dict[str, object]
+) -> bool:
+    """检查 pruning 路由是否至少包含一个已构造的供应商。"""
+    return any(item.get("provider") in providers for item in routing_chain)
+
+
 async def _build_llm_state(
     settings, factory
-) -> tuple[dict[str, object], dict[str, list[dict]], list[str]]:
+) -> tuple[dict[str, object], dict[str, list[dict]], list[str], bool]:
     """从 DB 读 enabled providers + routing → 解密 → 构造 provider 实例。
 
-    启动时与 reload 端点共用此函数（单一数据源）。
+    启动时与 reload 端点共用此函数。
 
     Returns:
-        (providers_dict, routing_dict, skipped_ids)。
+        (providers_dict, routing_dict, skipped_ids, db_has_providers)。
+        db_has_providers 用于区分 DB 无记录与 DB 有记录但全部禁用。
         providers 为空时调用方应决定是否回退 / 报错。
     """
     db_config = await load_llm_config_from_db(factory)
     if db_config is None:
-        return {}, {}, []
+        return {}, {}, [], False
     providers_list, routing_dict = db_config
     providers: dict[str, object] = {}
     skipped: list[str] = []
@@ -139,8 +148,14 @@ async def _build_llm_state(
             try:
                 cfg["api_key"] = decrypt_api_key(cfg["api_key"], settings.encryption_key)
             except ValueError:
-                pass  # 旧数据可能是明文，保持原样继续尝试
+                # 旧数据可能是明文（ENCRYPTION_KEY 轮换前），保持原样兼容继续
+                logger.warning(
+                    "api_key 解密失败，按明文兼容继续: provider=%s"
+                    "（检查 ENCRYPTION_KEY 一致性或重新录入）",
+                    prov["id"],
+                )
         try:
+            validate_llm_api_base(cfg.get("api_base", ""))
             provider = LLMRegistry.create(
                 prov["type"],
                 provider_id=prov["id"],
@@ -151,13 +166,11 @@ async def _build_llm_state(
                 temperature=cfg.get("temperature", 0.3),
             )
         except Exception:
-            logger.exception(
-                "LLM 供应商构造失败，已跳过: id=%s type=%s", prov["id"], prov["type"]
-            )
+            logger.exception("LLM 供应商构造失败，已跳过: id=%s type=%s", prov["id"], prov["type"])
             skipped.append(prov["id"])
             continue
         providers[prov["id"]] = provider
-    return providers, routing_dict, skipped
+    return providers, routing_dict, skipped, True
 
 
 @asynccontextmanager
@@ -174,41 +187,52 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.session_factory = get_session_factory(engine)
 
         # Seed: 确保 default customization + widget 绑定存在
+        from sqlalchemy import select as sa_select
+
         from backend.auth.crypto import encrypt_api_key
         from backend.auth.jwt import hash_password
         from backend.db.models import (
-            Customization, CustomizationBinding, LLMProviderModel, LLMRouting, User,
+            Customization,
+            CustomizationBinding,
+            LLMProviderModel,
+            LLMRouting,
+            User,
         )
-        from sqlalchemy import select as sa_select
 
         prompt_cfg = load_yaml_config(settings.config_dir / "system_prompt.yaml")
         async with app.state.session_factory() as session:
             # Admin 用户
             admin_email = os.environ.get("ADMIN_EMAIL", "admin@camthink.ai")
-            existing_admin = (await session.execute(
-                sa_select(User).where(User.email == admin_email)
-            )).scalar_one_or_none()
+            existing_admin = (
+                await session.execute(sa_select(User).where(User.email == admin_email))
+            ).scalar_one_or_none()
             if not existing_admin:
-                session.add(User(
-                    email=admin_email,
-                    role="admin",
-                    password_hash=hash_password(os.environ.get("ADMIN_PASSWORD", "admin123")),
-                ))
+                session.add(
+                    User(
+                        email=admin_email,
+                        role="admin",
+                        password_hash=hash_password(os.environ.get("ADMIN_PASSWORD", "admin123")),
+                    )
+                )
                 logger.info("已创建 admin 用户: %s", admin_email)
 
             # Default customization + widget 绑定
             if not await session.get(Customization, "default"):
-                session.add(Customization(
-                    id="default",
-                    name="默认配置",
-                    system_prompt=prompt_cfg["system_prompt"],
-                    language=prompt_cfg.get("language", "auto"),
-                    assistant_name=prompt_cfg.get("assistant_name", "CamThink 助手"),
-                ))
-                session.add(CustomizationBinding(
-                    channel="widget",
-                    customization_id="default",
-                ))
+                session.add(
+                    Customization(
+                        id="default",
+                        name="默认配置",
+                        system_prompt=prompt_cfg["system_prompt"],
+                        language=prompt_cfg.get("language", "auto"),
+                        assistant_name=prompt_cfg.get("assistant_name", "CamThink 助手"),
+                    )
+                )
+                session.add(
+                    CustomizationBinding(
+                        channel="widget",
+                        customization_id="default",
+                    )
+                )
                 logger.info("已创建 default customization + widget 绑定")
             await session.commit()
 
@@ -223,12 +247,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 cfg = dict(prov["config"])
                 if cfg.get("api_key"):
                     cfg["api_key"] = encrypt_api_key(cfg["api_key"], settings.encryption_key)
-                session.add(LLMProviderModel(
-                    id=prov["id"],
-                    type=prov["type"],
-                    enabled=prov.get("enabled", True),
-                    config=cfg,
-                ))
+                session.add(
+                    LLMProviderModel(
+                        id=prov["id"],
+                        type=prov["type"],
+                        enabled=prov.get("enabled", True),
+                        config=cfg,
+                    )
+                )
             for task, cfg in llm_yaml.get("routing", {}).items():
                 chain = cfg.get("chain", []) if isinstance(cfg, dict) else cfg
                 if await session.get(LLMRouting, task):
@@ -253,10 +279,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.weaviate_class_name = settings.weaviate_class_name
 
         # LLM:优先从 DB 加载，为空时回退 YAML(Phase 1 兼容)
-        providers, routing_dict, skipped = await _build_llm_state(
+        providers, routing_dict, skipped, db_has_providers = await _build_llm_state(
             settings, app.state.session_factory
         )
-        if providers:
+        if providers or db_has_providers:
             router_llm = LLMRouter(providers, routing_dict)
             logger.info(
                 "LLM 配置已从 DB 加载（%d 个供应商，跳过 %d 个）", len(providers), len(skipped)
@@ -291,8 +317,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         # Pruner(Phase 3A):检查 routing 中是否有 "pruning" task
         pruner = None
-        routing_for_pruning = routing_dict.get("pruning", []) if db_config else []
-        if routing_for_pruning and any(pid in providers for pid in routing_for_pruning):
+        routing_for_pruning = routing_dict.get("pruning", [])
+        if routing_for_pruning and _has_available_pruning_provider(routing_for_pruning, providers):
             from backend.pipeline.pruner import LLMPruner
 
             pruner = LLMPruner(router_llm)

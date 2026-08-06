@@ -1,6 +1,11 @@
 """Admin API Pydantic 模型。"""
 
-from pydantic import BaseModel, EmailStr, Field
+import ipaddress
+import os
+import socket
+from urllib.parse import urlparse
+
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class LoginRequest(BaseModel):
@@ -61,7 +66,9 @@ class DataSourceCreate(BaseModel):
 
 
 class DataSourceUpdate(BaseModel):
-    type: str | None = Field(default=None, pattern="^(github|filesystem|local_git|web_crawl|sdk|woocommerce)$")
+    type: str | None = Field(
+        default=None, pattern="^(github|filesystem|local_git|web_crawl|sdk|woocommerce)$"
+    )
     product: str | None = None
     enabled: bool | None = None
     config: dict | None = None
@@ -145,6 +152,88 @@ class BindingUpdate(BaseModel):
     customization_id: str
 
 
+# prod 模式 LLM api_base 白名单（防 SSRF + 凭证外泄）
+_DEFAULT_LLM_HOSTS = {"api.deepseek.com", "api.openai.com", "api.anthropic.com"}
+
+
+def _allowed_llm_hosts() -> set[str]:
+    """返回允许的 LLM 主机白名单（默认 + env LLM_ALLOWED_HOSTS 扩展）。"""
+    hosts = set(_DEFAULT_LLM_HOSTS)
+    extra = os.environ.get("LLM_ALLOWED_HOSTS", "")
+    return hosts | {h.strip().lower() for h in extra.split(",") if h.strip()}
+
+
+def validate_llm_api_base(url: str) -> str:
+    """校验 LLM api_base，防 SSRF 与凭证外泄。
+
+    所有环境都只允许默认供应商主机或通过 ``LLM_ALLOWED_HOSTS`` 显式配置的主机。
+    这不是 UI 校验，而是携带解密凭证发起出站请求前的安全边界。
+    prod 额外拒绝 DNS 解析到内网、loopback、保留和 link-local 地址。
+    本地 LLM 若确实需要使用，必须显式加入 allowlist；不允许依赖 APP_MODE
+    的默认值放行任意目标。
+    """
+    if not url:
+        return url
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("api_base 只允许 http/https 协议")
+    if os.environ.get("APP_MODE", "dev") == "prod" and parsed.scheme != "https":
+        raise ValueError("prod 模式 api_base 必须使用 https")
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise ValueError("api_base 缺少主机名")
+
+    try:
+        literal_ip = ipaddress.ip_address(host)
+    except ValueError:
+        literal_ip = None
+    if literal_ip is not None and (
+        literal_ip.is_link_local
+        or literal_ip.is_private
+        or literal_ip.is_loopback
+        or literal_ip.is_reserved
+    ):
+        raise ValueError(f"禁止 api_base 指向内网地址 {literal_ip}")
+
+    if host not in _allowed_llm_hosts():
+        raise ValueError(f"api_base 主机 {host} 不在 allowlist（通过 LLM_ALLOWED_HOSTS 配置）")
+
+    if os.environ.get("APP_MODE", "dev") != "prod":
+        return url
+
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror as exc:
+        raise ValueError(f"api_base 主机 {host} 无法解析") from exc
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_link_local or ip.is_private or ip.is_loopback or ip.is_reserved:
+            raise ValueError(f"prod 模式禁止 api_base 指向内网地址 {ip}")
+    return url
+
+
+class ProviderConfig(BaseModel):
+    """LLM 供应商配置（结构化校验，防 SSRF / cost 放大）。
+
+    api_base 经 validate_llm_api_base 校验；max_tokens/temperature 限界
+    防止管理员误设导致成本放大。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    api_base: str = ""
+    api_key: str = ""
+    model: str = ""
+    max_tokens: int = Field(default=4096, ge=1, le=128000)
+    temperature: float = Field(default=0.3, ge=0.0, le=2.0)
+    available_models: list[str] = Field(default_factory=list)
+
+    @field_validator("api_base")
+    @classmethod
+    def _check_api_base(cls, v: str) -> str:
+        return validate_llm_api_base(v)
+
+
 class LLMProviderOut(BaseModel):
     """LLM 供应商输出 schema(api_key 已脱敏)。"""
 
@@ -158,17 +247,17 @@ class LLMProviderCreate(BaseModel):
     """LLM 供应商创建 schema(config 中包含明文 api_key)。"""
 
     id: str = Field(..., min_length=1, max_length=50)
-    type: str = Field(..., pattern="^(openai_compatible|anthropic|openai)$")
+    type: str = Field(..., pattern="^openai_compatible$")
     enabled: bool = True
-    config: dict
+    config: ProviderConfig
 
 
 class LLMProviderUpdate(BaseModel):
     """LLM 供应商更新 schema(仅非 None 字段会被写入)。"""
 
-    type: str | None = None
+    type: str | None = Field(default=None, pattern="^openai_compatible$")
     enabled: bool | None = None
-    config: dict | None = None
+    config: ProviderConfig | None = None
 
 
 class LLMChainItem(BaseModel):
@@ -191,7 +280,7 @@ class LLMRoutingOut(BaseModel):
 class LLMRoutingUpdate(BaseModel):
     """LLM 路由更新 schema。"""
 
-    chain: list[LLMChainItem | str] = []  # 兼容旧字符串格式写入(过渡期)
+    chain: list[LLMChainItem] = []  # 写入侧只接受对象格式（读侧 config_loader 仍兼容旧字符串）
 
 
 class ConnectivityTestResult(BaseModel):
