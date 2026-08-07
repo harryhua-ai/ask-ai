@@ -60,6 +60,12 @@ COPY --from=builder /app/.venv /app/.venv
 
 COPY admin/dist /app/admin/dist
 
+# Cache-bust:随 git commit 变化,强制后续代码 COPY 层重建。
+# 修复 buildx gha cache(type=gha,mode=max)偶发 stale:
+# 代码改了但 COPY backend/ 层错误命中旧 cache,导致镜像含旧代码。
+ARG GIT_SHA=unknown
+RUN echo "git_sha=$GIT_SHA" > /app/.git-sha
+
 # 拷代码
 COPY backend/ ./backend/
 COPY scripts/ ./scripts/
