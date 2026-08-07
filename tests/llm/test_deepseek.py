@@ -119,3 +119,80 @@ async def test_list_models_raises_on_http_error():
         mock_client_cls.return_value = client
         with pytest.raises(HTTPStatusError):
             await _make_provider().list_models()
+
+
+# ---- generate 重试测试(B1: ReadTimeout 重试一次)----
+
+@pytest.mark.asyncio
+async def test_generate_retries_once_on_read_timeout():
+    """generate 遇 ReadTimeout 应重试一次;第二次成功则返回 LLMResponse。
+
+    场景:deepseek-v4-flash 对 intent 请求偶发超时,单次 timeout=60s 直接抛
+    导致 intent 识别 45% fail-open。加一次重试把间歇性超时吞掉。
+    """
+    import httpx
+
+    provider = DeepseekProvider(
+        provider_id="deepseek",
+        api_base="https://api.deepseek.com/v1",
+        api_key="fake-key",
+        model="deepseek-v4-flash",
+    )
+
+    call_count = {"n": 0}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [{"message": {"content": "support"}}],
+                "usage": {"prompt_tokens": 50, "completion_tokens": 5},
+                "model": "deepseek-v4-flash",
+            }
+
+        def raise_for_status(self):
+            pass
+
+    async def fake_post(url, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise httpx.ReadTimeout("simulated read timeout", request=httpx.Request("POST", url))
+        return FakeResponse()
+
+    with patch("backend.llm.deepseek.httpx.AsyncClient") as mock_client_cls:
+        client = AsyncMock()
+        client.post = AsyncMock(side_effect=fake_post)
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = client
+        result = await provider.generate(messages=[{"role": "user", "content": "test"}])
+
+    assert call_count["n"] == 2, f"应重试一次(共 2 次调用),实际 {call_count['n']}"
+    assert isinstance(result, LLMResponse)
+    assert result.content == "support"
+
+
+@pytest.mark.asyncio
+async def test_generate_raises_after_retry_exhausted():
+    """两次都 ReadTimeout 则抛 ReadTimeout(不无限重试)。"""
+    import httpx
+
+    provider = DeepseekProvider(
+        provider_id="deepseek",
+        api_base="https://api.deepseek.com/v1",
+        api_key="fake-key",
+        model="deepseek-v4-flash",
+    )
+
+    async def fake_post(url, **kwargs):
+        raise httpx.ReadTimeout("persistent timeout", request=httpx.Request("POST", url))
+
+    with patch("backend.llm.deepseek.httpx.AsyncClient") as mock_client_cls:
+        client = AsyncMock()
+        client.post = AsyncMock(side_effect=fake_post)
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = client
+        with pytest.raises(httpx.ReadTimeout):
+            await provider.generate(messages=[{"role": "user", "content": "test"}])

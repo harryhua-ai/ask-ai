@@ -65,8 +65,14 @@ def ask(question: str, api: str = DEFAULT_API, timeout: int = 90) -> dict:
                 "暂未在官方资料中找到相关信息",  # 无依据
             )
             is_reject = any(p in full for p in reject_phrases)
+            # is_grounded:答案带行内引用 [n](n=1-9),说明 LLM 拿到了带编号的检索上下文。
+            # 用于识破 PUBLIC_SOURCE_TYPES 白名单过滤(filesystem 不外露 sources)造成的假阴性:
+            # support 类 query 命中内部案例 → SSE sources=[] → is_answered=False,
+            # 但答案里的 [1][2] 引用证明它基于真实检索文档,非瞎编。
+            is_grounded = bool(re.search(r"\[[1-9]\]", full))
             return {"question": question, "sources": sources, "answer": full,
                     "is_answered": bool(full) and not is_reject and bool(sources),
+                    "is_grounded": is_grounded and not is_reject,
                     "is_reject": is_reject,
                     "n_sources": len(sources)}
     except Exception as exc:
@@ -89,17 +95,20 @@ def main() -> int:
         print(f"\n[{i}/{len(qs)}] {q[:60]}")
         res = ask(q, api=args.api)
         results.append(res)
-        status = "答" if res.get("is_answered") else "拒答"
+        status = "答" if res.get("is_answered") else ("有据" if res.get("is_grounded") else "拒答")
         ns = res.get("n_sources", 0)
+        cite = "✓" if res.get("is_grounded") else " "
         ans = res.get("answer", "")[:80]
         err = res.get("error", "")
-        print(f"  → {status} | sources={ns} | {ans}{'... ERROR:'+err if err else ''}")
+        print(f"  → {status} | sources={ns} cite={cite} | {ans}{'... ERROR:'+err if err else ''}")
     print("\n" + "=" * 60)
 
     n_answered = sum(1 for r in results if r.get("is_answered"))
+    n_grounded = sum(1 for r in results if r.get("is_grounded"))
     n_refused = sum(1 for r in results if r.get("is_reject"))
     n_err = sum(1 for r in results if r.get("error"))
-    print(f"精准答(有 sources + 非拒答):{n_answered}/{len(results)}")
+    print(f"带 sources 作答(公开源):{n_answered}/{len(results)}")
+    print(f"有据作答(行内引用[n],含 filesystem 内部源):{n_grounded}/{len(results)}")
     print(f"拒答(off_topic/business/无依据):{n_refused}/{len(results)}")
     print(f"失败(error):{n_err}/{len(results)}")
 

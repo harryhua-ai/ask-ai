@@ -45,31 +45,50 @@ class DeepseekProvider:
         return self._id
 
     async def generate(self, messages: list[dict], **kwargs) -> LLMResponse:
-        """调用非流式 /chat/completions 并返回 LLMResponse。"""
-        start = time.monotonic()
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                f"{self._api_base}/chat/completions",
-                headers={"Authorization": f"Bearer {self._api_key}"},
-                json={
-                    "model": kwargs.get("model", self._model),
-                    "messages": messages,
-                    "max_tokens": kwargs.get("max_tokens", self._max_tokens),
-                    "temperature": kwargs.get("temperature", self._temperature),
-                    "stream": False,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        """调用非流式 /chat/completions 并返回 LLMResponse。
 
-        elapsed_ms = int((time.monotonic() - start) * 1000)
-        return LLMResponse(
-            content=data["choices"][0]["message"]["content"],
-            model=data.get("model", self._model),
-            tokens_input=data["usage"]["prompt_tokens"],
-            tokens_output=data["usage"]["completion_tokens"],
-            latency_ms=elapsed_ms,
-        )
+        对 ReadTimeout 重试一次(最多 2 次请求)。deepseek-v4-flash 对短 prompt
+        (如 intent 分类)偶发超时,单次 timeout=90s 直接抛会导致上层 fail-open,
+        重试一次可吞掉大多数间歇性网络抖动。其他异常(HTTPStatusError 等)不重试。
+        """
+        start = time.monotonic()
+        max_attempts = 2
+        last_exc: Exception | None = None
+        async with httpx.AsyncClient(timeout=90) as client:
+            for attempt in range(max_attempts):
+                try:
+                    resp = await client.post(
+                        f"{self._api_base}/chat/completions",
+                        headers={"Authorization": f"Bearer {self._api_key}"},
+                        json={
+                            "model": kwargs.get("model", self._model),
+                            "messages": messages,
+                            "max_tokens": kwargs.get("max_tokens", self._max_tokens),
+                            "temperature": kwargs.get("temperature", self._temperature),
+                            "stream": False,
+                        },
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    elapsed_ms = int((time.monotonic() - start) * 1000)
+                    return LLMResponse(
+                        content=data["choices"][0]["message"]["content"],
+                        model=data.get("model", self._model),
+                        tokens_input=data["usage"]["prompt_tokens"],
+                        tokens_output=data["usage"]["completion_tokens"],
+                        latency_ms=elapsed_ms,
+                    )
+                except httpx.ReadTimeout as exc:
+                    last_exc = exc
+                    if attempt < max_attempts - 1:
+                        logger.warning(
+                            "deepseek generate ReadTimeout (attempt %d/%d), retrying",
+                            attempt + 1, max_attempts,
+                        )
+                        continue
+                    raise
+        # 理论不可达(async with 内 for 循环必 return 或 raise);防御性兜底
+        raise last_exc  # pragma: no cover
 
     async def stream(self, messages: list[dict], **kwargs):
         """调用流式 /chat/completions,逐块产出文本内容。"""
