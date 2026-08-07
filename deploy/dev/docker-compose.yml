@@ -1,0 +1,98 @@
+# ask-ai 开发部署 compose(backend + DB on tesla-t4,前端在 mac 代理过来)
+#
+# 开发阶段:后端 + 数据在 tesla-t4(本 compose),前端在 mac(npm run dev,
+# Vite 代理 /api → tesla-t4:18000,见 README.md)。
+# 与 prod 共享 external 数据卷(tesla-t4_pgdata / tesla-t4_weaviate_data)+
+# 同一个 ../../.env,dev↔prod 切换数据/配置保留。
+#
+# 与 prod 的差异:① 无 sync-cron(前端 dev 期间不让每小时同步抢 GPU);
+#   ② project 名 ask-ai-dev(与 prod 的 tesla-t4 隔离容器名,但共享卷)。
+#   backend 端口仍是 18000(与 prod 同),所以 dev/prod 不能同时跑(端口冲突),
+#   切换:docker compose -f prod/... down → docker compose -f dev/... up -d(卷保留)。
+
+name: ask-ai-dev
+
+volumes:
+  pgdata:
+    external: true
+    name: tesla-t4_pgdata
+  weaviate_data:
+    external: true
+    name: tesla-t4_weaviate_data
+
+x-backend-base: &backend-base
+  image: ghcr.io/harryhua-ai/ask-ai:latest
+  restart: unless-stopped
+  env_file: ../../.env
+  environment:
+    APP_MODE: prod
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER:-ask_ai}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-ask_ai}
+    WEAVIATE_URL: http://weaviate:8080
+    WEAVIATE_CLASS_NAME: Document
+    EMBEDDER_DEVICE: cuda
+    EMBEDDER_BATCH_SIZE: "16"
+    MODEL_CACHE_DIR: /models
+    HF_HOME: /models
+    TRANSFORMERS_OFFLINE: "1"
+  volumes:
+    - /home/ubuntu/ask-ai-corpus:/home/ubuntu/ask-ai-corpus
+    - /home/ubuntu/knowledge-support:/home/ubuntu/knowledge-support:ro
+    - /home/ubuntu/ask-ai/models:/models:ro
+  depends_on:
+    postgres: {condition: service_healthy}
+    weaviate: {condition: service_healthy}
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ask_ai}
+      POSTGRES_USER: ${POSTGRES_USER:-ask_ai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ask_ai}"]
+      interval: 5s
+      retries: 10
+
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.0
+    restart: unless-stopped
+    command: ["--host", "0.0.0.0", "--port", "8080", "--scheme", "http"]
+    environment:
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      DISABLE_TELEMETRY: "true"
+      PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
+      GRPC_PORT: "50051"
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/v1/.well-known/ready || exit 1"]
+      interval: 5s
+      retries: 12
+
+  backend:
+    # dev 后端(同 prod 镜像,无 sync-cron)。前端在 mac 代理过来。
+    <<: *backend-base
+    ports:
+      - "18000:8000"
+
+  sync:
+    # 手动同步 / reindex(dev 期间按需触发,不常驻)。
+    # 用法:docker compose run --rm sync python scripts/sync.py [--reindex]
+    <<: *backend-base
+    restart: "no"
+    healthcheck:
+      disable: true
+    command: ["python", "scripts/sync.py"]
