@@ -9,7 +9,7 @@ CamThink AI 知识助手 — 自建 RAG 系统。对 CamThink 产品(NE101/301/5
 uv sync --extra dev
 
 # 启动依赖服务(dev)
-docker compose -f deploy/docker-compose.yml up -d postgres weaviate
+docker compose -f deploy/dev/docker-compose.yml up -d postgres weaviate
 
 # 启动后端
 uv run python -m backend.main            # http://localhost:8000
@@ -130,7 +130,7 @@ LLM 供应商 + routing 优先从 Postgres DB 读取(`LLMProviderModel` / `LLMRo
 
 1. 复制 `.env.example` → `.env`,填入 `DEEPSEEK_API_KEY`、`GITHUB_TOKEN` 等
 2. `uv sync --extra dev` 装 Python 依赖
-3. `docker compose -f deploy/docker-compose.yml up -d postgres weaviate` 起依赖服务
+3. `docker compose -f deploy/dev/docker-compose.yml up -d postgres weaviate` 起依赖服务
 4. `uv run python scripts/sync.py` 首次同步知识库(需先在 mac 本地备好 filesystem 源的 Knowledge 仓库)
 5. `uv run python -m backend.main` 启动后端(:8000)
 6. `cd admin && npm install && npm run dev`(:5174)/ `cd widget && npm install && npm run dev`(:5173)
@@ -163,8 +163,10 @@ CI(`.github/workflows/build-image.yml`)跑:test → build widget+admin → build
 
 ## Deployment
 
-- **dev**:`deploy/docker-compose.yml`(postgres + weaviate + backend)
-- **prod**:`deploy/tesla-t4/` — 全栈 GPU(backend uvicorn + sync worker + sync-cron 每小时增量)。同一镜像,compose 用 command 覆盖区分 backend/sync。corpus 与 models 挂载(不打进镜像)。更新:`docker compose pull && docker compose up -d`(`deploy/tesla-t4/update.sh`)。
+- 两套 compose(`deploy/README.md` 索引,共享 external 数据卷 `tesla-t4_pgdata`/`tesla-t4_weaviate_data` + 同一仓库根 `.env`,dev↔prod 切换数据保留):
+  - **dev** `deploy/dev/`:backend + DB on tesla-t4(无 sync-cron),前端在 mac(`npm run dev` 代理 /api → tesla-t4:18000)。
+  - **prod** `deploy/prod/`:全栈 tesla-t4(backend uvicorn 服务 /admin + sync 手动 + sync-cron 每小时增量)。同一镜像,compose 用 command 覆盖区分。corpus/models 挂载(不打进镜像)。
+- **prod 更新**:`./deploy/prod/update.sh`(pull + 滚动更新,健康检查 `localhost:18000`;sync 手动 `docker compose -f deploy/prod/docker-compose.yml run --rm sync python scripts/sync.py [--reindex]`)。
 - **GPU 约束**:CUDA 12.8 / cu128 torch(tesla-t4 driver 575 / CUDA 12.9 兼容)。`EMBEDDER_BATCH_SIZE=16`(GPU 共享生产服务约束)。
 
 ## Critical Constraints(踩坑必读)

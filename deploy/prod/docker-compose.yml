@@ -1,0 +1,115 @@
+# ask-ai 生产部署 compose(tesla-t4 全栈 GPU)
+#
+# 用法见 README.md;更新见 update.sh。
+#
+# 架构(决策 1a:全栈 tesla-t4):
+#   postgres / weaviate / backend(uvicorn,服务 /admin 前端)/ sync(手动)/ sync-cron(每小时增量)
+# 同一 GPU 镜像(ghcr.io/harryhua-ai/ask-ai),compose 用 command 覆盖入口。
+#
+# 数据保留:name: tesla-t4 + external 命名卷(tesla-t4_pgdata / tesla-t4_weaviate_data),
+#   目录从旧 deploy/tesla-t4/ 改名到 prod/ 不改 project 名/卷名,现有数据不丢。
+#   dev compose(ask-ai-dev)引用同一 external 卷,dev↔prod 切换数据保留。
+
+name: tesla-t4
+
+volumes:
+  pgdata:
+    external: true
+    name: tesla-t4_pgdata
+  weaviate_data:
+    external: true
+    name: tesla-t4_weaviate_data
+
+# 后端类服务公共配置(YAML anchor,backend / sync / sync-cron 共享,DRY)
+x-backend-base: &backend-base
+  image: ghcr.io/harryhua-ai/ask-ai:latest
+  restart: unless-stopped
+  env_file: ../../.env
+  environment:
+    APP_MODE: prod
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER:-ask_ai}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-ask_ai}
+    WEAVIATE_URL: http://weaviate:8080
+    WEAVIATE_CLASS_NAME: Document
+    EMBEDDER_DEVICE: cuda
+    EMBEDDER_BATCH_SIZE: "16"
+    MODEL_CACHE_DIR: /models
+    HF_HOME: /models
+    TRANSFORMERS_OFFLINE: "1"
+  volumes:
+    # corpus:sync worker 索引源(git checkout 需写权限 → rw);backend 检索不读,但挂上无妨
+    - /home/ubuntu/ask-ai-corpus:/home/ubuntu/ask-ai-corpus
+    # filesystem 源(knowledge-support-cases)读取路径
+    - /home/ubuntu/knowledge-support:/home/ubuntu/knowledge-support:ro
+    # BGE-m3 + reranker 权重(不打进镜像,挂载复用)
+    - /home/ubuntu/ask-ai/models:/models:ro
+  depends_on:
+    postgres: {condition: service_healthy}
+    weaviate: {condition: service_healthy}
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ask_ai}
+      POSTGRES_USER: ${POSTGRES_USER:-ask_ai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ask_ai}"]
+      interval: 5s
+      retries: 10
+
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.0
+    restart: unless-stopped
+    command: ["--host", "0.0.0.0", "--port", "8080", "--scheme", "http"]
+    environment:
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      DISABLE_TELEMETRY: "true"
+      PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
+      GRPC_PORT: "50051"
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/v1/.well-known/ready || exit 1"]
+      interval: 5s
+      retries: 12
+
+  backend:
+    # uvicorn 服务 API(/api/ask 等)+ /admin 前端(admin/dist 打进镜像,SPAStaticFiles 托管)
+    <<: *backend-base
+    ports:
+      - "18000:8000"
+
+  sync:
+    # 一次性手动同步 / 全量 reindex。
+    # restart: "no" — 不循环(避免 up -d 把一次性 sync.py 跑成死循环)。
+    # healthcheck: disable — 镜像内置 HEALTHCHECK(curl :8000/health)为 backend 设计,
+    #   sync 不跑 web 服务,不关会永远 unhealthy。
+    # 用法:docker compose run --rm sync python scripts/sync.py            # 全量增量同步
+    #       docker compose run --rm sync python scripts/sync.py --reindex  # ⚠️ 删 collection 全量重灌
+    <<: *backend-base
+    restart: "no"
+    healthcheck:
+      disable: true
+    command: ["python", "scripts/sync.py"]
+
+  sync-cron:
+    # 每小时增量同步(while 循环;docker restart 策略保证失败重跑)。
+    # healthcheck: disable — 同 sync,非常驻 web 服务,镜像内置 HEALTHCHECK 不适用。
+    <<: *backend-base
+    healthcheck:
+      disable: true
+    command: >
+      sh -c "while true; do python3 scripts/sync.py || true; sleep 3600; done"
