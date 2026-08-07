@@ -103,6 +103,9 @@ jobs:
           build-args: |
             GIT_SHA=${{ github.sha }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
-          # GPU 镜像大(~3-4GB),buildx 缓存加速后续构建
+          cache-to: type=gha,mode=min
+          # mode=min:只缓存最终镜像层,不回写 builder 中间层(.venv 9.4GB + torch 2.7GB)。
+          # 实测 mode=max 回写 GHA cache 耗 36min(占总 build 45min 的 80%)。
+          # 改 min 后:pyproject/uv.lock 不变时 uv sync+torch 层靠 cache-from 照样命中(极少改),
+          # 回写量从 ~14GB → ~5GB,build 预计 45min → ~15min。
           # GIT_SHA build-arg: bust COPY backend/ 层的 stale cache,确保代码层随 commit 重建
