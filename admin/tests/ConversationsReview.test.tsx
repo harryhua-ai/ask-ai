@@ -15,6 +15,7 @@ vi.mock("@/hooks/useConversations", () => ({
           response_time_ms: 1000,
           channel: "widget",
           created_at: "2026-08-10T10:00:00Z",
+          feedback: "up",
           trace_summary: {
             stages: {
               intent: { ms: 50 },
@@ -64,12 +65,12 @@ mockFetchTraces.mockResolvedValue([
     turn_index: 0,
     type: "rag",
     stages: {
-      intent: { ms: 50 },
-      rewrite: { ms: 80 },
-      retrieve: { ms: 200 },
-      rerank: { ms: 120 },
-      generate: { ms: 550 },
-      output: { ms: 5 },
+      intent: { ms: 50, category: "commercial", reason: "价格咨询" },
+      rewrite: { ms: 80, rewritten: "NE503 价格多少" },
+      retrieve: { ms: 200, hybrid_count: 15, min_results_met: true },
+      rerank: { ms: 120, top_score: 0.82, count: 5 },
+      generate: { ms: 550, tokens_output: 120, latency_ms: 540 },
+      output: { ms: 5, sources_count: 3 },
     },
     total_ms: 1000,
     intent: "commercial",
@@ -94,13 +95,12 @@ function renderWithProviders(ui: React.ReactElement) {
 }
 
 describe("Conversations 审查页", () => {
-  it("列表显示问题、意图标签、迷你阶段条、总耗时", async () => {
+  it("列表显示问题、意图标签、总耗时", async () => {
     renderWithProviders(<Conversations />);
     await waitFor(() => {
       expect(screen.getByText("NE503 价格")).toBeInTheDocument();
       expect(screen.getAllByText(/commercial|商务/).length).toBeGreaterThan(0);
       expect(screen.getByText(/1,?000/)).toBeInTheDocument();
-      expect(document.querySelectorAll("[data-bar-seg]").length).toBeGreaterThan(0);
     });
   });
 
@@ -109,8 +109,8 @@ describe("Conversations 审查页", () => {
     const row = await screen.findByText("NE503 价格");
     fireEvent.click(row);
     await waitFor(() => {
-      expect(screen.getByText("前置")).toBeInTheDocument();
-      expect(screen.getByText("输出")).toBeInTheDocument();
+      expect(screen.getByText("意图分类")).toBeInTheDocument();
+      expect(screen.getByText("输出构建")).toBeInTheDocument();
     });
   });
 
@@ -120,6 +120,76 @@ describe("Conversations 审查页", () => {
     fireEvent.click(row);
     await waitFor(() => {
       expect(screen.getByText(/联系销售/)).toBeInTheDocument();
+    });
+  });
+
+  it("trace 详情显示诊断 detail(召回/top分/token/来源)", async () => {
+    renderWithProviders(<Conversations />);
+    const row = await screen.findByText("NE503 价格");
+    fireEvent.click(row);
+    await waitFor(() => {
+      expect(screen.getByText(/召回 15 条/)).toBeInTheDocument();
+      expect(screen.getByText(/top分 0\.820/)).toBeInTheDocument();
+      expect(screen.getByText(/输出 120 token/)).toBeInTheDocument();
+      expect(screen.getByText(/来源 3 条/)).toBeInTheDocument();
+    });
+  });
+
+  it("多轮对话可切换轮次查看 trace", async () => {
+    mockFetchTraces.mockResolvedValueOnce([
+      {
+        id: "t1", conversation_id: "c1", turn_index: 0, type: "rag",
+        stages: {
+          intent: { ms: 50, category: "product" },
+          retrieve: { ms: 200, hybrid_count: 10 },
+          rerank: { ms: 120, top_score: 0.9 },
+          generate: { ms: 500 },
+          output: { ms: 5, sources_count: 2 },
+        },
+        total_ms: 800, intent: "product", config_snapshot: {}, created_at: "",
+      },
+      {
+        id: "t2", conversation_id: "c1", turn_index: 1, type: "rag",
+        stages: {
+          intent: { ms: 40, category: "support" },
+          retrieve: { ms: 300, hybrid_count: 5 },
+          rerank: { ms: 100, top_score: 0.7 },
+          generate: { ms: 600 },
+          output: { ms: 5, sources_count: 1 },
+        },
+        total_ms: 1000, intent: "support", config_snapshot: {}, created_at: "",
+      },
+    ]);
+    renderWithProviders(<Conversations />);
+    const row = await screen.findByText("NE503 价格");
+    fireEvent.click(row);
+    await waitFor(() => {
+      expect(screen.getByText(/召回 10 条/)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("轮 2"));
+    await waitFor(() => {
+      expect(screen.getByText(/召回 5 条/)).toBeInTheDocument();
+    });
+  });
+
+  it("列表显示搜索框", () => {
+    renderWithProviders(<Conversations />);
+    expect(screen.getByPlaceholderText(/搜索问题/)).toBeInTheDocument();
+  });
+
+  it("列表卡片显示用户反馈图标", async () => {
+    renderWithProviders(<Conversations />);
+    await waitFor(() => {
+      expect(document.querySelector('[data-feedback="up"]')).toBeInTheDocument();
+    });
+  });
+
+  it("trace 详情显示类型 badge", async () => {
+    renderWithProviders(<Conversations />);
+    const row = await screen.findByText("NE503 价格");
+    fireEvent.click(row);
+    await waitFor(() => {
+      expect(screen.getByText("RAG 生成")).toBeInTheDocument();
     });
   });
 });

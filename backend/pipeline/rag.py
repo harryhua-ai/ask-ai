@@ -191,22 +191,14 @@ class RAGOrchestrator:
         *,
         product_filter: str | None,
         channel: str,
-    ) -> list[SearchResult]:
+    ) -> tuple[list[SearchResult], dict[str, int]]:
         """统一检索 + 三路 RRF 融合(answer / stream_answer 共用,保证 parity)。
 
         主 hybrid(search_query) + 符号 BM25(extracted) + intent boost 桶(extracted)
         → 单次 rrf_fuse 三路融合。任一路异常 / 为空均降级,不中断主流程。
 
-        Args:
-            extracted: extract_query 输出(绕 rewrite,保标识符),用于符号召回
-                与 boost 桶召回。
-            search_query: rewrite_query 输出,用于主 hybrid 检索。
-            intent_category: 意图分类,决定 boost 桶配置(见 INTENT_BOOST_FILTERS)。
-            product_filter: 可选产品过滤;仅透传给主 hybrid 与符号召回。
-            channel: 渠道过滤;透传给三路检索的 channel_visibility。
-
         Returns:
-            融合去重后的 :class:`SearchResult` 列表;融合失败时降级为主 hybrid 结果。
+            (融合去重后的 SearchResult 列表, 各路命中数 dict)
         """
         results = self._searcher.search(
             query=search_query,
@@ -243,11 +235,32 @@ class RAGOrchestrator:
 
         from backend.retrieval.rrf import rrf_fuse
 
+        path_counts = {
+            "hybrid": len(results),
+            "symbol": len(symbol_results),
+            "boost": len(bucket_results),
+        }
+
         try:
-            return rrf_fuse(results, symbol_results, bucket_results, k=60)
+            return rrf_fuse(results, symbol_results, bucket_results, k=60), path_counts
         except Exception as exc:  # noqa: BLE001
             logger.warning("RRF 融合失败,降级 hybrid 单路:%s", str(exc)[:200])
-            return results
+            return results, path_counts
+
+    @staticmethod
+    def _rerank_snippets(results: list[SearchResult], top: int = 5, text_preview: int = 300) -> list[dict]:
+        """提取 top N reranked 结果摘要(写入 trace),含正文预览供审查比对。"""
+        return [
+            {
+                "title": r.title,
+                "score": round(r.score, 3) if r.score else None,
+                "source_type": r.source_type,
+                "product": r.product,
+                "url": r.url,
+                "text": r.text[:text_preview] if r.text else "",
+            }
+            for r in results[:top]
+        ]
 
     def _build_context(self, results: list[SearchResult]) -> str:
         """把重排后的候选拼接成 LLM 上下文文本。
@@ -441,7 +454,7 @@ class RAGOrchestrator:
                     "stages": stages,
                     "total_ms": elapsed,
                     "intent": intent.category,
-                    "confidence": None,
+                    "confidence": intent.confidence,
                     "config_snapshot": self._config_snapshot(),
                 },
             )
@@ -461,7 +474,7 @@ class RAGOrchestrator:
 
         # 统一检索 + 三路 RRF 融合(hybrid + symbol + intent boost 桶)
         t_ret = time.monotonic()
-        fused = await self._retrieve_and_fuse(
+        fused, path_counts = await self._retrieve_and_fuse(
             extracted,
             search_query,
             intent.category,
@@ -472,17 +485,24 @@ class RAGOrchestrator:
             "ms": int((time.monotonic() - t_ret) * 1000),
             "hybrid_count": len(fused),
             "min_results_met": len(fused) >= effective_min,
+            "effective_min": effective_min,
+            "path_counts": path_counts,
         }
 
         t_rr = time.monotonic()
         reranked = self._reranker.rerank(search_query, fused, top_k=self._top_k)
+        pruned_count = 0
+        pre_prune_count = len(reranked)
 
         if self._pruner:
             reranked = await self._pruner.prune(search_query, reranked)
+            pruned_count = pre_prune_count - len(reranked)
         stages["rerank"] = {
             "ms": int((time.monotonic() - t_rr) * 1000),
             "top_score": reranked[0].score if reranked else None,
             "count": len(reranked),
+            "pruned": pruned_count,
+            "results": self._rerank_snippets(reranked),
         }
 
         if len(reranked) < effective_min:
@@ -500,7 +520,7 @@ class RAGOrchestrator:
                     "stages": stages,
                     "total_ms": elapsed,
                     "intent": intent.category,
-                    "confidence": None,
+                    "confidence": intent.confidence,
                     "config_snapshot": self._config_snapshot(),
                 },
             )
@@ -534,7 +554,7 @@ class RAGOrchestrator:
                 "stages": stages,
                 "total_ms": elapsed,
                 "intent": intent.category,
-                "confidence": None,
+                "confidence": intent.confidence,
                 "config_snapshot": self._config_snapshot(),
             },
         )
@@ -587,6 +607,14 @@ class RAGOrchestrator:
                     "language": language,
                     "response_time_ms": elapsed,
                     "intent": "product",
+                    "trace_payload": {
+                        "type": "override",
+                        "stages": {},
+                        "total_ms": elapsed,
+                        "intent": "product",
+                        "confidence": None,
+                        "config_snapshot": self._config_snapshot(),
+                    },
                 })
                 return
 
@@ -621,7 +649,7 @@ class RAGOrchestrator:
                             },
                             "total_ms": elapsed,
                             "intent": intent.category,
-                            "confidence": None,
+                            "confidence": intent.confidence,
                             "config_snapshot": self._config_snapshot(),
                         },
                     }
@@ -641,7 +669,7 @@ class RAGOrchestrator:
 
         # 统一检索 + 三路 RRF 融合(与 answer 共用 _retrieve_and_fuse,保证 parity)
         t1 = time.monotonic()
-        fused = await self._retrieve_and_fuse(
+        fused, path_counts = await self._retrieve_and_fuse(
             extracted,
             search_query,
             intent.category,
@@ -653,9 +681,12 @@ class RAGOrchestrator:
         t2 = time.monotonic()
         reranked = self._reranker.rerank(search_query, fused, top_k=self._top_k)
         rerank_ms = int((time.monotonic() - t2) * 1000)
+        pre_prune_count = len(reranked)
+        pruned_count = 0
 
         if self._pruner:
             reranked = await self._pruner.prune(query, reranked)
+            pruned_count = pre_prune_count - len(reranked)
 
         if len(reranked) < effective_min:
             elapsed = int((time.monotonic() - start) * 1000)
@@ -677,12 +708,18 @@ class RAGOrchestrator:
                                 "reason": intent.reason,
                             },
                             "rewrite": {"ms": rewrite_ms, "extracted": extracted, "rewritten": search_query},
-                            "retrieve": {"ms": search_ms, "hybrid_count": len(fused)},
-                            "rerank": {"ms": rerank_ms, "count": len(reranked)},
+                            "retrieve": {"ms": search_ms, "hybrid_count": len(fused), "effective_min": effective_min, "path_counts": path_counts},
+                            "rerank": {
+                                "ms": rerank_ms,
+                                "top_score": reranked[0].score if reranked else None,
+                                "count": len(reranked),
+                                "pruned": pruned_count,
+                                "results": self._rerank_snippets(reranked),
+                            },
                         },
                         "total_ms": elapsed,
                         "intent": intent.category,
-                        "confidence": None,
+                        "confidence": intent.confidence,
                         "config_snapshot": self._config_snapshot(),
                     },
                 }
@@ -692,11 +729,18 @@ class RAGOrchestrator:
         context = self._build_context(reranked) if reranked else ""
         # 附件日志文本(Phase 1a:直接拼接,截断在 extract_log_text 入库时已做)
         log_text = ""
+        attachment_summary: list[dict] = []
         if attachments:
             for att in attachments:
-                if getattr(att, "kind", None) == "log" and getattr(att, "extracted_text", None):
-                    log_text += att.extracted_text + "\n---\n"
-                # kind == "image" 1a 不处理(Phase 1b vision)
+                kind = getattr(att, "kind", None)
+                text = getattr(att, "extracted_text", None)
+                if kind == "log" and text:
+                    log_text += text + "\n---\n"
+                attachment_summary.append({
+                    "kind": kind or "unknown",
+                    "text_length": len(text) if text else 0,
+                    "text_preview": text[:200] if text else "",
+                })
         messages = self._build_messages(
             query, context, language, conversation_history, channel, intent=intent.category,
             log_text=log_text, image_context="",
@@ -756,15 +800,22 @@ class RAGOrchestrator:
                             "reason": intent.reason,
                         },
                         "rewrite": {"ms": rewrite_ms, "extracted": extracted, "rewritten": search_query},
-                        "retrieve": {"ms": search_ms, "hybrid_count": len(fused)},
-                        "rerank": {"ms": rerank_ms, "count": len(reranked)},
-                        "generate": {"ms": llm_ms, "ttft_ms": first_token_ms},
+                        "retrieve": {"ms": search_ms, "hybrid_count": len(fused), "effective_min": effective_min, "path_counts": path_counts},
+                        "rerank": {
+                            "ms": rerank_ms,
+                            "top_score": reranked[0].score if reranked else None,
+                            "count": len(reranked),
+                            "pruned": pruned_count,
+                            "results": self._rerank_snippets(reranked),
+                        },
+                        "generate": {"ms": llm_ms, "ttft_ms": first_token_ms, "tokens_output": len(full_answer)},
                         "output": {"ms": 0, "sources_count": len(sources)},
                     },
                     "total_ms": elapsed,
                     "intent": intent.category,
-                    "confidence": None,
+                    "confidence": intent.confidence,
                     "config_snapshot": self._config_snapshot(),
+                    "attachments": attachment_summary,
                 },
             }
         )
