@@ -29,7 +29,7 @@ export interface BusinessOverviewData {
     total: number;
     intent_dist: IntentDist;
     north_star: number;
-    satisfaction: number;
+    satisfaction: number | null;
   };
   leads: {
     valid: number;

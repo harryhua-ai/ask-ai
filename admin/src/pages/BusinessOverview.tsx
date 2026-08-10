@@ -46,9 +46,9 @@ export default function BusinessOverview() {
             />
             <KpiCard
               label="满意度"
-              value={data.service.satisfaction}
+              value={data.service.satisfaction ?? 0}
               unit="%"
-              alarm={data.service.satisfaction < 80}
+              alarm={(data.service.satisfaction ?? 100) < 80}
             />
           </div>
 

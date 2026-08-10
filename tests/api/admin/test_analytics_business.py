@@ -68,6 +68,16 @@ async def test_business_overview(business_seed):
     assert len(j["service"]["intent_dist"]) >= 3
     assert j["service"]["north_star"] >= 0
     assert "geo" in j
+    # leads 字段契约(前端 BusinessOverview 依赖,曾因字段名不匹配导致白屏)
+    assert set(j["leads"].keys()) >= {"valid", "potential", "hot_products"}
+    assert isinstance(j["leads"]["hot_products"], list)
+    # intent_dist 四意图键补全(前端 KpiCard 直接读 .commercial 等)
+    assert set(j["service"]["intent_dist"].keys()) == {
+        "commercial",
+        "product",
+        "support",
+        "off_topic",
+    }
 
 
 async def test_business_overview_custom_range(business_seed):
