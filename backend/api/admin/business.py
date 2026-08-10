@@ -47,7 +47,12 @@ async def business_overview(
             .group_by(Conversation.intent_tag)
         )
         intent_rows = (await session.execute(intent_q)).all()
-        intent_dist = {row[0] or "unknown": row[1] for row in intent_rows}
+        _raw_intent = {row[0] or "unknown": row[1] for row in intent_rows}
+        # 补全四意图键(前端契约固定 commercial/product/support/off_topic,缺失默认 0)
+        intent_dist = {
+            k: _raw_intent.get(k, 0)
+            for k in ("commercial", "product", "support", "off_topic")
+        }
 
         # 北极星:commercial 且 is_answered(占位,购买信号待业务方确认)
         north_star_q = select(func.count()).select_from(Conversation).where(
@@ -72,7 +77,9 @@ async def business_overview(
         )
         down_count = (await session.execute(down_q)).scalar() or 0
         feedback_total = up_count + down_count
-        satisfaction = round(up_count / feedback_total, 4) if feedback_total else None
+        satisfaction = (
+            round(up_count / feedback_total * 100, 1) if feedback_total else None
+        )
 
         # 销售线索(commercial 对话数)
         commercial_count = intent_dist.get("commercial", 0)
@@ -121,13 +128,14 @@ async def business_overview(
             "down_count": down_count,
         },
         "leads": {
-            "commercial_conversations": commercial_count,
-            "qualified": north_star,
-            "products": [],
+            "valid": north_star,
+            "potential": commercial_count,
+            "hot_products": [],
         },
         "scenes": scenes,
         "requirements": requirements,
         "top_questions": top_q_list,
         "geo": [],
         "geo_note": "地域字段待接入",
+        "timeseries": [],
     }

@@ -1,6 +1,6 @@
 type Props = {
   label: string;
-  value: number;
+  value?: number | null;
   unit?: string;
   delta?: { value: number; dir: "up" | "down" };
   baseline?: string;
@@ -8,7 +8,7 @@ type Props = {
 };
 
 export default function KpiCard({ label, value, unit = "", delta, baseline, alarm }: Props) {
-  const fmt = value.toLocaleString();
+  const fmt = value != null ? value.toLocaleString() : "—";
   return (
     <div
       className="rounded-lg border p-4 bg-[var(--panel)]"
