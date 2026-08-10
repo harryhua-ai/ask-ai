@@ -14,6 +14,10 @@ docker compose -f deploy/dev/docker-compose.yml up -d postgres weaviate
 # 启动后端
 uv run python -m backend.main            # http://localhost:8000
 
+# 本地一键启动(mac,数据层 + 后端 CPU 模式,秒级热更新)
+./scripts/sync_local_data.sh             # 首次:从 tesla-t4 拉数据到本地
+./scripts/dev-local.sh                   # 启动数据层 + 后端(uvicorn --reload)
+
 # 数据源同步(cron 入口)
 uv run python scripts/sync.py             # 同步全部 enabled 源(增量优先)
 uv run python scripts/sync.py --source github-ne301   # 仅单源
@@ -87,12 +91,16 @@ ask-ai/
 ├── scripts/
 │   ├── sync.py                 # 数据源同步 cron 入口
 │   ├── create_admin_user.py
-│   ├── migrate_*.py             # 迁移脚本(yaml_to_db / intent_tag / symbol_props 等)
-│   └── e2e_*.py                 # 端到端测试(20q / intent / real_review)
+│   ├── migrate_*.py             # 迁移脚本(yaml_to_db / intent_tag / symbol_props / github_source_schema / llm_chain_format 等)
+│   ├── e2e_*.py                 # 端到端测试(20q / intent_en / real / real_review)
+│   ├── sync_local_data.sh       # tesla-t4 → mac 本地数据同步(pg + weaviate)
+│   ├── dev-local.sh             # mac 本地一键启动(数据层 + 后端 CPU 模式)
+│   └── reindex_remote.sh        # tesla-t4 GPU reindex + 回同步(高危,有确认)
 ├── tests/                      # pytest(与 backend/ 镜像目录结构)
 ├── deploy/
-│   ├── docker-compose.yml      # dev(postgres + weaviate + backend)
-│   └── tesla-t4/               # 生产 GPU 全栈(backend + sync worker + sync-cron)
+│   ├── dev/                     # dev compose(tesla-t4 上的 mac 前端 + 远程 backend 调试)
+│   ├── local/                   # mac 本地开发数据层(postgres + weaviate,独立卷 ask-ai-local_*)
+│   └── prod/                    # 生产 GPU 全栈(backend + sync worker + sync-cron,纯镜像)
 ├── docs/superpowers/{specs,plans,handoff}/  # 设计文档 / 实施计划 / 交接
 ├── models/                     # BGE-m3 + reranker 权重(gitignore,挂载不打进镜像)
 ├── Dockerfile                  # 多阶段 GPU 镜像(CUDA 12.8 / cu128 torch)
@@ -163,16 +171,22 @@ CI(`.github/workflows/build-image.yml`)跑:test → build widget+admin → build
 
 ## Deployment
 
-- 两套 compose(`deploy/README.md` 索引,共享 external 数据卷 `tesla-t4_pgdata`/`tesla-t4_weaviate_data` + 同一仓库根 `.env`,dev↔prod 切换数据保留):
-  - **dev** `deploy/dev/`:backend + DB on tesla-t4(无 sync-cron),前端在 mac(`npm run dev` 代理 /api → tesla-t4:18000)。
-  - **prod** `deploy/prod/`:全栈 tesla-t4(backend uvicorn 服务 /admin + sync 手动 + sync-cron 每小时增量)。同一镜像,compose 用 command 覆盖区分。corpus/models 挂载(不打进镜像)。
-- **prod 更新**:`./deploy/prod/update.sh`(pull + 滚动更新,健康检查 `localhost:18000`;sync 手动 `docker compose -f deploy/prod/docker-compose.yml run --rm sync python scripts/sync.py [--reindex]`)。
-- **GPU 约束**:CUDA 12.8 / cu128 torch(tesla-t4 driver 575 / CUDA 12.9 兼容)。`EMBEDDER_BATCH_SIZE=16`(GPU 共享生产服务约束)。
+**部署模式:mac 本地 dev(CPU)+ tesla-t4 纯镜像 prod(GPU)**。生产只用 CI 构建的镜像,不挂载源码热更新(避免源码漂移,详见下方约束)。
+
+- **三套 compose**(`deploy/README.md` 索引):
+  - **prod** `deploy/prod/`:全栈 tesla-t4(backend uvicorn 服务 /admin + sync 手动 + sync-cron 每小时增量)。纯镜像 `ghcr.io/harryhua-ai/ask-ai:latest`,compose 用 command 覆盖区分服务。corpus/models 挂载(不打进镜像)。共享 external 数据卷 `tesla-t4_pgdata`/`tesla-t4_weaviate_data`。
+  - **local** `deploy/local/`:mac 本地开发数据层(postgres + weaviate,独立卷 `ask-ai-local_*`,CPU)。backend 不在容器,`dev-local.sh` 用 `uv run` 源码直跑 + `uvicorn --reload` 秒级热更新。数据用 `sync_local_data.sh` 从 tesla-t4 拉取。
+  - **dev** `deploy/dev/`:mac 前端 `npm run dev` 代理 /api → tesla-t4 prod backend(远程调试用,无独立 backend 容器)。
+- **prod 更新**:`./deploy/prod/update.sh`(pull + 滚动更新,健康检查 `localhost:18000`)。完整流程:push main → CI 构建镜像 → GHCR latest → ssh `update.sh` pull → up。
+- **prod sync 手动**:`docker compose -f deploy/prod/docker-compose.yml run --rm sync python scripts/sync.py`(增量)。远程 reindex 用 `scripts/reindex_remote.sh`。
+- **GPU 约束**:CUDA 12.8 / cu128 torch(tesla-t4 driver 575 / CUDA 12.9 兼容)。`EMBEDDER_BATCH_SIZE=16`(GPU 共享生产服务约束:locate-anything/llama-server/neomind 同占 T4,显存常满,sync embed 偶发 OOM 是既有问题)。
 
 ## Critical Constraints(踩坑必读)
 
-- **⚠️ `--reindex` 删整个 collection**:`scripts/sync.py --reindex` 删除**全部** Weaviate collection 后只重灌当前数据源,非单源增量。曾误删 560k chunk。单源增量**绝不用** `--reindex`。仅 schema 变更 / 符号字段回填时手动触发(期间服务不可用)。
+- **⚠️ `--reindex` 删整个 collection**:`scripts/sync.py --reindex` 删除**全部** Weaviate collection 后只重灌当前数据源,非单源增量。曾误删 560k chunk。单源增量**绝不用** `--reindex`。仅 schema 变更 / 符号字段回填时手动触发(期间服务不可用)。`reindex_remote.sh` 已拆 `--source`(增量)/`--reindex`(全量高危)两模式。
 - **⚠️ 测试库隔离**:必设 `TEST_DATABASE_URL=postgresql+asyncpg://ask_ai:changeme@localhost:5432/ask_ai_test`。`tests/conftest.py` 的 `drop_all` 在未隔离时会清空开发库。CI 已对齐 `ask_ai_test`。
+- **⚠️ weaviate RAFT hostname**:weaviate 1.28 重建容器后,若 `CLUSTER_HOSTNAME` 与数据卷 `raft/` 状态里的 voter ID 不一致,会卡在 RAFT join 循环起不来(部署时踩过)。prod + local compose 均固定 `CLUSTER_HOSTNAME: "7adc06acc397"`(匹配现有 voter ID,勿改)。改前需处理 raft 状态迁移。
+- **⚠️ 纯镜像部署,禁源码挂载热更新**:tesla-t4 prod 不用 override 挂载源码 + `uvicorn --reload`(曾因镜像/源码漂移致 pruning dict 崩溃,见 memory `tesla-t4-override-source-mount`)。秒级迭代放 mac 本地(`dev-local.sh`,单一源码不可能漂移),生产只用 CI 镜像。
 - **filesystem 源必须在 mac 同步**:Knowledge 仓库在 mac 本地;tesla-t4 reindex 漏灌 filesystem → support 案例缺失导致拒答。mac 跑同步后 tesla-t4 才有完整向量。
 - **prod 密钥**:`APP_MODE=prod` 必须显式设 `ENCRYPTION_KEY`(≥32 字节,API key 加解密)与 `JWT_SECRET`(非默认值),否则启动失败。
 - **API key 加解密兼容**:DB 中 api_key 用 AES 加密;`ENCRYPTION_KEY` 轮换前旧数据可能是明文,`_build_llm_state` 解密失败时按明文兼容继续(仅 warn,不中断)。

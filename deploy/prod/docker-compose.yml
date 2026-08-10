@@ -79,6 +79,10 @@ services:
       DISABLE_TELEMETRY: "true"
       PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
       GRPC_PORT: "50051"
+      # 固定 RAFT 节点标识;weaviate 1.28 单节点重建容器后,若 CLUSTER_HOSTNAME 与
+      # raft 状态里的 voter ID 不一致,会卡在 RAFT join 循环起不来(部署时踩过)。
+      # tesla-t4 现有数据卷的 voter ID 即此值,勿改;本地 local compose 同值。
+      CLUSTER_HOSTNAME: "7adc06acc397"
     volumes:
       - weaviate_data:/var/lib/weaviate
     healthcheck:
