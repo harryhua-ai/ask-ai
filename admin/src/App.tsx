@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Layout } from "@/components/Layout";
@@ -12,6 +12,7 @@ import LLMProviders from "@/pages/LLMProviders";
 import Conversations from "@/pages/Conversations";
 import AnswerOverrides from "@/pages/AnswerOverrides";
 import Analytics from "@/pages/Analytics";
+import BusinessOverview from "@/pages/BusinessOverview";
 
 export default function App() {
   return (
@@ -26,7 +27,7 @@ export default function App() {
             <ProtectedRoute>
               <Layout>
                 <Routes>
-                  <Route path="/" element={<Navigate to="/data-sources" replace />} />
+                  <Route path="/" element={<BusinessOverview />} />
                   <Route path="/data-sources" element={<DataSources />} />
                   <Route path="/customizations" element={<Customizations />} />
                   <Route path="/llm-providers" element={<LLMProviders />} />

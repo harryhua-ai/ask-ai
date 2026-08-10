@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
 from backend.api.schemas import AskRequest, ClickRequest, FeedbackRequest
-from backend.db.models import Attachment, Conversation, SourceClick
+from backend.db.models import Attachment, Conversation, SourceClick, Trace
 from backend.pipeline.rag import RAGOrchestrator
 from backend.services.attachments import (
     MAX_ATTACHMENTS_PER_MESSAGE,
@@ -129,6 +129,7 @@ async def ask(
         elapsed = 0
         token_emitted = False
         intent: str | None = None
+        trace_payload: dict | None = None
 
         try:
             async for chunk in rag.stream_answer(
@@ -157,6 +158,7 @@ async def ask(
                     language = data.get("language", "en")
                     elapsed = data.get("response_time_ms", 0)
                     intent = data.get("intent")
+                    trace_payload = data.get("trace_payload")
         except Exception:
             # S5: LLM 流式生成中途异常(超时/网络错误)时,降级返回友好提示。
             # 200 响应头已发送,无法改写状态码,但通过 SSE token 事件通知客户端。
@@ -185,6 +187,19 @@ async def ask(
                     intent_tag=intent,
                 )
                 session.add(conv)
+                if trace_payload:
+                    session.add(
+                        Trace(
+                            conversation_id=uuid.UUID(conversation_id),
+                            turn_index=0,
+                            type=trace_payload.get("type", "rag"),
+                            stages=trace_payload.get("stages", {}),
+                            total_ms=trace_payload.get("total_ms"),
+                            intent=trace_payload.get("intent"),
+                            confidence=trace_payload.get("confidence"),
+                            config_snapshot=trace_payload.get("config_snapshot", {}),
+                        )
+                    )
                 await session.commit()
         except Exception:
             logger.exception("写入 conversations 表失败, conversation_id=%s", conversation_id)

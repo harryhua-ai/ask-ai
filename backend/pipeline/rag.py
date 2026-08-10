@@ -85,6 +85,7 @@ class RAGAnswer:
     language: str
     response_time_ms: int
     intent: str = "product"
+    trace_payload: dict | None = None
 
 
 _I18N_PREFIXES = (
@@ -171,6 +172,16 @@ class RAGOrchestrator:
         self._channel_customizations = channel_customizations or {}
         self._override_matcher = override_matcher
         self._intent_styles = intent_styles or {}
+
+    def _config_snapshot(self) -> dict[str, Any]:
+        """当前编排器配置快照,写入 trace 供后续对照。"""
+        return {
+            "alpha": self._alpha,
+            "recall_limit": self._recall_limit,
+            "top_k": self._top_k,
+            "min_results": self._min_results,
+            "has_pruner": self._pruner is not None,
+        }
 
     async def _retrieve_and_fuse(
         self,
@@ -383,6 +394,7 @@ class RAGOrchestrator:
         """
         start = time.monotonic()
         language = detect_language(query)
+        stages: dict[str, Any] = {}
 
         # Phase 3A: 人工答案覆盖前置检查
         if self._override_matcher:
@@ -397,10 +409,23 @@ class RAGOrchestrator:
                     language=language,
                     response_time_ms=elapsed,
                     intent="product",
+                    trace_payload={
+                        "type": "rag",
+                        "stages": stages,
+                        "total_ms": elapsed,
+                        "intent": "product",
+                        "confidence": None,
+                        "config_snapshot": self._config_snapshot(),
+                    },
                 )
 
-        # 意图识别(4 分类):off_topic / commercial 直接拒答;product/support 进入检索
+        t_intent = time.monotonic()
         intent = await classify_intent(query, self._llm)
+        stages["intent"] = {
+            "ms": int((time.monotonic() - t_intent) * 1000),
+            "category": intent.category,
+            "reason": intent.reason,
+        }
         if intent.category == "off_topic":
             elapsed = int((time.monotonic() - start) * 1000)
             return RAGAnswer(
@@ -411,16 +436,31 @@ class RAGOrchestrator:
                 language=language,
                 response_time_ms=elapsed,
                 intent=intent.category,
+                trace_payload={
+                    "type": "reject_short",
+                    "stages": stages,
+                    "total_ms": elapsed,
+                    "intent": intent.category,
+                    "confidence": None,
+                    "config_snapshot": self._config_snapshot(),
+                },
             )
         # commercial/product/support 进入 RAG 管线
         # (commercial 原「过渡期拒答」已废:WooCommerce 产品已灌库,走 woocommerce boost 桶作答)
         # product/commercial/support 降低检索阈值(能力咨询/购买咨询容忍少结果)
         effective_min = 1 if intent.category in ("product", "support", "commercial") else self._min_results
 
+        t_rewrite = time.monotonic()
         extracted = await extract_query(query, self._llm)
         search_query = await rewrite_query(extracted, conversation_history, self._llm)
+        stages["rewrite"] = {
+            "ms": int((time.monotonic() - t_rewrite) * 1000),
+            "extracted": extracted,
+            "rewritten": search_query,
+        }
 
         # 统一检索 + 三路 RRF 融合(hybrid + symbol + intent boost 桶)
+        t_ret = time.monotonic()
         fused = await self._retrieve_and_fuse(
             extracted,
             search_query,
@@ -428,11 +468,22 @@ class RAGOrchestrator:
             product_filter=product_filter,
             channel=channel,
         )
+        stages["retrieve"] = {
+            "ms": int((time.monotonic() - t_ret) * 1000),
+            "hybrid_count": len(fused),
+            "min_results_met": len(fused) >= effective_min,
+        }
 
+        t_rr = time.monotonic()
         reranked = self._reranker.rerank(search_query, fused, top_k=self._top_k)
 
         if self._pruner:
             reranked = await self._pruner.prune(search_query, reranked)
+        stages["rerank"] = {
+            "ms": int((time.monotonic() - t_rr) * 1000),
+            "top_score": reranked[0].score if reranked else None,
+            "count": len(reranked),
+        }
 
         if len(reranked) < effective_min:
             elapsed = int((time.monotonic() - start) * 1000)
@@ -444,6 +495,14 @@ class RAGOrchestrator:
                 language=language,
                 response_time_ms=elapsed,
                 intent=intent.category,
+                trace_payload={
+                    "type": "reject_short",
+                    "stages": stages,
+                    "total_ms": elapsed,
+                    "intent": intent.category,
+                    "confidence": None,
+                    "config_snapshot": self._config_snapshot(),
+                },
             )
 
         context = self._build_context(reranked)
@@ -451,10 +510,17 @@ class RAGOrchestrator:
             query, context, language, conversation_history, channel, intent=intent.category,
         )
 
+        t_gen = time.monotonic()
         llm_response = await self._llm.generate(messages, task="generation")
+        stages["generate"] = {
+            "ms": int((time.monotonic() - t_gen) * 1000),
+            "latency_ms": getattr(llm_response, "latency_ms", None),
+            "tokens_output": getattr(llm_response, "tokens_output", None),
+        }
         sources = self._extract_sources(reranked)
-        elapsed = int((time.monotonic() - start) * 1000)
+        stages["output"] = {"ms": 0, "sources_count": len(sources)}
 
+        elapsed = int((time.monotonic() - start) * 1000)
         return RAGAnswer(
             answer=llm_response.content,
             sources=sources,
@@ -463,6 +529,14 @@ class RAGOrchestrator:
             language=language,
             response_time_ms=elapsed,
             intent=intent.category,
+            trace_payload={
+                "type": "rag",
+                "stages": stages,
+                "total_ms": elapsed,
+                "intent": intent.category,
+                "confidence": None,
+                "config_snapshot": self._config_snapshot(),
+            },
         )
 
     async def stream_answer(
@@ -521,7 +595,9 @@ class RAGOrchestrator:
         #  意图走 woocommerce boost 桶召回产品信息作答,不再拒答。intent.py 注释同步)
         # 评审 C1:有附件时跳过 off_topic 拒答——「分析这个日志」这类泛化
         # 日志排查语会被判 off_topic,但附件就是 context,必须放行。
+        t_intent = time.monotonic()
         intent = await classify_intent(query, self._llm)
+        intent_ms = int((time.monotonic() - t_intent) * 1000)
         if not attachments:
             if intent.category == "off_topic":
                 elapsed = int((time.monotonic() - start) * 1000)
@@ -534,6 +610,20 @@ class RAGOrchestrator:
                         "language": language,
                         "response_time_ms": elapsed,
                         "intent": intent.category,
+                        "trace_payload": {
+                            "type": "reject_short",
+                            "stages": {
+                                "intent": {
+                                    "ms": intent_ms,
+                                    "category": intent.category,
+                                    "reason": intent.reason,
+                                }
+                            },
+                            "total_ms": elapsed,
+                            "intent": intent.category,
+                            "confidence": None,
+                            "config_snapshot": self._config_snapshot(),
+                        },
                     }
                 )
                 return
@@ -578,6 +668,23 @@ class RAGOrchestrator:
                     "language": language,
                     "response_time_ms": elapsed,
                     "intent": intent.category,
+                    "trace_payload": {
+                        "type": "reject_short",
+                        "stages": {
+                            "intent": {
+                                "ms": intent_ms,
+                                "category": intent.category,
+                                "reason": intent.reason,
+                            },
+                            "rewrite": {"ms": rewrite_ms, "extracted": extracted, "rewritten": search_query},
+                            "retrieve": {"ms": search_ms, "hybrid_count": len(fused)},
+                            "rerank": {"ms": rerank_ms, "count": len(reranked)},
+                        },
+                        "total_ms": elapsed,
+                        "intent": intent.category,
+                        "confidence": None,
+                        "config_snapshot": self._config_snapshot(),
+                    },
                 }
             )
             return
@@ -639,6 +746,25 @@ class RAGOrchestrator:
                     "rerank_ms": rerank_ms,
                     "first_token_ms": first_token_ms,
                     "llm_ms": llm_ms,
+                },
+                "trace_payload": {
+                    "type": "rag",
+                    "stages": {
+                        "intent": {
+                            "ms": intent_ms,
+                            "category": intent.category,
+                            "reason": intent.reason,
+                        },
+                        "rewrite": {"ms": rewrite_ms, "extracted": extracted, "rewritten": search_query},
+                        "retrieve": {"ms": search_ms, "hybrid_count": len(fused)},
+                        "rerank": {"ms": rerank_ms, "count": len(reranked)},
+                        "generate": {"ms": llm_ms, "ttft_ms": first_token_ms},
+                        "output": {"ms": 0, "sources_count": len(sources)},
+                    },
+                    "total_ms": elapsed,
+                    "intent": intent.category,
+                    "confidence": None,
+                    "config_snapshot": self._config_snapshot(),
                 },
             }
         )

@@ -3,6 +3,21 @@
 @tailwind utilities;
 
 :root {
+  /* 可观测性设计 token(三页统一) */
+  --bg: #fafafa;
+  --panel: #fff;
+  --bd: #ececec;
+  --bd2: #f0f0f0;
+  --t1: #111827;
+  --t2: #6b7280;
+  --t3: #9ca3af;
+  --acc: #4f46e5;
+  --acc-t: #eef2ff;
+  --warn: #b45309;
+  --err: #dc2626;
+  --ok: #059669;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+
   --background: 0 0% 100%;
   --foreground: 0 0% 3.9%;
   --card: 0 0% 100%;
