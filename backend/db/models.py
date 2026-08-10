@@ -21,6 +21,7 @@ from typing import Any
 from sqlalchemy import (
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -92,6 +93,67 @@ class Conversation(Base):
     )
     attachments: Mapped[list["Attachment"]] = relationship(
         back_populates="conversation", lazy="raise"
+    )
+    traces: Mapped[list["Trace"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        foreign_keys="Trace.conversation_id",
+    )
+
+
+class Trace(Base):
+    """单轮 RAG/澄清/拒答的执行 trace,1 conversation : N trace。"""
+
+    __tablename__ = "traces"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    prev_trace_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("traces.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    turn_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    type: Mapped[str] = mapped_column(String(20), nullable=False, default="rag")
+    stages: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    total_ms: Mapped[int | None] = mapped_column(Integer)
+    intent: Mapped[str | None] = mapped_column(String(100))
+    confidence: Mapped[float | None] = mapped_column(Float)
+    config_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    conversation: Mapped["Conversation"] = relationship(back_populates="traces")
+    prev_trace: Mapped["Trace | None"] = relationship(
+        remote_side="Trace.id", foreign_keys=[prev_trace_id]
+    )
+
+
+class BusinessSignal(Base):
+    """业务信号聚类(场景应用/产品需求),LLM 后处理批跑产出。"""
+
+    __tablename__ = "business_signals"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    type: Mapped[str] = mapped_column(String(20), nullable=False)
+    label: Mapped[str] = mapped_column(String(100), nullable=False)
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    pct: Mapped[float] = mapped_column(Float, default=0.0)
+    sample_conversation_ids: Mapped[list[Any]] = mapped_column(JSONB, default=[])
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 

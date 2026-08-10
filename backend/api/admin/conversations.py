@@ -7,9 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.api.admin.schemas import ConversationOut
 from backend.auth.dependencies import CurrentUser, require_role
-from backend.db.models import Conversation, SourceClick
+from backend.db.models import Conversation, SourceClick, Trace
 from backend.services.intent_tagger import tag_batch, tag_single
 
 router = APIRouter(prefix="/conversations", tags=["对话审查"])
@@ -62,20 +61,39 @@ async def list_conversations(
         )
         convs = result.scalars().all()
 
+        # 批量获取 trace 摘要(每条对话最新一条 trace 的 stages)
+        conv_ids = [c.id for c in convs]
+        trace_map: dict = {}
+        if conv_ids:
+            trace_q = (
+                select(Trace)
+                .where(Trace.conversation_id.in_(conv_ids))
+                .order_by(Trace.turn_index)
+            )
+            trace_rows = (await session.execute(trace_q)).scalars().all()
+            for t in trace_rows:
+                if t.conversation_id not in trace_map:
+                    trace_map[t.conversation_id] = {
+                        "type": t.type,
+                        "stages": t.stages or {},
+                        "total_ms": t.total_ms,
+                    }
+
     items = [
-        ConversationOut(
-            id=str(c.id),
-            question=c.question,
-            answer=c.answer,
-            channel=c.channel,
-            language=c.language,
-            sources=list(c.sources or []),
-            is_answered=c.is_answered,
-            feedback=c.feedback,
-            response_time_ms=c.response_time_ms,
-            created_at=c.created_at.isoformat() if c.created_at else "",
-            intent_tag=c.intent_tag,
-        )
+        {
+            "id": str(c.id),
+            "question": c.question,
+            "answer": c.answer,
+            "channel": c.channel,
+            "language": c.language,
+            "sources": list(c.sources or []),
+            "is_answered": c.is_answered,
+            "feedback": c.feedback,
+            "response_time_ms": c.response_time_ms,
+            "created_at": c.created_at.isoformat() if c.created_at else "",
+            "intent_tag": c.intent_tag,
+            "trace_summary": trace_map.get(c.id),
+        }
         for c in convs
     ]
     return {"items": items, "total": total, "page": page, "size": size}
