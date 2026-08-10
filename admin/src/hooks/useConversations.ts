@@ -7,6 +7,7 @@ export interface ConversationFilters {
   is_answered?: boolean;
   feedback?: string;
   intent_tag?: string;
+  q?: string;
   date_from?: string;
   date_to?: string;
   page?: number;

@@ -24,40 +24,46 @@ async def list_conversations(
     is_answered: bool | None = Query(default=None),
     feedback: str | None = Query(default=None, pattern="^(up|down)$"),
     intent_tag: str | None = Query(default=None),
+    q: str | None = Query(default=None, description="全文搜索 question/answer"),
     date_from: str | None = Query(default=None, description="ISO 日期，如 2026-01-01"),
     date_to: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
 ) -> dict[str, Any]:
     """查询对话列表（viewer+ 可访问），支持 channel / is_answered / feedback /
-    intent_tag / date_from / date_to 多维过滤 + 分页。
+    intent_tag / q(全文搜索) / date_from / date_to 多维过滤 + 分页。
     """
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
-        q = select(Conversation)
+        stmt = select(Conversation)
         count_q = select(func.count()).select_from(Conversation)
         if channel:
-            q = q.where(Conversation.channel == channel)
+            stmt = stmt.where(Conversation.channel == channel)
             count_q = count_q.where(Conversation.channel == channel)
         if is_answered is not None:
-            q = q.where(Conversation.is_answered == is_answered)
+            stmt = stmt.where(Conversation.is_answered == is_answered)
             count_q = count_q.where(Conversation.is_answered == is_answered)
         if feedback:
-            q = q.where(Conversation.feedback == feedback)
+            stmt = stmt.where(Conversation.feedback == feedback)
             count_q = count_q.where(Conversation.feedback == feedback)
         if intent_tag:
-            q = q.where(Conversation.intent_tag == intent_tag)
+            stmt = stmt.where(Conversation.intent_tag == intent_tag)
             count_q = count_q.where(Conversation.intent_tag == intent_tag)
+        if q:
+            pattern = f"%{q}%"
+            cond = Conversation.question.ilike(pattern) | Conversation.answer.ilike(pattern)
+            stmt = stmt.where(cond)
+            count_q = count_q.where(cond)
         if date_from:
-            q = q.where(Conversation.created_at >= date_from)
+            stmt = stmt.where(Conversation.created_at >= date_from)
             count_q = count_q.where(Conversation.created_at >= date_from)
         if date_to:
-            q = q.where(Conversation.created_at <= date_to)
+            stmt = stmt.where(Conversation.created_at <= date_to)
             count_q = count_q.where(Conversation.created_at <= date_to)
 
         total = (await session.execute(count_q)).scalar() or 0
         result = await session.execute(
-            q.order_by(Conversation.created_at.desc()).offset((page - 1) * size).limit(size)
+            stmt.order_by(Conversation.created_at.desc()).offset((page - 1) * size).limit(size)
         )
         convs = result.scalars().all()
 

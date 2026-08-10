@@ -52,3 +52,29 @@ async def test_list_conversations_filtered(auth_headers):
     data = resp.json()
     assert data["total"] >= 1
     assert all(c["channel"] == "widget" for c in data["items"])
+
+
+async def test_list_conversations_q_search(auth_headers):
+    """q 参数全文搜索 question/answer(ILIKE)。"""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get(
+            "/api/admin/conversations?q=test%20question",
+            headers=auth_headers,
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] >= 1
+    assert all(
+        "test question" in c["question"].lower() or "test question" in (c["answer"] or "").lower()
+        for c in data["items"]
+    )
+
+    # 搜不存在的关键词 → fixture 的 test question 不在结果里
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp2 = await client.get(
+            "/api/admin/conversations?q=zzz_nomatch_zzz",
+            headers=auth_headers,
+        )
+    data2 = resp2.json()
+    assert all("test question" not in c["question"].lower() for c in data2["items"])

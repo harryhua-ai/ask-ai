@@ -33,7 +33,7 @@ _INTENT_PROMPT = """你是 CamThink 意图分类助手。判断用户输入属�
 - "NE101 蜂窝网络注册失败 / CEREG 报错" → support
 - "Python 怎么读串口(与 CamThink 无关)" → off_topic
 
-只输出 JSON: {{"category": "类别名", "reason": "简短理由"}}
+只输出 JSON: {{"category": "类别名", "reason": "简短理由", "confidence": 0.0到1.0的置信度}}
 
 ## 用户输入
 {query}
@@ -46,6 +46,7 @@ class IntentResult:
 
     category: str
     reason: str
+    confidence: float | None = None
 
 
 async def classify_intent(query: str, llm: Any) -> IntentResult:
@@ -75,8 +76,15 @@ async def classify_intent(query: str, llm: Any) -> IntentResult:
         if category not in VALID_CATEGORIES:
             category = "product"
         reason = data.get("reason", "")
-        logger.info("意图识别: %r → %s (%s)", query[:100], category, reason)
-        return IntentResult(category=category, reason=reason)
-    except Exception:  # noqa: BLE001
+        raw_conf = data.get("confidence")
+        try:
+            confidence = float(raw_conf) if raw_conf is not None else None
+            if confidence is not None and not (0.0 <= confidence <= 1.0):
+                confidence = None
+        except (TypeError, ValueError):
+            confidence = None
+        logger.info("意图识别: %r → %s (%s) confidence=%s", query[:100], category, reason, confidence)
+        return IntentResult(category=category, reason=reason, confidence=confidence)
+    except Exception:
         logger.warning("意图识别失败,fail-open 为 product", exc_info=True)
         return IntentResult(category="product", reason="classification failed")

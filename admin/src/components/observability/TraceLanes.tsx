@@ -1,4 +1,4 @@
-type StageInfo = { ms: number; status: "ok" | "warn" | "err"; detail?: string };
+type StageInfo = { ms: number; status: "ok" | "warn" | "err"; details?: string[] };
 type Stages = Record<string, StageInfo>;
 
 const LANE = [
@@ -25,13 +25,21 @@ export default function TraceLanes({ stages }: { stages: Stages }) {
           <div
             key={lane.key}
             data-status={s.status}
-            className="flex items-center gap-3 text-[13px] border border-[var(--bd)] rounded px-3 py-2"
+            className="flex flex-col gap-1 border border-[var(--bd)] rounded px-3 py-2"
           >
-            <span className="w-12 text-[var(--t2)]">{lane.label}</span>
-            <span style={{ color }}>{s.ms}ms</span>
-            {s.detail && (
-              <span className="text-[12px] text-[var(--t3)]">{s.detail}</span>
-            )}
+            <div className="flex items-center gap-3 text-[13px]">
+              <span className="w-12 text-[var(--t2)]">{lane.label}</span>
+              <span style={{ color }}>{s.ms}ms</span>
+            </div>
+            {s.details?.length ? (
+              <div className="ml-12 flex flex-col gap-0.5">
+                {s.details.map((d, i) => (
+                  <span key={i} className="text-[12px] text-[var(--t3)]">
+                    {d}
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </div>
         );
       })}
