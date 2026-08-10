@@ -1,0 +1,60 @@
+# ask-ai 本地开发 compose(mac,仅 postgres + weaviate)
+#
+# 用途:mac 本地跑数据层,backend 直接 uv run(源码 CPU 模式),前端 npm run dev。
+# 数据来源:首次用 scripts/sync_local_data.sh 从 tesla-t4 拉取,之后按需更新。
+#
+# 与 deploy/dev、deploy/prod 的区别:
+#   - 无 GPU、无 backend、无 sync 容器(backend 在 mac 源码直跑)
+#   - 独立数据卷(ask-ai-local_pgdata / ask-ai-local_weaviate),不与 tesla-t4 共享
+#   - 端口 5432/8080(本地直连,无需 18000 映射)
+#
+# 用法:
+#   docker compose -f deploy/local/docker-compose.yml up -d
+#   docker compose -f deploy/local/docker-compose.yml down
+
+name: ask-ai-local
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ask_ai}
+      POSTGRES_USER: ${POSTGRES_USER:-ask_ai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ask_ai}"]
+      interval: 5s
+      retries: 10
+
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.0
+    restart: unless-stopped
+    command: ["--host", "0.0.0.0", "--port", "8080", "--scheme", "http"]
+    environment:
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      DISABLE_TELEMETRY: "true"
+      PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
+      GRPC_PORT: "50051"
+      # 匹配 tesla-t4 的 RAFT voter ID;否则 sync 拉来的 raft 状态 voter ID 对不上,
+      # 本地 weaviate 会卡在 RAFT join 循环起不来(详见 CLAUDE.md weaviate 约束)
+      CLUSTER_HOSTNAME: "7adc06acc397"
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/v1/.well-known/ready || exit 1"]
+      interval: 5s
+      retries: 12
+
+volumes:
+  pgdata:
+    name: ask-ai-local_pgdata
+  weaviate_data:
+    name: ask-ai-local_weaviate_data
