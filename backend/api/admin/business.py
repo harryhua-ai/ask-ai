@@ -260,9 +260,7 @@ async def business_overview(
             "up_count": up_count,
             "down_count": down_count,
             "prev_total": prev_total,
-            "delta_pct": (
-                round((total - prev_total) / prev_total * 100, 1) if prev_total else 0.0
-            ),
+            "delta_pct": (round((total - prev_total) / prev_total * 100, 1) if prev_total else 0.0),
         },
         "leads": {
             "valid": north_star,

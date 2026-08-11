@@ -250,7 +250,9 @@ async def tech_performance(
     cur_flags = {"anomaly": anomaly_count, "retry": retry_count, "fail": fail_count}
     prev_flags = _count_flags(prev_traces)
     prev_n = len(prev_traces) or 1
-    anomaly_delta = round(cur_flags["anomaly"] / n - prev_flags["anomaly"] / prev_n, 4) if n else 0.0
+    anomaly_delta = (
+        round(cur_flags["anomaly"] / n - prev_flags["anomaly"] / prev_n, 4) if n else 0.0
+    )
     retry_delta = round(cur_flags["retry"] / n - prev_flags["retry"] / prev_n, 4) if n else 0.0
     fail_delta = round(cur_flags["fail"] / n - prev_flags["fail"] / prev_n, 4) if n else 0.0
 
