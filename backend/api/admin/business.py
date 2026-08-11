@@ -56,6 +56,10 @@ async def business_overview(
     if date_to:
         end = datetime.fromisoformat(date_to).replace(tzinfo=UTC)
 
+    # 上一同等长度时间窗(环比 prev_total/delta_pct)
+    prev_end = start
+    prev_start = start - timedelta(days=days)
+
     async with factory() as session:
         # 服务总览
         total_q = (
@@ -64,6 +68,14 @@ async def business_overview(
             .where(Conversation.created_at >= start, Conversation.created_at <= end)
         )
         total = (await session.execute(total_q)).scalar() or 0
+
+        # 上一时间窗总量(环比)
+        prev_total_q = (
+            select(func.count())
+            .select_from(Conversation)
+            .where(Conversation.created_at >= prev_start, Conversation.created_at < prev_end)
+        )
+        prev_total = (await session.execute(prev_total_q)).scalar() or 0
 
         # 意图分布(含 unknown 兜底)
         intent_q = (
@@ -247,6 +259,10 @@ async def business_overview(
             "satisfaction": satisfaction,
             "up_count": up_count,
             "down_count": down_count,
+            "prev_total": prev_total,
+            "delta_pct": (
+                round((total - prev_total) / prev_total * 100, 1) if prev_total else 0.0
+            ),
         },
         "leads": {
             "valid": north_star,
@@ -259,6 +275,46 @@ async def business_overview(
         "geo": geo,
         "geo_note": geo_note,
         "timeseries": timeseries,
+    }
+
+
+@router.get("/hot-questions")
+async def hot_questions(
+    _: ViewerDep,
+    request: Request,
+    intent: str = Query(..., pattern="^(commercial|product|support|off_topic)$"),
+    range: str = Query(default="7d"),
+) -> dict[str, Any]:
+    """按意图过滤的 Top3 问题(Phase 2 推断版:按 question 文本 GROUP BY)。
+
+    spec D5:QuestionCluster 无 intent 字段,改查 Conversation 按 intent_tag +
+    question 文本聚合。Phase 3 升级为接 clustering 精度更高。
+    """
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    days = {"today": 1, "7d": 7, "30d": 30, "90d": 90}.get(range, 7)
+    end = datetime.now(UTC)
+    start = end - timedelta(days=days)
+
+    async with factory() as session:
+        q = (
+            select(
+                Conversation.question,
+                func.count().label("cnt"),
+            )
+            .where(
+                Conversation.created_at >= start,
+                Conversation.created_at <= end,
+                Conversation.intent_tag == intent,
+            )
+            .group_by(Conversation.question)
+            .order_by(func.count().desc())
+            .limit(3)
+        )
+        rows = (await session.execute(q)).all()
+
+    return {
+        "items": [{"question": r.question, "count": r.cnt} for r in rows],
+        "intent": intent,
     }
 
 
