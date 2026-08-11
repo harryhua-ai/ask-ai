@@ -1,6 +1,7 @@
 """业务概览聚合端点测试。"""
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -137,6 +138,120 @@ async def test_business_overview_geo_pct_and_90d(business_seed):
             await session.execute(
                 Conversation.__table__.delete().where(
                     Conversation.question.in_(["biz_test_geo_cn", "biz_test_geo_us"])
+                )
+            )
+            await session.commit()
+
+
+async def test_business_overview_prev_total_delta(business_seed):
+    """service.prev_total/delta_pct = 上一同等长度时间窗的 total + 环比。"""
+    factory = app.state.session_factory
+    now = datetime.now(UTC)
+    try:
+        async with factory() as session:
+            # 本窗(最近 7d):3 条
+            for i in range(3):
+                session.add(
+                    Conversation(
+                        question=f"biz_test_prev_cur_{i}",
+                        channel="widget",
+                        is_answered=True,
+                        intent_tag="commercial",
+                        created_at=now - timedelta(days=1),
+                    )
+                )
+            # 上窗(7-14d 前):2 条
+            for i in range(2):
+                session.add(
+                    Conversation(
+                        question=f"biz_test_prev_prev_{i}",
+                        channel="widget",
+                        is_answered=True,
+                        intent_tag="commercial",
+                        created_at=now - timedelta(days=10),
+                    )
+                )
+            await session.commit()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get(
+                "/api/admin/business/overview?range=7d", headers=business_seed
+            )
+        assert resp.status_code == 200
+        svc = resp.json()["service"]
+        # prev_total/delta_pct 字段存在
+        assert "prev_total" in svc
+        assert "delta_pct" in svc
+        # 上窗至少 2 条(可能含其他测试残留,但 >=2)
+        assert svc["prev_total"] >= 2
+        # delta_pct 为数值
+        assert isinstance(svc["delta_pct"], (int, float))
+    finally:
+        async with factory() as session:
+            await session.execute(
+                Conversation.__table__.delete().where(
+                    Conversation.question.like("biz_test_prev_%")
+                )
+            )
+            await session.commit()
+
+
+async def test_hot_questions_by_intent(business_seed):
+    """按 intent 过滤的 Top3 问题(按 question 文本聚合)。"""
+    factory = app.state.session_factory
+    now = datetime.now(UTC)
+    try:
+        async with factory() as session:
+            # commercial:3 条,其中 "biz_test_hot_A" 2 次
+            for _ in range(2):
+                session.add(
+                    Conversation(
+                        question="biz_test_hot_A",
+                        channel="widget",
+                        is_answered=True,
+                        intent_tag="commercial",
+                        created_at=now - timedelta(days=1),
+                    )
+                )
+            session.add(
+                Conversation(
+                    question="biz_test_hot_B",
+                    channel="widget",
+                    is_answered=True,
+                    intent_tag="commercial",
+                    created_at=now - timedelta(days=1),
+                )
+            )
+            # product:1 条(不应出现在 commercial 结果)
+            session.add(
+                Conversation(
+                    question="biz_test_hot_product",
+                    channel="widget",
+                    is_answered=True,
+                    intent_tag="product",
+                    created_at=now - timedelta(days=1),
+                )
+            )
+            await session.commit()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get(
+                "/api/admin/business/hot-questions?intent=commercial&range=7d",
+                headers=business_seed,
+            )
+        assert resp.status_code == 200
+        j = resp.json()
+        assert j["intent"] == "commercial"
+        assert len(j["items"]) <= 3
+        # biz_test_hot_A 出现 2 次,应排第一
+        top = j["items"][0]
+        assert top["question"] == "biz_test_hot_A"
+        assert top["count"] == 2
+        # 不含 product
+        assert all("product" not in i["question"] for i in j["items"])
+    finally:
+        async with factory() as session:
+            await session.execute(
+                Conversation.__table__.delete().where(
+                    Conversation.question.like("biz_test_hot_%")
                 )
             )
             await session.commit()
