@@ -130,7 +130,14 @@ async def tech_performance(
                 "comparison": 0.0,
             },
             "stages": {
-                s: {"p50": 0, "p95": 0, "normal_max": NORMAL_MAX.get(s, 0)} for s in STAGE_NAMES
+                s: {
+                    "p50": 0,
+                    "p95": 0,
+                    "normal_max": NORMAL_MAX.get(s, 0),
+                    "p50_pct": 0.0,
+                    "p95_pct": 0.0,
+                }
+                for s in STAGE_NAMES
             },
             "trends": [],
             "anomalies": [],
@@ -221,6 +228,12 @@ async def tech_performance(
             "p95": int(_percentile(vals, 0.95)) if vals else 0,
             "normal_max": NORMAL_MAX.get(sname, 0),
         }
+    # Phase 2: 补 p50_pct/p95_pct(相对各段最大 P95 的比例,前端 DualStageBar 双色条用)
+    max_p95 = max((s["p95"] for s in stage_result.values()), default=0)
+    for sname in STAGE_NAMES:
+        sd = stage_result[sname]
+        sd["p50_pct"] = round(sd["p50"] / max_p95 * 100, 1) if max_p95 else 0.0
+        sd["p95_pct"] = round(sd["p95"] / max_p95 * 100, 1) if max_p95 else 0.0
 
     # 基线:取前一轮的 P95 作为基线;无前一轮则取本轮 P50
     prev_total_ms = sorted(t.total_ms for t in prev_traces if t.total_ms is not None)
