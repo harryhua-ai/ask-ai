@@ -29,9 +29,7 @@ def _infer_markers(trace_type: str, stages: dict) -> dict:
         for sd in stages.values()
     )
     retrieve_sd = stages.get("retrieve", {})
-    path_counts = (
-        retrieve_sd.get("path_counts", {}) if isinstance(retrieve_sd, dict) else {}
-    )
+    path_counts = retrieve_sd.get("path_counts", {}) if isinstance(retrieve_sd, dict) else {}
     symbol_count = path_counts.get("symbol", 0) if isinstance(path_counts, dict) else 0
     boost_count = path_counts.get("boost", 0) if isinstance(path_counts, dict) else 0
     degraded = symbol_count == 0 and boost_count == 0
@@ -54,9 +52,13 @@ async def list_conversations(
     q: str | None = Query(default=None, description="全文搜索 question/answer"),
     date_from: str | None = Query(default=None, description="ISO 日期，如 2026-01-01"),
     date_to: str | None = Query(default=None),
-    has_retry: bool | None = Query(default=None, description="Phase 2:异常重试(stages 含 retry_count)"),
+    has_retry: bool | None = Query(
+        default=None, description="Phase 2:异常重试(stages 含 retry_count)"
+    ),
     has_feedback: bool | None = Query(default=None, description="Phase 2:有反馈"),
-    has_clarify: bool | None = Query(default=None, description="Phase 2:触发澄清(trace type=clarify)"),
+    has_clarify: bool | None = Query(
+        default=None, description="Phase 2:触发澄清(trace type=clarify)"
+    ),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
 ) -> dict[str, Any]:
