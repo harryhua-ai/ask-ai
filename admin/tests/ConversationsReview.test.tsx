@@ -24,6 +24,8 @@ vi.mock("@/hooks/useConversations", () => ({
               rerank: { ms: 120 },
               generate: { ms: 550 },
             },
+            confidence: 0.45,
+            markers: { retry: true, clarify: false, reject_short: false, degraded: true },
           },
         },
       ],
@@ -190,6 +192,24 @@ describe("Conversations 审查页", () => {
     fireEvent.click(row);
     await waitFor(() => {
       expect(screen.getByText("RAG 生成")).toBeInTheDocument();
+    });
+  });
+
+  it("Phase 2:渲染快速筛选 toggle 栏 + markers 圆点", async () => {
+    renderWithProviders(<Conversations />);
+    await waitFor(() => {
+      // 4 个 toggle 按钮
+      const bar = document.querySelector("[data-toggle-bar]");
+      expect(bar).toBeTruthy();
+      const toggles = bar?.querySelectorAll("button[data-toggle]");
+      expect(toggles?.length).toBe(4);
+      // markers 圆点(retry + degraded 为 true)
+      const markersHost = document.querySelector("[data-markers]");
+      expect(markersHost).toBeTruthy();
+      expect(markersHost?.querySelector('[data-marker="retry"]')).toBeTruthy();
+      expect(markersHost?.querySelector('[data-marker="degraded"]')).toBeTruthy();
+      // clarify/reject_short 为 false,不渲染
+      expect(markersHost?.querySelector('[data-marker="clarify"]')).toBeNull();
     });
   });
 });

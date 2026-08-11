@@ -15,6 +15,7 @@ import { fetchTraces, type TraceData } from "@/lib/api/traces";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import StageBar from "@/components/observability/StageBar";
+import ToggleFilter from "@/components/observability/ToggleFilter";
 
 const INTENT_LABELS: Record<string, string> = {
   commercial: "商务咨询",
@@ -89,10 +90,33 @@ export default function Conversations() {
     }, 300);
     return () => clearTimeout(t);
   }, [searchInput]);
+  // Phase 2:快速筛选 toggle(置信<0.6 走客户端过滤,其余 3 个走后端查询参数)
+  const [toggles, setToggles] = useState<{
+    lowConf: boolean;
+    retry: boolean;
+    feedback: boolean;
+    clarify: boolean;
+  }>({ lowConf: false, retry: false, feedback: false, clarify: false });
+  useEffect(() => {
+    setFilters((f) => ({
+      ...f,
+      has_retry: toggles.retry || undefined,
+      has_feedback: toggles.feedback || undefined,
+      has_clarify: toggles.clarify || undefined,
+      page: 1,
+    }));
+  }, [toggles.retry, toggles.feedback, toggles.clarify]);
   const { data, isLoading } = useConversations(filters);
   const { data: detail } = useConversationDetail(selectedId);
   const tagMutation = useTagConversation();
   const batchTag = useBatchTag();
+  // Phase 2:置信<0.6 客户端过滤(D8 — trace confidence 在 JSONB,SQL 过滤性能差)
+  const visibleItems = toggles.lowConf
+    ? (data?.items ?? []).filter(
+        (c) =>
+          c.trace_summary?.confidence != null && c.trace_summary.confidence < 0.6,
+      )
+    : (data?.items ?? []);
 
   // 获取选中对话的 trace 数据
   const { data: traces } = useQuery<TraceData[]>({
@@ -192,11 +216,39 @@ export default function Conversations() {
           </select>
         </div>
 
+        {/* Phase 2:快速筛选 toggle 栏 */}
+        <div className="flex gap-2 flex-wrap" data-toggle-bar>
+          <ToggleFilter
+            label="置信<0.6"
+            active={toggles.lowConf}
+            onToggle={() => setToggles((t) => ({ ...t, lowConf: !t.lowConf }))}
+            color="var(--warn)"
+          />
+          <ToggleFilter
+            label="异常重试"
+            active={toggles.retry}
+            onToggle={() => setToggles((t) => ({ ...t, retry: !t.retry }))}
+            color="var(--err)"
+          />
+          <ToggleFilter
+            label="有反馈"
+            active={toggles.feedback}
+            onToggle={() => setToggles((t) => ({ ...t, feedback: !t.feedback }))}
+            color="var(--acc)"
+          />
+          <ToggleFilter
+            label="触发澄清"
+            active={toggles.clarify}
+            onToggle={() => setToggles((t) => ({ ...t, clarify: !t.clarify }))}
+            color="var(--ok)"
+          />
+        </div>
+
         <div className="space-y-2">
           {isLoading ? (
             <div className="text-center py-8 text-muted-foreground">加载中...</div>
           ) : (
-            data?.items.map((conv) => {
+          visibleItems.map((conv) => {
               return (
                 <div
                   key={conv.id}
@@ -216,6 +268,42 @@ export default function Conversations() {
                           <Badge variant="outline">
                             {INTENT_LABELS[conv.intent_tag] ?? conv.intent_tag}
                           </Badge>
+                        )}
+                        {conv.trace_summary?.markers && (
+                          <div className="flex items-center gap-1" data-markers>
+                            {conv.trace_summary.markers.retry && (
+                              <span
+                                data-marker="retry"
+                                title="异常重试"
+                                className="inline-block w-2 h-2 rounded-full"
+                                style={{ background: "var(--err)" }}
+                              />
+                            )}
+                            {conv.trace_summary.markers.clarify && (
+                              <span
+                                data-marker="clarify"
+                                title="触发澄清"
+                                className="inline-block w-2 h-2 rounded-full"
+                                style={{ background: "var(--warn)" }}
+                              />
+                            )}
+                            {conv.trace_summary.markers.reject_short && (
+                              <span
+                                data-marker="reject_short"
+                                title="短路拒答"
+                                className="inline-block w-2 h-2 rounded-full"
+                                style={{ background: "var(--t3)" }}
+                              />
+                            )}
+                            {conv.trace_summary.markers.degraded && (
+                              <span
+                                data-marker="degraded"
+                                title="检索降级"
+                                className="inline-block w-2 h-2 rounded-full"
+                                style={{ background: "var(--acc)" }}
+                              />
+                            )}
+                          </div>
                         )}
                       </div>
                       {conv.trace_summary && (
