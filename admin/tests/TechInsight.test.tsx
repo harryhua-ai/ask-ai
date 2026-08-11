@@ -14,7 +14,20 @@ vi.mock("@/lib/api/techInsight", () => ({
 }));
 
 mockTechPerf.mockResolvedValue({
-  kpi: { p95_ms: 1200, anomaly_rate: 0.1, retry_rate: 0.05, fail_rate: 0.02 },
+  kpi: {
+    p95_ms: 1200,
+    anomaly_rate: 0.1,
+    retry_rate: 0.05,
+    fail_rate: 0.02,
+    anomaly_count: 12,
+    retry_count: 6,
+    fail_count: 2,
+    anomaly_delta: 0.03,
+    retry_delta: -0.01,
+    fail_delta: 0.0,
+    baseline: 3000,
+    comparison: 0.0,
+  },
   stages: {
     intent: { p50: 50, p95: 80, normal_max: 500 },
     rewrite: { p50: 200, p95: 400, normal_max: 2000 },
@@ -27,8 +40,8 @@ mockTechPerf.mockResolvedValue({
     p50: 300,
     p95: 1000,
   })),
-  anomalies: [{ type: "LLM 超时", count: 3 }],
-  degradations: [],
+  anomalies: [{ type: "LLM 超时", count: 3, pct: 60.0 }],
+  degradations: [{ from: "正常 RAG", to: "单路检索", reason: "向量库降级 2 次" }],
 });
 
 mockCoverageGaps.mockResolvedValue({
@@ -71,9 +84,9 @@ describe("TechInsight 技术洞察页", () => {
     await waitFor(() => {
       expect(screen.getByText("P95 耗时")).toBeInTheDocument();
       expect(screen.getByText(/1,200/)).toBeInTheDocument();
-      expect(screen.getByText(/异常率/)).toBeInTheDocument();
-      expect(screen.getByText(/重试|retry/i)).toBeInTheDocument();
-      expect(screen.getByText(/失败率/)).toBeInTheDocument();
+      expect(screen.getByText("异常率")).toBeInTheDocument();
+      expect(screen.getByText("重试率")).toBeInTheDocument();
+      expect(screen.getByText("失败率")).toBeInTheDocument();
     });
   });
 
