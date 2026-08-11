@@ -150,6 +150,8 @@ Phase 1 需要新建的可视化组件,三页复用,放 `admin/src/components/vi
 
 需要新表、pipeline 采集层改造、eval 管道。这是结构性投资,1-2 周。**本轮只写设计定义,不实施**。待 Phase 1+2 落地后,根据实际价值评估是否启动。
 
+> **整体评审建议**: 不急着做,甚至可砍部分。Phase 1+2 完成后三页视觉对齐已达 B 方案目标,Phase 3 边际价值要和成本重新比。其中客户信息模型(3.1)、来源 eval(3.4)是产品设计决策,需产品视角,非纯工程能拍板。建议 Phase 2 完成后,拿实际数据回头评估——哪些项被真实使用场景卡住,哪些是"设计稿有但没人真用",按使用价值砍。
+
 ### 3.1 客户信息模型 + widget 表单
 
 **问题**: DB 无 customer/contact 实体,设计稿对话审查的"客户信息行"(姓名/邮箱/公司/备注/线索标记)完全无数据源。
@@ -161,28 +163,32 @@ Phase 1 需要新建的可视化组件,三页复用,放 `admin/src/components/vi
   created_at
   ```
   一对一关联 conversation,widget 端可选填写。
-- widget 端表单: 对话前或对话后,展示"留个联系方式?(可选)"轻量表单,字段 name/email/company/note。不强制,不阻断对话。
-- 线索标记 `is_lead`: 由后端规则推断(commercial 意图 + 含购买关键词)或 admin 手动标注。
+- widget 端表单: **对话后**展示"留个联系方式?(可选)"轻量表单——对话前表单是转化杀手(用户未获得价值就要留信息,流失高);对话后用户已获得答案,reciprocity 心理下留信息意愿更高。字段极简: name + email 必填、company/note 可选,不做必填校验阻断。
+- 线索标记 `is_lead`: **规则版 + 人工兜底**(commercial 意图 + 购买关键词如价格/经销商/采购)。不上 LLM 判定——成本高且不可解释,规则版 80% 准确率够运营用。admin 详情页加"标为线索/取消线索"按钮,运营手动修正,积累后再看规则要不要优化。
 - admin API: `/conversations/{id}/contact` GET/PATCH。
 - 对话审查前端: 详情面板加"客户信息行",从 contact 渲染。
 
-**待评审点**: widget 表单会不会降低对话转化?线索标记规则是否够准?
+**待评审点 + 评审建议**:
+- widget 表单转化 → 建议放对话后、极简可选。上线后追踪"留信息率",<5% 说明位置/文案不对再迭代。
+- 线索标记规则 → 建议规则版 + 人工兜底,不做 LLM 判定。
 
 ### 3.2 Trace 采集层修复
 
 **问题**: `rag.py` 无专门 `degraded`/`error_flags`/`retry_count` 字段落库。retrieve 阶段降级(符号/boost/RRF)通过 `path_counts` 间接反映(tech.py 靠它推断"单路检索"),但 LLM retry 信息完全丢失(deepseek.py retry 只 log 不回写)。tech.py 的异常/retry/降级统计全是推断,不准。
 
 **设计定义**:
-- `Trace` 模型加列: `error_flags`(JSONB)、`retry_count`(int)、`degraded`(bool)、`recovered`(bool)。
-- `rag.py` 采集点:
-  - LLM 超时重试 → 写 `retry_count`、`error_flags.llm_timeout`
-  - rerank 跳过/降级纯 hybrid → 写 `degraded=true`、`error_flags.rerank_skip`
-  - 向量库超时降级 BM25 → 写 `degraded=true`、`error_flags.vector_timeout`
-  - 恢复成功 → 写 `recovered=true`
+- `Trace` 模型加列: `error_flags`(JSONB)、`retry_count`(int)、`degraded`(bool)、`recovered`(bool)。**字段 nullable**,历史 trace 默认 null/0/false。
+- `rag.py` 采集点(**分级标记,不混为一谈**):
+  - `degraded=true` 只标"检索链路降级"(rerank 跳过/向量库超时降 BM25)——RAG 质量降级,用户可感知(答案变差)
+  - LLM 超时重试 → 标 `retry_count`、`error_flags.llm_timeout`,但 `degraded=false`——传输层重试,用户不可感知(只要最终成功)
+  - 恢复成功 → 写 `recovered=true`(降级后恢复,单独标)
+  - 这样 tech.py "降级率"只反映真正影响质量的,不被传输重试污染
 - `llm/deepseek.py` 的 retry 回调写回 Trace(目前丢失)。
-- tech.py 统计改读真实字段,废弃阈值推断。
+- tech.py 统计改读真实字段,废弃阈值推断。查询加时间窗过滤(只算有新字段的 trace),避免历史 null 拖低指标。
 
-**待评审点**: 历史 trace 数据无这些字段,迁移策略?降级检测的边界条件?
+**待评审点 + 评审建议**:
+- 历史 trace 迁移 → 建议**不回填**,新字段 nullable,历史降级信息已丢失无法重建。省迁移脚本一周。
+- 降级检测边界 → 建议**分级**:检索降级标 degraded,LLM 重试标 retry_count 但不标 degraded,恢复标 recovered。
 
 ### 3.3 多轮消息正文存储
 
@@ -193,7 +199,8 @@ Phase 1 需要新建的可视化组件,三页复用,放 `admin/src/components/vi
 - 方案 B(新表): `conversation_turns`(id, conversation_id, turn_index, user_message, assistant_message, sources, trace_id FK)。语义清晰,但多一张表。
 - **推荐 B**,trace 保持纯诊断,消息正文独立。多轮 API `/conversations/{id}/turns` 返回。
 
-**待评审点**: 历史多轮 conversation 的消息正文能否回填?
+**待评审点 + 评审建议**:
+- 历史多轮回填 → 建议**不能回填,接受历史空白**。Conversation 表只存最终一轮 q/ans,中间轮次物理丢失。历史多轮在详情页显示"历史轮次正文未采集(Phase 3 前未存储)"提示,新 conversation 从上线日起完整存储。不做回填尝试。
 
 ### 3.4 来源准确率 eval 管道
 
@@ -206,7 +213,9 @@ Phase 1 需要新建的可视化组件,三页复用,放 `admin/src/components/vi
 - tech.py `/source-health` 端点改读 `source_quality` 表。
 - 前端来源质量表渲染三级判色(≥70% 正常 / 60-70% 偏低 / <60% 差)。
 
-**待评审点**: eval 管道跑全量还是抽样?准确率定义是否需要人工校验?
+**待评审点 + 评审建议**:
+- eval 全量还是抽样 → 建议**抽样,每日 100 条**,优先抽有反馈(👍/👎)的(有真实质量信号,比随机抽样价值高)。统计上每来源月样本 ~300+,足够 95% 置信。定时跑(凌晨低峰),写 source_quality 表,不阻塞线上。
+- 准确率定义是否需人工校验 → 建议**首月人工抽检 50 条校准**,看 eval 判定与人工判断一致率。>85% 直接转自动;<85% 调 eval 判据。之后不再人工,除非某来源准确率骤降 >20% 再触发抽检。
 
 ### 3.5 澄清漏斗
 
@@ -222,7 +231,8 @@ Phase 1 需要新建的可视化组件,三页复用,放 `admin/src/components/vi
   5. 最终未命中(澄清后仍拒答/低相关)
 - 前端澄清漏斗组件(5 级留存率横条)。
 
-**待评审点**: 3.2 不做则 3.5 无法做,强依赖。
+**待评审点 + 评审建议**:
+- 强依赖 3.2 → 建议**捆绑,但 3.5 优先级低于 3.2**。3.2(Trace 采集层)是基础设施,修了后技术洞察全页统计变准,价值高且通用;3.5(澄清漏斗)只服务知识缺口 tab 一块,价值窄。若启动 Phase 3,3.2 必做,3.5 按数据决定——先跑数据看"触发澄清"对话占比,>10% 做 3.5,<10% 砍掉用数字代替漏斗图。
 
 ### 3.6 Phase 3 依赖图
 
@@ -343,3 +353,19 @@ admin/src/components/viz/
 - **Phase 1 事实核查**: ✅ 通过
 - **Phase 2 质量判断**: ✅ 通过
 - **完成时间**: 2026-08-11
+
+### 评审建议补充 — 2026-08-11
+
+Phase 3 各"待评审点"补充评审建议(9 项),均落回正文对应小节:
+
+| 评审点 | 建议 |
+|--------|------|
+| Phase 3 整体 | 不急,Phase 2 后按使用价值砍 |
+| widget表单转化 | 放对话后,极简可选 |
+| 线索标记规则 | 规则版+人工兜底,不上LLM |
+| 历史trace迁移 | 不回填,新字段nullable |
+| 降级检测边界 | 分级:检索降级 vs 传输重试 |
+| 历史多轮回填 | 不能,接受空白 |
+| eval抽样 | 100条/日,优先有反馈 |
+| eval人工校验 | 首月50条,>85%转自动 |
+| 3.5捆绑3.2 | 3.2必做,3.5按占比决定 |
