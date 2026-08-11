@@ -3,6 +3,9 @@ import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import KpiCard from "@/components/observability/KpiCard";
 import TimeFilter from "@/components/observability/TimeFilter";
+import StackedBar from "@/components/observability/StackedBar";
+import IntentColumn from "@/components/observability/IntentColumn";
+import ProgressBar from "@/components/observability/ProgressBar";
 import { Button } from "@/components/ui/button";
 import {
   fetchBusinessOverview,
@@ -86,40 +89,49 @@ export default function BusinessOverview() {
             />
           </div>
 
-          {/* 三意图分布 */}
+          {/* 服务总览意图堆叠条 + 三列意图深入卡 */}
           <div
-            className="rounded-lg border p-4"
+            className="rounded-lg border p-4 space-y-4"
             style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
           >
-            <h2 className="text-[14px] font-medium text-[var(--t1)] mb-3">
-              意图分布
-            </h2>
-            <div className="flex gap-6">
-              {(["commercial", "product", "support", "off_topic"] as const).map(
-                (intent) => (
-                  <Link
-                    key={intent}
-                    to={`/conversations?intent=${intent}`}
-                    className="text-center hover:opacity-70 transition"
-                  >
-                    <div className="text-2xl font-semibold text-[var(--t1)]">
-                      {data.service.intent_dist[intent]}
-                    </div>
-                    <div className="text-[12px] text-[var(--t2)]">
-                      {INTENT_LABELS[intent]}
-                    </div>
-                  </Link>
-                ),
-              )}
-              {data.service.unknown_intent_count > 0 && (
-                <div className="text-center">
-                  <div className="text-2xl font-semibold text-[var(--warn)]">
-                    {data.service.unknown_intent_count}
-                  </div>
-                  <div className="text-[12px] text-[var(--t2)]">未识别意图</div>
-                </div>
-              )}
+            <div>
+              <h2 className="text-[14px] font-medium text-[var(--t1)] mb-3">
+                意图分布
+              </h2>
+              <StackedBar
+                segments={[
+                  { label: "销售咨询", value: data.service.intent_dist.commercial, color: "var(--acc)" },
+                  { label: "产品方案", value: data.service.intent_dist.product, color: "var(--ok)" },
+                  { label: "技术支持", value: data.service.intent_dist.support, color: "var(--warn)" },
+                  { label: "无关闲聊", value: data.service.intent_dist.off_topic, color: "var(--t3)" },
+                ]}
+              />
             </div>
+            <div className="grid grid-cols-3 gap-4">
+              {(["commercial", "product", "support"] as const).map((intent) => {
+                const total = data.service.total || 1;
+                const trend = data.timeseries.slice(-7).map((d) => d[intent]);
+                return (
+                  <IntentColumn
+                    key={intent}
+                    name={INTENT_LABELS[intent]}
+                    count={data.service.intent_dist[intent]}
+                    pct={Math.round((data.service.intent_dist[intent] / total) * 100)}
+                    trend={trend}
+                    drillTo={`/conversations?intent=${intent}`}
+                    color={INTENT_COLORS[intent]}
+                  />
+                );
+              })}
+            </div>
+            {(data.service.intent_dist.off_topic > 0 || data.service.unknown_intent_count > 0) && (
+              <div className="flex gap-6 text-[12px] text-[var(--t3)]">
+                <span>无关闲聊 {data.service.intent_dist.off_topic}</span>
+                {data.service.unknown_intent_count > 0 && (
+                  <span>未识别意图 {data.service.unknown_intent_count}</span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* 每日对话量趋势 */}
@@ -309,15 +321,14 @@ export default function BusinessOverview() {
               地域分布
             </h2>
             {data.geo.length > 0 ? (
-              <div className="space-y-1">
+              <div className="space-y-2">
                 {data.geo.map((g) => (
-                  <div
+                  <ProgressBar
                     key={g.name}
-                    className="flex justify-between text-[13px]"
-                  >
-                    <span>{g.name}</span>
-                    <span className="text-[var(--t2)]">{g.count}</span>
-                  </div>
+                    label={g.name}
+                    value={g.count}
+                    pct={g.pct}
+                  />
                 ))}
               </div>
             ) : (
@@ -331,8 +342,15 @@ export default function BusinessOverview() {
 }
 
 const INTENT_LABELS: Record<string, string> = {
-  commercial: "商务咨询",
-  product: "产品咨询",
+  commercial: "销售咨询",
+  product: "产品方案",
   support: "技术支持",
   off_topic: "无关闲聊",
+};
+
+const INTENT_COLORS: Record<string, string> = {
+  commercial: "var(--acc)",
+  product: "var(--ok)",
+  support: "var(--warn)",
+  off_topic: "var(--t3)",
 };

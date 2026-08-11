@@ -8,8 +8,11 @@ vi.mock("@/lib/api/businessOverview", () => ({
     service: {
       total: 120,
       intent_dist: { commercial: 30, product: 50, support: 35, off_topic: 5 },
+      unknown_intent_count: 2,
       north_star: 18,
       satisfaction: 85,
+      up_count: 80,
+      down_count: 15,
     },
     leads: {
       valid: 12,
@@ -31,9 +34,19 @@ vi.mock("@/lib/api/businessOverview", () => ({
       { question: "NE503 价格", count: 8 },
       { question: "SDK 怎么接入", count: 5 },
     ],
-    geo: [],
-    geo_note: "地域字段待接入",
-    timeseries: [],
+    geo: [
+      { name: "中国", count: 60, pct: 50 },
+      { name: "美国", count: 30, pct: 25 },
+    ],
+    geo_note: "地域分布",
+    timeseries: Array.from({ length: 7 }, (_, i) => ({
+      date: `08-0${i + 1}`,
+      total: 10 + i,
+      commercial: 3,
+      product: 4,
+      support: 2,
+      off_topic: 1,
+    })),
   }),
 }));
 
@@ -53,12 +66,34 @@ function renderWithProviders(ui: React.ReactElement) {
 }
 
 describe("BusinessOverview", () => {
-  it("渲染服务总览及意图分布", async () => {
+  it("渲染服务总览 + 意图堆叠条 + 三列意图卡", async () => {
     renderWithProviders(<BusinessOverview />);
     await waitFor(() => {
       expect(screen.getByText(/总服务客户/)).toBeInTheDocument();
-      expect(screen.getByText(/销售咨询/)).toBeInTheDocument();
+      // 销售咨询现多处出现(KPI 行的 intent_dist 已移除,但 StackedBar 图例 + IntentColumn)
+      expect(screen.getAllByText(/销售咨询/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/产品方案/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/技术支持/).length).toBeGreaterThan(0);
       expect(screen.getAllByText(/有效线索/).length).toBeGreaterThan(0);
+    });
+  });
+
+  it("地域分布渲染 ProgressBar 含 [data-fill]", async () => {
+    renderWithProviders(<BusinessOverview />);
+    await waitFor(() => {
+      expect(screen.getByText(/中国/)).toBeInTheDocument();
+      const fill = document.querySelector("[data-fill]");
+      expect(fill).toBeTruthy();
+    });
+  });
+
+  it("三列意图卡含 mini-trend 柱", async () => {
+    renderWithProviders(<BusinessOverview />);
+    await waitFor(() => {
+      const cols = document.querySelectorAll("[data-intent-column]");
+      expect(cols.length).toBe(3);
+      // 每列 7 根 mini-trend 柱
+      expect(document.querySelectorAll("[data-bar]").length).toBeGreaterThanOrEqual(7);
     });
   });
 
