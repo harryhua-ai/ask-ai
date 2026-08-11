@@ -47,7 +47,7 @@ async def business_overview(
 ) -> dict[str, Any]:
     """返回业务概览:服务总览、销售线索、场景应用、产品需求、热门问题、地域。"""
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
-    days = {"today": 1, "7d": 7, "30d": 30}.get(range, 7)
+    days = {"today": 1, "7d": 7, "30d": 30, "90d": 90}.get(range, 7)
     end = datetime.now(UTC)
     start = end - timedelta(days=days)
 
@@ -226,7 +226,16 @@ async def business_overview(
             .limit(10)
         )
         geo_rows = (await session.execute(geo_q)).all()
-        geo = [{"name": row.country, "count": row.cnt} for row in geo_rows if row.country]
+        geo_total = sum(r.cnt for r in geo_rows) or 1
+        geo = [
+            {
+                "name": row.country,
+                "count": row.cnt,
+                "pct": round(row.cnt / geo_total * 100, 1),
+            }
+            for row in geo_rows
+            if row.country
+        ]
         geo_note = "地域分布" if geo else "暂无地域数据(新对话将自动捕获)"
 
     return {

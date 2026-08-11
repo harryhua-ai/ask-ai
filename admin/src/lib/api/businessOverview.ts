@@ -51,7 +51,7 @@ export interface BusinessOverviewData {
   scenes: SceneItem[];
   requirements: ProductReqItem[];
   top_questions: TopQuestionItem[];
-  geo: { name: string; count: number }[];
+  geo: { name: string; count: number; pct: number }[];
   geo_note: string;
   timeseries: TimeseriesDay[];
 }

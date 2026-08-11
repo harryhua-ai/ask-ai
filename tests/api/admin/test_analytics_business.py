@@ -87,3 +87,56 @@ async def test_business_overview_custom_range(business_seed):
             headers=business_seed,
         )
     assert resp.status_code == 200
+
+
+async def test_business_overview_geo_pct_and_90d(business_seed):
+    """geo 项含 pct(占比),range=90d 接受。"""
+    factory = app.state.session_factory
+    async with factory() as session:
+        # 补两条带 country 的对话(business_seed 创建的对话无 country)
+        session.add(
+            Conversation(
+                question="biz_test_geo_cn",
+                channel="widget",
+                is_answered=True,
+                intent_tag="commercial",
+                country="CN",
+            )
+        )
+        session.add(
+            Conversation(
+                question="biz_test_geo_us",
+                channel="widget",
+                is_answered=True,
+                intent_tag="commercial",
+                country="US",
+            )
+        )
+        await session.commit()
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get(
+                "/api/admin/business/overview?range=90d", headers=business_seed
+            )
+        assert resp.status_code == 200
+        j = resp.json()
+        assert j["service"]["total"] > 0
+        # geo 项含 pct
+        assert len(j["geo"]) > 0
+        for g in j["geo"]:
+            assert "pct" in g
+            assert 0 <= g["pct"] <= 100
+        # 含 CN/US 两条,占比相等(各 50%,因 fixture 只加这两条带 country)
+        cn = [g for g in j["geo"] if g["name"] == "CN"]
+        us = [g for g in j["geo"] if g["name"] == "US"]
+        assert cn and us
+        assert cn[0]["pct"] == us[0]["pct"]
+    finally:
+        async with factory() as session:
+            await session.execute(
+                Conversation.__table__.delete().where(
+                    Conversation.question.in_(["biz_test_geo_cn", "biz_test_geo_us"])
+                )
+            )
+            await session.commit()
