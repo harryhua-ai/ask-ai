@@ -11,6 +11,7 @@ import {
   fetchBusinessOverview,
   fetchBusinessOverviewRange,
   refreshBusinessSignals,
+  fetchHotQuestions,
 } from "@/lib/api/businessOverview";
 
 type TimeRange = { range?: string; from?: string; to?: string };
@@ -35,6 +36,26 @@ export default function BusinessOverview() {
       queryClient.invalidateQueries({ queryKey: ["business-overview"] });
     },
   });
+
+  // 三列意图卡 Top3 热门问题(Phase 2)
+  const hotRange = timeRange.range ?? "7d";
+  const commercialHot = useQuery({
+    queryKey: ["hot-questions", "commercial", hotRange],
+    queryFn: () => fetchHotQuestions("commercial", hotRange),
+  });
+  const productHot = useQuery({
+    queryKey: ["hot-questions", "product", hotRange],
+    queryFn: () => fetchHotQuestions("product", hotRange),
+  });
+  const supportHot = useQuery({
+    queryKey: ["hot-questions", "support", hotRange],
+    queryFn: () => fetchHotQuestions("support", hotRange),
+  });
+  const hotMap: Record<string, { question: string; count: number }[] | undefined> = {
+    commercial: commercialHot.data?.items,
+    product: productHot.data?.items,
+    support: supportHot.data?.items,
+  };
 
   return (
     <div className="space-y-6 p-4" style={{ background: "var(--bg)", minHeight: "100%" }}>
@@ -66,7 +87,18 @@ export default function BusinessOverview() {
         <>
           {/* 服务总览 KPI 行 */}
           <div className="grid grid-cols-4 gap-4">
-            <KpiCard label="总服务客户" value={data.service.total} />
+            <KpiCard
+              label="总服务客户"
+              value={data.service.total}
+              delta={
+                data.service.prev_total != null && data.service.prev_total > 0
+                  ? {
+                      value: data.service.delta_pct ?? 0,
+                      dir: (data.service.delta_pct ?? 0) >= 0 ? "up" : "down",
+                    }
+                  : undefined
+              }
+            />
             <KpiCard label="销售咨询" value={data.service.intent_dist.commercial} />
             <KpiCard
               label="有效线索"
@@ -120,6 +152,7 @@ export default function BusinessOverview() {
                     trend={trend}
                     drillTo={`/conversations?intent=${intent}`}
                     color={INTENT_COLORS[intent]}
+                    topQuestions={hotMap[intent]}
                   />
                 );
               })}

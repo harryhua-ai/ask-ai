@@ -13,6 +13,8 @@ vi.mock("@/lib/api/businessOverview", () => ({
       satisfaction: 85,
       up_count: 80,
       down_count: 15,
+      prev_total: 100,
+      delta_pct: 20.0,
     },
     leads: {
       valid: 12,
@@ -47,6 +49,15 @@ vi.mock("@/lib/api/businessOverview", () => ({
       support: 2,
       off_topic: 1,
     })),
+  }),
+  fetchBusinessOverviewRange: vi.fn(),
+  refreshBusinessSignals: vi.fn().mockResolvedValue({
+    scene_count: 0,
+    requirement_count: 0,
+  }),
+  fetchHotQuestions: vi.fn().mockResolvedValue({
+    items: [{ question: "NE503 价格", count: 5 }],
+    intent: "commercial",
   }),
 }));
 
@@ -104,5 +115,24 @@ describe("BusinessOverview", () => {
       "href",
       expect.stringContaining("/conversations?intent=commercial"),
     );
+  });
+
+  it("总服务客户显示环比 delta", async () => {
+    renderWithProviders(<BusinessOverview />);
+    // KpiCard 渲染 +20%(delta_pct=20,dir=up)
+    const delta = await screen.findByText("+20%");
+    expect(delta).toBeInTheDocument();
+  });
+
+  it("三列意图卡含热门问题 Top3", async () => {
+    renderWithProviders(<BusinessOverview />);
+    await waitFor(() => {
+      const cols = document.querySelectorAll("[data-intent-column]");
+      expect(cols.length).toBe(3);
+      // fetchHotQuestions mock 返回 "NE503 价格",三列 IntentColumn 内的 topQuestions 区域应渲染
+      const topBlocks = document.querySelectorAll("[data-top-questions]");
+      expect(topBlocks.length).toBe(3);
+      expect(topBlocks[0].textContent).toContain("NE503 价格");
+    });
   });
 });
