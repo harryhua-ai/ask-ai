@@ -33,6 +33,11 @@ export default defineConfig(({ mode }) => {
     test: {
       environment: "jsdom",
       setupFiles: ["./tests/setup.ts"],
+      exclude: [
+        "**/node_modules/**",
+        "**/dist/**",
+        "**/.claude/**",
+      ],
     },
   };
 });

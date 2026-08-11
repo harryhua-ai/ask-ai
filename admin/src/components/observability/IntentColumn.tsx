@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import MiniTrend from "@/components/observability/MiniTrend";
 
-/** 意图深入列(名 + 计数 + 百分比 + 7 日 mini-trend + 下钻链接)。 */
+/** 意图深入列(名 + 计数 + 百分比 + 7 日 mini-trend + Top 问题 + 下钻链接)。 */
 export default function IntentColumn({
   name,
   count,
@@ -9,6 +9,7 @@ export default function IntentColumn({
   trend,
   drillTo,
   color = "var(--acc)",
+  topQuestions,
 }: {
   name: string;
   count: number;
@@ -16,6 +17,7 @@ export default function IntentColumn({
   trend: number[];
   drillTo: string;
   color?: string;
+  topQuestions?: { question: string; count: number }[];
 }) {
   return (
     <Link
@@ -32,6 +34,16 @@ export default function IntentColumn({
       <div className="mt-2">
         <MiniTrend data={trend} color={color} />
       </div>
+      {topQuestions && topQuestions.length > 0 && (
+        <div className="mt-2 space-y-0.5" data-top-questions>
+          {topQuestions.map((q, i) => (
+            <div key={i} className="flex justify-between text-[12px]">
+              <span className="truncate flex-1 mr-2">{q.question}</span>
+              <span className="text-[var(--t3)]">{q.count}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </Link>
   );
 }
