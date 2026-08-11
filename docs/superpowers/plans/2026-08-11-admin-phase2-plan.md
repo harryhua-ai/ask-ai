@@ -1991,6 +1991,7 @@ git commit -m "docs(plan): Phase 2 完成 — 全量验证 + Real-Run Gate"
 - [x] 三页视觉对齐设计稿 B 方案(Phase 2 聚合层:环比/标记点/Top3/双色条/缺口标色)— 代码层面完成;真实数据视觉验证待 prod
 - [x] 无第三方图表库引入
 - [x] 所有新组件 < 80 行,props 驱动
+- [x] Playwright 浏览器 E2E 验证(补做,2026-08-11)— 三页导航 + tab/toggle/range 交互全程 0 console error;发现并修复 stale 后端(hot-questions 404)+ DualTrendBar 空数据 key 冲突(commit `acc3c1c`)。截图 `e2e-business-overview.png` / `e2e-knowledge-gaps.png`。**局限**:dev 库空态,真实数据视觉待 prod。
 
 ---
 
