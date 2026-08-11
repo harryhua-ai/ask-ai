@@ -798,3 +798,65 @@ async def test_rag_stream_answer_uses_symbol_and_bucket_parity():
         pass
     searcher.search_symbols.assert_called_once()
     searcher.search_bucket.assert_called_once()
+
+
+# --------------------------------------------------------------------------- #
+# P1: 拒答兜底 —— rerank 滤光但召回非空时降级用 fused top-N
+# 场景:Q98(DeepInspect)/Q104(纺织检测) 场景术语召回命中(fused 非空),
+#   但 rerank threshold=0.3 把弱相关候选全滤光(reranked=[]),
+#   当前直接拒答。修复后应降级用 fused top-N 继续生成。
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+async def test_rag_falls_back_when_rerank_filters_all():
+    """reranked 为空但 fused 非空时,应降级用 fused top-N 继续生成,不拒答。
+
+    复现场景:场景术语(如"纺织检测""DeepInspect")召回命中,
+    reranker 给的分 < 0.3 阈值被全滤光。当前代码 reranked=[] 直接拒答,
+    导致 Q98/Q100/Q104 误拒。修复后应拿 fused top-N 作降级上下文继续生成。
+    """
+    sr = _make_sr(text="纺织检测相关内容", source_id="s1", score=0.25)
+    searcher = MagicMock()
+    searcher.search.return_value = [sr]  # hybrid 召回命中
+    searcher.search_symbols.return_value = []
+    searcher.search_bucket.return_value = []
+    reranker = MagicMock()
+    reranker.rerank.return_value = []  # threshold 把候选全滤光
+    llm = AsyncMock()
+    llm.generate.side_effect = [
+        _intent_response("product"),
+        _make_llm_response("textile inspection"),
+        _make_llm_response("纺织检测答案是..."),
+    ]
+
+    rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="test")
+    result = await rag.answer("纺织布料缺陷检测", "widget")
+
+    # 关键:不应拒答,应降级用 fused 候选继续生成
+    assert result.is_answered is True, (
+        f"reranked 空但 fused 非空时应降级生成,不应拒答(实际 is_answered={result.is_answered})"
+    )
+    assert result.answer != "暂未在官方资料中找到相关信息。"
+
+
+@pytest.mark.unit
+async def test_rag_still_rejects_when_both_fused_and_reranked_empty():
+    """fused 也为空时(真无召回)仍应拒答 —— 兜底只救"有召回被滤光"的场景。"""
+    searcher = MagicMock()
+    searcher.search.return_value = []
+    searcher.search_symbols.return_value = []
+    searcher.search_bucket.return_value = []
+    reranker = MagicMock()
+    reranker.rerank.return_value = []
+    llm = AsyncMock()
+    llm.generate.side_effect = [
+        _intent_response("product"),
+        _make_llm_response("q"),
+    ]
+
+    rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="test")
+    result = await rag.answer("完全不相关的问题", "widget")
+
+    assert result.is_answered is False
+    assert "暂未在官方资料中找到" in result.answer

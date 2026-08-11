@@ -506,23 +506,37 @@ class RAGOrchestrator:
         }
 
         if len(reranked) < effective_min:
-            elapsed = int((time.monotonic() - start) * 1000)
-            return RAGAnswer(
-                answer=REJECT_ANSWER,
-                sources=[],
-                is_answered=False,
-                reranked_results=[],
-                language=language,
-                response_time_ms=elapsed,
-                intent=intent.category,
-                trace_payload={
-                    "type": "reject_short",
-                    "stages": stages,
-                    "total_ms": elapsed,
-                    "intent": intent.category,
-                    "confidence": intent.confidence,
-                    "config_snapshot": self._config_snapshot(),
-                },
+            # P1 兜底:rerank 把候选全滤光(threshold 过高)但召回非空时,
+            # 降级用 fused top-N 作上下文继续生成,而非直接拒答。
+            # 场景:Q98(DeepInspect)/Q104(纺织检测)等场景术语召回命中,
+            # 但 reranker 给分 < 0.3 被滤光。真无召回(fused 也空)才拒答。
+            fallback = fused[: self._top_k] if fused else []
+            if not fallback:
+                elapsed = int((time.monotonic() - start) * 1000)
+                return RAGAnswer(
+                    answer=REJECT_ANSWER,
+                    sources=[],
+                    is_answered=False,
+                    reranked_results=[],
+                    language=language,
+                    response_time_ms=elapsed,
+                    intent=intent.category,
+                    trace_payload={
+                        "type": "reject_short",
+                        "stages": stages,
+                        "total_ms": elapsed,
+                        "intent": intent.category,
+                        "confidence": intent.confidence,
+                        "config_snapshot": self._config_snapshot(),
+                    },
+                )
+            # 降级:用 fused top-N 作上下文,标记 fallback 供 trace 追踪
+            reranked = fallback
+            stages["rerank"]["fallback"] = True
+            stages["rerank"]["fallback_count"] = len(fallback)
+            logger.info(
+                "rerank 滤光但 fused 非空(%d),降级用 fused top-N",
+                len(fallback),
             )
 
         context = self._build_context(reranked)
@@ -689,42 +703,54 @@ class RAGOrchestrator:
             pruned_count = pre_prune_count - len(reranked)
 
         if len(reranked) < effective_min:
-            elapsed = int((time.monotonic() - start) * 1000)
-            yield json.dumps(
-                {
-                    "type": "complete",
-                    "answer": REJECT_ANSWER,
-                    "sources": [],
-                    "is_answered": False,
-                    "language": language,
-                    "response_time_ms": elapsed,
-                    "intent": intent.category,
-                    "trace_payload": {
-                        "type": "reject_short",
-                        "stages": {
-                            "intent": {
-                                "ms": intent_ms,
-                                "category": intent.category,
-                                "reason": intent.reason,
-                            },
-                            "rewrite": {"ms": rewrite_ms, "extracted": extracted, "rewritten": search_query},
-                            "retrieve": {"ms": search_ms, "hybrid_count": len(fused), "effective_min": effective_min, "path_counts": path_counts},
-                            "rerank": {
-                                "ms": rerank_ms,
-                                "top_score": reranked[0].score if reranked else None,
-                                "count": len(reranked),
-                                "pruned": pruned_count,
-                                "results": self._rerank_snippets(reranked),
-                            },
-                        },
-                        "total_ms": elapsed,
+            # P1 兜底:rerank 滤光但 fused 非空时降级用 fused top-N(与 answer 同策略)
+            fallback = fused[: self._top_k] if fused else []
+            if not fallback:
+                elapsed = int((time.monotonic() - start) * 1000)
+                yield json.dumps(
+                    {
+                        "type": "complete",
+                        "answer": REJECT_ANSWER,
+                        "sources": [],
+                        "is_answered": False,
+                        "language": language,
+                        "response_time_ms": elapsed,
                         "intent": intent.category,
-                        "confidence": intent.confidence,
-                        "config_snapshot": self._config_snapshot(),
-                    },
-                }
+                        "trace_payload": {
+                            "type": "reject_short",
+                            "stages": {
+                                "intent": {
+                                    "ms": intent_ms,
+                                    "category": intent.category,
+                                    "reason": intent.reason,
+                                },
+                                "rewrite": {"ms": rewrite_ms, "extracted": extracted, "rewritten": search_query},
+                                "retrieve": {"ms": search_ms, "hybrid_count": len(fused), "effective_min": effective_min, "path_counts": path_counts},
+                                "rerank": {
+                                    "ms": rerank_ms,
+                                    "top_score": reranked[0].score if reranked else None,
+                                    "count": len(reranked),
+                                    "pruned": pruned_count,
+                                    "results": self._rerank_snippets(reranked),
+                                },
+                            },
+                            "total_ms": elapsed,
+                            "intent": intent.category,
+                            "confidence": intent.confidence,
+                            "config_snapshot": self._config_snapshot(),
+                        },
+                    }
+                )
+                return
+            # 降级:用 fused top-N 作上下文
+            reranked = fallback
+            rerank_fallback = True
+            logger.info(
+                "stream rerank 滤光但 fused 非空(%d),降级用 fused top-N",
+                len(fallback),
             )
-            return
+        else:
+            rerank_fallback = False
 
         context = self._build_context(reranked) if reranked else ""
         # 附件日志文本(Phase 1a:直接拼接,截断在 extract_log_text 入库时已做)
