@@ -42,6 +42,8 @@ export interface BusinessOverviewData {
     satisfaction: number | null;
     up_count: number;
     down_count: number;
+    prev_total?: number; // Phase 2:上一同等长度时间窗总量
+    delta_pct?: number; // Phase 2:环比百分比
   };
   leads: {
     valid: number;
@@ -77,4 +79,11 @@ export function refreshBusinessSignals(): Promise<{
   conversations_analyzed: number;
 }> {
   return apiFetch(`/business/signals/refresh`, { method: "POST" });
+}
+
+export function fetchHotQuestions(
+  intent: string,
+  range: string = "7d",
+): Promise<{ items: TopQuestionItem[]; intent: string }> {
+  return apiFetch(`/business/hot-questions?intent=${intent}&range=${range}`);
 }
