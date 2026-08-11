@@ -48,10 +48,10 @@ ask-ai 管理后台三个核心页面(业务概览、对话审查、技术洞察
 | 前置 | intent + rewrite | rewrite | intent.category/reason + rewrite.extracted/rewritten |
 | 路由 | — (列表不显示) | intent | intent 路由决策(数据源选择 + 阈值放行),ms 含在 intent 段内 |
 | 检索 | retrieve + rerank | retrieve + rerank | retrieve.hybrid_count/path_counts + rerank.top_score |
-| 生成 | generate | generate | generate.latency_ms/tokens_output |
+| 生成 | generate | generate | generate.ms(两路径通用) + tokens_output;首 token 延迟: ttft_ms(流式) / latency_ms(非流式) |
 | 输出 | output | output | output.sources_count |
 
-> **⚠️ "路由" lane 数据源说明**: 设计稿的"路由"lane(路由→数据源 + 阈值放行)在 rag.py 中**没有独立计时段**——路由决策发生在 intent 阶段内部(数据源选择 + 阈值判断是 intent classification 的一部分)。Phase 1 采用折衷: "路由"lane 的 items 从 intent.reason + config_snapshot 派生,ms 显示 0 或从 intent 段拆分(估算)。如需精确计时,Phase 2 在 rag.py 新增 `stages.routing` 采集点(后端改动)。
+> **⚠️ "路由" lane 数据源说明**: 设计稿的"路由"lane(路由→数据源 + 阈值放行)在 rag.py 中**没有独立计时段**。intent.category 驱动路由决策,但实际 boost 桶执行(INTENT_BOOST_FILTERS)在 `_retrieve_and_fuse` 内,耗时计入 `retrieve.ms`;阈值 `effective_min` 存于 `retrieve.effective_min`。Phase 1 采用折衷: "路由"lane 的 items 从 intent.category/reason + retrieve.effective_min 派生,ms 显示 0 或估算。如需精确计时,Phase 2 在 rag.py 新增 `stages.routing` 采集点(后端改动)。
 
 **不做**: 客户信息、标记点(Phase 2/3)。
 
@@ -64,9 +64,9 @@ ask-ai 管理后台三个核心页面(业务概览、对话审查、技术洞察
 
 **前端**:
 - 服务总览卡加 `StackedBar`(意图堆叠条 + 图例,单行横向,三色段)
-- **新建三列意图卡**(销售咨询/产品方案/技术支持) — 每列含: 意图名 + 计数 + 百分比 + mini-trend(7 日柱图) + 下钻链接。当前实现缺失,被压缩成扁平"意图分布"数字块。
+- **新建三列意图卡**(销售咨询/产品方案/技术支持) — 每列含: 意图名 + 计数 + 百分比 + mini-trend(7 日柱图) + 下钻链接。当前实现缺失,被压缩成扁平"意图分布"数字块。off_topic 及未识别意图不入三列卡,保留在 KPI 行或独立小计数。
 - 地域分布加 `ProgressBar`(现有纯文本数字 → 横条)
-- 意图命名对齐设计稿: "商务咨询" → "销售咨询"(前端常量)
+- 意图命名对齐设计稿: "商务咨询" → "销售咨询"、"产品咨询" → "产品方案"(前端 INTENT_LABELS 常量)
 
 **不做**: 三列意图卡的热门问题 Top3、环比(Phase 2)。
 
@@ -319,3 +319,27 @@ admin/src/components/viz/
 | 7 | LOW | P2 | 主观意见 | Phase 1.2 区块计数 | "8个区块"口径模糊 | 在修复 #1 时明确定义"8视觉块 = 服务总览 + 三列意图 × 3 + 业务三列 × 3 + 地域" |
 
 **本轮修复**: 7 个 | **累计修复**: 7 个
+
+---
+
+### Round 2 — 2026-08-11 · 单路两阶段(独立 sub-agent)
+
+| # | 级别 | 阶段 | 标准性质 | 位置 | 问题 | 修复动作 |
+|---|------|------|---------|------|------|---------|
+| 1 | MEDIUM | P1 | 事实核查 | Phase 1.1 映射表"生成"行 | `generate.latency_ms` 在生产流式路径不存在(stream_answer 用 ttft_ms),按此实施会读 null | 改为 `generate.ms`(两路径通用)+ tokens_output;补注 ttft_ms(流式)/latency_ms(非流式) |
+| 2 | LOW | P1 | 事实核查 | Phase 1.1 路由lane说明 | "ms 含在 intent 段内"不精确(boost桶执行实际在 retrieve.ms) | 改为"intent.category 驱动路由,boost桶执行计入 retrieve.ms;路由lane ms 为 0/估算" |
+| 3 | LOW | P1 | 内部一致性 | Phase 1.2 命名对齐 | 漏了"产品咨询→产品方案" | 补全命名映射 |
+| 4 | LOW | P1 | 设计完整性 | Phase 1.2 三列卡 | off_topic/未识别意图去向未说明 | 补"不入三列卡,保留在 KPI 行或独立小计数" |
+
+**本轮修复**: 4 个 | **累计修复**: 11 个
+
+---
+
+### 汇总
+
+- **收敛轮次**: 2
+- **累计修复**: 11 个(CRITICAL 0 / HIGH 1 / MEDIUM 5 / LOW 5;按标准性质: 事实核查 8 / 机械检测 1 / 主观意见 2)
+- **审核模式**: 单路两阶段(独立 sub-agent)
+- **Phase 1 事实核查**: ✅ 通过
+- **Phase 2 质量判断**: ✅ 通过
+- **完成时间**: 2026-08-11
