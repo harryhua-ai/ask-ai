@@ -4,7 +4,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import desc, func, select, update
+from sqlalchemy import Text, desc, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.auth.dependencies import CurrentUser, require_role
@@ -54,11 +54,15 @@ async def list_conversations(
     q: str | None = Query(default=None, description="全文搜索 question/answer"),
     date_from: str | None = Query(default=None, description="ISO 日期，如 2026-01-01"),
     date_to: str | None = Query(default=None),
+    has_retry: bool | None = Query(default=None, description="Phase 2:异常重试(stages 含 retry_count)"),
+    has_feedback: bool | None = Query(default=None, description="Phase 2:有反馈"),
+    has_clarify: bool | None = Query(default=None, description="Phase 2:触发澄清(trace type=clarify)"),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
 ) -> dict[str, Any]:
     """查询对话列表（viewer+ 可访问），支持 channel / is_answered / feedback /
-    intent_tag / q(全文搜索) / date_from / date_to 多维过滤 + 分页。
+    intent_tag / q(全文搜索) / date_from / date_to / has_retry / has_feedback /
+    has_clarify 多维过滤 + 分页。
     """
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
@@ -87,6 +91,44 @@ async def list_conversations(
         if date_to:
             stmt = stmt.where(Conversation.created_at <= date_to)
             count_q = count_q.where(Conversation.created_at <= date_to)
+
+        # Phase 2:has_feedback(Conversation.feedback 非空)
+        if has_feedback is True:
+            stmt = stmt.where(Conversation.feedback.is_not(None))
+            count_q = count_q.where(Conversation.feedback.is_not(None))
+        elif has_feedback is False:
+            stmt = stmt.where(Conversation.feedback.is_(None))
+            count_q = count_q.where(Conversation.feedback.is_(None))
+
+        # Phase 2:has_clarify(trace type=clarify,EXISTS 半连接)
+        if has_clarify is True:
+            stmt = stmt.where(
+                exists().where(
+                    Trace.conversation_id == Conversation.id,
+                    Trace.type == "clarify",
+                )
+            )
+            count_q = count_q.where(
+                exists().where(
+                    Trace.conversation_id == Conversation.id,
+                    Trace.type == "clarify",
+                )
+            )
+
+        # Phase 2:has_retry(stages JSONB 文本含 retry_count,与 _infer_markers 同源)
+        if has_retry is True:
+            stmt = stmt.where(
+                exists().where(
+                    Trace.conversation_id == Conversation.id,
+                    Trace.stages.cast(Text).like('%"retry_count":%'),
+                )
+            )
+            count_q = count_q.where(
+                exists().where(
+                    Trace.conversation_id == Conversation.id,
+                    Trace.stages.cast(Text).like('%"retry_count":%'),
+                )
+            )
 
         total = (await session.execute(count_q)).scalar() or 0
         result = await session.execute(

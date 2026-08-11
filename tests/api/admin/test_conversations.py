@@ -182,3 +182,101 @@ async def test_list_conversations_markers_inferred(auth_headers):
     async with factory() as session:
         await session.execute(Trace.__table__.delete().where(Trace.conversation_id == conv.id))
         await session.commit()
+
+
+@pytest.mark.integration
+async def test_list_conversations_has_clarify_filter(auth_headers):
+    """has_clarify=true 只返回 trace type=clarify 的对话。"""
+    factory = app.state.session_factory
+    cid_a = uuid.uuid4()
+    cid_b = uuid.uuid4()
+    async with factory() as session:
+        session.add(Conversation(id=cid_a, question="toggle_clarify_a", answer="a", is_answered=True))
+        session.add(Conversation(id=cid_b, question="toggle_clarify_b", answer="b", is_answered=True))
+        session.add(Trace(conversation_id=cid_a, turn_index=0, type="clarify",
+                          stages={"intent": {"ms": 5}}, total_ms=5, config_snapshot={}))
+        session.add(Trace(conversation_id=cid_b, turn_index=0, type="rag",
+                          stages={"intent": {"ms": 5}}, total_ms=5, config_snapshot={}))
+        await session.commit()
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/api/admin/conversations?has_clarify=true&q=toggle_clarify",
+                headers=auth_headers,
+            )
+        assert resp.status_code == 200
+        ids = [i["id"] for i in resp.json()["items"]]
+        assert str(cid_a) in ids
+        assert str(cid_b) not in ids
+    finally:
+        async with factory() as session:
+            await session.execute(Trace.__table__.delete().where(
+                Trace.conversation_id.in_([str(cid_a), str(cid_b)])))
+            await session.execute(Conversation.__table__.delete().where(
+                Conversation.id.in_([str(cid_a), str(cid_b)])))
+            await session.commit()
+
+
+@pytest.mark.integration
+async def test_list_conversations_has_feedback_filter(auth_headers):
+    """has_feedback=true 只返回 feedback 非空的对话。"""
+    factory = app.state.session_factory
+    cid_a = uuid.uuid4()
+    cid_b = uuid.uuid4()
+    async with factory() as session:
+        session.add(Conversation(id=cid_a, question="toggle_fb_a", answer="a",
+                                 is_answered=True, feedback="up"))
+        session.add(Conversation(id=cid_b, question="toggle_fb_b", answer="b", is_answered=True))
+        await session.commit()
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/api/admin/conversations?has_feedback=true&q=toggle_fb",
+                headers=auth_headers,
+            )
+        assert resp.status_code == 200
+        ids = [i["id"] for i in resp.json()["items"]]
+        assert str(cid_a) in ids
+        assert str(cid_b) not in ids
+    finally:
+        async with factory() as session:
+            await session.execute(Conversation.__table__.delete().where(
+                Conversation.id.in_([str(cid_a), str(cid_b)])))
+            await session.commit()
+
+
+@pytest.mark.integration
+async def test_list_conversations_has_retry_filter(auth_headers):
+    """has_retry=true 只返回 stages 含 retry_count 的对话。"""
+    factory = app.state.session_factory
+    cid_a = uuid.uuid4()
+    cid_b = uuid.uuid4()
+    async with factory() as session:
+        session.add(Conversation(id=cid_a, question="toggle_retry_a", answer="a", is_answered=True))
+        session.add(Conversation(id=cid_b, question="toggle_retry_b", answer="b", is_answered=True))
+        session.add(Trace(conversation_id=cid_a, turn_index=0, type="rag",
+                          stages={"rerank": {"ms": 50, "retry_count": 2}},
+                          total_ms=50, config_snapshot={}))
+        session.add(Trace(conversation_id=cid_b, turn_index=0, type="rag",
+                          stages={"intent": {"ms": 5}}, total_ms=5, config_snapshot={}))
+        await session.commit()
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/api/admin/conversations?has_retry=true&q=toggle_retry",
+                headers=auth_headers,
+            )
+        assert resp.status_code == 200
+        ids = [i["id"] for i in resp.json()["items"]]
+        assert str(cid_a) in ids
+        assert str(cid_b) not in ids
+    finally:
+        async with factory() as session:
+            await session.execute(Trace.__table__.delete().where(
+                Trace.conversation_id.in_([str(cid_a), str(cid_b)])))
+            await session.execute(Conversation.__table__.delete().where(
+                Conversation.id.in_([str(cid_a), str(cid_b)])))
+            await session.commit()
