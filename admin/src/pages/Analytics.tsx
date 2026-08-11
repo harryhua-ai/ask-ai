@@ -4,6 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import KpiCard from "@/components/observability/KpiCard";
 import TrendChart from "@/components/observability/TrendChart";
 import TimeFilter from "@/components/observability/TimeFilter";
+import ContainmentDiagram from "@/components/observability/ContainmentDiagram";
+import NodeFlow from "@/components/observability/NodeFlow";
 import {
   fetchTechPerformance,
   fetchCoverageGaps,
@@ -93,17 +95,44 @@ function TechPerfTab({ range }: { range: string }) {
           value={Math.round(data.kpi.anomaly_rate * 100)}
           unit="%"
           alarm={data.kpi.anomaly_rate > 0.1}
+          baseline={`${data.kpi.anomaly_count} 条`}
+          delta={
+            data.kpi.anomaly_delta !== 0
+              ? {
+                  value: Math.round(data.kpi.anomaly_delta * 1000) / 10,
+                  dir: data.kpi.anomaly_delta > 0 ? "up" : "down",
+                }
+              : undefined
+          }
         />
         <KpiCard
           label="重试率"
           value={Math.round(data.kpi.retry_rate * 100)}
           unit="%"
+          baseline={`${data.kpi.retry_count} 条`}
+          delta={
+            data.kpi.retry_delta !== 0
+              ? {
+                  value: Math.round(data.kpi.retry_delta * 1000) / 10,
+                  dir: data.kpi.retry_delta > 0 ? "up" : "down",
+                }
+              : undefined
+          }
         />
         <KpiCard
           label="失败率"
           value={Math.round(data.kpi.fail_rate * 100)}
           unit="%"
           alarm={data.kpi.fail_rate > 0.05}
+          baseline={`${data.kpi.fail_count} 条`}
+          delta={
+            data.kpi.fail_delta !== 0
+              ? {
+                  value: Math.round(data.kpi.fail_delta * 1000) / 10,
+                  dir: data.kpi.fail_delta > 0 ? "up" : "down",
+                }
+              : undefined
+          }
         />
       </div>
 
@@ -125,56 +154,66 @@ function TechPerfTab({ range }: { range: string }) {
         <TrendChart data={data.trends} baseline={3000} />
       </div>
 
-      {/* 阶段表 */}
+      {/* 异常 ⊃ 重试 ⊃ 失败 包含图 */}
       <div
         className="rounded-lg border p-4"
         style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
       >
         <h2 className="text-[14px] font-medium text-[var(--t1)] mb-3">
-          阶段 P50/P95（超标标橙）
+          异常 / 重试 / 失败 包含关系
         </h2>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>阶段</TableHead>
-              <TableHead>P50 (ms)</TableHead>
-              <TableHead>P95 (ms)</TableHead>
-              <TableHead>正常上限</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {Object.entries(data.stages).map(([stage, s]) => {
-              const over = s.p95 > s.normal_max;
-              return (
-                <TableRow key={stage}>
-                  <TableCell
-                    data-over={over}
-                    className={over ? "text-[var(--warn)] font-medium" : ""}
-                  >
-                    {stage}
-                  </TableCell>
-                  <TableCell>{s.p50.toLocaleString()}</TableCell>
-                  <TableCell>{s.p95.toLocaleString()}</TableCell>
-                  <TableCell className="text-[var(--t2)]">
-                    {s.normal_max.toLocaleString()}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+        <ContainmentDiagram
+          anomaly={data.kpi.anomaly_count}
+          retry={data.kpi.retry_count}
+          fail={data.kpi.fail_count}
+        />
       </div>
 
-      {/* 异常分布 */}
-      {data.anomalies.length > 0 && (
+      {/* 技术性能三列:慢在哪 / 什么异常 / 降级到什么 */}
+      <div data-tech-grid3 className="grid grid-cols-3 gap-4">
+        {/* 慢在哪:阶段表 */}
         <div
+          data-col="slow"
+          className="rounded-lg border p-4"
+          style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
+        >
+          <h2 className="text-[14px] font-medium text-[var(--t1)] mb-3">
+            慢在哪(阶段 P50/P95)
+          </h2>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>阶段</TableHead>
+                <TableHead>P95</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {Object.entries(data.stages).map(([stage, s]) => {
+                const over = s.p95 > s.normal_max;
+                return (
+                  <TableRow key={stage}>
+                    <TableCell
+                      data-over={over}
+                      className={over ? "text-[var(--warn)] font-medium" : ""}
+                    >
+                      {stage}
+                    </TableCell>
+                    <TableCell>{s.p95.toLocaleString()}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* 什么异常:异常分布(彩色圆点 + pct) */}
+        <div
+          data-col="anomaly"
           className="rounded-lg border p-4"
           style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
         >
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-[14px] font-medium text-[var(--t1)]">
-              异常分布
-            </h2>
+            <h2 className="text-[14px] font-medium text-[var(--t1)]">什么异常</h2>
             <Link
               to="/conversations"
               className="text-[12px] text-[var(--acc)] hover:underline"
@@ -182,41 +221,60 @@ function TechPerfTab({ range }: { range: string }) {
               查看对话
             </Link>
           </div>
-          <div className="space-y-1">
-            {data.anomalies.map((a, i) => (
-              <div
-                key={i}
-                className="flex justify-between text-[13px]"
-              >
-                <span>{a.type}</span>
-                <span className="text-[var(--t2)]">{a.count}</span>
-              </div>
-            ))}
-          </div>
+          {data.anomalies.length > 0 ? (
+            <div className="space-y-2">
+              {data.anomalies.map((a, i) => {
+                const dotColor =
+                  a.count > 5 ? "var(--err)" : a.count > 2 ? "var(--warn)" : "var(--t3)";
+                return (
+                  <div key={i} className="flex items-center gap-2 text-[13px]">
+                    <span
+                      className="inline-block w-2 h-2 rounded-full"
+                      style={{ background: dotColor }}
+                      data-anomaly-dot={a.type}
+                    />
+                    <span className="flex-1">{a.type}</span>
+                    <span className="text-[var(--t2)]">{a.count}</span>
+                    {a.pct != null && (
+                      <span className="text-[var(--t3)] text-[11px]">({a.pct}%)</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-[12px] text-[var(--t3)]">无异常</div>
+          )}
         </div>
-      )}
 
-      {/* 降级链路 */}
-      {data.degradations.length > 0 && (
+        {/* 降级到什么:降级链路 NodeFlow */}
         <div
+          data-col="degrade"
           className="rounded-lg border p-4"
           style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
         >
           <h2 className="text-[14px] font-medium text-[var(--t1)] mb-3">
-            降级链路
+            降级到什么
           </h2>
-          <div className="space-y-2">
-            {data.degradations.map((d, i) => (
-              <div key={i} className="text-[13px]">
-                <span className="text-[var(--warn)]">{d.from}</span>
-                {" → "}
-                <span className="text-[var(--t1)]">{d.to}</span>
-                <span className="text-[var(--t3)] ml-2">({d.reason})</span>
-              </div>
-            ))}
-          </div>
+          {data.degradations.length > 0 ? (
+            <div className="space-y-2">
+              {data.degradations.map((d, i) => (
+                <div key={i} className="space-y-1">
+                  <NodeFlow
+                    nodes={[
+                      { label: d.from, tone: "ok" },
+                      { label: d.to, tone: "warn" },
+                    ]}
+                  />
+                  <div className="text-[11px] text-[var(--t3)]">{d.reason}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-[12px] text-[var(--t3)]">无降级</div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* 数据源健康度 */}
       {healthData && healthData.items.length > 0 && (
@@ -356,6 +414,17 @@ function KnowledgeGapsTab() {
             暂无缺口数据，请先执行聚类刷新
           </div>
         )}
+      </div>
+
+      {/* 澄清漏斗占位(Phase 3 真实数据接入) */}
+      <div
+        className="rounded-lg border p-4"
+        style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
+      >
+        <h2 className="text-[14px] font-medium text-[var(--t1)] mb-3">
+          澄清漏斗
+        </h2>
+        <div className="text-[12px] text-[var(--t3)]">暂无数据(待接入)</div>
       </div>
 
       {/* 覆盖缺口 */}
