@@ -6,6 +6,12 @@ export interface TechKpi {
   anomaly_rate: number;
   retry_rate: number;
   fail_rate: number;
+  anomaly_count: number;
+  retry_count: number;
+  fail_count: number;
+  anomaly_delta: number;
+  retry_delta: number;
+  fail_delta: number;
   baseline: number;
   comparison: number;
 }
@@ -25,6 +31,7 @@ export interface TrendDay {
 export interface AnomalyItem {
   type: string;
   count: number;
+  pct?: number;
   detail?: string;
 }
 
