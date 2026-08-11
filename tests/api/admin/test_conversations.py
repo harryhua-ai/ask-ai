@@ -5,9 +5,10 @@ import uuid
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import desc, select
 
 from backend.auth.jwt import create_access_token, hash_password
-from backend.db.models import Conversation, User
+from backend.db.models import Conversation, Trace, User
 from backend.main import app
 
 # 所有 admin API 测试共享 session 级事件循环（与 conftest 的 session fixture 对齐）
@@ -78,3 +79,55 @@ async def test_list_conversations_q_search(auth_headers):
         )
     data2 = resp2.json()
     assert all("test question" not in c["question"].lower() for c in data2["items"])
+
+
+async def test_list_conversations_trace_summary_latest_turn_and_confidence(auth_headers):
+    """trace_summary 取最新一轮(turn_index 最大)的 trace,且含 confidence。"""
+    factory = app.state.session_factory
+    async with factory() as session:
+        conv = await session.execute(
+            select(Conversation).where(Conversation.question == "test question")
+        )
+        conv = conv.scalar_one()
+        # 先建 turn 0(低置信),再建 turn 1(高置信,应被选中)
+        session.add(
+            Trace(
+                conversation_id=conv.id,
+                turn_index=0,
+                type="rag",
+                stages={"intent": {"ms": 50}},
+                total_ms=100,
+                intent="commercial",
+                confidence=0.30,
+                config_snapshot={},
+            )
+        )
+        session.add(
+            Trace(
+                conversation_id=conv.id,
+                turn_index=1,
+                type="rag",
+                stages={"intent": {"ms": 60}},
+                total_ms=200,
+                intent="commercial",
+                confidence=0.85,
+                config_snapshot={},
+            )
+        )
+        await session.commit()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get(
+            "/api/admin/conversations?q=test%20question", headers=auth_headers
+        )
+    items = resp.json()["items"]
+    target = [c for c in items if c["question"] == "test question"][0]
+    ts = target["trace_summary"]
+    assert ts is not None
+    # 取最新轮次(turn 1)
+    assert ts["confidence"] == 0.85
+    assert ts["total_ms"] == 200
+    # 清理本次创建的 trace
+    async with factory() as session:
+        await session.execute(Trace.__table__.delete().where(Trace.conversation_id == conv.id))
+        await session.commit()

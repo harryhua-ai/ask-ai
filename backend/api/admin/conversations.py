@@ -4,7 +4,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func, select, update
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.auth.dependencies import CurrentUser, require_role
@@ -74,7 +74,7 @@ async def list_conversations(
             trace_q = (
                 select(Trace)
                 .where(Trace.conversation_id.in_(conv_ids))
-                .order_by(Trace.turn_index)
+                .order_by(desc(Trace.turn_index))
             )
             trace_rows = (await session.execute(trace_q)).scalars().all()
             for t in trace_rows:
@@ -83,6 +83,7 @@ async def list_conversations(
                         "type": t.type,
                         "stages": t.stages or {},
                         "total_ms": t.total_ms,
+                        "confidence": t.confidence,
                     }
 
     items = [
