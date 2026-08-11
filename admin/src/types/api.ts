@@ -1,3 +1,5 @@
+import type { TraceStageData } from "@/lib/api/traces";
+
 export interface User {
   id: string;
   email: string;
@@ -109,6 +111,13 @@ export interface LLMRouting {
   chain: LLMChainItem[] | string[];
 }
 
+export interface TraceSummary {
+  type: string;
+  stages: Record<string, TraceStageData>;
+  total_ms: number | null;
+  confidence: number | null;
+}
+
 export interface Conversation {
   id: string;
   question: string;
@@ -121,6 +130,7 @@ export interface Conversation {
   response_time_ms: number | null;
   created_at: string;
   intent_tag: string | null;
+  trace_summary?: TraceSummary | null;
 }
 
 export interface AnswerOverride {
