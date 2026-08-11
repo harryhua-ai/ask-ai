@@ -20,6 +20,8 @@ export interface StagePercentile {
   p50: number;
   p95: number;
   normal_max: number;
+  p50_pct?: number; // Phase 2:p50 占最大 P95 的比例
+  p95_pct?: number; // Phase 2:p95 占最大 P95 的比例
 }
 
 export interface TrendDay {

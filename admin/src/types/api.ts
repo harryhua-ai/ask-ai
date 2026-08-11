@@ -111,11 +111,19 @@ export interface LLMRouting {
   chain: LLMChainItem[] | string[];
 }
 
+export interface TraceMarkers {
+  retry: boolean;
+  clarify: boolean;
+  reject_short: boolean;
+  degraded: boolean;
+}
+
 export interface TraceSummary {
   type: string;
   stages: Record<string, TraceStageData>;
   total_ms: number | null;
   confidence: number | null;
+  markers?: TraceMarkers | null;
 }
 
 export interface Conversation {

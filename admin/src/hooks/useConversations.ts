@@ -11,6 +11,9 @@ export interface ConversationFilters {
   date_from?: string;
   date_to?: string;
   page?: number;
+  has_retry?: boolean; // Phase 2:异常重试
+  has_feedback?: boolean; // Phase 2:有反馈
+  has_clarify?: boolean; // Phase 2:触发澄清
 }
 
 interface PaginatedConversations {
