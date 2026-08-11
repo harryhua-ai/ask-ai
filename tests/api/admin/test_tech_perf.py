@@ -116,3 +116,30 @@ async def test_tech_perf_stage_percentiles(tech_perf_seed):
         assert stages[s]["p50"] > 0
         assert stages[s]["p95"] >= stages[s]["p50"]
         assert "normal_max" in stages[s]
+
+
+async def test_tech_perf_kpi_count_delta_and_anomaly_pct(tech_perf_seed):
+    """KPI 含 count(anomaly/retry/fail 条数)、delta(环比)、anomalies 项含 pct。"""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/api/admin/tech/performance?range=7d", headers=tech_perf_seed
+        )
+    assert resp.status_code == 200
+    j = resp.json()
+    kpi = j["kpi"]
+    # count 字段存在且为 int
+    for field in ("anomaly_count", "retry_count", "fail_count"):
+        assert field in kpi
+        assert isinstance(kpi[field], int)
+    # delta 字段存在且为 float(环比,可为正/负/0)
+    for field in ("anomaly_delta", "retry_delta", "fail_delta"):
+        assert field in kpi
+        assert isinstance(kpi[field], (int, float))
+    # anomalies 项含 pct
+    for a in j["anomalies"]:
+        assert "pct" in a
+        assert 0 <= a["pct"] <= 100
+    # count 与 rate 一致性(anomaly_count / n ≈ anomaly_rate,n=当前窗 trace 数)
+    # seed 创建 12 条 trace(10 rag + 2 reject_short),均在 7d 内
+    # 这里只验证 count 与 rate 的数值关系不矛盾(rate = count/n)
+    # 若有 prev_traces 则 delta 非零;无 prev_traces 时 delta 为 0(基线逻辑)

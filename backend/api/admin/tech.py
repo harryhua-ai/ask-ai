@@ -40,6 +40,40 @@ def _percentile(sorted_vals: list[float], pct: float) -> float:
     return sorted_vals[f] + (sorted_vals[c] - sorted_vals[f]) * (k - f)
 
 
+def _count_flags(traces: list) -> dict[str, int]:
+    """统计 trace 列表的 anomaly/retry/fail 条数(与主循环判定逻辑一致)。
+
+    用于环比 delta:对当前窗和上一时间窗分别调用,差值即环比变化。
+    """
+    anomaly = 0
+    retry = 0
+    fail = 0
+    for t in traces:
+        stages = t.stages or {}
+        is_anomaly = False
+        for sname in STAGE_NAMES:
+            sd = stages.get(sname)
+            if isinstance(sd, dict):
+                ms_val = sd.get("ms", 0)
+                if ms_val > NORMAL_MAX.get(sname, 999999):
+                    is_anomaly = True
+                if sd.get("error"):
+                    is_anomaly = True
+        if is_anomaly:
+            anomaly += 1
+        if any(
+            isinstance(sd, dict) and (sd.get("error") or sd.get("retry_count"))
+            for sd in stages.values()
+        ):
+            retry += 1
+        if any(
+            isinstance(sd, dict) and sd.get("error") and not sd.get("recovered")
+            for sd in stages.values()
+        ):
+            fail += 1
+    return {"anomaly": anomaly, "retry": retry, "fail": fail}
+
+
 @tech_router.get("/performance")
 async def tech_performance(
     _: ViewerDep,
@@ -86,6 +120,12 @@ async def tech_performance(
                 "anomaly_rate": 0.0,
                 "retry_rate": 0.0,
                 "fail_rate": 0.0,
+                "anomaly_count": 0,
+                "retry_count": 0,
+                "fail_count": 0,
+                "anomaly_delta": 0.0,
+                "retry_delta": 0.0,
+                "fail_delta": 0.0,
                 "baseline": 0,
                 "comparison": 0.0,
             },
@@ -193,6 +233,14 @@ async def tech_performance(
     # 环比:当前 P95 vs 基线 P95
     comparison = round((p95_total - baseline_p95) / baseline_p95, 4) if baseline_p95 else 0.0
 
+    # 异常/retry/fail 环比 delta(当前 rate - 上一时间窗 rate)
+    cur_flags = {"anomaly": anomaly_count, "retry": retry_count, "fail": fail_count}
+    prev_flags = _count_flags(prev_traces)
+    prev_n = len(prev_traces) or 1
+    anomaly_delta = round(cur_flags["anomaly"] / n - prev_flags["anomaly"] / prev_n, 4) if n else 0.0
+    retry_delta = round(cur_flags["retry"] / n - prev_flags["retry"] / prev_n, 4) if n else 0.0
+    fail_delta = round(cur_flags["fail"] / n - prev_flags["fail"] / prev_n, 4) if n else 0.0
+
     # 趋势(按天)
     daily_totals: dict[str, list[int]] = defaultdict(list)
     for t in traces:
@@ -210,9 +258,10 @@ async def tech_performance(
             }
         )
 
-    # 异常分布列表
+    # 异常分布列表(含占比 pct)
+    anomaly_total = sum(anomaly_type_count.values()) or 1
     anomalies = [
-        {"type": atype, "count": count}
+        {"type": atype, "count": count, "pct": round(count / anomaly_total * 100, 1)}
         for atype, count in sorted(anomaly_type_count.items(), key=lambda x: -x[1])
     ]
 
@@ -228,6 +277,12 @@ async def tech_performance(
             "anomaly_rate": round(anomaly_count / n, 4) if n else 0.0,
             "retry_rate": round(retry_count / n, 4) if n else 0.0,
             "fail_rate": round(fail_count / n, 4) if n else 0.0,
+            "anomaly_count": anomaly_count,
+            "retry_count": retry_count,
+            "fail_count": fail_count,
+            "anomaly_delta": anomaly_delta,
+            "retry_delta": retry_delta,
+            "fail_delta": fail_delta,
             "baseline": baseline_p95,
             "comparison": comparison,
         },
