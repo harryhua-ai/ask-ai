@@ -34,6 +34,7 @@ from backend.db.models import (
     QuestionCluster,
     SourceClick,
     SyncLog,
+    Trace,
 )
 
 router = APIRouter(prefix="/analytics", tags=["分析仪表盘"])
@@ -94,7 +95,11 @@ async def list_coverage_gaps(
         )
         clusters = result.scalars().all()
 
-        # 批量查询每个 cluster 的对话,按 sources 有无分类 miss_type
+        # 批量查询每个 cluster 的对话,按四态分类 miss_type(spec D4)
+        # reject:is_answered=False(拒答)
+        # low:answered, sources 非空, 最新 trace confidence<0.6(低相关)
+        # 召回空:answered, sources 空
+        # 召回不足:answered, sources 非空, confidence>=0.6 或无 trace
         miss_type_map: dict[str, str] = {}
         miss_type_summary: dict[str, int] = defaultdict(int)
         if clusters:
@@ -102,16 +107,43 @@ async def list_coverage_gaps(
             conv_q = select(
                 Conversation.cluster_id,
                 Conversation.sources,
+                Conversation.is_answered,
+                Conversation.id,
             ).where(Conversation.cluster_id.in_(cluster_ids))
             conv_rows = (await session.execute(conv_q)).all()
+
+            # 批量查最新 trace confidence(turn_index 最大)
+            conv_ids = [str(row.id) for row in conv_rows]
+            conf_map: dict[str, float | None] = {}
+            if conv_ids:
+                trace_q = (
+                    select(
+                        Trace.conversation_id,
+                        Trace.confidence,
+                        Trace.turn_index,
+                    )
+                    .where(Trace.conversation_id.in_(conv_ids))
+                    .order_by(Trace.turn_index.desc())
+                )
+                for row in (await session.execute(trace_q)).all():
+                    cid = str(row.conversation_id)
+                    if cid not in conf_map:
+                        conf_map[cid] = row.confidence
+
             cluster_stats: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
             for row in conv_rows:
                 cid = str(row.cluster_id) if row.cluster_id else ""
                 sources = row.sources if isinstance(row.sources, list) else []
-                if not sources:
-                    cluster_stats[cid]["召回空"] += 1
+                conf = conf_map.get(str(row.id))
+                if not row.is_answered:
+                    miss = "reject"
+                elif sources and conf is not None and conf < 0.6:
+                    miss = "low"
+                elif not sources:
+                    miss = "召回空"
                 else:
-                    cluster_stats[cid]["召回不足"] += 1
+                    miss = "召回不足"
+                cluster_stats[cid][miss] += 1
             for cid, stats in cluster_stats.items():
                 dominant = max(stats, key=stats.get) if stats else "未分类"
                 miss_type_map[cid] = dominant

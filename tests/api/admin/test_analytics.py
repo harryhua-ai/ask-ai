@@ -5,6 +5,7 @@
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -12,7 +13,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from backend.auth.jwt import create_access_token, hash_password
-from backend.db.models import QuestionCluster, User
+from backend.db.models import Conversation, QuestionCluster, Trace, User
 from backend.main import app
 
 # 所有 admin API 测试共享 session 级事件循环(与 conftest 的 session fixture 对齐)
@@ -212,3 +213,126 @@ class TestAnalyticsAPI:
                     del app.state.clustering
             else:
                 app.state.clustering = original
+
+
+@pytest.mark.integration
+async def test_coverage_gaps_miss_type_four_types(auth_headers):
+    """miss_type 四态:reject/low/召回空/召回不足。
+
+    reject:is_answered=False
+    low:answered, sources 非空, 最新 trace confidence<0.6
+    召回空:answered, sources 空
+    召回不足:answered, sources 非空, confidence>=0.6(或无 trace)
+    """
+    factory = app.state.session_factory
+    now = datetime.now(UTC)
+    cluster_ids: list[uuid.UUID] = []
+    conv_ids: list[uuid.UUID] = []
+    try:
+        async with factory() as session:
+            # 4 个独立 cluster,每个 cluster 的对话构成单一 miss_type,
+            # 使该 type 成为 dominant,summary 中 4 种 type 各出现 1 次。
+            # reject:is_answered=False
+            cid_reject = uuid.uuid4()
+            session.add(QuestionCluster(
+                id=cid_reject, cluster_type="gap",
+                representative_question="miss_reject",
+                question_count=1, status="open",
+            ))
+            c1 = Conversation(
+                id=uuid.uuid4(), question="biz_miss_reject", answer=None,
+                is_answered=False, cluster_id=str(cid_reject),
+                created_at=now - timedelta(days=1),
+            )
+            session.add(c1)
+            # low:answered + sources 非空 + confidence<0.6
+            cid_low = uuid.uuid4()
+            session.add(QuestionCluster(
+                id=cid_low, cluster_type="gap",
+                representative_question="miss_low",
+                question_count=1, status="open",
+            ))
+            c2 = Conversation(
+                id=uuid.uuid4(), question="biz_miss_low", answer="a",
+                is_answered=True, sources=[{"url": "x"}],
+                cluster_id=str(cid_low), created_at=now - timedelta(days=1),
+            )
+            session.add(c2)
+            session.add(Trace(
+                conversation_id=c2.id, turn_index=0, type="rag",
+                stages={"intent": {"ms": 5}}, total_ms=5,
+                confidence=0.3, config_snapshot={},
+            ))
+            # 召回空:answered + sources 空
+            cid_empty = uuid.uuid4()
+            session.add(QuestionCluster(
+                id=cid_empty, cluster_type="gap",
+                representative_question="miss_empty",
+                question_count=1, status="open",
+            ))
+            c3 = Conversation(
+                id=uuid.uuid4(), question="biz_miss_empty", answer="a",
+                is_answered=True, sources=[],
+                cluster_id=str(cid_empty), created_at=now - timedelta(days=1),
+            )
+            session.add(c3)
+            # 召回不足:answered + sources 非空 + confidence>=0.6
+            cid_insuf = uuid.uuid4()
+            session.add(QuestionCluster(
+                id=cid_insuf, cluster_type="gap",
+                representative_question="miss_insufficient",
+                question_count=1, status="open",
+            ))
+            c4 = Conversation(
+                id=uuid.uuid4(), question="biz_miss_insufficient", answer="a",
+                is_answered=True, sources=[{"url": "y"}],
+                cluster_id=str(cid_insuf), created_at=now - timedelta(days=1),
+            )
+            session.add(c4)
+            session.add(Trace(
+                conversation_id=c4.id, turn_index=0, type="rag",
+                stages={"intent": {"ms": 5}}, total_ms=5,
+                confidence=0.8, config_snapshot={},
+            ))
+            cluster_ids = [cid_reject, cid_low, cid_empty, cid_insuf]
+            conv_ids = [c1.id, c2.id, c3.id, c4.id]
+            await session.commit()
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/api/admin/analytics/coverage-gaps", headers=auth_headers
+            )
+        assert resp.status_code == 200
+        j = resp.json()
+        # 每个 cluster 的 dominant miss_type 应与预期一致
+        target_map = {str(cid_reject): "reject", str(cid_low): "low",
+                      str(cid_empty): "召回空", str(cid_insuf): "召回不足"}
+        for item in j["items"]:
+            if item["id"] in target_map:
+                assert item["miss_type"] == target_map[item["id"]], (
+                    f"cluster {item['id']} miss_type={item['miss_type']}, "
+                    f"预期 {target_map[item['id']]}"
+                )
+        # 四态汇总均出现
+        summary = j["miss_type_summary"]
+        for t in ("reject", "low", "召回空", "召回不足"):
+            assert summary.get(t, 0) >= 1, f"miss_type {t} 未出现"
+    finally:
+        async with factory() as session:
+            await session.execute(
+                Trace.__table__.delete().where(
+                    Trace.conversation_id.in_([str(c) for c in conv_ids])
+                )
+            )
+            await session.execute(
+                Conversation.__table__.delete().where(
+                    Conversation.id.in_([str(c) for c in conv_ids])
+                )
+            )
+            await session.execute(
+                QuestionCluster.__table__.delete().where(
+                    QuestionCluster.id.in_([str(c) for c in cluster_ids])
+                )
+            )
+            await session.commit()

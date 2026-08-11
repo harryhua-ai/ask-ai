@@ -356,6 +356,7 @@ class QuestionClusterOut(BaseModel):
     period_start: str | None
     period_end: str | None
     created_at: str
+    miss_type: str | None = None
 
 
 class SourceAnalyticsOut(BaseModel):
@@ -382,6 +383,7 @@ class QuestionClusterList(BaseModel):
     total: int
     page: int
     size: int
+    miss_type_summary: dict[str, int] = {}
 
 
 class SourceAnalyticsList(BaseModel):
