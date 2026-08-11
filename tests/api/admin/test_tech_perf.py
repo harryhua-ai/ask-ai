@@ -143,3 +143,24 @@ async def test_tech_perf_kpi_count_delta_and_anomaly_pct(tech_perf_seed):
     # seed 创建 12 条 trace(10 rag + 2 reject_short),均在 7d 内
     # 这里只验证 count 与 rate 的数值关系不矛盾(rate = count/n)
     # 若有 prev_traces 则 delta 非零;无 prev_traces 时 delta 为 0(基线逻辑)
+
+
+async def test_tech_perf_stage_pct(tech_perf_seed):
+    """stages 各段含 p50_pct/p95_pct(相对最大 P95 的比例)。"""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/api/admin/tech/performance?range=7d", headers=tech_perf_seed
+        )
+    assert resp.status_code == 200
+    stages = resp.json()["stages"]
+    max_p95 = max(s["p95"] for s in stages.values())
+    for sname, sd in stages.items():
+        assert "p50_pct" in sd, f"{sname} 缺 p50_pct"
+        assert "p95_pct" in sd, f"{sname} 缺 p95_pct"
+        assert isinstance(sd["p50_pct"], (int, float))
+        assert isinstance(sd["p95_pct"], (int, float))
+        # p95_pct = p95 / max_p95 * 100(允许 ±0.5 四舍五入误差)
+        if max_p95 > 0:
+            assert abs(sd["p95_pct"] - round(sd["p95"] / max_p95 * 100, 1)) < 0.5
+            # p50_pct <= p95_pct(P50 <= P95)
+            assert sd["p50_pct"] <= sd["p95_pct"] + 0.5
