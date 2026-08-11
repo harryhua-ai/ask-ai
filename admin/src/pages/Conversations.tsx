@@ -14,6 +14,7 @@ import {
 import { fetchTraces, type TraceData } from "@/lib/api/traces";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import StageBar from "@/components/observability/StageBar";
 
 const INTENT_LABELS: Record<string, string> = {
   commercial: "商务咨询",
@@ -217,6 +218,53 @@ export default function Conversations() {
                           </Badge>
                         )}
                       </div>
+                      {conv.trace_summary && (
+                        <div className="mt-2 flex items-center gap-2">
+                          <div className="flex-1 max-w-[280px]">
+                            <StageBar
+                              stages={[
+                                {
+                                  key: "前置",
+                                  ms:
+                                    (conv.trace_summary.stages["intent"]?.ms ?? 0) +
+                                    (conv.trace_summary.stages["rewrite"]?.ms ?? 0),
+                                  color: "var(--acc)",
+                                },
+                                {
+                                  key: "检索",
+                                  ms:
+                                    (conv.trace_summary.stages["retrieve"]?.ms ?? 0) +
+                                    (conv.trace_summary.stages["rerank"]?.ms ?? 0),
+                                  color: "var(--ok)",
+                                },
+                                {
+                                  key: "生成",
+                                  ms: conv.trace_summary.stages["generate"]?.ms ?? 0,
+                                  color: "var(--warn)",
+                                },
+                                {
+                                  key: "输出",
+                                  ms: conv.trace_summary.stages["output"]?.ms ?? 0,
+                                  color: "var(--err)",
+                                },
+                              ]}
+                            />
+                          </div>
+                          {conv.trace_summary.confidence != null && (
+                            <span
+                              data-confidence
+                              className={
+                                "text-[11px] " +
+                                (conv.trace_summary.confidence < 0.6
+                                  ? "text-[var(--warn)]"
+                                  : "text-[var(--t3)]")
+                              }
+                            >
+                              置信 {(conv.trace_summary.confidence * 100).toFixed(0)}%
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="flex flex-col items-end gap-1 text-sm shrink-0">
                       <div className="flex items-center gap-1">
