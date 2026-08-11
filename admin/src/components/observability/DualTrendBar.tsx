@@ -7,7 +7,8 @@ export default function DualTrendBar({
   baseline: number;
 }) {
   const max = Math.max(...data.map((d) => d.p95), baseline, 1);
-  const yAxisTicks = [0, Math.round(max * 0.5), max];
+  // 去重:空数据时 max=1,中间刻度 round(0.5)=1 与 max 重合 → React key 冲突。
+  const yAxisTicks = [...new Set([0, Math.round(max * 0.5), max])];
   return (
     <div className="flex gap-2" data-dual-trend>
       {/* y 轴 */}
