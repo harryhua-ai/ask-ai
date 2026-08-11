@@ -8,7 +8,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from backend.auth.jwt import create_access_token, hash_password
-from backend.db.models import Conversation, User
+from backend.db.models import BusinessSignal, Conversation, User
 from backend.main import app
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
@@ -190,6 +190,63 @@ async def test_business_overview_prev_total_delta(business_seed):
             await session.execute(
                 Conversation.__table__.delete().where(
                     Conversation.question.like("biz_test_prev_%")
+                )
+            )
+            await session.commit()
+
+
+async def test_business_overview_signals_overlap_with_query_window(business_seed):
+    """场景应用/产品需求在 overview 中按"区间重叠"展示,而非要求信号完全包含在查询窗口内。
+
+    复现:SignalExtractor 默认 30 天窗(period_start=now-30d, period_end=now),
+    overview 默认 7d(start=now-7d, end=now)。旧查询条件
+    `period_start >= start AND period_end <= end` 要求信号完全包含在查询窗内,
+    30 天信号永远不被 7 天窗口包含 → scenes/requirements 永远为空。
+    正确语义:信号时间段与查询时间段有重叠即展示。
+    """
+    factory = app.state.session_factory
+    now = datetime.now(UTC)
+    try:
+        async with factory() as session:
+            # 模拟 SignalExtractor 的 30 天窗产出
+            session.add(
+                BusinessSignal(
+                    type="scene",
+                    label="biz_test_signal_scene",
+                    count=5,
+                    pct=10.0,
+                    period_start=now - timedelta(days=30),
+                    period_end=now,
+                )
+            )
+            session.add(
+                BusinessSignal(
+                    type="requirement",
+                    label="biz_test_signal_req",
+                    count=3,
+                    pct=6.0,
+                    period_start=now - timedelta(days=30),
+                    period_end=now,
+                )
+            )
+            await session.commit()
+        # 用默认 7d 窗查询——信号 30 天窗与 7 天窗有重叠,应展示
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get(
+                "/api/admin/business/overview?range=7d", headers=business_seed
+            )
+        assert resp.status_code == 200
+        scenes = resp.json()["scenes"]
+        requirements = resp.json()["requirements"]
+        assert any(s["label"] == "biz_test_signal_scene" for s in scenes), \
+            f"30 天窗信号在 7d 查询中应展示(区间重叠),实际 scenes={scenes}"
+        assert any(r["label"] == "biz_test_signal_req" for r in requirements), \
+            f"30 天窗信号在 7d 查询中应展示(区间重叠),实际 requirements={requirements}"
+    finally:
+        async with factory() as session:
+            await session.execute(
+                BusinessSignal.__table__.delete().where(
+                    BusinessSignal.label.like("biz_test_signal_%")
                 )
             )
             await session.commit()

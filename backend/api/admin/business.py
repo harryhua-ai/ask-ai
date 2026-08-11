@@ -134,10 +134,14 @@ async def business_overview(
 
         commercial_count = intent_dist.get("commercial", 0)
 
-        # 业务信号(场景/需求)
+        # 业务信号(场景/需求)——按"区间重叠"匹配:
+        # 信号 period(如默认 30 天提取窗)与查询窗口(如 7d)有重叠即展示。
+        # 旧条件 `period_start >= start AND period_end <= end` 要求信号完全包含在
+        # 查询窗内,30 天提取的信号永远不被 7 天窗口包含 → scenes/requirements 永远为空。
+        # 正确重叠条件:period_start <= end AND period_end >= start。
         signal_q = select(BusinessSignal).where(
-            BusinessSignal.period_start >= start,
-            BusinessSignal.period_end <= end,
+            BusinessSignal.period_start <= end,
+            BusinessSignal.period_end >= start,
         )
         signals = (await session.execute(signal_q)).scalars().all()
         scenes = [
