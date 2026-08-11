@@ -16,6 +16,33 @@ ViewerDep = Annotated[CurrentUser, Depends(require_role("admin", "editor", "view
 EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
 
 
+def _infer_markers(trace_type: str, stages: dict) -> dict:
+    """从 trace type + stages 推断标记(retry/clarify/reject_short/degraded)。
+
+    Phase 2 推断版(spec §2.4):Phase 3 升级为真实事件字段时 API 契约不变。
+    - retry: stages 任一段含 error/retry_count(与 tech.py _count_flags 同源)
+    - degraded: retrieve.path_counts symbol/boost 全 0(单路检索,与 tech.py 降级检测同源)
+    - clarify/reject_short: 直接看 trace type
+    """
+    retry = any(
+        isinstance(sd, dict) and (sd.get("error") or sd.get("retry_count"))
+        for sd in stages.values()
+    )
+    retrieve_sd = stages.get("retrieve", {})
+    path_counts = (
+        retrieve_sd.get("path_counts", {}) if isinstance(retrieve_sd, dict) else {}
+    )
+    symbol_count = path_counts.get("symbol", 0) if isinstance(path_counts, dict) else 0
+    boost_count = path_counts.get("boost", 0) if isinstance(path_counts, dict) else 0
+    degraded = symbol_count == 0 and boost_count == 0
+    return {
+        "retry": retry,
+        "clarify": trace_type == "clarify",
+        "reject_short": trace_type == "reject_short",
+        "degraded": degraded,
+    }
+
+
 @router.get("")
 async def list_conversations(
     _: ViewerDep,
@@ -79,11 +106,13 @@ async def list_conversations(
             trace_rows = (await session.execute(trace_q)).scalars().all()
             for t in trace_rows:
                 if t.conversation_id not in trace_map:
+                    stages = t.stages or {}
                     trace_map[t.conversation_id] = {
                         "type": t.type,
-                        "stages": t.stages or {},
+                        "stages": stages,
                         "total_ms": t.total_ms,
                         "confidence": t.confidence,
+                        "markers": _infer_markers(t.type or "rag", stages),
                     }
 
     items = [

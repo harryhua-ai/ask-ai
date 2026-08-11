@@ -131,3 +131,54 @@ async def test_list_conversations_trace_summary_latest_turn_and_confidence(auth_
     async with factory() as session:
         await session.execute(Trace.__table__.delete().where(Trace.conversation_id == conv.id))
         await session.commit()
+
+
+async def test_list_conversations_markers_inferred(auth_headers):
+    """markers 从最新 trace 推断:retry/clarify/reject_short/degraded。"""
+    factory = app.state.session_factory
+    async with factory() as session:
+        conv = await session.execute(
+            select(Conversation).where(Conversation.question == "test question")
+        )
+        conv = conv.scalar_one()
+        # 最新 trace:clarify 类型 + retrieve 降级(path_counts symbol/boost 全 0)+ rerank retry
+        session.add(
+            Trace(
+                conversation_id=conv.id,
+                turn_index=0,
+                type="clarify",
+                stages={
+                    "intent": {"ms": 10, "category": "product"},
+                    "rewrite": {"ms": 5},
+                    "retrieve": {
+                        "ms": 100,
+                        "path_counts": {"hybrid": 5, "symbol": 0, "boost": 0},
+                    },
+                    "rerank": {"ms": 50, "retry_count": 1},
+                    "generate": {"ms": 200},
+                    "output": {"ms": 1},
+                },
+                total_ms=366,
+                confidence=0.55,
+                config_snapshot={},
+            )
+        )
+        await session.commit()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get(
+            "/api/admin/conversations?q=test%20question", headers=auth_headers
+        )
+    items = resp.json()["items"]
+    target = [c for c in items if c["question"] == "test question"][0]
+    ts = target["trace_summary"]
+    assert ts is not None
+    m = ts["markers"]
+    assert m["clarify"] is True  # trace type = clarify
+    assert m["degraded"] is True  # symbol==0 and boost==0 → 单路检索降级
+    assert m["retry"] is True  # rerank.retry_count=1
+    assert m["reject_short"] is False  # type != reject_short
+    # 清理
+    async with factory() as session:
+        await session.execute(Trace.__table__.delete().where(Trace.conversation_id == conv.id))
+        await session.commit()
