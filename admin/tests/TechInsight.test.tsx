@@ -29,11 +29,11 @@ mockTechPerf.mockResolvedValue({
     comparison: 0.0,
   },
   stages: {
-    intent: { p50: 50, p95: 80, normal_max: 500 },
-    rewrite: { p50: 200, p95: 400, normal_max: 2000 },
-    retrieve: { p50: 500, p95: 800, normal_max: 3000 },
-    rerank: { p50: 300, p95: 600, normal_max: 2000 },
-    generate: { p50: 3000, p95: 5000, normal_max: 2000 },
+    intent: { p50: 50, p95: 80, normal_max: 500, p50_pct: 1, p95_pct: 2 },
+    rewrite: { p50: 200, p95: 400, normal_max: 2000, p50_pct: 4, p95_pct: 8 },
+    retrieve: { p50: 500, p95: 800, normal_max: 3000, p50_pct: 10, p95_pct: 16 },
+    rerank: { p50: 300, p95: 600, normal_max: 2000, p50_pct: 6, p95_pct: 12 },
+    generate: { p50: 3000, p95: 5000, normal_max: 2000, p50_pct: 60, p95_pct: 100 },
   },
   trends: Array.from({ length: 7 }, (_, i) => ({
     date: `08-0${i + 1}`,
@@ -53,6 +53,7 @@ mockCoverageGaps.mockResolvedValue({
       sample_questions: ["如何接入 SDK"],
       question_count: 5,
       status: "open",
+      miss_type: "召回空",
       period_start: null,
       period_end: null,
       created_at: "2026-08-10T10:00:00Z",
@@ -90,7 +91,7 @@ describe("TechInsight 技术洞察页", () => {
     });
   });
 
-  it("P50/P95 趋势图渲染 7 柱且每柱含双段", async () => {
+  it("P50/P95 趋势图渲染 7 柱且每柱含双段 + 基线虚线", async () => {
     renderWithProviders(<Analytics />);
     await waitFor(() => {
       const bars = document.querySelectorAll("[data-bar]");
@@ -99,6 +100,8 @@ describe("TechInsight 技术洞察页", () => {
         expect(b.querySelectorAll("[data-seg='p95']").length).toBe(1);
         expect(b.querySelectorAll("[data-seg='p50']").length).toBe(1);
       });
+      // DualTrendBar 基线虚线
+      expect(document.querySelector("[data-baseline]")).toBeTruthy();
     });
   });
 
@@ -116,11 +119,13 @@ describe("TechInsight 技术洞察页", () => {
     });
   });
 
-  it("切换到知识缺口 tab 显示覆盖缺口", async () => {
+  it("切换到知识缺口 tab 显示覆盖缺口 + 类型 badge", async () => {
     renderWithProviders(<Analytics />);
     fireEvent.click(await screen.findByText("知识缺口"));
     await waitFor(() => {
       expect(screen.getByText("如何接入 SDK")).toBeInTheDocument();
+      // GapTypeBadge 渲染(mock miss_type="召回空")
+      expect(document.querySelector("[data-gap-type='召回空']")).toBeTruthy();
     });
   });
 

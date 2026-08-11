@@ -2,7 +2,9 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import KpiCard from "@/components/observability/KpiCard";
-import TrendChart from "@/components/observability/TrendChart";
+import DualTrendBar from "@/components/observability/DualTrendBar";
+import DualStageBar from "@/components/observability/DualStageBar";
+import GapTypeBadge from "@/components/observability/GapTypeBadge";
 import TimeFilter from "@/components/observability/TimeFilter";
 import ContainmentDiagram from "@/components/observability/ContainmentDiagram";
 import NodeFlow from "@/components/observability/NodeFlow";
@@ -151,7 +153,7 @@ function TechPerfTab({ range }: { range: string }) {
         <h2 className="text-[14px] font-medium text-[var(--t1)] mb-3">
           P50/P95 趋势
         </h2>
-        <TrendChart data={data.trends} baseline={3000} />
+        <DualTrendBar data={data.trends} baseline={data.kpi.baseline} />
       </div>
 
       {/* 异常 ⊃ 重试 ⊃ 失败 包含图 */}
@@ -180,30 +182,19 @@ function TechPerfTab({ range }: { range: string }) {
           <h2 className="text-[14px] font-medium text-[var(--t1)] mb-3">
             慢在哪(阶段 P50/P95)
           </h2>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>阶段</TableHead>
-                <TableHead>P95</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {Object.entries(data.stages).map(([stage, s]) => {
-                const over = s.p95 > s.normal_max;
-                return (
-                  <TableRow key={stage}>
-                    <TableCell
-                      data-over={over}
-                      className={over ? "text-[var(--warn)] font-medium" : ""}
-                    >
-                      {stage}
-                    </TableCell>
-                    <TableCell>{s.p95.toLocaleString()}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+          <div className="space-y-2">
+            {Object.entries(data.stages).map(([stage, s]) => (
+              <DualStageBar
+                key={stage}
+                stage={stage}
+                p50={s.p50}
+                p95={s.p95}
+                normalMax={s.normal_max}
+                p50Pct={s.p50_pct ?? 0}
+                p95Pct={s.p95_pct ?? 0}
+              />
+            ))}
+          </div>
         </div>
 
         {/* 什么异常:异常分布(彩色圆点 + pct) */}
@@ -463,15 +454,7 @@ function KnowledgeGapsTab() {
                     {cluster.representative_question}
                   </TableCell>
                   <TableCell>
-                    {cluster.miss_type && (
-                      <Badge
-                        variant={
-                          cluster.miss_type === "召回空" ? "destructive" : "secondary"
-                        }
-                      >
-                        {cluster.miss_type}
-                      </Badge>
-                    )}
+                    {cluster.miss_type && <GapTypeBadge type={cluster.miss_type} />}
                   </TableCell>
                   <TableCell>{cluster.question_count}</TableCell>
                   <TableCell>
