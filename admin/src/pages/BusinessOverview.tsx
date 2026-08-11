@@ -1,17 +1,20 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import KpiCard from "@/components/observability/KpiCard";
 import TimeFilter from "@/components/observability/TimeFilter";
+import { Button } from "@/components/ui/button";
 import {
   fetchBusinessOverview,
   fetchBusinessOverviewRange,
+  refreshBusinessSignals,
 } from "@/lib/api/businessOverview";
 
 type TimeRange = { range?: string; from?: string; to?: string };
 
 export default function BusinessOverview() {
   const [timeRange, setTimeRange] = useState<TimeRange>({ range: "7d" });
+  const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ["business-overview", timeRange],
@@ -23,12 +26,35 @@ export default function BusinessOverview() {
     },
   });
 
+  const signalMutation = useMutation({
+    mutationFn: () => refreshBusinessSignals(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["business-overview"] });
+    },
+  });
+
   return (
     <div className="space-y-6 p-4" style={{ background: "var(--bg)", minHeight: "100%" }}>
       {/* 标题 + 时间筛选 */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-[var(--t1)]">业务概览</h1>
-        <TimeFilter onChange={setTimeRange} />
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => signalMutation.mutate()}
+            disabled={signalMutation.isPending}
+          >
+            {signalMutation.isPending ? "提取中..." : "刷新业务信号"}
+          </Button>
+          {signalMutation.data && (
+            <span className="text-[12px] text-[var(--ok)]">
+              已提取 {signalMutation.data.scene_count} 场景 +{" "}
+              {signalMutation.data.requirement_count} 需求
+            </span>
+          )}
+          <TimeFilter onChange={setTimeRange} />
+        </div>
       </div>
 
       {isLoading && <div className="text-[var(--t2)]">加载中...</div>}
@@ -46,9 +72,17 @@ export default function BusinessOverview() {
             />
             <KpiCard
               label="满意度"
-              value={data.service.satisfaction ?? 0}
-              unit="%"
-              alarm={(data.service.satisfaction ?? 100) < 80}
+              value={data.service.satisfaction}
+              unit={data.service.satisfaction !== null ? "%" : ""}
+              alarm={
+                data.service.satisfaction !== null &&
+                data.service.satisfaction < 80
+              }
+              baseline={
+                data.service.up_count + data.service.down_count > 0
+                  ? `${data.service.up_count}赞 / ${data.service.down_count}踩`
+                  : undefined
+              }
             />
           </div>
 
@@ -63,18 +97,67 @@ export default function BusinessOverview() {
             <div className="flex gap-6">
               {(["commercial", "product", "support", "off_topic"] as const).map(
                 (intent) => (
-                  <div key={intent} className="text-center">
+                  <Link
+                    key={intent}
+                    to={`/conversations?intent=${intent}`}
+                    className="text-center hover:opacity-70 transition"
+                  >
                     <div className="text-2xl font-semibold text-[var(--t1)]">
                       {data.service.intent_dist[intent]}
                     </div>
                     <div className="text-[12px] text-[var(--t2)]">
                       {INTENT_LABELS[intent]}
                     </div>
-                  </div>
+                  </Link>
                 ),
+              )}
+              {data.service.unknown_intent_count > 0 && (
+                <div className="text-center">
+                  <div className="text-2xl font-semibold text-[var(--warn)]">
+                    {data.service.unknown_intent_count}
+                  </div>
+                  <div className="text-[12px] text-[var(--t2)]">未识别意图</div>
+                </div>
               )}
             </div>
           </div>
+
+          {/* 每日对话量趋势 */}
+          {data.timeseries.length > 0 && (
+            <div
+              className="rounded-lg border p-4"
+              style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
+            >
+              <h2 className="text-[14px] font-medium text-[var(--t1)] mb-3">
+                每日对话量
+              </h2>
+              <div className="flex items-end gap-1 h-32">
+                {data.timeseries.map((d) => {
+                  const max = Math.max(...data.timeseries.map((t) => t.total), 1);
+                  const h = (d.total / max) * 100;
+                  return (
+                    <div
+                      key={d.date}
+                      className="flex-1 flex flex-col items-center justify-end"
+                      title={`${d.date}: ${d.total}`}
+                    >
+                      <div
+                        className="w-full rounded-t"
+                        style={{
+                          height: `${h}%`,
+                          background: "var(--acc)",
+                          minHeight: d.total > 0 ? "2px" : "0",
+                        }}
+                      />
+                      <div className="text-[10px] text-[var(--t3)] mt-1">
+                        {d.date}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             {/* 销售线索 */}

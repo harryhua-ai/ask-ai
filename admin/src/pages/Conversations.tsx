@@ -236,8 +236,16 @@ export default function Conversations() {
                           />
                         )}
                       </div>
-                      {conv.response_time_ms && (
-                        <span className="text-muted-foreground">
+                      {conv.response_time_ms != null && (
+                        <span
+                          className={
+                            conv.response_time_ms > 10000
+                              ? "text-[var(--err)]"
+                              : conv.response_time_ms > 5000
+                                ? "text-[var(--warn)]"
+                                : "text-[var(--ok)]"
+                          }
+                        >
                           {conv.response_time_ms.toLocaleString()}ms
                         </span>
                       )}

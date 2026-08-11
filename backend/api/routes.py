@@ -15,7 +15,16 @@ import uuid
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import update
@@ -120,6 +129,15 @@ async def ask(
                     raise HTTPException(403, "Attachment access denied")
                 attachment_objs.append(att)
 
+    # 地域:从 Accept-Language 提取地区码作为地域代理(无需 GeoIP 数据库)
+    country: str | None = None
+    accept_lang = request.headers.get("accept-language", "")
+    for part in accept_lang.split(","):
+        sub = part.strip().split(";")[0].split("-")
+        if len(sub) == 2:
+            country = sub[1].upper()
+            break
+
     async def event_generator() -> Any:
         conversation_id = str(uuid.uuid4())
         full_answer = ""
@@ -185,6 +203,7 @@ async def ask(
                     is_answered=is_answered,
                     response_time_ms=elapsed,
                     intent_tag=intent,
+                    country=country,
                 )
                 session.add(conv)
                 if trace_payload:
@@ -267,9 +286,7 @@ async def upload_attachments_widget(
     """widget 匿名上传:固定 owner_type=widget_anon,owner_id=session_id。"""
     if len(files) > MAX_ATTACHMENTS_PER_MESSAGE:
         raise HTTPException(422, f"Too many files (max {MAX_ATTACHMENTS_PER_MESSAGE})")
-    return await _do_upload(
-        files, "widget_anon", session_id, background_tasks, session_factory
-    )
+    return await _do_upload(files, "widget_anon", session_id, background_tasks, session_factory)
 
 
 async def _do_upload(
