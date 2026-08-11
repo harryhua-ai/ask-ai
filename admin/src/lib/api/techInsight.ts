@@ -6,6 +6,8 @@ export interface TechKpi {
   anomaly_rate: number;
   retry_rate: number;
   fail_rate: number;
+  baseline: number;
+  comparison: number;
 }
 
 export interface StagePercentile {
@@ -38,6 +40,7 @@ export interface TechPerformanceData {
   trends: TrendDay[];
   anomalies: AnomalyItem[];
   degradations: DegradationItem[];
+  trace_coverage_from: string | null;
 }
 
 export function fetchTechPerformance(
@@ -51,4 +54,37 @@ export function fetchCoverageGaps(
 ): Promise<ClusterList> {
   const qs = status ? `?status=${status}` : "";
   return apiFetch<ClusterList>(`/analytics/coverage-gaps${qs}`);
+}
+
+export interface GapTrendDay {
+  date: string;
+  total: number;
+  unanswered: number;
+  unanswered_rate: number;
+}
+
+export function fetchGapTrends(
+  days: number = 30,
+): Promise<{ trends: GapTrendDay[] }> {
+  return apiFetch(`/analytics/gap-trends?days=${days}`);
+}
+
+export interface SourceHealthItem {
+  source_id: string;
+  source_type: string;
+  product: string;
+  enabled: boolean;
+  doc_count: number;
+  chunk_count: number;
+  sync_success_rate: number;
+  total_syncs: number;
+  failed_syncs: number;
+  health: string;
+  last_sync: string | null;
+}
+
+export function fetchSourceHealth(
+  days: number = 30,
+): Promise<{ items: SourceHealthItem[]; days: number }> {
+  return apiFetch(`/analytics/source-health?days=${days}`);
 }

@@ -93,7 +93,10 @@ class ClusteringService:
         async with self._factory() as session:
             q = select(Conversation.id, Conversation.question)
             if cluster_type == "gap":
-                q = q.where(Conversation.is_answered.is_(False))
+                q = q.where(
+                    Conversation.is_answered.is_(False),
+                    Conversation.intent_tag != "off_topic",
+                )
             if date_from:
                 q = q.where(Conversation.created_at >= date_from)
             if date_to:

@@ -56,7 +56,9 @@ class Document(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
-    branch: Mapped[str] = mapped_column(String(100), default="", nullable=False, primary_key=True, index=True)
+    branch: Mapped[str] = mapped_column(
+        String(100), default="", nullable=False, primary_key=True, index=True
+    )
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -82,6 +84,7 @@ class Conversation(Base):
     intent_tag: Mapped[str | None] = mapped_column(String(100))
     custom_tags: Mapped[list[Any]] = mapped_column(JSONB, default=[])
     customization_id: Mapped[str | None] = mapped_column(String(50))
+    country: Mapped[str | None] = mapped_column(String(10))
 
     # Phase 3 预留
     cluster_id: Mapped[str | None] = mapped_column(String(100))
@@ -106,9 +109,7 @@ class Trace(Base):
 
     __tablename__ = "traces"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("conversations.id", ondelete="CASCADE"),
@@ -127,9 +128,7 @@ class Trace(Base):
     intent: Mapped[str | None] = mapped_column(String(100))
     confidence: Mapped[float | None] = mapped_column(Float)
     config_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     conversation: Mapped["Conversation"] = relationship(back_populates="traces")
     prev_trace: Mapped["Trace | None"] = relationship(
@@ -142,9 +141,7 @@ class BusinessSignal(Base):
 
     __tablename__ = "business_signals"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     type: Mapped[str] = mapped_column(String(20), nullable=False)
     label: Mapped[str] = mapped_column(String(100), nullable=False)
     count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -152,9 +149,7 @@ class BusinessSignal(Base):
     sample_conversation_ids: Mapped[list[Any]] = mapped_column(JSONB, default=[])
     period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class SourceClick(Base):
@@ -338,9 +333,7 @@ Index("idx_source_clicks_conversation", SourceClick.conversation_id)
 Index("idx_source_clicks_source_url", SourceClick.source_url)
 Index("idx_sync_log_source", SyncLog.source_id, SyncLog.started_at.desc())
 Index("idx_sync_log_status", SyncLog.status, SyncLog.started_at.desc())
-Index(
-    "idx_question_clusters_type_status", QuestionCluster.cluster_type, QuestionCluster.status
-)
+Index("idx_question_clusters_type_status", QuestionCluster.cluster_type, QuestionCluster.status)
 Index(
     "idx_question_clusters_type_count",
     QuestionCluster.cluster_type,

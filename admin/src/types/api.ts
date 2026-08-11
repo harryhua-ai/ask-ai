@@ -152,6 +152,7 @@ export interface QuestionCluster {
   period_start: string | null;
   period_end: string | null;
   created_at: string;
+  miss_type?: string;
 }
 
 export interface ClusterList {
@@ -159,6 +160,7 @@ export interface ClusterList {
   total: number;
   page: number;
   size: number;
+  miss_type_summary?: Record<string, number>;
 }
 
 export interface SourceAnalyticsItem {

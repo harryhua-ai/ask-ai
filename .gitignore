@@ -43,3 +43,4 @@ kapa-*.png
 
 # 临时进度快照(auto-dev CHECKPOINT,会话级临时文件)
 /CHECKPOINT.md
+.gstack/

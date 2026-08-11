@@ -7,10 +7,13 @@
 - GET    /top-questions           查询全部问题聚类(viewer+)
 - POST   /top-questions/refresh   触发重新聚类(admin/editor)
 - GET    /sources                 来源点击/引用聚合(viewer+)
+- GET    /gap-trends              缺口趋势(按天未回答率)(viewer+)
+- GET    /source-health           数据源健康度(viewer+)
 """
 
 import uuid
-from datetime import datetime, timedelta
+from collections import defaultdict
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -24,16 +27,23 @@ from backend.api.admin.schemas import (
     SourceAnalyticsList,
 )
 from backend.auth.dependencies import CurrentUser, require_role
-from backend.db.models import QuestionCluster, SourceClick
+from backend.db.models import (
+    Conversation,
+    DataSource,
+    Document,
+    QuestionCluster,
+    SourceClick,
+    SyncLog,
+)
 
 router = APIRouter(prefix="/analytics", tags=["分析仪表盘"])
 ViewerDep = Annotated[CurrentUser, Depends(require_role("admin", "editor", "viewer"))]
 EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
 
 
-def _to_cluster_out(c: QuestionCluster) -> dict[str, Any]:
+def _to_cluster_out(c: QuestionCluster, miss_type: str | None = None) -> dict[str, Any]:
     """将 QuestionCluster ORM 对象转换为 API 输出字典。"""
-    return {
+    out = {
         "id": str(c.id),
         "cluster_type": c.cluster_type,
         "representative_question": c.representative_question,
@@ -44,6 +54,9 @@ def _to_cluster_out(c: QuestionCluster) -> dict[str, Any]:
         "period_end": c.period_end.isoformat() if c.period_end else None,
         "created_at": c.created_at.isoformat() if c.created_at else "",
     }
+    if miss_type is not None:
+        out["miss_type"] = miss_type
+    return out
 
 
 # ----------------------------------------------------------------------- #
@@ -59,12 +72,17 @@ async def list_coverage_gaps(
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
 ) -> dict[str, Any]:
-    """查询 Coverage Gaps 聚类列表(viewer+ 可访问)。"""
+    """查询 Coverage Gaps 聚类列表(viewer+ 可访问)。
+
+    每个 gap 附 miss_type 分类:召回空(sources 为空)/ 召回不足(sources 非空但仍未回答)。
+    """
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
         q = select(QuestionCluster).where(QuestionCluster.cluster_type == "gap")
-        count_q = select(func.count()).select_from(QuestionCluster).where(
-            QuestionCluster.cluster_type == "gap"
+        count_q = (
+            select(func.count())
+            .select_from(QuestionCluster)
+            .where(QuestionCluster.cluster_type == "gap")
         )
         if status:
             q = q.where(QuestionCluster.status == status)
@@ -72,17 +90,40 @@ async def list_coverage_gaps(
 
         total = (await session.execute(count_q)).scalar() or 0
         result = await session.execute(
-            q.order_by(QuestionCluster.question_count.desc())
-            .offset((page - 1) * size)
-            .limit(size)
+            q.order_by(QuestionCluster.question_count.desc()).offset((page - 1) * size).limit(size)
         )
         clusters = result.scalars().all()
 
+        # 批量查询每个 cluster 的对话,按 sources 有无分类 miss_type
+        miss_type_map: dict[str, str] = {}
+        miss_type_summary: dict[str, int] = defaultdict(int)
+        if clusters:
+            cluster_ids = [str(c.id) for c in clusters]
+            conv_q = select(
+                Conversation.cluster_id,
+                Conversation.sources,
+            ).where(Conversation.cluster_id.in_(cluster_ids))
+            conv_rows = (await session.execute(conv_q)).all()
+            cluster_stats: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+            for row in conv_rows:
+                cid = str(row.cluster_id) if row.cluster_id else ""
+                sources = row.sources if isinstance(row.sources, list) else []
+                if not sources:
+                    cluster_stats[cid]["召回空"] += 1
+                else:
+                    cluster_stats[cid]["召回不足"] += 1
+            for cid, stats in cluster_stats.items():
+                dominant = max(stats, key=stats.get) if stats else "未分类"
+                miss_type_map[cid] = dominant
+                miss_type_summary[dominant] += 1
+
+    items = [_to_cluster_out(c, miss_type_map.get(str(c.id), "未分类")) for c in clusters]
     return {
-        "items": [_to_cluster_out(c) for c in clusters],
+        "items": items,
         "total": total,
         "page": page,
         "size": size,
+        "miss_type_summary": dict(miss_type_summary),
     }
 
 
@@ -150,8 +191,10 @@ async def list_top_questions(
     """查询 Top Questions 聚类列表(viewer+ 可访问)。"""
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
-        count_q = select(func.count()).select_from(QuestionCluster).where(
-            QuestionCluster.cluster_type == "top"
+        count_q = (
+            select(func.count())
+            .select_from(QuestionCluster)
+            .where(QuestionCluster.cluster_type == "top")
         )
         total = (await session.execute(count_q)).scalar() or 0
         result = await session.execute(
@@ -240,3 +283,113 @@ async def source_analytics(
         ],
         "days": days,
     }
+
+
+# ----------------------------------------------------------------------- #
+# Gap Trends — 按天未回答率时序
+# ----------------------------------------------------------------------- #
+
+
+@router.get("/gap-trends")
+async def gap_trends(
+    _: ViewerDep,
+    request: Request,
+    days: int = Query(default=30, ge=1, le=365),
+) -> dict[str, Any]:
+    """缺口趋势:按天聚合对话总量与未回答数(viewer+ 可访问)。"""
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    end = datetime.now(UTC)
+    start = end - timedelta(days=days)
+
+    async with factory() as session:
+        q = (
+            select(
+                func.date_trunc("day", Conversation.created_at).label("day"),
+                func.count().label("total"),
+                func.count().filter(Conversation.is_answered.is_(False)).label("unanswered"),
+            )
+            .where(Conversation.created_at >= start, Conversation.created_at <= end)
+            .group_by("day")
+            .order_by("day")
+        )
+        rows = (await session.execute(q)).all()
+
+    trends = [
+        {
+            "date": row.day.strftime("%m-%d") if row.day else "",
+            "total": row.total,
+            "unanswered": row.unanswered,
+            "unanswered_rate": round(row.unanswered / row.total, 4) if row.total else 0.0,
+        }
+        for row in rows
+    ]
+    return {"trends": trends}
+
+
+# ----------------------------------------------------------------------- #
+# Source Health — 数据源健康度
+# ----------------------------------------------------------------------- #
+
+
+@router.get("/source-health")
+async def source_health(
+    _: ViewerDep,
+    request: Request,
+    days: int = Query(default=30, ge=1, le=365),
+) -> dict[str, Any]:
+    """数据源健康度:同步成功率 + 文档数 + 最近同步(viewer+ 可访问)。"""
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+
+    async with factory() as session:
+        sync_q = (
+            select(
+                SyncLog.source_id,
+                SyncLog.source_type,
+                func.count().label("total_syncs"),
+                func.count().filter(SyncLog.status == "success").label("success_syncs"),
+                func.count().filter(SyncLog.status == "failed").label("failed_syncs"),
+                func.max(SyncLog.started_at).label("last_sync"),
+            )
+            .where(SyncLog.started_at >= cutoff)
+            .group_by(SyncLog.source_id, SyncLog.source_type)
+        )
+        sync_rows = (await session.execute(sync_q)).all()
+
+        doc_q = select(
+            Document.source_id,
+            func.count().label("doc_count"),
+            func.coalesce(func.sum(Document.chunk_count), 0).label("chunk_count"),
+        ).group_by(Document.source_id)
+        doc_rows = (await session.execute(doc_q)).all()
+        doc_map = {row.source_id: (row.doc_count, row.chunk_count) for row in doc_rows}
+
+        ds_q = select(DataSource.id, DataSource.product, DataSource.enabled)
+        ds_rows = (await session.execute(ds_q)).all()
+        ds_map = {row.id: (row.product, row.enabled) for row in ds_rows}
+
+    items = []
+    for row in sync_rows:
+        doc_count, chunk_count = doc_map.get(row.source_id, (0, 0))
+        product, enabled = ds_map.get(row.source_id, ("unknown", True))
+        success_rate = round(row.success_syncs / row.total_syncs, 4) if row.total_syncs else 0.0
+        health = (
+            "healthy" if success_rate >= 0.9 else "degraded" if success_rate >= 0.5 else "critical"
+        )
+        items.append(
+            {
+                "source_id": row.source_id,
+                "source_type": row.source_type,
+                "product": product,
+                "enabled": enabled,
+                "doc_count": doc_count,
+                "chunk_count": chunk_count,
+                "sync_success_rate": success_rate,
+                "total_syncs": row.total_syncs,
+                "failed_syncs": row.failed_syncs,
+                "health": health,
+                "last_sync": row.last_sync.isoformat() if row.last_sync else None,
+            }
+        )
+
+    return {"items": items, "days": days}

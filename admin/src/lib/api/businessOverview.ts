@@ -24,12 +24,24 @@ export interface TopQuestionItem {
   count: number;
 }
 
+export interface TimeseriesDay {
+  date: string;
+  total: number;
+  commercial: number;
+  product: number;
+  support: number;
+  off_topic: number;
+}
+
 export interface BusinessOverviewData {
   service: {
     total: number;
     intent_dist: IntentDist;
+    unknown_intent_count: number;
     north_star: number;
     satisfaction: number | null;
+    up_count: number;
+    down_count: number;
   };
   leads: {
     valid: number;
@@ -41,7 +53,7 @@ export interface BusinessOverviewData {
   top_questions: TopQuestionItem[];
   geo: { name: string; count: number }[];
   geo_note: string;
-  timeseries: { date: string; count: number }[];
+  timeseries: TimeseriesDay[];
 }
 
 export function fetchBusinessOverview(
@@ -57,4 +69,12 @@ export function fetchBusinessOverviewRange(
   return apiFetch<BusinessOverviewData>(
     `/business/overview?from=${from}&to=${to}`,
   );
+}
+
+export function refreshBusinessSignals(): Promise<{
+  scene_count: number;
+  requirement_count: number;
+  conversations_analyzed: number;
+}> {
+  return apiFetch(`/business/signals/refresh`, { method: "POST" });
 }

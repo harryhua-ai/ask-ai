@@ -1,9 +1,15 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import KpiCard from "@/components/observability/KpiCard";
 import TrendChart from "@/components/observability/TrendChart";
 import TimeFilter from "@/components/observability/TimeFilter";
-import { fetchTechPerformance, fetchCoverageGaps } from "@/lib/api/techInsight";
+import {
+  fetchTechPerformance,
+  fetchCoverageGaps,
+  fetchGapTrends,
+  fetchSourceHealth,
+} from "@/lib/api/techInsight";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -55,6 +61,11 @@ function TechPerfTab({ range }: { range: string }) {
     queryFn: () => fetchTechPerformance(range),
   });
 
+  const { data: healthData } = useQuery({
+    queryKey: ["source-health"],
+    queryFn: () => fetchSourceHealth(30),
+  });
+
   if (isLoading) return <div className="text-[var(--t2)]">加载中...</div>;
   if (!data) return null;
 
@@ -67,6 +78,15 @@ function TechPerfTab({ range }: { range: string }) {
           value={data.kpi.p95_ms}
           unit="ms"
           alarm={data.kpi.p95_ms > 5000}
+          baseline={`基线 ${data.kpi.baseline}ms`}
+          delta={
+            data.kpi.comparison !== 0
+              ? {
+                  value: Math.round(data.kpi.comparison * 100),
+                  dir: data.kpi.comparison > 0 ? "up" : "down",
+                }
+              : undefined
+          }
         />
         <KpiCard
           label="异常率"
@@ -86,6 +106,13 @@ function TechPerfTab({ range }: { range: string }) {
           alarm={data.kpi.fail_rate > 0.05}
         />
       </div>
+
+      {/* trace 覆盖提示 */}
+      {data.trace_coverage_from && (
+        <div className="text-[12px] text-[var(--t3)]">
+          Trace 数据自 {new Date(data.trace_coverage_from).toLocaleDateString()} 起
+        </div>
+      )}
 
       {/* P50/P95 趋势 */}
       <div
@@ -144,9 +171,17 @@ function TechPerfTab({ range }: { range: string }) {
           className="rounded-lg border p-4"
           style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
         >
-          <h2 className="text-[14px] font-medium text-[var(--t1)] mb-3">
-            异常分布
-          </h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-[14px] font-medium text-[var(--t1)]">
+              异常分布
+            </h2>
+            <Link
+              to="/conversations"
+              className="text-[12px] text-[var(--acc)] hover:underline"
+            >
+              查看对话
+            </Link>
+          </div>
           <div className="space-y-1">
             {data.anomalies.map((a, i) => (
               <div
@@ -182,6 +217,58 @@ function TechPerfTab({ range }: { range: string }) {
           </div>
         </div>
       )}
+
+      {/* 数据源健康度 */}
+      {healthData && healthData.items.length > 0 && (
+        <div
+          className="rounded-lg border p-4"
+          style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
+        >
+          <h2 className="text-[14px] font-medium text-[var(--t1)] mb-3">
+            数据源健康度
+          </h2>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>数据源</TableHead>
+                <TableHead>产品</TableHead>
+                <TableHead>文档数</TableHead>
+                <TableHead>同步成功率</TableHead>
+                <TableHead>状态</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {healthData.items.map((s) => (
+                <TableRow key={s.source_id}>
+                  <TableCell className="font-medium">{s.source_id}</TableCell>
+                  <TableCell>{s.product}</TableCell>
+                  <TableCell>{s.doc_count}</TableCell>
+                  <TableCell>
+                    {Math.round(s.sync_success_rate * 100)}%
+                  </TableCell>
+                  <TableCell>
+                    <Badge
+                      variant={
+                        s.health === "healthy"
+                          ? "default"
+                          : s.health === "degraded"
+                            ? "secondary"
+                            : "destructive"
+                      }
+                    >
+                      {s.health === "healthy"
+                        ? "健康"
+                        : s.health === "degraded"
+                          ? "降级"
+                          : "严重"}
+                    </Badge>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
     </div>
   );
 }
@@ -193,17 +280,82 @@ function KnowledgeGapsTab() {
     queryFn: () => fetchCoverageGaps(status),
   });
 
+  const { data: trendData } = useQuery({
+    queryKey: ["gap-trends"],
+    queryFn: () => fetchGapTrends(30),
+  });
+
+  const missSummary = data?.miss_type_summary ?? {};
+
   return (
     <div className="space-y-4">
-      {/* 澄清漏斗(暂无数据) */}
+      {/* 未回答率趋势 */}
+      {trendData && trendData.trends.length > 0 && (
+        <div
+          className="rounded-lg border p-4"
+          style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
+        >
+          <h2 className="text-[14px] font-medium text-[var(--t1)] mb-3">
+            未回答率趋势(30 天)
+          </h2>
+          <div className="flex items-end gap-1 h-24">
+            {trendData.trends.map((d) => {
+              const maxRate = Math.max(
+                ...trendData.trends.map((t) => t.unanswered_rate),
+                0.01,
+              );
+              const h = (d.unanswered_rate / maxRate) * 100;
+              return (
+                <div
+                  key={d.date}
+                  className="flex-1 flex flex-col items-center justify-end"
+                  title={`${d.date}: ${d.unanswered}/${d.total} (${Math.round(d.unanswered_rate * 100)}%)`}
+                >
+                  <div
+                    className="w-full rounded-t"
+                    style={{
+                      height: `${h}%`,
+                      background:
+                        d.unanswered_rate > 0.3
+                          ? "var(--err)"
+                          : d.unanswered_rate > 0.1
+                            ? "var(--warn)"
+                            : "var(--ok)",
+                      minHeight: d.total > 0 ? "2px" : "0",
+                    }}
+                  />
+                  <div className="text-[9px] text-[var(--t3)] mt-1">{d.date}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 缺口类型分布 */}
       <div
         className="rounded-lg border p-4"
         style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
       >
         <h2 className="text-[14px] font-medium text-[var(--t1)] mb-3">
-          澄清漏斗
+          缺口类型分布
         </h2>
-        <div className="text-[12px] text-[var(--t3)]">暂无数据（待接入）</div>
+        {Object.keys(missSummary).length > 0 ? (
+          <div className="flex gap-6">
+            {Object.entries(missSummary).map(([type, count]) => (
+              <div key={type} className="text-center">
+                <div className="text-2xl font-semibold text-[var(--warn)]">
+                  {count}
+                </div>
+                <div className="text-[12px] text-[var(--t2)]">{type}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-[12px] text-[var(--t3)]">
+            暂无缺口数据，请先执行聚类刷新
+          </div>
+        )}
       </div>
 
       {/* 覆盖缺口 */}
@@ -230,6 +382,7 @@ function KnowledgeGapsTab() {
             <TableHeader>
               <TableRow>
                 <TableHead>代表问题</TableHead>
+                <TableHead>类型</TableHead>
                 <TableHead>数量</TableHead>
                 <TableHead>状态</TableHead>
               </TableRow>
@@ -239,6 +392,17 @@ function KnowledgeGapsTab() {
                 <TableRow key={cluster.id}>
                   <TableCell className="font-medium">
                     {cluster.representative_question}
+                  </TableCell>
+                  <TableCell>
+                    {cluster.miss_type && (
+                      <Badge
+                        variant={
+                          cluster.miss_type === "召回空" ? "destructive" : "secondary"
+                        }
+                      >
+                        {cluster.miss_type}
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell>{cluster.question_count}</TableCell>
                   <TableCell>
