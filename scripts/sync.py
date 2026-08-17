@@ -136,6 +136,64 @@ async def _count_documents(session_factory: Any, source_id_prefix: str) -> int:
         return int(result.scalar() or 0)
 
 
+# --------------------------------------------------------------------------- #
+# 增量窗口(2026-08-17 改造):since 取"上次成功同步时间",而非固定 now-24h
+# --------------------------------------------------------------------------- #
+
+# 无成功记录时(首次运行 / 历史日志被清)的保守回看窗口,保持旧行为
+DEFAULT_INCREMENTAL_WINDOW = timedelta(hours=24)
+
+# 上次成功时间过旧(源长期停摆 / 同步长期失败)时的窗口上限,
+# 防止单次拉取无界膨胀;超出部分需手动全量补(如 --reindex)
+MAX_INCREMENTAL_LOOKBACK = timedelta(days=30)
+
+
+def _compute_since(last_success: datetime | None, now: datetime) -> datetime:
+    """计算本次增量窗口起点。
+
+    Args:
+        last_success: 该源最近一次 status=success 的完成时间;None 表示
+            无成功记录。
+        now: 当前时间(调用方传入便于测试)。
+
+    Returns:
+        窗口起点。规则:无记录 → ``now - DEFAULT_INCREMENTAL_WINDOW``;
+        过旧 → ``now - MAX_INCREMENTAL_LOOKBACK``(上限夹紧);
+        未来时间(时钟漂移)→ ``now``(夹紧,避免空区间永久跳过)。
+    """
+    if last_success is None:
+        return now - DEFAULT_INCREMENTAL_WINDOW
+    since = max(last_success, now - MAX_INCREMENTAL_LOOKBACK)
+    return min(since, now)
+
+
+async def _last_success_at(session_factory: Any, source_id: str) -> datetime | None:
+    """查 sync_log 中该源最近一次成功同步的完成时间。
+
+    取 finished_at(缺省时回退 started_at,如异常中断的行);failed 行
+    被跳过——失败不推进窗口,下次同步仍覆盖缺口。
+
+    Args:
+        session_factory: 异步 SQLAlchemy 会话工厂。
+        source_id: 数据源 ID。
+
+    Returns:
+        最近一次成功同步的时间;无成功记录时返回 None。
+    """
+    async with session_factory() as session:
+        result = await session.execute(
+            select(SyncLog.finished_at, SyncLog.started_at)
+            .where(SyncLog.source_id == source_id, SyncLog.status == "success")
+            .order_by(SyncLog.started_at.desc())
+            .limit(1)
+        )
+        row = result.one_or_none()
+    if row is None:
+        return None
+    finished_at, started_at = row
+    return finished_at or started_at
+
+
 async def _sync_one(
     cfg: SourceConfig,
     pipeline: IngestionPipeline,
@@ -174,7 +232,12 @@ async def _sync_one(
 
     try:
         connector = ConnectorRegistry.create(cfg)
-        since = datetime.now(UTC) - timedelta(hours=24)
+        # 增量窗口:上次成功时间(失败不推进窗口,防缺口被推过)
+        last_success = await _last_success_at(session_factory, cfg.id)
+        since = _compute_since(last_success, datetime.now(UTC))
+        logger.info(
+            "数据源 %s 增量窗口: %s", cfg.id, since.isoformat()
+        )
 
         if reindex:
             # reindex 模式:绕过增量 skip,强制全量重灌(符号字段回填 /

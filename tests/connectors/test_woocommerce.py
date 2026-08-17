@@ -279,3 +279,43 @@ def test_woocommerce_missing_creds_raises_value_error(monkeypatch):
     )
     with pytest.raises(ValueError, match="凭证缺失"):
         ConnectorRegistry.create(cfg)
+
+
+# --------------------------------------------------------------------------- #
+# fetch 层错误传播(防静默失败回归,2026-08-17 401 事故)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_woocommerce_fetch_changes_http_error_propagates():
+    """fetch_changes 遇 HTTP 错误(如 401)必须向上抛,不得吞成"无变更"。
+
+    回归背景:2026-08-04~08-17 凭证错误时 fetch_changes 把 401 吞成空列表,
+    sync_log 记 success,商城数据静默冻结 13 天。改为抛出后 _sync_one 记
+    status=failed,增量窗口不再推过缺口。
+    """
+    from backend.connectors.woocommerce import WooCommerceConnector
+
+    connector = WooCommerceConnector(_make_config())
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status.side_effect = RuntimeError("401 Unauthorized")
+    with (
+        patch.object(connector, "_get", return_value=mock_resp),
+        pytest.raises(RuntimeError, match="401"),
+    ):
+        list(connector.fetch_changes(datetime.now(UTC) - timedelta(hours=1)))
+
+
+@pytest.mark.unit
+def test_woocommerce_fetch_all_http_error_propagates():
+    """fetch_all 遇 HTTP 错误同样必须抛出(首次同步失败不能伪装成空)。"""
+    from backend.connectors.woocommerce import WooCommerceConnector
+
+    connector = WooCommerceConnector(_make_config())
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status.side_effect = RuntimeError("500 Server Error")
+    with (
+        patch.object(connector, "_get", return_value=mock_resp),
+        pytest.raises(RuntimeError, match="500"),
+    ):
+        list(connector.fetch_all())

@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import delete, select
@@ -46,6 +47,16 @@ def tiny_repo(tmp_path):
     return r
 
 
+# 决策 2A(github 统一为唯一 git 源类型)移除了 LocalGitConnector 的
+# @register,以下 3 个测试经 ConnectorRegistry.create(type="local_git")
+# 必然 KeyError,自该决策起失效。待用 github connector + 本地路径重写;
+# skip/fallback 的 mock 路径已由 tests/pipeline/test_sync.py 覆盖。
+_LEGACY_LOCAL_GIT = pytest.mark.skip(
+    reason="local_git 已移除 registry 注册(决策 2A),待迁移 github connector"
+)
+
+
+@_LEGACY_LOCAL_GIT
 async def test_run_sync_reads_db_and_writes_documents_with_branch(tiny_repo, monkeypatch):
     """seed DataSource(local_git,多分支) → run_sync → documents 表有多分支行,branch 非空。"""
     from unittest.mock import MagicMock, patch
@@ -101,9 +112,7 @@ async def test_run_sync_reads_db_and_writes_documents_with_branch(tiny_repo, mon
         # 断言 documents 表有多分支行
         with sync_factory() as s:
             docs = list(
-                s.execute(
-                    select(Document).where(Document.source_id.like("ne301-code/%"))
-                ).scalars()
+                s.execute(select(Document).where(Document.source_id.like("ne301-code/%"))).scalars()
             )
             branches = {d.branch for d in docs}
             assert "main" in branches
@@ -111,9 +120,7 @@ async def test_run_sync_reads_db_and_writes_documents_with_branch(tiny_repo, mon
             # 清理
             for d in docs:
                 s.delete(d)
-            s.execute(
-                DataSource.__table__.delete().where(DataSource.id == "ne301-code")
-            )
+            s.execute(DataSource.__table__.delete().where(DataSource.id == "ne301-code"))
             s.commit()
     finally:
         async with engine.begin() as conn:
@@ -157,9 +164,7 @@ def backdated_repo(tmp_path):
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=r, check=True)
     (r / "main_only.py").write_text("a = 1\n")
     subprocess.run(["git", "add", ".", "-A"], cwd=r, check=True)
-    subprocess.run(
-        ["git", "commit", "-q", "-m", "init"], cwd=r, check=True, env=_GIT_OLD_ENV
-    )
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=r, check=True, env=_GIT_OLD_ENV)
     return r
 
 
@@ -167,6 +172,7 @@ _TEST_DSN = "postgresql+asyncpg://ask_ai:changeme@localhost:5432/ask_ai_test"
 
 
 @pytest.mark.integration
+@_LEGACY_LOCAL_GIT
 async def test_sync_skips_when_documents_exist_and_no_changes(backdated_repo):
     """fetch_changes 空 + documents 表已有记录 → 不回退 fetch_all,不 ingest_all。
 
@@ -224,9 +230,7 @@ async def test_sync_skips_when_documents_exist_and_no_changes(backdated_repo):
         # SyncLog 应记录 items_unchanged >= 1, items_new == 0
         with sync_factory() as s:
             logs = list(
-                s.execute(
-                    select(SyncLog).where(SyncLog.source_id == "ne301-skip")
-                ).scalars()
+                s.execute(select(SyncLog).where(SyncLog.source_id == "ne301-skip")).scalars()
             )
             assert logs, "应至少有一条 SyncLog"
             latest = max(logs, key=lambda x: x.started_at)
@@ -241,6 +245,7 @@ async def test_sync_skips_when_documents_exist_and_no_changes(backdated_repo):
 
 
 @pytest.mark.integration
+@_LEGACY_LOCAL_GIT
 async def test_sync_falls_back_when_no_documents(backdated_repo):
     """fetch_changes 空 + documents 表无记录 → 首次同步,回退 fetch_all(ingest_all 被调)。
 
@@ -289,6 +294,245 @@ async def test_sync_falls_back_when_no_documents(backdated_repo):
         with sync_factory() as s:
             s.execute(delete(Document).where(Document.source_id.like("ne301-first/%")))
             s.execute(delete(SyncLog).where(SyncLog.source_id == "ne301-first"))
+            s.commit()
+    finally:
+        await engine.dispose()
+
+
+# --------------------------------------------------------------------------- #
+# 增量窗口改造(2026-08-17):since = 上次成功时间,而非固定 now-24h
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.integration
+async def test_last_success_at_prefers_latest_success_ignores_failed():
+    """_last_success_at 取最近一条 success 的 finished_at,跳过 failed 行。
+
+    finished_at 为空时回退 started_at(dry_run/异常路径可能缺失)。
+    """
+    from scripts.sync import _last_success_at
+
+    now = datetime.now(UTC)
+    from backend.db.session import get_session_factory
+
+    engine = get_engine(_TEST_DSN)
+    try:
+        await init_db(engine)
+        async_factory = get_session_factory(engine)
+        sync_factory = get_sync_session_factory(_TEST_DSN)
+        sid = "win-lookup-src"
+
+        with sync_factory() as s:
+            s.execute(delete(SyncLog).where(SyncLog.source_id == sid))
+            # 三条:旧 success、更新的 failed、最新 success(finished_at 空)
+            s.add(
+                SyncLog(
+                    source_id=sid,
+                    source_type="local_git",
+                    status="success",
+                    started_at=now - timedelta(hours=10),
+                    finished_at=now - timedelta(hours=10),
+                )
+            )
+            s.add(
+                SyncLog(
+                    source_id=sid,
+                    source_type="local_git",
+                    status="failed",
+                    started_at=now - timedelta(hours=6),
+                    finished_at=now - timedelta(hours=6),
+                )
+            )
+            newest = SyncLog(
+                source_id=sid,
+                source_type="local_git",
+                status="success",
+                started_at=now - timedelta(hours=2),
+                finished_at=None,
+            )
+            s.add(newest)
+            s.commit()
+
+        got = await _last_success_at(async_factory, sid)
+
+        assert got is not None
+        assert got == newest.started_at  # 最近 success 的 started_at 回退
+
+        with sync_factory() as s:
+            s.execute(delete(SyncLog).where(SyncLog.source_id == sid))
+            s.commit()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.integration
+async def test_sync_one_uses_last_success_as_window():
+    """_sync_one 应把上次成功的 finished_at 作为 fetch_changes 的 since。
+
+    seed:documents 有行(触发 skip 路径)+ success SyncLog(5h 前)
+    → 记录型 connector 收到的 since == seeded finished_at。
+    """
+    from unittest.mock import MagicMock
+
+    from backend.connectors.registry import ConnectorRegistry, SourceConfig
+    from scripts.sync import _sync_one
+
+    now = datetime.now(UTC)
+    from backend.db.session import get_session_factory
+
+    engine = get_engine(_TEST_DSN)
+    try:
+        await init_db(engine)
+        async_factory = get_session_factory(engine)
+        sync_factory = get_sync_session_factory(_TEST_DSN)
+        sid = "win-pass-src"
+        last_success = now - timedelta(hours=5)
+
+        with sync_factory() as s:
+            s.execute(delete(SyncLog).where(SyncLog.source_id == sid))
+            s.execute(delete(Document).where(Document.source_id.like(f"{sid}/%")))
+            s.add(
+                Document(
+                    content_hash="w" * 64,
+                    source_id=f"{sid}/main/x.py",
+                    source_type="local_git",
+                    product="ne301",
+                    title="x",
+                    url="file:///x",
+                    branch="main",
+                    chunk_count=1,
+                )
+            )
+            s.add(
+                SyncLog(
+                    source_id=sid,
+                    source_type="local_git",
+                    status="success",
+                    started_at=last_success,
+                    finished_at=last_success,
+                )
+            )
+            s.commit()
+
+        recorded: dict[str, object] = {}
+
+        class _RecordingConnector:
+            def fetch_changes(self, since):
+                recorded["since"] = since
+                return iter([])  # 空变更 → skip 路径
+
+            def fetch_deleted(self, since):
+                return []
+
+        cfg = SourceConfig(
+            id=sid,
+            type="local_git",
+            product="ne301",
+            enabled=True,
+            config={"repo_path": "/nonexistent"},
+            sync_interval="1h",
+        )
+        orig_create = ConnectorRegistry.create
+        ConnectorRegistry.create = staticmethod(lambda c: _RecordingConnector())
+        try:
+            await _sync_one(cfg, MagicMock(), async_factory, triggered_by="test")
+        finally:
+            ConnectorRegistry.create = orig_create
+
+        assert recorded["since"] == last_success
+
+        # skip 路径仍记 success → 下次窗口继续推进
+        with sync_factory() as s:
+            latest = (
+                s.execute(
+                    select(SyncLog)
+                    .where(SyncLog.source_id == sid)
+                    .order_by(SyncLog.started_at.desc())
+                    .limit(1)
+                )
+                .scalars()
+                .one()
+            )
+            assert latest.status == "success"
+            s.execute(delete(SyncLog).where(SyncLog.source_id == sid))
+            s.execute(delete(Document).where(Document.source_id.like(f"{sid}/%")))
+            s.commit()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.integration
+async def test_sync_one_marks_failed_when_ingest_raises():
+    """ingest_all 抛错(全零守卫/OOM 模式)→ SyncLog 记 failed + error_detail。"""
+    from unittest.mock import MagicMock
+
+    from backend.connectors.base import RawDocument
+    from backend.connectors.registry import ConnectorRegistry, SourceConfig
+    from backend.db.session import get_session_factory
+    from scripts.sync import _sync_one
+
+    engine = get_engine(_TEST_DSN)
+    try:
+        await init_db(engine)
+        async_factory = get_session_factory(engine)
+        sync_factory = get_sync_session_factory(_TEST_DSN)
+        sid = "win-fail-src"
+
+        with sync_factory() as s:
+            s.execute(delete(SyncLog).where(SyncLog.source_id == sid))
+
+        doc = RawDocument(
+            source_id=f"{sid}/p/1",
+            source_type="woocommerce",
+            product="commercial",
+            title="p",
+            content="NE301 Kit",
+            url="https://x",
+            metadata={},
+            content_hash="f" * 64,
+        )
+
+        class _FailingConnector:
+            def fetch_changes(self, since):
+                return iter([doc])
+
+            def fetch_deleted(self, since):
+                return []
+
+        cfg = SourceConfig(
+            id=sid,
+            type="woocommerce",
+            product="commercial",
+            enabled=True,
+            config={},
+            sync_interval="1h",
+        )
+        pipeline = MagicMock()
+        pipeline.ingest_all.side_effect = RuntimeError(
+            "2 个文档灌入失败(可能 embed/写库故障): woo/p/1"
+        )
+
+        orig_create = ConnectorRegistry.create
+        ConnectorRegistry.create = staticmethod(lambda c: _FailingConnector())
+        try:
+            await _sync_one(cfg, pipeline, async_factory, triggered_by="test")
+        finally:
+            ConnectorRegistry.create = orig_create
+
+        with sync_factory() as s:
+            latest = (
+                s.execute(
+                    select(SyncLog)
+                    .where(SyncLog.source_id == sid)
+                    .order_by(SyncLog.started_at.desc())
+                    .limit(1)
+                )
+                .scalars()
+                .one()
+            )
+            assert latest.status == "failed"
+            assert "灌入失败" in (latest.error_detail or "")
+            s.execute(delete(SyncLog).where(SyncLog.source_id == sid))
             s.commit()
     finally:
         await engine.dispose()

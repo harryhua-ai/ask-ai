@@ -314,23 +314,33 @@ class IngestionPipeline:
         return success_count
 
     def ingest_all(self, docs: list[RawDocument]) -> dict[str, int]:
-        """批量灌入文档,单 doc 失败不中断后续。
+        """批量灌入文档,单 doc 失败不中断后续,但整体失败时 raise。
 
         跨 doc 累积 chunk 后一次性 embed(embedder 内部按 ``batch_size`` 批处理),
-        充分利用 GPU;再按 doc 批量写 Weaviate。单 doc 失败仅记 0,不中断批次。
+        充分利用 GPU;再按 doc 批量写 Weaviate。
+
+        契约(2026-08-17):处理完全部 doc 后,若存在灌入失败的 doc
+        (embed / 写库异常),统一 raise ``RuntimeError``——由调用方
+        (``scripts/sync.py``)记 SyncLog status=failed,增量窗口不推过缺口。
+        计 0 不再代表失败(仅代表合法空文档),避免二者混淆导致的静默丢数。
 
         Args:
             docs: 待灌入的原始文档列表。
 
         Returns:
-            ``{source_id: success_chunk_count}`` 字典;失败的 doc 计为 0。
+            ``{source_id: success_chunk_count}`` 字典;全部成功时返回。
+
+        Raises:
+            RuntimeError: 任一 doc 灌入失败(部分 doc 可能已成功写入,
+                重试幂等:content_hash 去重 + 确定性 UUID 覆盖写)。
         """
         results: dict[str, int] = {}
+        failed: list[str] = []
         batch_size = 64  # 每批 64 doc:控制内存,跨 doc 累积满 batch_size embed
         for start in range(0, len(docs), batch_size):
             batch = docs[start : start + batch_size]
             try:
-                results.update(self._ingest_doc_batch(batch))
+                results.update(self._ingest_doc_batch(batch, failed))
             except Exception as exc:  # noqa: BLE001 - 整批失败回退逐 doc
                 logger.error(
                     "批处理失败(start=%d): %s,回退逐 doc", start, str(exc)[:200]
@@ -341,13 +351,29 @@ class IngestionPipeline:
                     except Exception as exc2:  # noqa: BLE001
                         logger.error("索引失败 %s: %s", doc.source_id, exc2)
                         results[doc.source_id] = 0
+                        failed.append(doc.source_id)
+        if failed:
+            preview = ", ".join(failed[:10])
+            if len(failed) > 10:
+                preview += ", ..."
+            raise RuntimeError(
+                f"{len(failed)} 个文档灌入失败(可能 embed/写库故障,需重试): {preview}"
+            )
         return results
 
-    def _ingest_doc_batch(self, docs: list[RawDocument]) -> dict[str, int]:
+    def _ingest_doc_batch(
+        self, docs: list[RawDocument], failed: list[str] | None = None
+    ) -> dict[str, int]:
         """跨 doc 批处理:chunk → 批量 embed → 按 doc 批量写 Weaviate + Postgres。
 
         将多 doc 的 chunk 文本拼成一个列表统一 embed(embedder 内部按
         ``batch_size`` 切批),消除逐 doc 小 batch 的 GPU 固定开销。
+
+        Args:
+            docs: 待灌入的原始文档列表。
+            failed: 失败 doc 的 source_id 收集列表(可选)。提供时,批内
+                切分 / 逐 doc 回退失败的 doc 会被追加进去,供 ``ingest_all``
+                统一 raise;缺省时保持旧的静默计 0 行为(直接调用方兼容)。
         """
         import weaviate as _wv
 
@@ -368,6 +394,8 @@ class IngestionPipeline:
             except Exception as exc:  # noqa: BLE001
                 logger.error("索引失败 %s: %s", doc.source_id, str(exc)[:200])
                 results[doc.source_id] = 0
+                if failed is not None:
+                    failed.append(doc.source_id)
         if not doc_chunks:
             return results
 
@@ -392,6 +420,8 @@ class IngestionPipeline:
                 except Exception as exc2:  # noqa: BLE001
                     logger.error("索引失败 %s: %s", doc.source_id, exc2)
                     results[doc.source_id] = 0
+                    if failed is not None:
+                        failed.append(doc.source_id)
             return results
         if len(all_vectors) != len(all_texts):
             raise RuntimeError(
