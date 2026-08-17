@@ -3,14 +3,18 @@
 #
 # 多阶段构建:
 
-#   2. builder:cuda + uv 装依赖(torch cu128)
+#   2. builder:ubuntu + uv 装依赖(torch cu128)
 
 #
-# GPU:CUDA 12.8 + cu128 torch(与 tesla-t4 driver 575/CUDA 12.9 兼容)
+# GPU:CUDA 12.8 兼容(tesla-t4 driver 575/CUDA 12.9),但镜像**不用** nvidia/cuda
+# 基础镜像——torch cu128 wheel 自带全套 nvidia-* pip 库(site-packages/nvidia/*,
+# 含 cudnn),torch 经 RPATH 加载;nvidia/cuda 基础镜像的系统 CUDA/cuDNN(~4.5GB)
+# 与之重复且不被使用,2026-08-17 移除后镜像 14.1GB → ~9.6GB。driver 侧 libcuda
+# 由 nvidia container runtime 注入(compose deploy.resources.devices)。
 # 模型/语料不打进镜像,容器启动时挂载(决策 2/3)
 
 # ---------- python builder ----------
-FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu24.04 AS builder
+FROM ubuntu:24.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -36,7 +40,7 @@ RUN uv sync --frozen --no-dev
 RUN uv pip install torch --index-url https://download.pytorch.org/whl/cu128 --reinstall-package torch
 
 # ---------- runtime ----------
-FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu24.04 AS runtime
+FROM ubuntu:24.04 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
