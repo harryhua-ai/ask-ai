@@ -75,7 +75,13 @@ class BGEEmbedder(Embedder):
                 "FlagEmbedding 未安装,请在虚拟环境中执行 "
                 "`uv pip install FlagEmbedding` 或 `pip install FlagEmbedding`"
             ) from exc
-        self._model = BGEM3FlagModel(model_name, use_fp16=self._device != "cpu")
+        self._model = BGEM3FlagModel(
+            model_name,
+            use_fp16=self._device != "cpu",
+            # 显式传设备:devices 缺省时 FlagEmbedding 会自检 cuda 自行上 GPU,
+            # 无视 EMBEDDER_DEVICE=cpu(cpu 模式曾以 fp32 加载上 GPU 致 OOM)
+            devices=[self._device],
+        )
         logger.info("BGE-m3 加载完成")
 
     @property
@@ -137,7 +143,12 @@ class BGEReranker(Reranker):
                 "FlagEmbedding 未安装,请在虚拟环境中执行 "
                 "`uv pip install FlagEmbedding` 或 `pip install FlagEmbedding`"
             ) from exc
-        self._model = FlagReranker(model_name, use_fp16=self._device != "cpu")
+        self._model = FlagReranker(
+            model_name,
+            use_fp16=self._device != "cpu",
+            # 同 BGEEmbedder:显式传设备,防 FlagEmbedding 自选 GPU
+            devices=[self._device],
+        )
         logger.info("bge-reranker 加载完成")
 
     def rerank(self, query: str, documents: list[str]) -> list[float]:

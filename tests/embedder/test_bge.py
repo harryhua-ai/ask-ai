@@ -179,6 +179,68 @@ def test_ensure_hf_cache_does_not_override_existing(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# 单元测试:构造参数 devices 透传(防 FlagEmbedding 自选 GPU 回归)
+# --------------------------------------------------------------------------- #
+
+
+def _make_fake_flagembedding() -> tuple[types.ModuleType, list, list]:
+    """构造记录调用参数的假 FlagEmbedding 模块(不加载真实权重)。
+
+    Returns:
+        (fake 模块, BGEM3FlagModel 调用记录列表, FlagReranker 调用记录列表)
+    """
+    bgem3_calls: list[dict] = []
+    reranker_calls: list[dict] = []
+
+    class BGEM3FlagModel:
+        def __init__(self, *args, **kwargs):
+            bgem3_calls.append({"args": args, "kwargs": kwargs})
+
+    class FlagReranker:
+        def __init__(self, *args, **kwargs):
+            reranker_calls.append({"args": args, "kwargs": kwargs})
+
+    mod = types.ModuleType("FlagEmbedding")
+    mod.BGEM3FlagModel = BGEM3FlagModel
+    mod.FlagReranker = FlagReranker
+    return mod, bgem3_calls, reranker_calls
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("device,use_fp16", [("cpu", False), ("cuda", True)])
+def test_embedder_passes_device_to_flagembedding(monkeypatch, tmp_path, device, use_fp16):
+    """BGEEmbedder 构造必须显式传 devices,否则 FlagEmbedding 检测到
+    cuda 后会无视 EMBEDDER_DEVICE 自行上 GPU(共享 T4 显存满时 sync
+    embed OOM,2026-08-17 踩过:cpu 模式实际以 fp32 加载上 GPU)。"""
+
+    from backend.embedder.bge import BGEEmbedder
+
+    mod, bgem3_calls, _ = _make_fake_flagembedding()
+    monkeypatch.setitem(sys.modules, "FlagEmbedding", mod)
+
+    BGEEmbedder(device=device, cache_dir=tmp_path)
+
+    assert bgem3_calls[0]["kwargs"]["devices"] == [device]
+    assert bgem3_calls[0]["kwargs"]["use_fp16"] is use_fp16
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("device,use_fp16", [("cpu", False), ("cuda", True)])
+def test_reranker_passes_device_to_flagembedding(monkeypatch, tmp_path, device, use_fp16):
+    """BGEReranker 构造必须显式传 devices(同 BGEEmbedder,防自选 GPU)。"""
+
+    from backend.embedder.bge import BGEReranker
+
+    mod, _, reranker_calls = _make_fake_flagembedding()
+    monkeypatch.setitem(sys.modules, "FlagEmbedding", mod)
+
+    BGEReranker(device=device, cache_dir=tmp_path)
+
+    assert reranker_calls[0]["kwargs"]["devices"] == [device]
+    assert reranker_calls[0]["kwargs"]["use_fp16"] is use_fp16
+
+
+# --------------------------------------------------------------------------- #
 # 集成测试:真实模型推理(首次运行需下载权重)
 # --------------------------------------------------------------------------- #
 
@@ -228,10 +290,13 @@ def test_reranker_single_document_returns_list():
     assert isinstance(scores, list)
     assert len(scores) == 1
 
+
 def test_bge_embedder_accepts_batch_max_length():
     """BGEEmbedder 接受 batch_size/max_length(GPU 大 batch 配置化)。"""
     import inspect
+
     from backend.embedder.bge import BGEEmbedder
+
     sig = inspect.signature(BGEEmbedder.__init__)
     assert "batch_size" in sig.parameters
     assert "max_length" in sig.parameters
