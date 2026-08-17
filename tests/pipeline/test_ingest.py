@@ -135,23 +135,80 @@ def test_ingest_skips_empty_document():
 
 
 @pytest.mark.unit
-def test_ingest_all_isolates_per_doc_failure():
-    """一个 doc 抛异常时,后续 doc 仍被处理,失败 doc 计为 0。"""
+def test_ingest_all_isolates_per_doc_failure_then_raises():
+    """单 doc 失败仍处理完其余 doc(隔离),但整体必须 raise 标记失败。
+
+    契约变更(2026-08-17):失败 doc 计 0 会与"合法空文档"混淆,导致
+    sync_log 记 success、增量窗口推过缺口(OOM 事故模式)。现在 ingest_all
+    处理完全部 doc 后对失败集合统一 raise,由 _sync_one 记 status=failed。
+    """
     embedder = _make_embedder()
     client = _make_weaviate_client()
 
     docs = [_make_doc(source_id="ok/1"), _make_doc(source_id="bad/1")]
     pipeline = IngestionPipeline(embedder, client)
 
-    # 让第二个 doc 在 ingest_document 阶段就抛(模拟 embed 异常)
-    with patch.object(
-        pipeline,
-        "ingest_document",
-        side_effect=[1, RuntimeError("boom")],
+    # 让第二个 doc 在逐 doc 回退路径抛(模拟 embed 异常)
+    with (
+        patch.object(
+            pipeline,
+            "ingest_document",
+            side_effect=[1, RuntimeError("boom")],
+        ) as mock_ingest,
+        pytest.raises(RuntimeError, match="bad/1"),
     ):
+        pipeline.ingest_all(docs)
+
+    # 隔离语义:失败前 ok/1 也被处理,而不是第一个失败就中断
+    assert mock_ingest.call_count == 2
+
+
+@pytest.mark.unit
+def test_ingest_all_all_success_returns_counts_without_raise():
+    """全部成功时正常返回计数字典,不抛异常(向后兼容主路径)。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+
+    docs = [_make_doc(source_id="a/1"), _make_doc(source_id="b/1")]
+    pipeline = IngestionPipeline(embedder, client)
+
+    with patch.object(pipeline, "ingest_document", side_effect=[2, 3]):
         results = pipeline.ingest_all(docs)
 
-    assert results == {"ok/1": 1, "bad/1": 0}
+    assert results == {"a/1": 2, "b/1": 3}
+
+
+@pytest.mark.unit
+def test_ingest_all_chunk_failure_tracked_and_raised():
+    """_ingest_doc_batch Phase1 切分失败的 doc 也要进入失败集合并触发 raise。
+
+    覆盖批处理路径的失败收集:不经过 ingest_document 回退,直接在
+    chunk 阶段抛错的 doc 不能被静默计 0。
+    """
+    import backend.pipeline.ingest as ingest_mod
+
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+
+    docs = [_make_doc(source_id="good/1"), _make_doc(source_id="evil/1")]
+    pipeline = IngestionPipeline(embedder, client)
+
+    real_chunk = ingest_mod.chunk_document_semantic
+
+    def _chunk_boom(doc, *args, **kwargs):
+        if doc.source_id == "evil/1":
+            raise RuntimeError("chunker boom")
+        return real_chunk(doc, *args, **kwargs)
+
+    with (
+        patch.object(ingest_mod, "chunk_document_semantic", side_effect=_chunk_boom),
+        patch.object(pipeline, "ingest_document") as mock_fallback,
+    ):
+        # good/1 走批路径成功;evil/1 切分失败被收集;
+        # 批处理整体成功(不触发回退),最后统一 raise
+        with pytest.raises(RuntimeError, match="evil/1"):
+            pipeline.ingest_all(docs)
+        mock_fallback.assert_not_called()
 
 
 @pytest.mark.unit

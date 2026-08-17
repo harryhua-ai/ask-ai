@@ -65,6 +65,10 @@ def _make_async_session_factory():
     """
     session = MagicMock()
     session.commit = AsyncMock()  # run_sync 中是 await session.commit()
+    # _last_success_at 的 sync_log 查询:默认无成功记录(窗口回退 24h)
+    session.execute = AsyncMock(
+        return_value=MagicMock(one_or_none=lambda: None)
+    )
 
     @asynccontextmanager
     async def _ctx():
@@ -417,7 +421,11 @@ async def test_sync_one_falls_back_to_fetch_all_when_changes_empty():
     # _count_documents 调 await session.execute(...).scalar()
     # 返回 0 = documents 表无记录 → 走首次回退路径
     session.execute = AsyncMock(
-        return_value=MagicMock(scalar=MagicMock(return_value=0))
+        return_value=MagicMock(
+            scalar=MagicMock(return_value=0),
+            # _last_success_at 的窗口查询:无成功记录 → 窗口回退 24h
+            one_or_none=lambda: None,
+        )
     )
 
     with patch("scripts.sync.ConnectorRegistry.create", return_value=connector):
@@ -451,7 +459,10 @@ async def test_sync_one_reindex_forces_fetch_all_bypassing_skip():
     session_factory, session = _make_async_session_factory()
     # documents 表"已有记录"(count > 0)——正常路径会 skip,但 reindex 应绕过
     session.execute = AsyncMock(
-        return_value=MagicMock(scalar=MagicMock(return_value=100))
+        return_value=MagicMock(
+            scalar=MagicMock(return_value=100),
+            one_or_none=lambda: None,
+        )
     )
 
     with patch("scripts.sync.ConnectorRegistry.create", return_value=connector):
@@ -525,12 +536,13 @@ async def test_sync_one_commit_failure_does_not_propagate():
     pipeline.ingest_all.return_value = {"doc1": 1}
     connector = _make_connector_mock()
 
-    # session_factory() 本身抛异常(连接失败场景)
-    failing_factory = MagicMock(side_effect=RuntimeError("session factory crashed"))
+    # session 可用(窗口查询正常),但 commit 失败(死锁 / 连接断开场景)
+    session_factory, session = _make_async_session_factory()
+    session.commit = AsyncMock(side_effect=RuntimeError("db commit failed"))
 
     # 不应抛异常 - finally 内层 try/except 应吞掉异常
     with patch("scripts.sync.ConnectorRegistry.create", return_value=connector):
-        await _sync_one(cfg, pipeline, failing_factory)
+        await _sync_one(cfg, pipeline, session_factory)
 
     # 主流程应已正常完成
     pipeline.ingest_all.assert_called_once()
@@ -563,6 +575,10 @@ async def test_sync_log_commit_failure_does_not_break_isolation():
     async def _ctx():
         call_state["n"] += 1
         session = MagicMock()
+        # 窗口查询正常(无成功记录)
+        session.execute = AsyncMock(
+            return_value=MagicMock(one_or_none=lambda: None)
+        )
         if call_state["n"] == 1:
             # 模拟 commit 失败(死锁 / 连接断开)
             session.commit = AsyncMock(side_effect=RuntimeError("db commit failed"))

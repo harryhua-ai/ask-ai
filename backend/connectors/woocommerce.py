@@ -264,12 +264,12 @@ class WooCommerceConnector:
         return resp.json()
 
     def fetch_all(self) -> Iterator[RawDocument]:
-        """全量抓取所有 publish 产品(单页,≤per_page)。"""
-        try:
-            products = self._fetch_page()
-        except Exception as exc:  # noqa: BLE001
-            logger.error("WooCommerce fetch_all 失败: %s", str(exc)[:200])
-            return
+        """全量抓取所有 publish 产品(单页,≤per_page)。
+
+        HTTP 错误(401/5xx 等)直接向上抛,由 ``_sync_one`` 记
+        SyncLog status=failed——首次同步失败不得伪装成"空结果"。
+        """
+        products = self._fetch_page()
         for p in products:
             try:
                 yield self._product_to_document(p)
@@ -279,12 +279,13 @@ class WooCommerceConnector:
                 )
 
     def fetch_changes(self, since: datetime) -> Iterator[RawDocument]:
-        """增量抓取:modified_after 过滤。"""
-        try:
-            products = self._fetch_page(modified_after=since.isoformat())
-        except Exception as exc:  # noqa: BLE001
-            logger.error("WooCommerce fetch_changes 失败: %s", str(exc)[:200])
-            return
+        """增量抓取:modified_after 过滤。
+
+        HTTP 错误(401/5xx 等)直接向上抛。2026-08-04~08-17 教训:此处
+        吞异常返回空会让 sync_log 记 success,商城数据静默冻结 13 天;
+        增量窗口改为"上次成功时间"后,静默失败更会把窗口推过缺口。
+        """
+        products = self._fetch_page(modified_after=since.isoformat())
         for p in products:
             try:
                 yield self._product_to_document(p)
