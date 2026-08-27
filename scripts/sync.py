@@ -264,7 +264,6 @@ async def _handle_no_change(
             gap_desc = "存在部分 chunk 丢失(整篇差集为空),未自动补齐,需人工核查"
         log_entry.status = "partial"
         log_entry.items_new = 0
-        log_entry.items_updated = 0  # 部分 chunk 丢失未自动补齐,无成功写入
         log_entry.error_detail = (
             f"一致性校验发现缺口 {report.actual_chunks}/{report.expected_chunks} chunks;"
             f"{gap_desc};orphan={report.orphan_count}"
