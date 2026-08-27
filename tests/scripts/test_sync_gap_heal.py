@@ -32,8 +32,9 @@ async def test_no_change_but_vector_gap_triggers_heal_and_partial(
 ):
     """无变更 + 一致性校验发现缺口 → fetch_all 过滤缺口补灌,记 partial。"""
     mock_last_success.return_value = datetime(2026, 8, 18, 15, 39, tzinfo=UTC)
-    mock_count.return_value = 500           # documents 已有记录(非首次)
+    mock_count.return_value = 500  # documents 已有记录(非首次)
     from backend.services.vector_consistency import VectorGapReport
+
     mock_verify.return_value = VectorGapReport(
         expected_chunks=500, actual_chunks=480, missing_source_ids=["doc-a"]
     )
@@ -42,18 +43,31 @@ async def test_no_change_but_vector_gap_triggers_heal_and_partial(
     # fetch_changes 空(无变更);fetch_all 返回缺口文档
     connector.fetch_changes.return_value = iter([])
     from backend.connectors.base import RawDocument
-    connector.fetch_all.return_value = iter([
-        RawDocument(
-            source_id="doc-a", source_type="github", product="x",
-            title="a", content="A", url="http://a", metadata={},
-            content_hash="h1",
-        ),
-        RawDocument(  # 非缺口文档,应被过滤掉
-            source_id="doc-keep", source_type="github", product="x",
-            title="b", content="B", url="http://b", metadata={},
-            content_hash="h2",
-        ),
-    ])
+
+    connector.fetch_all.return_value = iter(
+        [
+            RawDocument(
+                source_id="doc-a",
+                source_type="github",
+                product="x",
+                title="a",
+                content="A",
+                url="http://a",
+                metadata={},
+                content_hash="h1",
+            ),
+            RawDocument(  # 非缺口文档,应被过滤掉
+                source_id="doc-keep",
+                source_type="github",
+                product="x",
+                title="b",
+                content="B",
+                url="http://b",
+                metadata={},
+                content_hash="h2",
+            ),
+        ]
+    )
     connector.fetch_deleted.return_value = []
     mock_create.return_value = connector
 
@@ -86,6 +100,7 @@ async def test_no_change_and_healthy_keeps_success_skip(
     mock_last_success.return_value = datetime(2026, 8, 18, 15, 39, tzinfo=UTC)
     mock_count.return_value = 500
     from backend.services.vector_consistency import VectorGapReport
+
     mock_verify.return_value = VectorGapReport(
         expected_chunks=500, actual_chunks=500, missing_source_ids=[]
     )
@@ -106,3 +121,29 @@ async def test_no_change_and_healthy_keeps_success_skip(
     written = session_factory.return_value.__aenter__.return_value.add.call_args[0][0]
     assert written.status == "success"
     assert written.items_unchanged == 500
+
+
+@pytest.mark.asyncio
+@patch("scripts.sync._count_documents", new_callable=AsyncMock)
+@patch("scripts.sync._last_success_at", new_callable=AsyncMock)
+@patch("scripts.sync.verify_source_vectors", new_callable=AsyncMock)
+@patch("scripts.sync.ConnectorRegistry.create")
+async def test_dry_run_no_change_skips_verification(
+    mock_create, mock_verify, mock_last_success, mock_count
+):
+    """dry_run 无变更 → 不校验不灌入(回归防线:审查 Critical)。"""
+    mock_last_success.return_value = datetime(2026, 8, 18, 15, 39, tzinfo=UTC)
+    mock_count.return_value = 500
+    connector = MagicMock()
+    connector.fetch_changes.return_value = iter([])
+    connector.fetch_all.return_value = iter([])  # 不应被调用
+    mock_create.return_value = connector
+    pipeline = _make_pipeline()
+    session_factory = MagicMock()
+    session_factory.return_value.__aenter__.return_value.commit = AsyncMock()
+
+    await _sync_one(_make_cfg(), pipeline, session_factory, triggered_by="manual", dry_run=True)
+
+    # 校验器未被调用(不触发只读查询副作用),ingest_all 未被调用(不灌入)
+    assert not mock_verify.called
+    assert not pipeline.ingest_all.called

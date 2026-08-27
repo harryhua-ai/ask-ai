@@ -203,13 +203,16 @@ async def _handle_no_change(
     session_factory: Any,
     log_entry: SyncLog,
     start: float,
+    dry_run: bool = False,
 ) -> None:
     """无变更路径:先做向量一致性校验,缺口则 fetch_all 过滤补灌并记 partial。
 
     背景(2026-08 Weaviate 只读事故):Postgres documents 表有记录但
     Weaviate 无向量的缺口文档,增量同步永远判"无变更跳过"而不自愈。
     本函数在跳过前核对该源的向量完整性:
-      - 健康(汇总级总数相等) → 维持旧语义:记 success + unchanged 返回;
+      - dry_run → 维持原语义:仅统计不校验不灌入(SyncLog 由 finally 的
+        not dry_run 守卫,同样不写);
+      - 健康(汇总级总数相等) → 记 success + unchanged;
         `_last_success_at` 认 success → 窗口照常推进。
       - 有缺口 → fetch_all 拉全源后按 missing_source_ids 过滤,
         只对缺口文档重灌(embed 幂等 upsert);记 status="partial"
@@ -224,13 +227,20 @@ async def _handle_no_change(
         session_factory: 异步会话工厂。
         log_entry: 待写 SyncLog(就地改 status/items/error_detail/finished_at)。
         start: time.monotonic() 起点(算 duration_ms)。
+        dry_run: True 时维持旧语义仅统计,绝不触发校验/灌入副作用。
     """
+    if dry_run:
+        # dry-run 原语义:无变更时也只列举,不做任何校验/写库副作用
+        log_entry.items_new = 0
+        log_entry.items_unchanged = existing
+        log_entry.finished_at = datetime.now(UTC)
+        log_entry.duration_ms = int((time.monotonic() - start) * 1000)
+        return
     report = await verify_source_vectors(session_factory, pipeline, source_id)
     if report.is_healthy:
-        logger.info(
-            "数据源 %s 无变更,跳过(documents 已有 %d)", source_id, existing
-        )
+        logger.info("数据源 %s 无变更,跳过(documents 已有 %d)", source_id, existing)
         log_entry.items_new = 0
+        log_entry.items_updated = 0
         log_entry.items_unchanged = existing
     else:
         # 有缺口:fetch_all 后只对缺口文档 embed 重灌(幂等 upsert)。
@@ -250,9 +260,11 @@ async def _handle_no_change(
             log_entry.items_updated = sum(results.values())
             gap_desc = f"已补齐 {len(missing_set)} 篇缺失文档"
         else:
+            log_entry.items_updated = 0  # 部分 chunk 丢失未自动补齐
             gap_desc = "存在部分 chunk 丢失(整篇差集为空),未自动补齐,需人工核查"
         log_entry.status = "partial"
         log_entry.items_new = 0
+        log_entry.items_updated = 0  # 部分 chunk 丢失未自动补齐,无成功写入
         log_entry.error_detail = (
             f"一致性校验发现缺口 {report.actual_chunks}/{report.expected_chunks} chunks;"
             f"{gap_desc};orphan={report.orphan_count}"
@@ -302,9 +314,7 @@ async def _sync_one(
         # 增量窗口:上次成功时间(失败不推进窗口,防缺口被推过)
         last_success = await _last_success_at(session_factory, cfg.id)
         since = _compute_since(last_success, datetime.now(UTC))
-        logger.info(
-            "数据源 %s 增量窗口: %s", cfg.id, since.isoformat()
-        )
+        logger.info("数据源 %s 增量窗口: %s", cfg.id, since.isoformat())
 
         if reindex:
             # reindex 模式:绕过增量 skip,强制全量重灌(符号字段回填 /
@@ -319,8 +329,14 @@ async def _sync_one(
                 existing = await _count_documents(session_factory, cfg.id)
                 if existing > 0:
                     await _handle_no_change(
-                        cfg.id, existing, connector, pipeline, session_factory,
-                        log_entry, start,
+                        cfg.id,
+                        existing,
+                        connector,
+                        pipeline,
+                        session_factory,
+                        log_entry,
+                        start,
+                        dry_run=dry_run,
                     )
                     return
                 # 首次同步:documents 表无记录,回退到全量拉取
