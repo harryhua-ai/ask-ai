@@ -65,6 +65,7 @@ from backend.db.session import (
 )
 from backend.embedder.bge import BGEEmbedder
 from backend.pipeline.ingest import IngestionPipeline
+from backend.services.vector_consistency import verify_source_vectors
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +195,72 @@ async def _last_success_at(session_factory: Any, source_id: str) -> datetime | N
     return finished_at or started_at
 
 
+async def _handle_no_change(
+    source_id: str,
+    existing: int,
+    connector: Any,
+    pipeline: IngestionPipeline,
+    session_factory: Any,
+    log_entry: SyncLog,
+    start: float,
+) -> None:
+    """无变更路径:先做向量一致性校验,缺口则 fetch_all 过滤补灌并记 partial。
+
+    背景(2026-08 Weaviate 只读事故):Postgres documents 表有记录但
+    Weaviate 无向量的缺口文档,增量同步永远判"无变更跳过"而不自愈。
+    本函数在跳过前核对该源的向量完整性:
+      - 健康(汇总级总数相等) → 维持旧语义:记 success + unchanged 返回;
+        `_last_success_at` 认 success → 窗口照常推进。
+      - 有缺口 → fetch_all 拉全源后按 missing_source_ids 过滤,
+        只对缺口文档重灌(embed 幂等 upsert);记 status="partial"
+        + error_detail。partial 不被 `_last_success_at` 采纳 → 窗口不
+        推进,下一轮同步重新校验自确认。
+
+    Args:
+        source_id: 数据源 ID(不带斜杠;校验器内部拼 `{prefix}/%` 与 `{prefix}/*`)。
+        existing: documents 表该源已有记录数。
+        connector: 已实例化的 connector(fetch_all 用)。
+        pipeline: 灌入管道(校验与补灌共用)。
+        session_factory: 异步会话工厂。
+        log_entry: 待写 SyncLog(就地改 status/items/error_detail/finished_at)。
+        start: time.monotonic() 起点(算 duration_ms)。
+    """
+    report = await verify_source_vectors(session_factory, pipeline, source_id)
+    if report.is_healthy:
+        logger.info(
+            "数据源 %s 无变更,跳过(documents 已有 %d)", source_id, existing
+        )
+        log_entry.items_new = 0
+        log_entry.items_unchanged = existing
+    else:
+        # 有缺口:fetch_all 后只对缺口文档 embed 重灌(幂等 upsert)。
+        # 注意 part-chunk 丢失场景下 missing_source_ids 可能为空(差集只看
+        # 整篇缺失),此时仍走 partial 使窗口不推进并暴露详情,绝不静默跳过。
+        logger.info(
+            "数据源 %s 一致性校验发现缺口:%d/%d chunks(actual/expected),%d 篇整篇缺失",
+            source_id,
+            report.actual_chunks,
+            report.expected_chunks,
+            len(report.missing_source_ids),
+        )
+        if report.missing_source_ids:
+            missing_set = set(report.missing_source_ids)
+            docs = [d for d in connector.fetch_all() if d.source_id in missing_set]
+            results = pipeline.ingest_all(docs)  # 写失败仍 raise → 走外层 except 记 failed
+            log_entry.items_updated = sum(results.values())
+            gap_desc = f"已补齐 {len(missing_set)} 篇缺失文档"
+        else:
+            gap_desc = "存在部分 chunk 丢失(整篇差集为空),未自动补齐,需人工核查"
+        log_entry.status = "partial"
+        log_entry.items_new = 0
+        log_entry.error_detail = (
+            f"一致性校验发现缺口 {report.actual_chunks}/{report.expected_chunks} chunks;"
+            f"{gap_desc};orphan={report.orphan_count}"
+        )
+    log_entry.finished_at = datetime.now(UTC)
+    log_entry.duration_ms = int((time.monotonic() - start) * 1000)
+
+
 async def _sync_one(
     cfg: SourceConfig,
     pipeline: IngestionPipeline,
@@ -251,14 +318,10 @@ async def _sync_one(
                 # 区分首次(无 documents 记录)vs 无变更(已有记录)
                 existing = await _count_documents(session_factory, cfg.id)
                 if existing > 0:
-                    # 无变更跳过:不回退全量,不灌入,直接记 SyncLog 返回
-                    logger.info(
-                        "数据源 %s 无变更,跳过(documents 已有 %d)", cfg.id, existing
+                    await _handle_no_change(
+                        cfg.id, existing, connector, pipeline, session_factory,
+                        log_entry, start,
                     )
-                    log_entry.items_new = 0
-                    log_entry.items_unchanged = existing
-                    log_entry.finished_at = datetime.now(UTC)
-                    log_entry.duration_ms = int((time.monotonic() - start) * 1000)
                     return
                 # 首次同步:documents 表无记录,回退到全量拉取
                 logger.info("数据源 %s 首次同步,回退到全量拉取", cfg.id)
