@@ -737,3 +737,28 @@ def test_build_props_contains_symbol():
     assert props["source_id"] == "ne301/main.py"
     assert props["branch"] == "main"
     assert props["chunk_type"] == "code"
+
+
+# --------------------------------------------------------------------------- #
+# replace 回退失败诚实上报
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_ingest_all_raises_when_replace_fallback_fails():
+    """insert_many 失败 + replace 回退也失败 → 该 doc 计入 failed → ingest_all raise。
+
+    复现缺陷 1:replace 回退失败只 warn 不计失败,导致 sync 误记 success。
+    修复后 replace 失败对象计入 failed,ingest_all 末尾 raise,由 sync 记 failed。
+    """
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+    collection = client.collections.get.return_value
+    # insert_many 抛块级异常(触发整块 replace 回退)
+    collection.data.insert_many.side_effect = Exception("store is read-only")
+    # replace 回退也失败(模拟 Weaviate 只读)
+    collection.data.replace.side_effect = Exception("store is read-only")
+
+    pipeline = IngestionPipeline(embedder, client)
+    with pytest.raises(RuntimeError, match="灌入失败"):
+        pipeline.ingest_all([_make_doc()])

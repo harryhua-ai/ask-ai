@@ -472,6 +472,7 @@ class IngestionPipeline:
                     str(exc)[:120],
                 )
                 failed_idx.update(range(_ws, _we))
+        replace_failed: set[int] = set()  # replace 回退也失败的对象索引(写库彻底失败)
         for fi in failed_idx:  # replace 回退(用预计算向量,不重 embed)
             try:
                 self._collection.data.replace(
@@ -483,12 +484,18 @@ class IngestionPipeline:
                 logger.warning(
                     "replace 回退失败 uuid=%s: %s", all_uuids[fi], str(exc2)[:120]
                 )
-        # 按 doc 统计成功数(insert 成功 + replace 回退均计成功)+ Postgres upsert + 日志
+                replace_failed.add(fi)
+        # 按 doc 统计成功数(insert 成功 + replace 回退成功计成功;replace 也失败计失败)
         for idx, (doc, chunks) in enumerate(doc_chunks):
             o_s, o_e = obj_spans[idx]
             total = o_e - o_s
-            n_failed_in_doc = sum(1 for i in range(o_s, o_e) if i in failed_idx)
-            success_count = total - n_failed_in_doc  # replace 回退的也算(已尝试覆盖)
+            n_failed_in_doc = sum(
+                1 for i in range(o_s, o_e) if i in failed_idx or i in replace_failed
+            )
+            success_count = total - n_failed_in_doc
+            if failed is not None and n_failed_in_doc > 0:
+                # 写库彻底失败(insert 失败且 replace 也失败)→ 记入 failed,由 ingest_all raise
+                failed.append(doc.source_id)
             if self._session_factory is not None:
                 try:
                     self._upsert_postgres(doc, success_count)
