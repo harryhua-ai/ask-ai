@@ -489,9 +489,7 @@ class IngestionPipeline:
         for idx, (doc, chunks) in enumerate(doc_chunks):
             o_s, o_e = obj_spans[idx]
             total = o_e - o_s
-            n_failed_in_doc = sum(
-                1 for i in range(o_s, o_e) if i in failed_idx or i in replace_failed
-            )
+            n_failed_in_doc = sum(1 for i in range(o_s, o_e) if i in replace_failed)
             success_count = total - n_failed_in_doc
             if failed is not None and n_failed_in_doc > 0:
                 # 写库彻底失败(insert 失败且 replace 也失败)→ 记入 failed,由 ingest_all raise

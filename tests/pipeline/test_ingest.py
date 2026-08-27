@@ -762,3 +762,31 @@ def test_ingest_all_raises_when_replace_fallback_fails():
     pipeline = IngestionPipeline(embedder, client)
     with pytest.raises(RuntimeError, match="灌入失败"):
         pipeline.ingest_all([_make_doc()])
+
+
+@pytest.mark.unit
+def test_ingest_all_idempotent_replace_success_does_not_raise():
+    """insert has_errors(UUID 已存在)+ replace 成功 → 幂等重灌不 raise、全部计成功。
+
+    回归防线(审查 Critical):若 n_failed_in_doc 误用 ``i in failed_idx``,
+    则 replace 已成功写入的对象也被计失败 → 任何含 UUID 冲突的增量 sync
+    误记 failed → 窗口不推进 → 下轮重拉同一窗口再失败,永久循环。
+    修复后只有 replace 也失败的对象计入失败,幂等重灌正常返回。
+    """
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+    collection = client.collections.get.return_value
+    # insert_many 返回含 has_errors 的 response(模拟确定性 UUID 已存在)→ 进入 replace 回退
+    resp = MagicMock()
+    resp.has_errors = True
+    insert_result = MagicMock()
+    insert_result.all_responses = [resp]
+    collection.data.insert_many.return_value = insert_result
+    # replace 回退正常成功(覆盖写,不设 side_effect)
+
+    pipeline = IngestionPipeline(embedder, client)
+    results = pipeline.ingest_all([_make_doc()])
+
+    # 不 raise,replace 覆盖写 1 次,该 doc 全部 chunk 计成功
+    assert results == {"test/1": 1}
+    collection.data.replace.assert_called_once()
