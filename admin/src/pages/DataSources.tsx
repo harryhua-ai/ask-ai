@@ -384,21 +384,24 @@ export default function DataSources() {
   };
 
   // 后端 trigger_sync 为 fire-and-forget,需轮询 list 检测 last_sync 推进以判定结束;
-  // 再按 last_sync_status 区分成功/失败,失败时带 error_detail。
+  // 再按 last_sync_status 区分成功/失败/补齐(partial),失败/补齐时带 error_detail。
   useEffect(() => {
     if (syncingIds.size === 0) return;
     const now = Date.now();
     const completed: string[] = [];
     const failed: { id: string; error: string | null }[] = [];
+    const partial: { id: string; error: string | null }[] = [];
     const stale: string[] = [];
     for (const id of syncingIds) {
       const ds = sources?.find((s) => s.id === id);
       const ts = ds?.last_sync ? new Date(ds.last_sync).getTime() : 0;
       const triggered = triggeredAt[id] ?? 0;
       if (ts && ts > triggered) {
-        // last_sync 推进 → 同步尝试已结束,按 status 区分成功/失败
+        // last_sync 推进 → 同步尝试已结束,按 status 区分成功/失败/补齐
         if (ds?.last_sync_status === "failed") {
           failed.push({ id, error: ds.last_sync_error ?? null });
+        } else if (ds?.last_sync_status === "partial") {
+          partial.push({ id, error: ds.last_sync_error ?? null });
         } else {
           completed.push(id);
         }
@@ -419,6 +422,16 @@ export default function DataSources() {
       setSyncingIds((prev) => {
         const next = new Set(prev);
         failed.forEach(({ id }) => next.delete(id));
+        return next;
+      });
+    }
+    if (partial.length > 0) {
+      partial.forEach(({ id, error }) =>
+        toast.warning(`同步完成(补齐缺口):${error ?? id}`),
+      );
+      setSyncingIds((prev) => {
+        const next = new Set(prev);
+        partial.forEach(({ id }) => next.delete(id));
         return next;
       });
     }
@@ -688,6 +701,11 @@ export default function DataSources() {
               <TableCell>{ds.sync_interval}</TableCell>
               <TableCell>
                 <span title={ds.last_sync ?? "暂无同步记录"}>{formatSyncTime(ds.last_sync)}</span>
+                {ds.last_sync_status === "partial" && (
+                  <Badge variant="warning" className="ml-2">
+                    {ds.last_sync_error ?? "已补齐缺口"}
+                  </Badge>
+                )}
               </TableCell>
               <TableCell className="space-x-2">
                 <Button
