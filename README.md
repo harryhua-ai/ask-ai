@@ -9,7 +9,3 @@ CamThink AI 知识助手 — 自建 RAG 系统。
 3. 同步知识库:`python scripts/sync.py`
 4. 启动后端:`python -m backend.main`
 5. 构建并测试 Widget:`cd widget && npm install && npm run build`
-
-## 文档
-
-设计文档见 `docs/superpowers/specs/`

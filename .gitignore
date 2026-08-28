@@ -44,3 +44,13 @@ kapa-*.png
 # 临时进度快照(auto-dev CHECKPOINT,会话级临时文件)
 /CHECKPOINT.md
 .gstack/
+
+# 文档仅本地保留,GitHub 仓库只保留代码
+/docs/
+/CLAUDE.md
+/deploy/README.md
+/deploy/dev/README.md
+/deploy/prod/README.md
+
+# 本地视频 agent 工作目录
+/.video_agent/
