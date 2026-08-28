@@ -329,9 +329,11 @@ class IngestionPipeline:
         """
         self._ensure_collection()
         try:
+            from weaviate.classes.query import Filter
+
             self._collection.data.delete_many(
-                where=self._collection.filter.by_property("source_id").equal(source_id)
-                & self._collection.filter.by_property("chunk_index").greater_or_equal(current_count)
+                where=Filter.by_property("source_id").equal(source_id)
+                & Filter.by_property("chunk_index").greater_or_equal(current_count)
             )
         except Exception as exc:  # noqa: BLE001 - 清理失败不阻断灌入
             logger.warning("清理陈旧 chunk 失败 source_id=%s: %s", source_id, str(exc)[:120])
@@ -535,8 +537,10 @@ class IngestionPipeline:
         # Weaviate:删除该 source_id 的全部 chunk
         self._ensure_collection()
         try:
+            from weaviate.classes.query import Filter
+
             self._collection.data.delete_many(
-                where=self._collection.filter.by_property("source_id").equal(source_id)
+                where=Filter.by_property("source_id").equal(source_id)
             )
         except Exception as exc:  # noqa: BLE001 - Weaviate 删除失败不阻断 Postgres
             logger.warning("Weaviate 删除失败 source_id=%s: %s", source_id, exc)
