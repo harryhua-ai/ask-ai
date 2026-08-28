@@ -27,6 +27,80 @@ def _make_pipeline() -> MagicMock:
 @patch("scripts.sync._last_success_at", new_callable=AsyncMock)
 @patch("scripts.sync.verify_source_vectors", new_callable=AsyncMock)
 @patch("scripts.sync.ConnectorRegistry.create")
+async def test_partial_chunk_loss_refills_via_refill_source_ids(
+    mock_create, mock_verify, mock_last_success, mock_count
+):
+    """部分 chunk 丢失(missing 为空、refill 非空)→ 按 refill 清单重灌并记 partial。"""
+    mock_last_success.return_value = datetime(2026, 8, 18, 15, 39, tzinfo=UTC)
+    mock_count.return_value = 500
+    from backend.services.vector_consistency import VectorGapReport
+
+    # 整篇差集为空,但 doc-a 的 chunk 集合不一致(丢 2 个)且 Weaviate 多 1 个多余 chunk
+    mock_verify.return_value = VectorGapReport(
+        expected_chunks=500,
+        actual_chunks=499,
+        missing_source_ids=[],
+        refill_source_ids=["doc-a"],
+        stale_chunk_count=1,
+    )
+
+    connector = MagicMock()
+    connector.fetch_changes.return_value = iter([])
+    from backend.connectors.base import RawDocument
+
+    connector.fetch_all.return_value = iter(
+        [
+            RawDocument(
+                source_id="doc-a",
+                source_type="github",
+                product="x",
+                title="a",
+                content="A",
+                url="http://a",
+                metadata={},
+                content_hash="h1",
+            ),
+            RawDocument(
+                source_id="doc-keep",
+                source_type="github",
+                product="x",
+                title="b",
+                content="B",
+                url="http://b",
+                metadata={},
+                content_hash="h2",
+            ),
+        ]
+    )
+    connector.fetch_deleted.return_value = []
+    mock_create.return_value = connector
+
+    pipeline = _make_pipeline()
+    session_factory = MagicMock()
+    session_factory.return_value.__aenter__.return_value.commit = AsyncMock()
+    pipeline._session_factory = None
+
+    await _sync_one(_make_cfg(), pipeline, session_factory, triggered_by="manual")
+
+    # doc-a 被 fetch_all 过滤重灌(doc-keep 不进灌入)
+    called_docs = pipeline.ingest_all.call_args[0][0]
+    assert [d.source_id for d in called_docs] == ["doc-a"]
+    written = session_factory.return_value.__aenter__.return_value.add.call_args[0][0]
+    assert written.status == "partial"
+    # 措辞:重灌 N 篇(整篇缺失 M + chunk 不一致 K)+ 多余 chunk S 个
+    detail = written.error_detail or ""
+    assert "重灌" in detail
+    assert "整篇缺失 0" in detail
+    assert "chunk 不一致 1" in detail
+    assert "多余 chunk 1 个" in detail
+    assert written.items_updated == 3  # ingest_all 返回 {"doc-a": 3}
+
+
+@pytest.mark.asyncio
+@patch("scripts.sync._count_documents", new_callable=AsyncMock)
+@patch("scripts.sync._last_success_at", new_callable=AsyncMock)
+@patch("scripts.sync.verify_source_vectors", new_callable=AsyncMock)
+@patch("scripts.sync.ConnectorRegistry.create")
 async def test_no_change_but_vector_gap_triggers_heal_and_partial(
     mock_create, mock_verify, mock_last_success, mock_count
 ):
@@ -36,7 +110,10 @@ async def test_no_change_but_vector_gap_triggers_heal_and_partial(
     from backend.services.vector_consistency import VectorGapReport
 
     mock_verify.return_value = VectorGapReport(
-        expected_chunks=500, actual_chunks=480, missing_source_ids=["doc-a"]
+        expected_chunks=500,
+        actual_chunks=480,
+        missing_source_ids=["doc-a"],
+        refill_source_ids=["doc-a"],  # 重灌清单 = 整篇缺失 ∪ chunk 不一致
     )
 
     connector = MagicMock()

@@ -431,14 +431,18 @@ def test_ensure_collection_creates_new_properties():
     mock_client.collections.get.return_value = mock_collection
 
     pipeline = IngestionPipeline(
-        embedder=MagicMock(), weaviate_client=mock_client, class_name="Document",
+        embedder=MagicMock(),
+        weaviate_client=mock_client,
+        class_name="Document",
     )
     pipeline._ensure_collection()
 
     mock_client.collections.create.assert_called_once()
     create_kwargs = mock_client.collections.create.call_args
-    property_names = [p.name if hasattr(p, "name") else p.get("name")
-                      for p in create_kwargs.kwargs.get("properties", [])]
+    property_names = [
+        p.name if hasattr(p, "name") else p.get("name")
+        for p in create_kwargs.kwargs.get("properties", [])
+    ]
     assert "channel_visibility" in property_names
     assert "doc_section" in property_names
     assert "chunk_type" in property_names
@@ -474,13 +478,21 @@ def test_ingest_document_writes_new_fields():
     mock_embedder.embed.return_value = [[0.1, 0.2, 0.3]]
 
     pipeline = IngestionPipeline(
-        embedder=mock_embedder, weaviate_client=mock_client, class_name="Document",
+        embedder=mock_embedder,
+        weaviate_client=mock_client,
+        class_name="Document",
     )
 
     doc = RawDocument(
-        source_id="test/1", source_type="github", product="ne503",
-        title="T", content="# Title\n\nContent.", url="u",
-        metadata={}, content_hash="h", channel_visibility=("api",),
+        source_id="test/1",
+        source_type="github",
+        product="ne503",
+        title="T",
+        content="# Title\n\nContent.",
+        url="u",
+        metadata={},
+        content_hash="h",
+        channel_visibility=("api",),
     )
     pipeline.ingest_document(doc)
 
@@ -509,13 +521,20 @@ def test_ingest_document_uses_semantic_chunking():
     mock_embedder.embed.return_value = [[0.1]]
 
     pipeline = IngestionPipeline(
-        embedder=mock_embedder, weaviate_client=mock_client, class_name="Document",
+        embedder=mock_embedder,
+        weaviate_client=mock_client,
+        class_name="Document",
     )
 
     doc = RawDocument(
-        source_id="t/1", source_type="github", product="p",
-        title="T", content="# Heading\n\nText.", url="u",
-        metadata={}, content_hash="h",
+        source_id="t/1",
+        source_type="github",
+        product="p",
+        title="T",
+        content="# Heading\n\nText.",
+        url="u",
+        metadata={},
+        content_hash="h",
     )
 
     with patch("backend.pipeline.ingest.chunk_document_semantic") as mock_chunk:
@@ -535,6 +554,7 @@ def test_route_code_to_chunk_code():
     from unittest.mock import MagicMock, patch
     from backend.pipeline.ingest import IngestionPipeline
     from backend.connectors.base import RawDocument
+
     mock_client = MagicMock()
     mock_client.collections.exists.return_value = True
     mock_collection = MagicMock()
@@ -543,12 +563,20 @@ def test_route_code_to_chunk_code():
     mock_embedder.embed.return_value = [[0.1]]
     pipeline = IngestionPipeline(embedder=mock_embedder, weaviate_client=mock_client)
     doc = RawDocument(
-        source_id="r/main/m.py", source_type="local_git", product="p",
-        title="m", content="def foo():\n    return 1\n", url="u",
-        metadata={"path": "m.py"}, content_hash="h", branch="main",
+        source_id="r/main/m.py",
+        source_type="local_git",
+        product="p",
+        title="m",
+        content="def foo():\n    return 1\n",
+        url="u",
+        metadata={"path": "m.py"},
+        content_hash="h",
+        branch="main",
     )
-    with patch("backend.pipeline.ingest.chunk_document_semantic") as mock_semantic, \
-         patch("backend.pipeline.ingest.chunk_code") as mock_code:
+    with (
+        patch("backend.pipeline.ingest.chunk_document_semantic") as mock_semantic,
+        patch("backend.pipeline.ingest.chunk_code") as mock_code,
+    ):
         mock_code.return_value = []
         pipeline.ingest_document(doc)
         mock_code.assert_called_once()
@@ -561,6 +589,7 @@ def test_route_markdown_to_semantic():
     from unittest.mock import MagicMock, patch
     from backend.pipeline.ingest import IngestionPipeline
     from backend.connectors.base import RawDocument
+
     mock_client = MagicMock()
     mock_client.collections.exists.return_value = True
     mock_collection = MagicMock()
@@ -569,12 +598,20 @@ def test_route_markdown_to_semantic():
     mock_embedder.embed.return_value = [[0.1]]
     pipeline = IngestionPipeline(embedder=mock_embedder, weaviate_client=mock_client)
     doc = RawDocument(
-        source_id="r/main/m.md", source_type="local_git", product="p",
-        title="m", content="# Title\n\nText.", url="u",
-        metadata={"path": "m.md"}, content_hash="h", branch="main",
+        source_id="r/main/m.md",
+        source_type="local_git",
+        product="p",
+        title="m",
+        content="# Title\n\nText.",
+        url="u",
+        metadata={"path": "m.md"},
+        content_hash="h",
+        branch="main",
     )
-    with patch("backend.pipeline.ingest.chunk_document_semantic") as mock_semantic, \
-         patch("backend.pipeline.ingest.chunk_code") as mock_code:
+    with (
+        patch("backend.pipeline.ingest.chunk_document_semantic") as mock_semantic,
+        patch("backend.pipeline.ingest.chunk_code") as mock_code,
+    ):
         mock_semantic.return_value = []
         pipeline.ingest_document(doc)
         mock_semantic.assert_called_once()
@@ -587,6 +624,7 @@ def test_weaviate_gets_branch_property():
     from unittest.mock import MagicMock
     from backend.pipeline.ingest import IngestionPipeline
     from backend.connectors.base import RawDocument
+
     mock_client = MagicMock()
     mock_client.collections.exists.return_value = True
     mock_collection = MagicMock()
@@ -595,9 +633,15 @@ def test_weaviate_gets_branch_property():
     mock_embedder.embed.return_value = [[0.1]]
     pipeline = IngestionPipeline(embedder=mock_embedder, weaviate_client=mock_client)
     doc = RawDocument(
-        source_id="r/hw-v1.2/m.py", source_type="local_git", product="p",
-        title="m", content="def foo():\n    return 1\n", url="u",
-        metadata={"path": "m.py"}, content_hash="h", branch="hw-v1.2",
+        source_id="r/hw-v1.2/m.py",
+        source_type="local_git",
+        product="p",
+        title="m",
+        content="def foo():\n    return 1\n",
+        url="u",
+        metadata={"path": "m.py"},
+        content_hash="h",
+        branch="hw-v1.2",
     )
     pipeline.ingest_document(doc)
     data_objs = mock_collection.data.insert_many.call_args.args[0]
@@ -611,14 +655,17 @@ def test_ensure_collection_creates_branch_property():
     from unittest.mock import MagicMock
     from backend.pipeline.ingest import IngestionPipeline
     from weaviate.classes.config import DataType
+
     mock_client = MagicMock()
     mock_client.collections.exists.return_value = False
     mock_client.collections.get.return_value = MagicMock()
     pipeline = IngestionPipeline(embedder=MagicMock(), weaviate_client=mock_client)
     pipeline._ensure_collection()
     create_kwargs = mock_client.collections.create.call_args
-    property_names = [p.name if hasattr(p, "name") else p.get("name")
-                      for p in create_kwargs.kwargs.get("properties", [])]
+    property_names = [
+        p.name if hasattr(p, "name") else p.get("name")
+        for p in create_kwargs.kwargs.get("properties", [])
+    ]
     assert "branch" in property_names
     # 校验 DataType
     for p in create_kwargs.kwargs.get("properties", []):
@@ -652,9 +699,7 @@ def test_upsert_postgres_writes_branch():
     def _factory():
         yield session
 
-    pipeline = IngestionPipeline(
-        embedder, client, session_factory=MagicMock(side_effect=_factory)
-    )
+    pipeline = IngestionPipeline(embedder, client, session_factory=MagicMock(side_effect=_factory))
     doc = RawDocument(
         source_id="r/hw-v1.2/m.py",
         source_type="local_git",
@@ -675,6 +720,7 @@ def test_upsert_postgres_writes_branch():
 def test_deterministic_uuid_stable_and_unique():
     """确定性 UUID:同 (source_id, chunk_index) 同 uuid;不同 chunk/branch 不同 uuid。"""
     from backend.pipeline.ingest import _deterministic_uuid
+
     u1 = _deterministic_uuid("r/main/f.py", 0)
     u2 = _deterministic_uuid("r/main/f.py", 0)
     u3 = _deterministic_uuid("r/main/f.py", 1)
@@ -695,14 +741,17 @@ def test_ensure_collection_creates_symbol_properties():
     from unittest.mock import MagicMock
     from backend.pipeline.ingest import IngestionPipeline
     from weaviate.classes.config import DataType
+
     mock_client = MagicMock()
     mock_client.collections.exists.return_value = False
     mock_client.collections.get.return_value = MagicMock()
     pipeline = IngestionPipeline(embedder=MagicMock(), weaviate_client=mock_client)
     pipeline._ensure_collection()
     create_kwargs = mock_client.collections.create.call_args
-    property_names = [p.name if hasattr(p, "name") else p.get("name")
-                      for p in create_kwargs.kwargs.get("properties", [])]
+    property_names = [
+        p.name if hasattr(p, "name") else p.get("name")
+        for p in create_kwargs.kwargs.get("properties", [])
+    ]
     assert "symbol_name" in property_names
     assert "symbol_tokens" in property_names
     assert "symbol_signature" in property_names
@@ -721,13 +770,31 @@ def test_build_props_contains_symbol():
     from backend.pipeline.ingest import _build_props
     from backend.pipeline.chunk import Chunk
     from backend.connectors.base import RawDocument
-    doc = RawDocument(source_id="ne301/main.py", source_type="local_git",
-                      product="ne301", title="main.py", content="x", url="",
-                      metadata={"path": "main.py"}, content_hash="h", branch="main")
-    chunk = Chunk(text="t", document=doc, chunk_index=0, total_chunks=1,
-                  start_char=0, end_char=1, chunk_type="code",
-                  symbol_name="battery_read_i2c", symbol_tokens="battery read i2c",
-                  symbol_node_type="function_definition", symbol_signature="def ...")
+
+    doc = RawDocument(
+        source_id="ne301/main.py",
+        source_type="local_git",
+        product="ne301",
+        title="main.py",
+        content="x",
+        url="",
+        metadata={"path": "main.py"},
+        content_hash="h",
+        branch="main",
+    )
+    chunk = Chunk(
+        text="t",
+        document=doc,
+        chunk_index=0,
+        total_chunks=1,
+        start_char=0,
+        end_char=1,
+        chunk_type="code",
+        symbol_name="battery_read_i2c",
+        symbol_tokens="battery read i2c",
+        symbol_node_type="function_definition",
+        symbol_signature="def ...",
+    )
     props = _build_props(chunk, doc)
     assert props["symbol_name"] == "battery_read_i2c"
     assert props["symbol_tokens"] == "battery read i2c"
@@ -790,3 +857,98 @@ def test_ingest_all_idempotent_replace_success_does_not_raise():
     # 不 raise,replace 覆盖写 1 次,该 doc 全部 chunk 计成功
     assert results == {"test/1": 1}
     collection.data.replace.assert_called_once()
+
+
+# --------------------------------------------------------------------------- #
+# Task C: _prune_stale_chunks 陈旧 chunk 清理 + _upsert_postgres 旧版本行清理
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_prune_stale_chunks_calls_delete_many_with_chunk_filter():
+    """_prune_stale_chunks 应按 source_id 相等 + chunk_index >= N 组合过滤删除。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+    collection = client.collections.get.return_value
+
+    pipeline = IngestionPipeline(embedder, client)
+    pipeline._prune_stale_chunks("r/main/f.py", 3)
+
+    collection.data.delete_many.assert_called_once()
+    # where 条件是 source_id 相等 & chunk_index >= 3 的组合 Filter
+    where_arg = collection.data.delete_many.call_args.kwargs["where"]
+    assert where_arg is not None
+
+
+@pytest.mark.unit
+def test_ingest_document_prunes_stale_chunks_when_fully_written():
+    """单篇全部写成功后应调用 _prune_stale_chunks 清理超出范围的旧 chunk。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+    collection = client.collections.get.return_value
+
+    pipeline = IngestionPipeline(embedder, client)
+    pipeline.ingest_document(_make_doc())  # 短内容 1 chunk,全部成功
+
+    assert collection.data.delete_many.called
+
+
+@pytest.mark.unit
+def test_ingest_document_skips_prune_when_partial_failure():
+    """部分 chunk 写失败(不 raise 的单篇路径计 success_count < total)不 prune。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+    collection = client.collections.get.return_value
+
+    # 单 chunk 文档 insert 失败 + replace 也失败 → success_count=0
+    collection.data.insert_many.side_effect = Exception("read-only")
+    collection.data.replace.side_effect = Exception("read-only")
+
+    pipeline = IngestionPipeline(embedder, client)
+    with pytest.raises(RuntimeError, match="灌入失败"):
+        pipeline.ingest_all([_make_doc()])
+
+    # 失败路径不 prune(避免误删后新 chunk 又写失败造成更大缺口)
+    assert not collection.data.delete_many.called
+
+
+@pytest.mark.unit
+def test_prune_failure_does_not_break_ingest():
+    """delete_many 抛异常时灌入流程不中断(只 warning)。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+    collection = client.collections.get.return_value
+    collection.data.delete_many.side_effect = Exception("delete failed")
+
+    pipeline = IngestionPipeline(embedder, client)
+    count = pipeline.ingest_document(_make_doc())
+
+    assert count == 1  # 灌入本身成功,prune 失败被吞
+
+
+@pytest.mark.unit
+def test_upsert_postgres_deletes_old_hash_rows_for_same_source_id():
+    """内容变更(新 hash 无匹配)时,插入新行前应删除同 source_id 的旧版本行。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+
+    # (新 hash, branch) 无匹配 → 走插入分支
+    session = MagicMock()
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = None
+    session.execute.return_value = scalar_result
+
+    @contextmanager
+    def _factory():
+        yield session
+
+    session_factory = MagicMock(side_effect=_factory)
+
+    pipeline = IngestionPipeline(embedder, client, session_factory=session_factory)
+    pipeline._upsert_postgres(_make_doc(content_hash="newhash"), 1)
+
+    # 两次 execute:第一次查 (content_hash, branch),第二次删旧版本行
+    assert session.execute.call_count == 2
+    # delete 语句被 add 前执行
+    assert session.add.called
+    session.commit.assert_called_once()

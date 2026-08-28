@@ -232,6 +232,7 @@ class IngestionPipeline:
         # 远程 Weaviate 经 SSH tunnel 时,N chunk 逐条往返延迟极高;
         # 改为 1 次 batch 提交,已存在对象按 per-object 错误回退 replace。
         import weaviate as _wv
+
         data_objs: list = []
         props_list: list[dict] = []
         uuid_list: list = []
@@ -242,17 +243,13 @@ class IngestionPipeline:
             props_list.append(_props)
             uuid_list.append(_det_uuid)
             data_objs.append(
-                _wv.classes.data.DataObject(
-                    properties=_props, vector=_vec_list, uuid=_det_uuid
-                )
+                _wv.classes.data.DataObject(properties=_props, vector=_vec_list, uuid=_det_uuid)
             )
         success_count = 0
         try:
             result = self._collection.data.insert_many(data_objs)
             responses = getattr(result, "all_responses", [])
-            failed_idx = [
-                i for i, r in enumerate(responses) if getattr(r, "has_errors", False)
-            ]
+            failed_idx = [i for i, r in enumerate(responses) if getattr(r, "has_errors", False)]
             success_count = len(data_objs) - len(failed_idx)
             # 已存在的 UUID:回退单条 replace 保证幂等覆盖
             for _i in failed_idx:
@@ -305,6 +302,10 @@ class IngestionPipeline:
             except Exception as exc:  # noqa: BLE001 - Postgres 失败不影响 Weaviate
                 logger.error("Postgres upsert 失败 doc=%s: %s", doc.source_id, exc)
 
+        # 全部 chunk 写成功后清理超出范围的陈旧对象(部分失败时留待下轮重试)
+        if success_count == len(chunks):
+            self._prune_stale_chunks(doc.source_id, len(chunks))
+
         logger.info(
             "已索引 %s: %d/%d chunk 成功",
             doc.source_id,
@@ -312,6 +313,28 @@ class IngestionPipeline:
             len(chunks),
         )
         return success_count
+
+    def _prune_stale_chunks(self, source_id: str, current_count: int) -> None:
+        """删除该 doc 在 Weaviate 中 chunk_index >= current_count 的陈旧对象。
+
+        背景:写入用确定性 UUID(``uuid5(source_id, chunk_index)``),只有
+        insert_many + 已存在 UUID 的 replace 回退——文档内容缩短后,超出新
+        chunk 数的旧对象(索引 >= current_count)不在新批次中,永远不会被
+        触碰而残留,导致 Weaviate 侧实际 chunk 数 > Postgres 记录,一致性
+        校验永远报不一致。删除失败只 warning,不中断灌入。
+
+        Args:
+            source_id: 文档唯一标识。
+            current_count: 本次写入的 chunk 数;仅清理索引 >= 该值的多余对象。
+        """
+        self._ensure_collection()
+        try:
+            self._collection.data.delete_many(
+                where=self._collection.filter.by_property("source_id").equal(source_id)
+                & self._collection.filter.by_property("chunk_index").greater_or_equal(current_count)
+            )
+        except Exception as exc:  # noqa: BLE001 - 清理失败不阻断灌入
+            logger.warning("清理陈旧 chunk 失败 source_id=%s: %s", source_id, str(exc)[:120])
 
     def ingest_all(self, docs: list[RawDocument]) -> dict[str, int]:
         """批量灌入文档,单 doc 失败不中断后续,但整体失败时 raise。
@@ -342,9 +365,7 @@ class IngestionPipeline:
             try:
                 results.update(self._ingest_doc_batch(batch, failed))
             except Exception as exc:  # noqa: BLE001 - 整批失败回退逐 doc
-                logger.error(
-                    "批处理失败(start=%d): %s,回退逐 doc", start, str(exc)[:200]
-                )
+                logger.error("批处理失败(start=%d): %s,回退逐 doc", start, str(exc)[:200])
                 for doc in batch:
                     try:
                         results[doc.source_id] = self.ingest_document(doc)
@@ -424,9 +445,7 @@ class IngestionPipeline:
                         failed.append(doc.source_id)
             return results
         if len(all_vectors) != len(all_texts):
-            raise RuntimeError(
-                f"embedder 返回 {len(all_vectors)} 向量,期望 {len(all_texts)}"
-            )
+            raise RuntimeError(f"embedder 返回 {len(all_vectors)} 向量,期望 {len(all_texts)}")
 
         # Phase 3:构造整批对象 → 单次 insert_many(跨 doc,1 次往返)→ replace 回退 → 按 doc 统计
         self._ensure_collection()
@@ -447,9 +466,7 @@ class IngestionPipeline:
                 all_uuids.append(det_uuid)
                 all_vecs_flat.append(vec_list)
                 all_objs.append(
-                    _wv.classes.data.DataObject(
-                        properties=props, vector=vec_list, uuid=det_uuid
-                    )
+                    _wv.classes.data.DataObject(properties=props, vector=vec_list, uuid=det_uuid)
                 )
             obj_spans.append((o_start, len(all_objs)))
         # 分块 insert_many(跨 doc,WRITE_CHUNK/块),避免大 payload 触发 gRPC 超时;
@@ -481,9 +498,7 @@ class IngestionPipeline:
                     uuid=all_uuids[fi],
                 )
             except Exception as exc2:  # noqa: BLE001
-                logger.warning(
-                    "replace 回退失败 uuid=%s: %s", all_uuids[fi], str(exc2)[:120]
-                )
+                logger.warning("replace 回退失败 uuid=%s: %s", all_uuids[fi], str(exc2)[:120])
                 replace_failed.add(fi)
         # 按 doc 统计成功数(insert 成功 + replace 回退成功计成功;replace 也失败计失败)
         for idx, (doc, chunks) in enumerate(doc_chunks):
@@ -499,6 +514,9 @@ class IngestionPipeline:
                     self._upsert_postgres(doc, success_count)
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Postgres upsert 失败 doc=%s: %s", doc.source_id, exc)
+            # 全部 chunk 写成功后清理超出范围的陈旧对象(部分失败时留待下轮重试)
+            if success_count == total:
+                self._prune_stale_chunks(doc.source_id, total)
             logger.info(
                 "已索引 %s: %d/%d chunk 成功",
                 doc.source_id,
@@ -539,7 +557,9 @@ class IngestionPipeline:
         """在 Postgres ``documents`` 表 upsert doc 行。
 
         用 ``(content_hash, branch)`` 复合主键去重:同内容跨分支各留一行;同分支重复灌入更新 chunk_count / source_id /
-        updated_at,不存在则插入新行。
+        updated_at,不存在则插入新行。内容变更(新 hash 无匹配)时先删除同
+        source_id 的旧版本行——否则旧行永远残留,documents 表同 source_id
+        多行导致一致性校验的 expected 被抬高,永远报不一致。
 
         Args:
             doc: 原始文档(取 content_hash / source_id / title 等字段)。
@@ -549,10 +569,17 @@ class IngestionPipeline:
         with self._session_factory() as session:
             existing = session.execute(
                 select(Document).where(
-                Document.content_hash == doc.content_hash, Document.branch == doc.branch
-            )
+                    Document.content_hash == doc.content_hash, Document.branch == doc.branch
+                )
             ).scalar_one_or_none()
             if existing is None:
+                # 内容变更:清理同 source_id 的旧版本行(防幽灵行累积)
+                session.execute(
+                    delete(Document).where(
+                        Document.source_id == doc.source_id,
+                        Document.content_hash != doc.content_hash,
+                    )
+                )
                 session.add(
                     Document(
                         content_hash=doc.content_hash,

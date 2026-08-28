@@ -51,7 +51,7 @@ from sqlalchemy import func, select
 
 import backend.connectors.filesystem  # 触发 @register 装饰器
 import backend.connectors.github
-import backend.connectors.local_git  # noqa: F401 - 触发 @register 装饰器
+import backend.connectors.local_git  # 触发 @register 装饰器
 import backend.connectors.woocommerce  # noqa: F401 - 触发 @register 装饰器
 from backend.config import Settings, load_settings
 from backend.connectors.db_adapter import to_source_config
@@ -214,8 +214,9 @@ async def _handle_no_change(
         not dry_run 守卫,同样不写);
       - 健康(汇总级总数相等) → 记 success + unchanged;
         `_last_success_at` 认 success → 窗口照常推进。
-      - 有缺口 → fetch_all 拉全源后按 missing_source_ids 过滤,
-        只对缺口文档重灌(embed 幂等 upsert);记 status="partial"
+      - 有缺口 → fetch_all 拉全源后按 refill_source_ids(整篇缺失 ∪
+        chunk 集合不一致)过滤,只对缺口文档重灌(embed 幂等 upsert,
+        多余 chunk 由 ingest 的 _prune_stale_chunks 清理);记 status="partial"
         + error_detail。partial 不被 `_last_success_at` 采纳 → 窗口不
         推进,下一轮同步重新校验自确认。
 
@@ -243,25 +244,35 @@ async def _handle_no_change(
         log_entry.items_updated = 0
         log_entry.items_unchanged = existing
     else:
-        # 有缺口:fetch_all 后只对缺口文档 embed 重灌(幂等 upsert)。
-        # 注意 part-chunk 丢失场景下 missing_source_ids 可能为空(差集只看
-        # 整篇缺失),此时仍走 partial 使窗口不推进并暴露详情,绝不静默跳过。
+        # 有缺口:fetch_all 后按 refill_source_ids(整篇缺失 ∪ chunk 集合不一致)
+        # 过滤重灌(幂等 upsert)。多余 chunk 由 upsert 覆盖后随文档重建清理;
+        # 孤儿向量仅统计不删。partial 使窗口不推进并暴露详情,绝不静默跳过。
+        missing_n = len(report.missing_source_ids)
+        refill_n = len(report.refill_source_ids)
+        mismatch_n = refill_n - missing_n  # chunk 集合不一致篇数(refill ⊇ missing)
         logger.info(
-            "数据源 %s 一致性校验发现缺口:%d/%d chunks(actual/expected),%d 篇整篇缺失",
+            "数据源 %s 一致性校验发现缺口:%d/%d chunks(actual/expected),"
+            "需重灌 %d 篇(整篇缺失 %d + chunk 不一致 %d),多余 chunk %d 个",
             source_id,
             report.actual_chunks,
             report.expected_chunks,
-            len(report.missing_source_ids),
+            refill_n,
+            missing_n,
+            mismatch_n,
+            report.stale_chunk_count,
         )
-        if report.missing_source_ids:
-            missing_set = set(report.missing_source_ids)
-            docs = [d for d in connector.fetch_all() if d.source_id in missing_set]
+        if report.refill_source_ids:
+            refill_set = set(report.refill_source_ids)
+            docs = [d for d in connector.fetch_all() if d.source_id in refill_set]
             results = pipeline.ingest_all(docs)  # 写失败仍 raise → 走外层 except 记 failed
             log_entry.items_updated = sum(results.values())
-            gap_desc = f"已补齐 {len(missing_set)} 篇缺失文档"
+            gap_desc = (
+                f"需重灌 {refill_n} 篇(整篇缺失 {missing_n} + chunk 不一致 {mismatch_n});"
+                f"多余 chunk {report.stale_chunk_count} 个(已由 ingest 清理)"
+            )
         else:
-            log_entry.items_updated = 0  # 部分 chunk 丢失未自动补齐
-            gap_desc = "存在部分 chunk 丢失(整篇差集为空),未自动补齐,需人工核查"
+            log_entry.items_updated = 0  # 仅孤儿/多余向量等无重灌项场景
+            gap_desc = "存在缺口但重灌清单为空,未自动补齐,需人工核查"
         log_entry.status = "partial"
         log_entry.items_new = 0
         log_entry.error_detail = (
