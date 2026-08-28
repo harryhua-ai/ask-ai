@@ -108,6 +108,13 @@ class ExclusionPolicy:
         if any(p.lower() in BUILD_DIRS or p in user_dirs for p in parts):
             return True
 
+        # macOS AppleDouble 元数据文件(任意层级的 ._* 文件名):
+        # mac→Linux 同步时 rsync/scp 不带 --exclude 会成对生成,
+        # 内容是二进制资源 fork,对知识库纯噪音。按文件名前缀在任意
+        # 层级排除,先于扩展名判定(它常带 .md 后缀骗过白名单)。
+        if any(p.startswith("._") for p in parts):
+            return True
+
         ext = PurePosixPath(rel_path).suffix.lower()
 
         # 二进制扩展名
@@ -124,11 +131,7 @@ class ExclusionPolicy:
 
         # 源码不受 size 限制;非源码超大排除
         is_source = ext in SOURCE_EXT
-        if (
-            not is_source
-            and self.max_file_size is not None
-            and size > self.max_file_size
-        ):
+        if not is_source and self.max_file_size is not None and size > self.max_file_size:
             return True
 
         return False

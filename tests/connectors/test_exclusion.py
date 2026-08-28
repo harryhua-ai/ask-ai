@@ -43,3 +43,15 @@ def test_max_file_size_only_nonsource():
     p = ExclusionPolicy({"max_file_size": 1_000_000})
     assert not p.should_exclude("src/huge.c", 5_000_000)  # 源码不受限
     assert p.should_exclude("data/huge.json", 5_000_000)  # 非源码受限
+
+
+def test_exclude_appledouble_metadata_files():
+    """macOS ._* 元数据文件(任意层级)应被排除——2026-08 垃圾灌库事故防线。"""
+    p = ExclusionPolicy({})
+    # 根层级与任意子层级
+    assert p.should_exclude("._NE101-PIR传感器功能咨询.md", 100)
+    assert p.should_exclude("main/2026-05/._Dave-reply.md", 100)
+    assert p.should_exclude("docs/i18n/en/._guide.mdx", 100)
+    # 正常文件不受影响(含下划线/点开头的合法名)
+    assert not p.should_exclude("main/_category_.json", 100)
+    assert not p.should_exclude("main/docs/guide.md", 100)
