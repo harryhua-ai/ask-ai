@@ -44,8 +44,10 @@
 
 | 方案 | 内容 | 代价 |
 |---|---|---|
-| **A(现状零改动)** | artifact 提供绝对路径;文档头部记录 `BASELINE_COMMIT`(代码 SHA)+ 版本日期;hash 语义降级为"代码基线引用" | contract 冻结无技术防篡改保障(靠纪律) |
-| **B(推荐)** | 在 `docs/` 内 `git init` 本地文档仓(主 repo 已忽略,零干扰)——artifact 获得 hash 与不可篡改历史,"不静默改 contract"有技术保障,协议完整落地 | 多一个本地仓的习惯成本(handoff 时给执行端的是绝对路径,不受影响) |
+| **A** | artifact 提供绝对路径;文档头部记录 `BASELINE_COMMIT`(代码 SHA)+ 版本日期;hash 语义降级为"代码基线引用" | contract 冻结无技术防篡改保障(靠纪律) |
+| **B(已拍板采用,2026-08-30)** | `docs/` 内本地文档仓已建立(init commit `a79a269`,主 repo `.gitignore` 已忽略 `/docs/`,零干扰)——artifact 有 hash 与不可篡改历史,"不静默改 contract"有技术保障 | 多一个本地仓的习惯成本(handoff 给执行端的仍是绝对路径,不受影响) |
+
+**生效格式**:自方案 B 起,Planning/Review 的最终回复提供 artifact 绝对路径 + **docs 本地仓的 commit hash**(代码任务另附主 repo `BASELINE_COMMIT`)。
 
 ## 7. 与既有实践的衔接
 

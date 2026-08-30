@@ -244,7 +244,8 @@ mask_pii → BudgetLimiter 预扣 → 附件注入
 8. **官网爬取数据源**(2026-08-30 立项,产品负责人需求):新增 `web_crawl` connector 类型(founding spec §6 预留),首实例 `website-camthink`(www.camthink.ai)。Inspect 已核:官网 SSR/SSG 纯 HTTP 可抓、标准 sitemap 索引(post/page/product 三子表,lastmod 增量天然支持);设计要点:HTML→Markdown 清洗(剥模板噪音,工作量重头)、**排除 `/store/`**(woocommerce-mall 已覆盖防重复)、language=en、product 维度整站标 `website`(contract 起草时核 schema 约束)。**额外价值:官网含 NG4500(Jetson 边缘盒)而现有 github 源无此产品,补知识覆盖盲区**。排序:与 widget 上线准备并行开发,wiki 灰度不依赖它,**官网页嵌入 widget 前必须就绪**(访客在官网问官网内容需有源可答);contract 在 P1-RES Review 后起草(起草前 Inspect:三子 sitemap 页面量、代表性页面 HTML 结构定清洗规则、product 字段值域)
 
 **D. 入口层扩展**(v3 核心定位主线;2026-08-28 D-3 拍板后重排,web 插件优先):
-1. **widget 标准化分发**(当前第一优先):品牌/文案/主题可配置(data-* 或全局变量)、一行 `<script>` 嵌入任意站点、多站点嵌入指南与示例、分发域名落地。CamThink 实例目标站点(D-10 已确认):官网 `www.camthink.ai`、wiki `wiki.camthink.ai/docs/`、商城 `www.camthink.ai/store/`;现状盘点待补。**前置检查项(均完成/已拍板,2026-08-30)**:① admin 内嵌聊天已独立 `channel="admin"`(`c8117f4`,审查通过);② 存量清洗已拍板(P-1,§8):T1 上线时 cutoff——pg_dump 备份后 DELETE 627 条混用对话
+1. **T1a 实例最小上线包(上线里程碑,2026-08-30 拆分拍板)**:widget.js 由 backend 托管(仿 admin StaticFiles)+ Dockerfile 带 widget/dist + CORS 白名单加三域名(纯 env 配置)+ P-1 存量清洗(已拍板 cutoff 执行)+ 三站点嵌入。**灰度顺序(已拍板):wiki → 官网 → 商城**(风险递进,商城价值最高放最后;北极星观察期自 wiki 灰度日启动)。Inspect 已核:widget 配置接口已标准化(`data-api-url`/`data-language`/`data-primary-color`,`widget/src/index.tsx:22-26`),唯一代码缺口是 widget 托管(一天级)。**官网波次前置:C8 官网爬取源就绪**(访客在官网问官网内容需有源可答)。前置检查项(均完成/已拍板):① admin 聊天独立 `channel="admin"`(`c8117f4` 审查通过);② P-1 存量清洗(pg_dump 备份后 DELETE 627 条)
+2. **T1b 标准件分发(产品线,与 T1a 并行或后置)**:品牌/文案/主题全套配置化、分发文档、多站点嵌入指南与示例、分发域名策略——服务"第二个用户",**不挡实例上线**
 2. (预留)渠道适配器框架:`ChannelAdapter` Protocol 从 spec 纸面变为代码框架——等第一个非 web 入口需求启动
 3. (预留)集成方 API 认证:API key + 按集成方配额/预算——等第一个系统级 HEADLESS 对接需求启动(D-4 随之决策)
 4. (后续逐步)MCP Server / Discord / WhatsApp 入口
@@ -258,7 +259,7 @@ mask_pii → BudgetLimiter 预扣 → 附件注入
 
 **建议优先级框架**(供讨论,非决定;已按 D-1/D-2/D-3 拍板调整):
 - **T0 收尾**:A1 + A2(把已投入的工作变成生产价值)
-- **T1 入口层第一步**:D1(widget 标准化分发 + 多站点嵌入,含 CamThink 实例的商城嵌入)——同时服务实例线(流量入口)与产品线(标准件的第一可交付物)
+- **T1 上线里程碑(2026-08-30 拆分拍板)**:**T1a 实例最小上线包**(widget 托管 + CORS + P-1 清洗 + 三站点灰度嵌入 **wiki→官网→商城**,官网波次需 C8 官网源就绪)= 实例线上线;**T1b 标准件分发**(品牌配置化/文档)= 产品线,并行或后置,不挡上线。北极星观察期自 wiki 灰度日启动
 - **T2/T3 商业闭环 vs 质量地基**(排序由实例数据裁决,2026-08-28 D-5 定):业务概览 commercial 咨询占比高 → 先 B1(留资)+ C2(sales 目录)(推实例层线索数);占比低 → 先 B2(trace 真实化)+ B4(eval 管道)+ B3(推产品层自助解决率)。观察期:T1 落地后积累 2-4 周意图分布数据再裁
 - **T4 通用化起步**:E3(Alembic,私有部署形态下必做)→ E1(常量出仓)→ E2(意图配置化)→ E4(onboarding + licensing)
 - **T5 按需/预留**:B5、C1(1b)、C3~C7、D2-D5 入口扩展、D4 Platform Assistant(由真实对接需求牵引);低优工程清单:ruff 存量 12 处、schemas 与 CLAUDE.md 若干文档不一致
