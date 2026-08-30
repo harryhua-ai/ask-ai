@@ -15,7 +15,7 @@ class AskRequest(BaseModel):
     """``POST /api/ask`` 请求体。
 
     Attributes:
-        message: 用户问题文本(1~2000 字符)。
+        message: 用户问题文本(1~8000 字符)。
         language: 可选语言提示(如 ``zh-cn`` / ``en``);为空时由管道自动检测。
         channel: 渠道标识(仅允许 ``widget|discord|whatsapp|mcp|admin``),默认 ``widget``。
             ``admin`` 为管理后台内嵌聊天专用渠道,用于数据边界隔离:
