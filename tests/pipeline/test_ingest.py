@@ -843,11 +843,11 @@ def test_ingest_all_idempotent_replace_success_does_not_raise():
     embedder = _make_embedder()
     client = _make_weaviate_client()
     collection = client.collections.get.return_value
-    # insert_many 返回含 has_errors 的 response(模拟确定性 UUID 已存在)→ 进入 replace 回退
-    resp = MagicMock()
-    resp.has_errors = True
+    # insert_many 返回 errors(模拟确定性 UUID 已存在)→ 进入 replace 回退
+    # (D4-ACC:记账已迁 result.errors/uuids,all_responses 废弃不再使用)
     insert_result = MagicMock()
-    insert_result.all_responses = [resp]
+    insert_result.errors = {0: MagicMock()}
+    insert_result.uuids = {}
     collection.data.insert_many.return_value = insert_result
     # replace 回退正常成功(覆盖写,不设 side_effect)
 

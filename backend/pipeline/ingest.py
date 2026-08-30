@@ -248,8 +248,9 @@ class IngestionPipeline:
         success_count = 0
         try:
             result = self._collection.data.insert_many(data_objs)
-            responses = getattr(result, "all_responses", [])
-            failed_idx = [i for i, r in enumerate(responses) if getattr(r, "has_errors", False)]
+            # v4 官方返回:errors 键 = 对象在本次 insert_many 中的原始下标。
+            # all_responses 已废弃且仅保留末尾 MAX_STORED_RESULTS 条,不可用于记账。
+            failed_idx = sorted(result.errors.keys())
             success_count = len(data_objs) - len(failed_idx)
             # 已存在的 UUID:回退单条 replace 保证幂等覆盖
             for _i in failed_idx:
@@ -479,10 +480,9 @@ class IngestionPipeline:
             _we = min(_ws + WRITE_CHUNK, len(all_objs))
             try:
                 _result = self._collection.data.insert_many(all_objs[_ws:_we])
-                _responses = getattr(_result, "all_responses", [])
-                for _i, _r in enumerate(_responses):
-                    if getattr(_r, "has_errors", False):
-                        failed_idx.add(_ws + _i)
+                # 同上:errors 键 = 块内原始下标,加块偏移映射回全局下标
+                for _i in _result.errors:
+                    failed_idx.add(_ws + _i)
             except Exception as exc:  # noqa: BLE001 - 块级失败:整块对象走 replace 回退
                 logger.warning(
                     "insert_many 块失败(offset=%d,%d objs): %s,整块 replace",
