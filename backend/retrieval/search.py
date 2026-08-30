@@ -22,6 +22,28 @@ from backend.embedder.base import Embedder
 
 logger = logging.getLogger(__name__)
 
+# admin 为管理后台测试环境,数据边界独立落库,但检索可见性按访客视角:
+# 管理员所见 = 访客(widget)所见。其余渠道原样透传(零回归)。
+_VISIBILITY_CHANNEL_ALIAS: dict[str, str] = {"admin": "widget"}
+
+
+def _visibility_probe_channel(channel: str | None) -> str | None:
+    """把请求渠道映射为 channel_visibility 过滤所用的探测渠道。
+
+    ``admin`` 映射为 ``widget``(P1-RES:修复 admin 内嵌聊天检索被
+    可见性白名单排除的问题);其余渠道(含 None)原样返回,行为与
+    历史基线完全一致。
+
+    Args:
+        channel: 请求渠道标识,可为 None。
+
+    Returns:
+        用于 ``contains_any`` 过滤的渠道值(None 表示不过滤)。
+    """
+    if channel is None:
+        return None
+    return _VISIBILITY_CHANNEL_ALIAS.get(channel, channel)
+
 
 @dataclass(frozen=True)
 class SearchResult:
@@ -156,13 +178,10 @@ class HybridSearcher:
         # 组合 filter:product + channel(AND 语义)
         filters_list: list = []
         if product_filter:
-            filters_list.append(
-                Filter.by_property("product").equal(product_filter)
-            )
-        if channel:
-            filters_list.append(
-                Filter.by_property("channel_visibility").contains_any([channel])
-            )
+            filters_list.append(Filter.by_property("product").equal(product_filter))
+        probe = _visibility_probe_channel(channel)
+        if probe:
+            filters_list.append(Filter.by_property("channel_visibility").contains_any([probe]))
         if len(filters_list) == 1:
             kwargs = {**kwargs, "filters": filters_list[0]}
         elif len(filters_list) >= 2:
@@ -205,17 +224,13 @@ class HybridSearcher:
         from weaviate.classes.query import Filter
 
         filters_list: list = [
-            Filter.by_property("channel_visibility").contains_any([channel])
+            Filter.by_property("channel_visibility").contains_any(
+                [_visibility_probe_channel(channel)]
+            )
         ]
         if product_filter:
-            filters_list.append(
-                Filter.by_property("product").equal(product_filter)
-            )
-        filters = (
-            filters_list[0]
-            if len(filters_list) == 1
-            else Filter.all_of(filters_list)
-        )
+            filters_list.append(Filter.by_property("product").equal(product_filter))
+        filters = filters_list[0] if len(filters_list) == 1 else Filter.all_of(filters_list)
 
         resp = collection.query.bm25(
             query=query,
@@ -223,9 +238,19 @@ class HybridSearcher:
             limit=limit,
             filters=filters,
             return_properties=[
-                "source_id", "source_type", "product", "title", "url", "text",
-                "chunk_index", "chunk_type", "doc_section", "channel_visibility",
-                "symbol_name", "symbol_signature", "branch",
+                "source_id",
+                "source_type",
+                "product",
+                "title",
+                "url",
+                "text",
+                "chunk_index",
+                "chunk_type",
+                "doc_section",
+                "channel_visibility",
+                "symbol_name",
+                "symbol_signature",
+                "branch",
             ],
         )
         return [self._to_search_result(o) for o in resp.objects]
@@ -274,28 +299,19 @@ class HybridSearcher:
         if source_types:
             # TEXT 标量属性:equal + any_of 合并(OR 语义)
             filters_list.append(
-                Filter.any_of(
-                    [Filter.by_property("source_type").equal(st) for st in source_types]
-                )
+                Filter.any_of([Filter.by_property("source_type").equal(st) for st in source_types])
             )
         if chunk_types:
             filters_list.append(
-                Filter.any_of(
-                    [Filter.by_property("chunk_type").equal(ct) for ct in chunk_types]
-                )
+                Filter.any_of([Filter.by_property("chunk_type").equal(ct) for ct in chunk_types])
             )
         if product_filter:
             filters_list.append(Filter.by_property("product").equal(product_filter))
-        if channel:
-            filters_list.append(
-                Filter.by_property("channel_visibility").contains_any([channel])
-            )
+        probe = _visibility_probe_channel(channel)
+        if probe:
+            filters_list.append(Filter.by_property("channel_visibility").contains_any([probe]))
 
-        filters = (
-            filters_list[0]
-            if len(filters_list) == 1
-            else Filter.all_of(filters_list)
-        )
+        filters = filters_list[0] if len(filters_list) == 1 else Filter.all_of(filters_list)
 
         resp = collection.query.bm25(
             query=query,
@@ -303,9 +319,19 @@ class HybridSearcher:
             limit=limit,
             filters=filters,
             return_properties=[
-                "source_id", "source_type", "product", "title", "url", "text",
-                "chunk_index", "chunk_type", "doc_section", "channel_visibility",
-                "symbol_name", "symbol_signature", "branch",
+                "source_id",
+                "source_type",
+                "product",
+                "title",
+                "url",
+                "text",
+                "chunk_index",
+                "chunk_type",
+                "doc_section",
+                "channel_visibility",
+                "symbol_name",
+                "symbol_signature",
+                "branch",
             ],
         )
         return [self._to_search_result(o) for o in resp.objects]
@@ -325,11 +351,7 @@ class HybridSearcher:
         distance = metadata.distance if metadata is not None else None
         score = 1.0 - distance if distance is not None else 0.0
         cv_raw = props.get("channel_visibility", ["widget", "api"])
-        cv_tuple = (
-            tuple(cv_raw)
-            if isinstance(cv_raw, (list, tuple))
-            else ("widget", "api")
-        )
+        cv_tuple = tuple(cv_raw) if isinstance(cv_raw, (list, tuple)) else ("widget", "api")
         return SearchResult(
             text=props.get("text", ""),
             source_id=props.get("source_id", ""),
