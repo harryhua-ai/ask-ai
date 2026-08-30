@@ -35,6 +35,7 @@
 ## 5. Handoff 规则
 
 - 严格遵守项目 Shared Handoff Protocol(自包含交接文档 + 可粘贴提示词,见既有 `docs/superpowers/handoff/` 惯例)
+- **执行工作流条款(2026-08-30 增,延续项目 plans 惯例)**:每个 Execution Contract 的 Required Verification 节须包含——"建议使用 superpowers 工作流(`superpowers:executing-plans` 或 `subagent-driven-development`,若会话可用)逐 Task 执行;工作流纪律以本契约的 TDD/汇报要求为准"
 - Planning 与 Review 均写入持久化 markdown artifact,最终回复提供**文件路径 + commit hash**
 - 多阶段任务:每阶段通过后更新整体进度(交接文档"执行结果"节 + `docs/product-roadmap.md` 对应条目)
 
