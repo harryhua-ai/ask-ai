@@ -1,10 +1,14 @@
 # WEB-DATA-WIN 契约束执行报告(C10 → C9 → C8 + C10 增补)
 
-- 执行人:Engineering Executor(侧聊窗口)
+> **Review 结论(2026-08-30 晚):判定 PASS,放行推送已执行**——快进推送 main
+> (`fe98ca2..76d75e7`,5 commit 线性),本地 main 已同步,CI run 33321125298 触发;
+> 未部署(T1a 前一次性发布)。worktree 与分支已退役(main 含全部代码)。
+> **PAT 轮换待用户操作;sync_log 泄漏行删除为独立动作,待产品确认后另行执行。**
+
+- 执行人:Engineering Executor(侧聊窗口)+ 主窗口 Executor(交叉验证与收口)
 - 契约:`docs/engineering/contracts/c8-c9-c10-web-data-win.md`(已冻结)
 - BASELINE:fe98ca2(A1 全线收官)
-- worktree:`.claude/worktrees/web-data-window`(分支 `worktree-exec/web-data-window`)
-- 提交链(未 push,待 Review 放行):
+- 提交链(已按放行推送 main):
   - `309c1f5` fix(github+admin): C10 源可诊断性与表单缺陷
   - `b09cd8d` feat(filesystem+admin): C9 上传文件夹建源,浏览器直传即建源
   - `eaca95f` feat(admin): github 源拉取分支时预填全部文件后缀(C10 增补)

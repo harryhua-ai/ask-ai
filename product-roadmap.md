@@ -275,7 +275,7 @@ mask_pii → BudgetLimiter 预扣 → 附件注入
 | 生产运行 | 后端/数据面在 tesla-t4 生产运行(入口 wiki-data.camthink.ai);**公开站点零嵌入,真实访客流量为零**(唯一集成:admin 登录页 + 登录后页面,管理员测试用) |
 | 通用化程度 | 架构层达标(插件/配置化/部署物);业务语义层 12 后端文件 + 6 前端文件 CamThink 硬编码,意图体系为最深单点(§5) |
 | 代码(2026-08-30 收敛完成) | main 历史已重写 + **文档全部转仅本地**(`4651ca8`,GitHub 只留代码);**收敛完成:main = origin/main = `88a4c9f`**,分叉消除(旧 SHA 81bd1db/be93264 作废 → c8117f4/88a4c9f);分支已退役,backup/sync-consistency-pre-rebase 留至 D-11 后;规划文档(含本篇、CLAUDE.md)为本地 untracked,执行端经绝对路径读取;CLAUDE.md 已固化环境策略 |
-| 已完成未验收 | ~~sync-consistency~~ **D-11 Review 判定 PARTIAL(08-30,任务关闭)**:机制验收全过、验收 c 数据侧遗留分流 §6.3-A1b(P1 admin 检索修复 / ne503-sdk rename / 8 源孤儿 / 消失文档盲区);P1 任务包在途(BASELINE 88a4c9f) |
+| 已完成未验收 | **全部代码就绪待发布**:main = `76d75e7` = origin(P1 `5ca3dfe` + D4-ACC `ce59b15`/`fe98ca2` + WEB-DATA-WIN `309c1f5`..`76d75e7` 三契约);CI 33321125298;worktree 清零。**剩余:一次性发布(REL-WIN 契约)+ 发布后观察三项 → T1a** |
 | 数据规模 | 13 源在同步(T4 现 5 success / 9 partial,残留均为数据侧根因);知识源幽灵清理闭环 481/481;曾误删 560k chunk 事故后重建 |
 | 测试 | 后端 pytest(本地全量 **499 passed + 3 skipped**,排除 embedder/e2e 与 CI 同口径;embedder 无外网沙箱会因 BGE 下载挂起,缓存有模型后不卡)+ 前端 vitest(admin 88)+ Playwright E2E 三页;ruff 存量 12 处(I001×10/BLE001/SIM103,低优清单) |
 | 已知风险 | T4 磁盘曾 91-96%(事故根因);GPU 显存与 3 服务共享(sync embed 偶发 OOM);dev 库稀疏导致三页真实数据视觉验证欠账 |
