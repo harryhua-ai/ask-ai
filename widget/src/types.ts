@@ -11,6 +11,8 @@ export interface WidgetConfig {
   apiUrl: string;
   language?: string;
   primaryColor?: string;
+  /** 渠道标识,缺省 "widget";admin 内嵌聊天传 "admin" 以隔离测试对话数据 */
+  channel?: string;
 }
 
 export type MessageType = "user" | "assistant";

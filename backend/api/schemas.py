@@ -17,7 +17,9 @@ class AskRequest(BaseModel):
     Attributes:
         message: 用户问题文本(1~2000 字符)。
         language: 可选语言提示(如 ``zh-cn`` / ``en``);为空时由管道自动检测。
-        channel: 渠道标识(仅允许 ``widget|discord|whatsapp|mcp``),默认 ``widget``。
+        channel: 渠道标识(仅允许 ``widget|discord|whatsapp|mcp|admin``),默认 ``widget``。
+            ``admin`` 为管理后台内嵌聊天专用渠道,用于数据边界隔离:
+            管理员测试对话不与真实访客(widget)对话混入同一统计池。
         conversation_history: OpenAI 风格历史消息(最多 ``MAX_HISTORY_ITEMS`` 条),
             单条 content 上限 ``MAX_HISTORY_CONTENT_CHARS`` 字符,总计上限
             ``MAX_HISTORY_TOTAL_CHARS`` 字符。仅保留 ``role`` / ``content`` 键。
@@ -25,7 +27,7 @@ class AskRequest(BaseModel):
 
     message: str = Field(..., min_length=1, max_length=8000)
     language: str | None = None
-    channel: str = Field(default="widget", pattern="^(widget|discord|whatsapp|mcp)$")
+    channel: str = Field(default="widget", pattern="^(widget|discord|whatsapp|mcp|admin)$")
     conversation_history: list[dict] = Field(default_factory=list, max_length=MAX_HISTORY_ITEMS)
     # Phase 1a:widget 匿名会话标识(localStorage UUID),用于附件归属校验
     session_id: str | None = Field(default=None, max_length=200)

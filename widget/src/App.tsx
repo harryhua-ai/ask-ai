@@ -35,7 +35,7 @@ export function App({ config }: { config: WidgetConfig }) {
 
     // try/finally 确保 isStreaming 总是被重置,即使 fetch 抛错或 SSE 提前返回(resp.body 为空 / resp.ok 为 false)
     try {
-      await ask(text, messages, "widget", {
+      await ask(text, messages, config.channel ?? "widget", {
         onSources: (sources, convId) => {
           setConversationId(convId);
           setMessages((prev) =>
