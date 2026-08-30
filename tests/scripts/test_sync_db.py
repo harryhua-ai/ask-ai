@@ -223,9 +223,9 @@ async def test_sync_skips_when_documents_exist_and_no_changes(backdated_repo):
         await _sync_one(cfg, mock_pipeline, async_factory, triggered_by="test")
 
         # 核心断言:没有 ingest_all 调用 = 没有回退全量
-        assert not mock_pipeline.ingest_all.called, (
-            "documents 表已有记录时,fetch_changes 空不应回退 fetch_all"
-        )
+        assert (
+            not mock_pipeline.ingest_all.called
+        ), "documents 表已有记录时,fetch_changes 空不应回退 fetch_all"
 
         # SyncLog 应记录 items_unchanged >= 1, items_new == 0
         with sync_factory() as s:
@@ -286,9 +286,9 @@ async def test_sync_falls_back_when_no_documents(backdated_repo):
         await _sync_one(cfg, mock_pipeline, async_factory, triggered_by="test")
 
         # 核心断言:回退全量 → ingest_all 被调用
-        assert mock_pipeline.ingest_all.called, (
-            "documents 表无记录时,fetch_changes 空应回退 fetch_all 并调用 ingest_all"
-        )
+        assert (
+            mock_pipeline.ingest_all.called
+        ), "documents 表无记录时,fetch_changes 空应回退 fetch_all 并调用 ingest_all"
 
         # 清理本测试产生的行
         with sync_factory() as s:
@@ -434,8 +434,17 @@ async def test_sync_one_uses_last_success_as_window():
         )
         orig_create = ConnectorRegistry.create
         ConnectorRegistry.create = staticmethod(lambda c: _RecordingConnector())
+        # 校验器(迭代器口径,D4-ACC)需读到与 pg 一致的向量:种子文档 1 chunk
+        _wv_item = MagicMock(properties={"source_id": f"{sid}/main/x.py", "chunk_index": 0})
+        _wv_collection = MagicMock()
+        _wv_collection.iterator.return_value = [_wv_item]
+        _wv_client = MagicMock()
+        _wv_client.collections.get.return_value = _wv_collection
+        _pipeline = MagicMock()
+        _pipeline._client = _wv_client
+        _pipeline._class_name = "Document"
         try:
-            await _sync_one(cfg, MagicMock(), async_factory, triggered_by="test")
+            await _sync_one(cfg, _pipeline, async_factory, triggered_by="test")
         finally:
             ConnectorRegistry.create = orig_create
 

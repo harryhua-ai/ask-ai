@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from backend.services import vector_consistency
 from backend.services.vector_consistency import verify_source_vectors
 
 
@@ -55,20 +54,55 @@ def _make_pipeline(
 
 
 @pytest.mark.asyncio
+async def test_summary_level_not_fooled_by_like_token_pollution():
+    """neomind 家族 like 前缀污染场景:聚合口径虚高不得影响健康判定(D4-ACC)。
+
+    旧实现:汇总级 total_count 用 TEXT like 计数,`neomind-local/*` 会把
+    dashboard/extensions/devicetypes 的对象一并算进来(生产实测聚合 16983
+    vs 迭代器 10953),造成永久假 partial。新实现:汇总级与精确级同为
+    迭代器口径 → 迭代器一致即健康。
+    """
+    pg_rows = [("neomind-local/main/a.md", 2), ("neomind-local/main/b.md", 1)]
+    session_factory = _make_session_factory(scalar=3, rows=pg_rows)
+    # 真实对象仅 3 个(与 pg 一致);聚合口径被污染成 16983(模拟 like 虚高)
+    pipeline = _make_pipeline(
+        actual_chunks=16983,
+        wv_chunks={"neomind-local/main/a.md": {0, 1}, "neomind-local/main/b.md": {0}},
+    )
+
+    report = await verify_source_vectors(session_factory, pipeline, "neomind-local")
+
+    assert report.is_healthy is True
+    assert report.actual_chunks == 3  # 迭代器口径,非聚合污染值
+    assert report.missing_source_ids == []
+    assert report.refill_source_ids == []
+    assert report.orphan_count == 0
+
+
+@pytest.mark.asyncio
 async def test_verify_healthy_when_counts_match():
-    """汇总级相等 → is_healthy=True,不深入精确级(iterator 不被调用)。"""
-    # Postgres SUM(chunk_count) == Weaviate total == 10
-    session_factory = _make_session_factory(scalar=10)
-    pipeline = _make_pipeline(actual_chunks=10)
+    """迭代器口径一致 → is_healthy=True;汇总级不再使用 like 聚合(D4-ACC)。"""
+    # Postgres SUM(chunk_count) == Weaviate 迭代器可见 chunks == 10
+    pg_rows = [("wiki-documents-local/main/a.md", 3), ("wiki-documents-local/main/b.md", 7)]
+    session_factory = _make_session_factory(scalar=10, rows=pg_rows)
+    pipeline = _make_pipeline(
+        actual_chunks=10,  # 旧聚合口径的 mock 值,新实现不再读取
+        wv_chunks={
+            "wiki-documents-local/main/a.md": {0, 1, 2},
+            "wiki-documents-local/main/b.md": set(range(7)),
+        },
+    )
 
     report = await verify_source_vectors(session_factory, pipeline, "wiki-documents-local")
 
     assert report.is_healthy is True
+    assert report.actual_chunks == 10
     assert report.missing_source_ids == []
     assert report.refill_source_ids == []
     assert report.stale_chunk_count == 0
-    # 精确级不触发:fetch_objects 未调用
-    assert pipeline._client.collections.get.return_value.query.fetch_objects.called is False
+    # 汇总级不再依赖 TEXT like 聚合(D4-ACC 口径统一)
+    collection = pipeline._client.collections.get.return_value
+    assert collection.aggregate.over_all.called is False
 
 
 @pytest.mark.asyncio
@@ -149,19 +183,11 @@ async def test_refill_unions_missing_and_chunk_mismatch_sorted():
 
 
 @pytest.mark.asyncio
-async def test_orphan_count_only_within_source_prefix(monkeypatch):
-    """孤儿计数限本源前缀:iterator 全表遍历后客户端按前缀过滤,跨源孤儿不计数。"""
-    # 伪造 Filter:aggregate 的 like(pattern) 记录调用,断言服务端过滤仍在本源
-    fake_filter = MagicMock(name="FakeFilter")
-    like_patterns: list[str] = []
+async def test_orphan_count_only_within_source_prefix():
+    """孤儿计数限本源前缀:iterator 全表遍历后客户端按前缀过滤,跨源孤儿不计数。
 
-    def _like(pattern):
-        like_patterns.append(pattern)
-        return ("like", pattern)
-
-    fake_filter.by_property.return_value.like.side_effect = _like
-    monkeypatch.setattr(vector_consistency, "Filter", fake_filter)
-
+    D4-ACC:汇总级已弃用 like 聚合,孤儿计数仍限本源前缀(客户端过滤)。
+    """
     # Weaviate 全库数据:本源 1 正常 + 本源 1 孤儿 + 跨源 1 孤儿
     all_items = [
         MagicMock(properties={"source_id": "src/doc-1", "chunk_index": 0}),
@@ -170,7 +196,7 @@ async def test_orphan_count_only_within_source_prefix(monkeypatch):
     ]
 
     collection = MagicMock()
-    collection.aggregate.over_all.return_value.total_count = 3
+    collection.aggregate.over_all.return_value.total_count = 3  # 不再被读取
     collection.iterator.return_value = list(all_items)
 
     client = MagicMock()
@@ -179,7 +205,7 @@ async def test_orphan_count_only_within_source_prefix(monkeypatch):
     pipeline._client = client
     pipeline._class_name = "Document"
 
-    # Postgres SUM=1(仅 src/doc-1);Weaviate 全库 total=3 → 汇总级不等,触发精确级
+    # Postgres SUM=1(仅 src/doc-1);迭代器可见 actual=2(ghost 计入)→ 不健康
     session_factory = _make_session_factory(scalar=1, rows=[("src/doc-1", 1)])
 
     report = await verify_source_vectors(session_factory, pipeline, "src")
@@ -187,8 +213,8 @@ async def test_orphan_count_only_within_source_prefix(monkeypatch):
     assert report.is_healthy is False
     # 只统计本源前缀内的孤儿(src/ghost);跨源 other-source/orphan 不算
     assert report.orphan_count == 1
-    # aggregate 服务端过滤仍为本源前缀
-    assert set(like_patterns) == {"src/*"}
+    # 汇总级不再使用 like 聚合(D4-ACC 口径统一)
+    assert collection.aggregate.over_all.called is False
     # iterator 取 (source_id, chunk_index) 两属性
     assert collection.iterator.call_args.kwargs["return_properties"] == [
         "source_id",

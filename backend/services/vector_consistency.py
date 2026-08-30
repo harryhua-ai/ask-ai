@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from weaviate.classes.query import Filter
 
 from backend.db.models import Document
 
@@ -36,8 +35,16 @@ class VectorGapReport:
 
     @property
     def is_healthy(self) -> bool:
-        """汇总级相等即视为健康(不深入精确级)。"""
-        return self.expected_chunks == self.actual_chunks
+        """健康 = 汇总相等且无任何缺口(整篇缺失 / chunk 集合不一致 / 孤儿)。
+
+        迭代器口径下 expected/actual 同源相等已蕴含前两者一致;
+        显式列出 refill/orphan 条件以保证无「账面一致但存在漂移」的漏判。
+        """
+        return (
+            self.expected_chunks == self.actual_chunks
+            and not self.refill_source_ids
+            and self.orphan_count == 0
+        )
 
 
 async def verify_source_vectors(
@@ -67,29 +74,15 @@ async def verify_source_vectors(
         expected = int(result.scalar() or 0)
 
     collection = pipeline._client.collections.get(pipeline._class_name)
-    source_filter = Filter.by_property("source_id").like(f"{source_prefix}/*")
-    agg = collection.aggregate.over_all(total_count=True, filters=source_filter)
-    actual = int(getattr(agg, "total_count", 0) or 0)
 
-    if expected == actual:
-        return VectorGapReport(expected_chunks=expected, actual_chunks=actual)
-
-    # 2) 精确级:chunk 级差集
-    #    Postgres 侧取 (source_id, chunk_count)
-    async with session_factory() as session:
-        result = await session.execute(
-            select(Document.source_id, Document.chunk_count).where(
-                Document.source_id.like(f"{source_prefix}/%")
-            )
-        )
-        pg_chunks: dict[str, int] = {sid: int(cc) for sid, cc in result.all()}
-
-    #    Weaviate 侧拉 (source_id, chunk_index)。两个 v4 限制(v4.22 实测):
-    #    - iterator() 不支持 filters 参数;
-    #    - fetch_objects 的 after 游标与 where 过滤互斥(cursor api 限制)。
-    #    故只能 iterator 全表遍历 + 客户端前缀过滤(orphan 计数仍限本源)。
+    # 2) 汇总级 + 精确级统一口径:单次迭代器全扫 + 客户端前缀过滤。
+    #    Weaviate TEXT like 按 token 分词匹配,源前缀互相污染(neomind 家族
+    #    实证:`neomind-local/*` 聚合计数把整个家族对象都算进来),聚合口径
+    #    不可用于计数;一切以迭代器可见对象为准(D4-ACC)。
+    #    v4 限制(v4.22 实测):iterator() 不支持 filters 参数。
     wv_chunks: dict[str, set[int]] = {}
     prefix = f"{source_prefix}/"
+    actual = 0
     for item in collection.iterator(return_properties=["source_id", "chunk_index"]):
         props = item.properties
         sid = props.get("source_id")
@@ -100,6 +93,17 @@ async def verify_source_vectors(
         if not sid.startswith(prefix):
             continue  # 客户端前缀过滤
         wv_chunks.setdefault(sid, set()).add(int(idx))
+        actual += 1
+
+    # 3) 精确级:chunk 级差集
+    #    Postgres 侧取 (source_id, chunk_count)
+    async with session_factory() as session:
+        result = await session.execute(
+            select(Document.source_id, Document.chunk_count).where(
+                Document.source_id.like(f"{source_prefix}/%")
+            )
+        )
+        pg_chunks: dict[str, int] = {sid: int(cc) for sid, cc in result.all()}
 
     # 整篇缺失:pg 有、Weaviate 完全没有
     missing = sorted(sid for sid in pg_chunks if sid not in wv_chunks)
