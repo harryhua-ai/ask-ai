@@ -38,6 +38,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 # 导入 connector 实现以触发 @ConnectorRegistry.register
 import backend.connectors.filesystem
 import backend.connectors.github
+import backend.connectors.web_crawl
 
 # 导入 LLM provider 以触发 @LLMRegistry.register
 import backend.llm.deepseek  # noqa: F401
@@ -194,6 +195,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from backend.db.models import (
             Customization,
             CustomizationBinding,
+            DataSource,
             LLMProviderModel,
             LLMRouting,
             User,
@@ -201,7 +203,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         prompt_cfg = load_yaml_config(settings.config_dir / "system_prompt.yaml")
         async with app.state.session_factory() as session:
-            # Admin 用户
+            # C8:官网爬取数据源首实例(T1a 官网嵌入前置)
+            if not await session.get(DataSource, "website-camthink"):
+                session.add(
+                    DataSource(
+                        id="website-camthink",
+                        type="web_crawl",
+                        product="website",
+                        enabled=True,
+                        config={
+                            "base_url": "https://www.camthink.ai",
+                            "crawl_delay_ms": 500,
+                        },
+                        sync_interval="24h",
+                    )
+                )
+                logger.info("已创建官网爬取数据源: website-camthink")
+
+# Admin 用户
             admin_email = os.environ.get("ADMIN_EMAIL", "admin@camthink.ai")
             existing_admin = (
                 await session.execute(sa_select(User).where(User.email == admin_email))

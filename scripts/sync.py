@@ -52,6 +52,7 @@ from sqlalchemy import func, select
 import backend.connectors.filesystem  # 触发 @register 装饰器
 import backend.connectors.github
 import backend.connectors.local_git  # 触发 @register 装饰器
+import backend.connectors.web_crawl  # 触发 @register 装饰器
 import backend.connectors.woocommerce  # noqa: F401 - 触发 @register 装饰器
 from backend.config import Settings, load_settings
 from backend.connectors.db_adapter import to_source_config

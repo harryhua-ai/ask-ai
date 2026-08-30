@@ -40,6 +40,7 @@ SOURCE_LABELS = {
     "github": "[GitHub]",
     "wiki": "[Wiki]",
     "website": "[官网]",
+    "web_crawl": "[官网]",
     "blog": "[博客]",
     "filesystem": "[知识库]",
 }
@@ -47,8 +48,11 @@ SOURCE_LABELS = {
 # 对外展示的 source 类型白名单(终端用户可见的 sources 列表)。
 # filesystem(support 内部案例)不对外展示(内部客户工单路径不外露),
 # 但仍参与检索与生成(LLM 用它当依据,只是不进 sources 返回)。
-# 官网(website)接入后自动纳入。代码仓库(local_git)属 GitHub 公开 repo,纳入。
-PUBLIC_SOURCE_TYPES: frozenset[str] = frozenset({"local_git", "github", "woocommerce", "website"})
+# 官网爬取源(web_crawl,C8)与历史 website 类型属公开站,纳入。
+# 代码仓库(local_git)属 GitHub 公开 repo,纳入。
+PUBLIC_SOURCE_TYPES: frozenset[str] = frozenset(
+    {"local_git", "github", "woocommerce", "website", "web_crawl"}
+)
 
 # Per-intent boost 桶配置:与主 hybrid 结果 RRF 融合,让 intent 相关 source 获得加权。
 # - support:故障案例/排查文档多 ingest 为 source_type="filesystem",提升其召回权重。

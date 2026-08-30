@@ -310,6 +310,29 @@ async def test_rag_filters_all_internal_when_no_public_source():
 
 
 @pytest.mark.unit
+async def test_rag_web_crawl_source_enters_public_list():
+    """web_crawl(官网爬取,C8)属公开源,进对外 sources。"""
+    web_sr = _make_sr(
+        text="NG4500 搭载 Jetson 平台",
+        source_id="website-camthink/product/neoedge-ai-box-ng4500",
+        title="NeoEdge AI Box NG4500",
+        url="https://www.camthink.ai/product/neoedge-ai-box-ng4500/",
+        source_type="web_crawl",
+        product="website",
+    )
+
+    rag, _, _, _ = _build_orchestrator(
+        searcher_results=[web_sr],
+        reranked_results=[web_sr],
+    )
+
+    result = await rag.answer("NG4500 用什么平台", "widget")
+
+    assert len(result.sources) == 1
+    assert result.sources[0]["type"] == "web_crawl"
+
+
+@pytest.mark.unit
 async def test_rag_stream_answer_emits_sources_then_tokens_then_complete():
     """stream_answer 正常序列:sources → token(s) → complete。"""
     sr = _make_sr(text="hello world", url="https://example.com/a")
