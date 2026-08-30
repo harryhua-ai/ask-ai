@@ -223,7 +223,7 @@ mask_pii → BudgetLimiter 预扣 → 附件注入
 
 **A. 已立项未收尾**:
 1. ~~sync-consistency~~ **✅ 已收口(2026-08-30 D-11)**:代码全归一 main(`88a4c9f`)+ 部署验收通过——自愈循环幂等(两轮 SyncLog 逐字节一致)、幽灵清理闭环实证(knowledge 5 行 pg 遗留清除后 partial→success 481/481)、prune 零误触发。残留为**数据侧**(非代码),分列下条
-1b. **数据侧残留(P1-RES 处置后,2026-08-30 Review=PARTIAL)**:① ~~P1 admin 检索~~ **代码修复完成**(`5ca3dfe`,三处过滤点映射,Review 放行 push,随下次发布生效);② ~~ne503-sdk rename~~ **数据修复完成**(窗口配对重置+470 灌入+15 篇清理残留 0;终态 partial 因 D4);③ 孤儿清单已交付:**615 篇/3125 chunks 集中 5 源**(ne301 523/wiki 42/extensions 38/lowpower 10/devicetypes 2,均分支旧版/已删文件残留),另有 dashboard/neomind-local 系聚合口径**假阳性**无需清理——待用户逐源拍板;④ 功能盲区:增量同步不处理"源里消失的文档"(候选池);⑤ **新发现缺陷 D4(高优候选)**:ingest 成功记账依赖废弃 `all_responses`(`ingest.py:251/:482`),getattr 静默空列表 → 失败全记成功、pg 假数落账——影响全部 github 源 replace 记账,自愈根基失真;建议与 T1a 并行立项 `fix(ingest)` + 校验器口径统一(同包)
+1b. **数据侧残留(P1-RES 已关闭,2026-08-30;处置详见 `docs/engineering/reviews/p1-res-review.md`)**:① ~~P1 admin 检索~~ **修复已合入 main**(`5ca3dfe`,生产生效待下次常规发布);② ~~ne503-sdk rename~~ **数据修复完成**(470 灌入+15 篇清理残留 0;终态 partial 因 D4);③ 孤儿 615 篇/5 源**已拍板全清**(随 D4-ACC Task 3);dashboard/neomind-local 系聚合口径假阳性无需清理;④ 功能盲区:增量同步不处理"源里消失的文档"(候选池);⑤ **D4 缺陷已立项**:D4-ACC 契约已签发(ingest 记账迁移 + 校验器口径统一 + 孤儿清理,`docs/engineering/contracts/d4-ingest-accounting-and-consistency-calibration.md`,baseline `5ca3dfe`)
 2. tesla-t4 Docker 恢复预案执行(14 容器,数据零丢失,需停机窗口 + owners 确认;任何 T4 部署前查磁盘余量)
 
 **B. 已设计待评审**(admin 对齐 Phase 3,spec 评审建议"不急做,按实际使用价值砍"):
