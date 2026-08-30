@@ -9,7 +9,6 @@
 """
 
 import uuid
-from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -80,7 +79,7 @@ def upload_cwd(tmp_path, monkeypatch):
 
 
 async def _upload(client, headers, source_id, items: list[tuple[str, bytes]]):
-    files = [(f"files", (name, content, "application/octet-stream")) for name, content in items]
+    files = [("files", (name, content, "application/octet-stream")) for name, content in items]
     return await client.post(
         f"/api/admin/data-sources/{source_id}/upload",
         files=files,

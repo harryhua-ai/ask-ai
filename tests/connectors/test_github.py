@@ -103,9 +103,8 @@ def test_github_ensure_cloned_failure_raises(tmp_path) -> None:
     with patch(
         "backend.connectors.github.subprocess.run",
         side_effect=subprocess.CalledProcessError(1, "git"),
-    ):
-        with pytest.raises(RuntimeError):
-            conn._ensure_cloned("main")
+    ), pytest.raises(RuntimeError):
+        conn._ensure_cloned("main")
 
 
 @pytest.mark.unit
