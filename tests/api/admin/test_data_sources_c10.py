@@ -50,6 +50,18 @@ class _FakeGitHubClient:
     async def get(self, url):
         if url.endswith("/branches?per_page=100"):
             return _FakeResp([{"name": b} for b in REMOTE_BRANCHES])
+        if "/git/trees/" in url:
+            return _FakeResp(
+                {
+                    "tree": [
+                        {"path": "src/main.c", "type": "blob"},
+                        {"path": "src/util.h", "type": "blob"},
+                        {"path": "README.md", "type": "blob"},
+                        {"path": "docs/manual.bin", "type": "blob"},
+                        {"path": ".gitignore", "type": "blob"},
+                    ]
+                }
+            )
         return _FakeResp({"default_branch": REMOTE_DEFAULT})
 
 
@@ -200,3 +212,16 @@ async def test_sync_rejects_invalid_branches(fake_github, auth_headers):
         assert "ghost-branch" in resp.json()["detail"]
     finally:
         await _cleanup_source("c10-stale-branch")
+
+
+async def test_preview_file_types_lists_repo_extensions(fake_github, auth_headers):
+    """preview-file-types:仓库全量文件后缀去重返回(点开头文件不计)。"""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get(
+            "/api/admin/data-sources/preview-file-types"
+            "?owner=camthink-ai&repo=demo-repo&branch=master",
+            headers=auth_headers,
+        )
+    assert resp.status_code == 200
+    assert resp.json()["extensions"] == [".bin", ".c", ".h", ".md"]

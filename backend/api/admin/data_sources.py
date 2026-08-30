@@ -445,6 +445,38 @@ async def preview_branches(
     return {"branches": branches, "default_branch": default_branch}
 
 
+@router.get("/preview-file-types")
+async def preview_file_types(
+    owner: str, repo: str, branch: str, _: EditorDep
+) -> dict[str, Any]:
+    """预览仓库内出现的全部文件后缀(C10 增补:默认全列,用户按需删)。
+
+    GitHub trees API 递归列举指定分支文件树;点开头的文件名(如 .gitignore)
+    不计后缀;去重排序返回。
+    """
+    token = os.environ.get("GITHUB_TOKEN", "")
+    headers = {
+        "Accept": "application/vnd.github+json",
+        **({"Authorization": f"Bearer {token}"} if token else {}),
+    }
+    async with httpx.AsyncClient(timeout=30, headers=headers) as client:
+        resp = await client.get(
+            f"https://api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive=1"
+        )
+        resp.raise_for_status()
+    extensions: set[str] = set()
+    for item in resp.json().get("tree", []):
+        if item.get("type") != "blob":
+            continue
+        name = str(item.get("path", "")).rsplit("/", 1)[-1]
+        if name.startswith("."):
+            continue
+        ext = Path(name).suffix.lower()
+        if ext:
+            extensions.add(ext)
+    return {"extensions": sorted(extensions)}
+
+
 @router.post("/{source_id}/sync")
 async def trigger_sync(source_id: str, _: EditorDep, request: Request) -> dict[str, str]:
     """手动触发指定数据源同步（后台异步执行，立即返回）。"""

@@ -11,6 +11,7 @@ import {
   useTriggerSync,
   useTriggerSyncAll,
   fetchPreviewBranches,
+  fetchPreviewFileTypes,
   uploadSourceFiles,
 } from "@/hooks/useDataSources";
 import { Button } from "@/components/ui/button";
@@ -369,6 +370,15 @@ export default function DataSources() {
       if ((!current || current === "main") && branches.includes(defaultBranch)) {
         setValue("branches", defaultBranch, { shouldDirty: true });
       }
+      // C10 增补:仓库出现的全部文件后缀默认全列,用户按需删
+      try {
+        const ft = await fetchPreviewFileTypes(parsed.owner, parsed.repo, defaultBranch);
+        if (ft.extensions.length) {
+          setValue("file_types", ft.extensions.join(", "), { shouldDirty: true });
+        }
+      } catch {
+        // 文件类型拉取失败不打断分支流程(用户仍可手填)
+      }
     } catch (err) {
       setBranchError(err instanceof Error ? err.message : "拉取分支失败");
     } finally {
@@ -651,7 +661,21 @@ export default function DataSources() {
                       webkitdirectory: "",
                       directory: "",
                     }}
-                    onChange={(e) => setPickedFiles(Array.from(e.target.files ?? []))}
+                    onChange={(e) => {
+                      const picked = Array.from(e.target.files ?? []);
+                      setPickedFiles(picked);
+                      // 按所选文件后缀预填白名单,用户按需删
+                      const exts = [
+                        ...new Set(
+                          picked
+                            .map((f) => f.name.slice(f.name.lastIndexOf(".")).toLowerCase())
+                            .filter((x) => x.startsWith(".")),
+                        ),
+                      ];
+                      if (exts.length) {
+                        setValue("file_types", exts.join(", "), { shouldDirty: true });
+                      }
+                    }}
                   />
                   {pickedFiles.length > 0 && (
                     <p className="text-xs text-muted-foreground">

@@ -113,6 +113,19 @@ export async function uploadSourceFiles(
   return { saved };
 }
 
+/** 预览仓库内全部文件后缀(C10 增补:默认全列,用户按需删)。 */
+export async function fetchPreviewFileTypes(
+  owner: string,
+  repo: string,
+  branch: string,
+): Promise<{ extensions: string[] }> {
+  const data = await apiFetch<{ extensions: string[] }>(
+    `/data-sources/preview-file-types?owner=${encodeURIComponent(owner)}`
+    + `&repo=${encodeURIComponent(repo)}&branch=${encodeURIComponent(branch)}`,
+  );
+  return data;
+}
+
 /** 预览 GitHub 仓库分支列表 + 默认分支(供表单消除 main 硬编码)。 */
 export async function fetchPreviewBranches(
   owner: string,

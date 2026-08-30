@@ -2,7 +2,13 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import DataSources from "@/pages/DataSources";
-import { useDataSources, useTriggerSync, fetchPreviewBranches, useTriggerSyncAll } from "@/hooks/useDataSources";
+import {
+  useDataSources,
+  useTriggerSync,
+  fetchPreviewBranches,
+  fetchPreviewFileTypes,
+  useTriggerSyncAll,
+} from "@/hooks/useDataSources";
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
@@ -23,6 +29,7 @@ vi.mock("@/hooks/useDataSources", () => ({
   useTriggerSync: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useTriggerSyncAll: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   fetchPreviewBranches: vi.fn(),
+  fetchPreviewFileTypes: vi.fn(),
 }));
 
 afterEach(() => {
@@ -523,5 +530,30 @@ describe("C9 filesystem 内容来源", () => {
     fireEvent.click(screen.getByText("上传文件夹"));
     expect(screen.queryByPlaceholderText("/data/docs")).not.toBeInTheDocument();
     expect(screen.getByLabelText("选择文件夹")).toBeInTheDocument();
+  });
+});
+
+// ====================  C10 增补:拉取时自动列全仓库文件后缀  ====================
+
+
+it("拉取分支后 file_types 自动预填仓库全部后缀,用户按需删", async () => {
+  vi.mocked(fetchPreviewBranches).mockResolvedValue({
+    branches: ["master"],
+    defaultBranch: "master",
+  });
+  vi.mocked(fetchPreviewFileTypes).mockResolvedValue({
+    extensions: [".c", ".h", ".md"],
+  });
+  renderWithSources([]);
+  fireEvent.click(screen.getByText("新增数据源"));
+  fireEvent.change(
+    screen.getByPlaceholderText("https://github.com/camthink-ai/ne301.git"),
+    { target: { value: "https://github.com/camthink-ai/demo.git" } },
+  );
+  fireEvent.click(screen.getByText("拉取分支"));
+  await waitFor(() => {
+    expect(
+      (screen.getByDisplayValue(".c, .h, .md") as HTMLInputElement).value,
+    ).toBe(".c, .h, .md");
   });
 });
