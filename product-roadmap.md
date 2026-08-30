@@ -223,7 +223,7 @@ mask_pii → BudgetLimiter 预扣 → 附件注入
 
 **A. 已立项未收尾**:
 1. ~~sync-consistency~~ **✅ 已收口(2026-08-30 D-11)**:代码全归一 main(`88a4c9f`)+ 部署验收通过——自愈循环幂等(两轮 SyncLog 逐字节一致)、幽灵清理闭环实证(knowledge 5 行 pg 遗留清除后 partial→success 481/481)、prune 零误触发。残留为**数据侧**(非代码),分列下条
-1b. **数据侧残留(P1-RES 已关闭,2026-08-30;处置详见 `docs/engineering/reviews/p1-res-review.md`)**:① ~~P1 admin 检索~~ **修复已合入 main**(`5ca3dfe`,生产生效待下次常规发布);② ~~ne503-sdk rename~~ **数据修复完成**(470 灌入+15 篇清理残留 0;终态 partial 因 D4);③ 孤儿 615 篇/5 源**已拍板全清**(随 D4-ACC Task 3);dashboard/neomind-local 系聚合口径假阳性无需清理;④ 功能盲区:增量同步不处理"源里消失的文档"(候选池);⑤ **D4 缺陷已立项**:D4-ACC 契约已签发(ingest 记账迁移 + 校验器口径统一 + 孤儿清理,`docs/engineering/contracts/d4-ingest-accounting-and-consistency-calibration.md`,baseline `5ca3dfe`)
+1b. **数据侧残留(2026-08-30 终态,A1 全线收官)**:① P1 修复 `5ca3dfe` ② D4 记账修复 + 校验器口径统一 `ce59b15`/`fe98ca2` ③ 615 孤儿已清(D4-ACC Task3,5/5 源迭代器口径一致)——**全部 push origin(main=fe98ca2),CI run 33311417157**;④ 功能盲区(消失文档)留候选池。**剩余:一次性发布(部署动作,T1a 前)+ 发布后观察三项**(ne503 自愈收敛 / 五源 partial→success 翻转 / admin 聊天恢复)
 2. tesla-t4 Docker 恢复预案执行(14 容器,数据零丢失,需停机窗口 + owners 确认;任何 T4 部署前查磁盘余量)
 
 **B. 已设计待评审**(admin 对齐 Phase 3,spec 评审建议"不急做,按实际使用价值砍"):
