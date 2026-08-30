@@ -139,18 +139,27 @@ async def test_preview_dirs_nonexistent_root_404(auth_headers):
 
 
 async def test_preview_branches(auth_headers, monkeypatch):
-    """preview-branches 应调 GitHub API 返回分支列表(mock httpx)。"""
+    """preview-branches 应调 GitHub API 返回分支列表与默认分支(mock httpx)。"""
     from unittest.mock import AsyncMock, MagicMock
 
     import backend.api.admin.data_sources as mod
 
-    fake_resp = MagicMock()
-    fake_resp.raise_for_status.return_value = None
-    fake_resp.json.return_value = [{"name": "main"}, {"name": "hw-v1.2"}]
+    def _resp(payload):
+        fake = MagicMock()
+        fake.raise_for_status.return_value = None
+        fake.json.return_value = payload
+        return fake
+
     fake_client = MagicMock()
     fake_client.__aenter__ = AsyncMock(return_value=fake_client)
     fake_client.__aexit__ = AsyncMock(return_value=None)
-    fake_client.get = AsyncMock(return_value=fake_resp)
+    fake_client.get = AsyncMock(
+        side_effect=lambda url: (
+            _resp([{"name": "main"}, {"name": "hw-v1.2"}])
+            if url.endswith("/branches?per_page=100")
+            else _resp({"default_branch": "main"})
+        )
+    )
     monkeypatch.setattr(mod.httpx, "AsyncClient", lambda *a, **kw: fake_client)
 
     transport = ASGITransport(app=app)
@@ -162,6 +171,7 @@ async def test_preview_branches(auth_headers, monkeypatch):
     assert resp.status_code == 200
     data = resp.json()
     assert data["branches"] == ["main", "hw-v1.2"]
+    assert data["default_branch"] == "main"
 
 
 async def test_sync_all_returns_enabled_source_ids_skips_disabled(auth_headers, monkeypatch):

@@ -97,21 +97,60 @@ class GitHubConnector(DataSourceConnector):
             "https://", f"https://x-access-token:{self._token}@"
         )
 
+    def _sanitize(self, text: str) -> str:
+        """错误信息脱敏:抹去内嵌 token,鉴权 URL 保留 `x-access-token:***@` 形态(C10)。"""
+        if self._token:
+            text = text.replace(self._token, "***")
+        # 兜底:上下文外出现的鉴权 URL 凭据段同样不泄漏
+        return re.sub(r"x-access-token:[^@\s]+@", "x-access-token:***@", text)
+
+    def _run_git(self, args: list[str], cwd: Path | None = None) -> None:
+        """执行 git 命令;非零退出抛 RuntimeError,附脱敏后的 stderr 摘要(C10)。
+
+        旧行为抛 CalledProcessError:字符串含完整命令(内嵌 token 的鉴权
+        URL)且丢弃 stderr 真因,错误不可诊断还泄密。私有仓库仓库不存在
+        时 clone 亦走此路径(如被自动带入的 main)。
+
+        Args:
+            args: git 子命令与参数(不含 "git" 前缀;可含鉴权 URL,脱敏后展示)。
+            cwd: 工作目录(已有 clone 的 fetch/reset 用)。
+
+        Raises:
+            RuntimeError: 命令非零退出,message 含脱敏后的 stderr 首行摘要。
+        """
+        proc: subprocess.CompletedProcess[str] | subprocess.CalledProcessError
+        try:
+            proc = subprocess.run(
+                ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
+            )
+        except subprocess.CalledProcessError as exc:  # check=True 调用形态兼容
+            proc = exc
+        if getattr(proc, "returncode", 1) == 0:
+            return
+        detail = self._sanitize(proc.stderr or proc.stdout or "")
+        lines = [ln.strip() for ln in detail.splitlines() if ln.strip()]
+        # 优先取 fatal/error 行(stderr 首行常是 "Cloning into ..." 等噪音)
+        summary = next(
+            (ln for ln in lines if "fatal" in ln.lower() or "error" in ln.lower()),
+            lines[0] if lines else f"exit code {proc.returncode}",
+        )[:200]
+        safe_args = " ".join(self._sanitize(a) for a in args)
+        raise RuntimeError(f"git {safe_args} 失败: {summary}") from None
+
     def _ensure_cloned(self, branch: str) -> None:
         """首次 clone(clone_path 不存在时)。失败报错,不降级(决策 4A)。
 
         Args:
             branch: 首次 clone 指定的分支(--branch)。
         Raises:
-            subprocess.CalledProcessError: clone 失败(网络 / 鉴权 / 磁盘)。
+            RuntimeError: clone 失败(网络 / 鉴权 / 磁盘 / 分支不存在),
+                message 已脱敏并附 stderr 摘要。
         """
         if self._clone_path.exists():
             return
         self._clone_path.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(
-            ["git", "clone", "--branch", branch, self._authed_url(), str(self._clone_path)],
-            check=True,
-            capture_output=True,
+        self._run_git(
+            ["clone", "--branch", branch, self._authed_url(), str(self._clone_path)]
         )
 
     def _git_sync_branch(self, branch: str) -> None:
@@ -121,18 +160,8 @@ class GitHubConnector(DataSourceConnector):
         才把工作区同步到远端最新(clone 副本只读,reset 安全)。非 checkout ——
         checkout 在本地分支与远端分叉时会遗留旧内容(staleness root cause)。
         """
-        subprocess.run(
-            ["git", "fetch", "origin", branch],
-            cwd=self._clone_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "reset", "--hard", f"origin/{branch}"],
-            cwd=self._clone_path,
-            check=True,
-            capture_output=True,
-        )
+        self._run_git(["fetch", "origin", branch], cwd=self._clone_path)
+        self._run_git(["reset", "--hard", f"origin/{branch}"], cwd=self._clone_path)
 
     def _git_local_sha(self, branch: str) -> str:
         """本地 HEAD commit SHA(``git rev-parse HEAD``)。"""

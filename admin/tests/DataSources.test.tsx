@@ -104,7 +104,10 @@ describe("DataSources", () => {
   });
 
   it("github 拉取分支后:复选框供选择,已配置分支预选,勾选/取消更新值", async () => {
-    vi.mocked(fetchPreviewBranches).mockResolvedValue(["main", "hw-v1.2", "dev"]);
+    vi.mocked(fetchPreviewBranches).mockResolvedValue({
+      branches: ["main", "hw-v1.2", "dev"],
+      defaultBranch: "main",
+    });
     const ds = {
       id: "ne301-docs",
       type: "github",
@@ -440,5 +443,59 @@ describe("DataSources", () => {
     expect(await screen.findAllByText("同步中...")).toHaveLength(2);
     // syncingIds>0 时「同步全部」按钮禁用,避免并发触发
     expect(screen.getByText("同步全部")).toBeDisabled();
+  });
+});
+
+// ====================  C10:branches 默认值跟随仓库 default_branch  ====================
+
+
+describe("C10 branches 默认分支", () => {
+  it("新建表单 branches 初始为空,不再硬编码 main", () => {
+    renderWithSources([]);
+    fireEvent.click(screen.getByText("新增数据源"));
+    const el = document.querySelector('input[name="branches"]') as HTMLInputElement;
+    expect(el?.value).toBe("");
+  });
+
+  it("拉取分支后 default_branch 自动选中(替代 main 硬编码)", async () => {
+    vi.mocked(fetchPreviewBranches).mockResolvedValue({
+      branches: ["master", "hw-v1.2"],
+      defaultBranch: "hw-v1.2",
+    });
+    renderWithSources([]);
+    fireEvent.click(screen.getByText("新增数据源"));
+    fireEvent.change(
+      screen.getByPlaceholderText("https://github.com/camthink-ai/ne301.git"),
+      { target: { value: "https://github.com/camthink-ai/demo.git" } },
+    );
+    fireEvent.click(screen.getByText("拉取分支"));
+    await waitFor(() => expect(screen.getByText("hw-v1.2")).toBeInTheDocument());
+    // default_branch 自动勾选,master 未勾选
+    const hw = screen
+      .getByText("hw-v1.2")
+      .closest("label")
+      ?.querySelector("input") as HTMLInputElement;
+    expect(hw.checked).toBe(true);
+    const master = screen
+      .getByText("master")
+      .closest("label")
+      ?.querySelector("input") as HTMLInputElement;
+    expect(master.checked).toBe(false);
+  });
+
+  it("编辑无 branches 配置的源回填空串,不再兜底 main", () => {
+    renderWithSources([
+      {
+        id: "c10-src",
+        type: "github",
+        product: "demo",
+        enabled: true,
+        sync_interval: "24h",
+        config: { repo_url: "https://github.com/camthink-ai/demo.git" },
+      },
+    ]);
+    fireEvent.click(screen.getByText("编辑"));
+    const el = document.querySelector('input[name="branches"]') as HTMLInputElement;
+    expect(el?.value).toBe("");
   });
 });

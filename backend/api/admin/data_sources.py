@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import re
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
@@ -38,6 +39,120 @@ SYSTEM_DIRS = frozenset(
 # 顶层/子层返回上限,防止巨型目录拖垮管理面板。
 MAX_TOP_DIRS = 100
 MAX_SUB_DIRS = 50
+
+# github repo_url 解析(与 connectors/github.py _REPO_URL_RE 同语义)
+_REPO_URL_RE = re.compile(r"github\.com/([^/\s]+)/([^\s/#]+?)(?:\.git)?/?$")
+_DEFAULT_CLONE_ROOT = "~/ask-ai-corpus"
+
+
+def _parse_repo_slug(repo_url: str) -> tuple[str, str] | None:
+    """repo_url → (owner, repo);不合法返回 None。"""
+    m = _REPO_URL_RE.search(repo_url or "")
+    if not m:
+        return None
+    return m.group(1), m.group(2)
+
+
+async def _fetch_github_branches(owner: str, repo: str) -> tuple[list[str], str]:
+    """拉取远端分支列表与默认分支(校验与表单预览共用)。
+
+    GITHUB_TOKEN 从环境变量读取(可选,匿名调用有速率限制)。
+    """
+    token = os.environ.get("GITHUB_TOKEN", "")
+    headers = {
+        "Accept": "application/vnd.github+json",
+        **({"Authorization": f"Bearer {token}"} if token else {}),
+    }
+    async with httpx.AsyncClient(timeout=15, headers=headers) as client:
+        repo_resp = await client.get(f"https://api.github.com/repos/{owner}/{repo}")
+        repo_resp.raise_for_status()
+        default_branch = str(repo_resp.json().get("default_branch", ""))
+        br_resp = await client.get(
+            f"https://api.github.com/repos/{owner}/{repo}/branches?per_page=100"
+        )
+        br_resp.raise_for_status()
+        branches = [b["name"] for b in br_resp.json()]
+    return branches, default_branch
+
+
+def _configured_branches(cfg: dict) -> list[str]:
+    """从源 config 取已配置分支(兼容 list 与逗号分隔字符串两种形态)。"""
+    raw = cfg.get("branches") or []
+    if isinstance(raw, str):
+        return [b.strip() for b in raw.split(",") if b.strip()]
+    return [str(b).strip() for b in raw if str(b).strip()]
+
+
+async def _validate_github_branches(cfg: dict) -> None:
+    """github 源校验 branches ⊆ 远端分支;不合法 → 400 拦截。
+
+    无 repo_url / 未配置分支时跳过(兼容 owner/repo 旧配置与全量拉取场景);
+    远端 API 不可达时放行并告警(无法核验 ≠ 不合法)。
+    """
+    slug = _parse_repo_slug(str(cfg.get("repo_url") or ""))
+    branches = _configured_branches(cfg)
+    if slug is None or not branches:
+        return
+    owner, repo = slug
+    try:
+        remote, _default = await _fetch_github_branches(owner, repo)
+    except Exception as exc:  # noqa: BLE001 - 核验失败放行,不阻断创建/同步
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "分支合法性核验失败(放行): %s/%s: %s", owner, repo, str(exc)[:120]
+        )
+        return
+    invalid = [b for b in branches if b not in remote]
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"分支在远端仓库不存在: {', '.join(invalid)}"
+            f"(远端可用: {', '.join(remote[:8])}{'...' if len(remote) > 8 else ''})",
+        )
+
+
+def _effective_clone_path(cfg: dict) -> str:
+    """github 源的生效 clone 路径(显式配置优先,默认 ~/ask-ai-corpus/<repo>)。"""
+    explicit = str(cfg.get("clone_path") or "").strip()
+    if explicit:
+        return explicit
+    slug = _parse_repo_slug(str(cfg.get("repo_url") or ""))
+    repo = slug[1] if slug else ""
+    return f"{_DEFAULT_CLONE_ROOT}/{repo}"
+
+
+async def _check_clone_path_conflict(
+    factory: async_sessionmaker[AsyncSession], source_id: str, cfg: dict
+) -> None:
+    """同仓库已有源且未显式配置不同 clone_path → 409 拦截。
+
+    背景:默认 clone 路径为 ~/ask-ai-corpus/<repo>,同仓库双源共用会互相
+    fetch/reset 覆盖工作区。显式配置了不同 clone_path 的新源放行。
+    """
+    slug = _parse_repo_slug(str(cfg.get("repo_url") or ""))
+    if slug is None:
+        return
+    owner, repo = slug
+    # 新源已显式配置 clone_path → 视为调用方已处理冲突,放行
+    if str(cfg.get("clone_path") or "").strip():
+        return
+    async with factory() as session:
+        result = await session.execute(select(DataSource).where(DataSource.type == "github"))
+        for ds in result.scalars():
+            if ds.id == source_id:
+                continue
+            other_slug = _parse_repo_slug(str((ds.config or {}).get("repo_url") or ""))
+            if other_slug != (owner, repo):
+                continue
+            other_explicit = str((ds.config or {}).get("clone_path") or "").strip()
+            if not other_explicit:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"仓库 {owner}/{repo} 已有数据源「{ds.id}」,两者默认 clone_path"
+                    "相同会互相覆盖;请新源显式配置不同的 clone_path",
+                )
+        return
 
 
 def _is_listable_dir(entry: Path) -> bool:
@@ -146,6 +261,9 @@ async def create_data_source(
     """创建数据源（admin / editor）。id 可选，缺省时按 product+短 hash 自动生成。"""
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     source_id = req.id or f"{req.product}-{uuid4().hex[:8]}"
+    if req.type == "github":
+        await _validate_github_branches(req.config)
+        await _check_clone_path_conflict(factory, source_id, req.config)
     async with factory() as session:
         existing = await session.execute(select(DataSource).where(DataSource.id == source_id))
         if existing.scalar_one_or_none():
@@ -171,6 +289,8 @@ async def update_data_source(
             raise HTTPException(status_code=404, detail="数据源不存在")
         for key, value in values.items():
             setattr(ds, key, value)
+        if ds.type == "github":
+            await _validate_github_branches(ds.config)
         await session.commit()
         await session.refresh(ds)
     return _to_out(ds)
@@ -238,22 +358,13 @@ async def preview_dirs(root_path: str, _: EditorDep) -> dict[str, list[dict]]:
 @router.get("/preview-branches")
 async def preview_branches(
     owner: str, repo: str, _: EditorDep
-) -> dict[str, list[str]]:
-    """预览 GitHub 仓库分支列表(供前端多选)。
+) -> dict[str, Any]:
+    """预览 GitHub 仓库分支列表与默认分支(供前端多选与默认勾选)。
 
     GITHUB_TOKEN 从环境变量读取(可选,匿名调用有速率限制)。
     """
-    token = os.environ.get("GITHUB_TOKEN", "")
-    headers = {
-        "Accept": "application/vnd.github+json",
-        **({"Authorization": f"Bearer {token}"} if token else {}),
-    }
-    async with httpx.AsyncClient(timeout=15, headers=headers) as client:
-        resp = await client.get(
-            f"https://api.github.com/repos/{owner}/{repo}/branches?per_page=100"
-        )
-        resp.raise_for_status()
-    return {"branches": [b["name"] for b in resp.json()]}
+    branches, default_branch = await _fetch_github_branches(owner, repo)
+    return {"branches": branches, "default_branch": default_branch}
 
 
 @router.post("/{source_id}/sync")
@@ -267,6 +378,8 @@ async def trigger_sync(source_id: str, _: EditorDep, request: Request) -> dict[s
             raise HTTPException(status_code=404, detail="数据源不存在")
         if not ds.enabled:
             raise HTTPException(status_code=400, detail="数据源已禁用")
+        if ds.type == "github":
+            await _validate_github_branches(ds.config)
         cfg = to_source_config(ds)
 
     # 捕获到闭包局部变量,避免后台任务引用已结束的 request 对象

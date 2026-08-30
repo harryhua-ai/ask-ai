@@ -86,12 +86,15 @@ export function useTriggerSyncAll() {
   });
 }
 
-/** 预览 GitHub 仓库分支列表(供前端多选填充)。 */
-export async function fetchPreviewBranches(owner: string, repo: string): Promise<string[]> {
-  const data = await apiFetch<{ branches: string[] }>(
+/** 预览 GitHub 仓库分支列表 + 默认分支(供表单消除 main 硬编码)。 */
+export async function fetchPreviewBranches(
+  owner: string,
+  repo: string,
+): Promise<{ branches: string[]; defaultBranch: string }> {
+  const data = await apiFetch<{ branches: string[]; default_branch: string }>(
     `/data-sources/preview-branches?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`,
   );
-  return data.branches;
+  return { branches: data.branches, defaultBranch: data.default_branch };
 }
 
 /**

@@ -65,7 +65,7 @@ const EMPTY_FORM: FormValues = {
   repo_url: "",
   clone_path: "",
   root_path: "",
-  branches: "main",
+  branches: "",
   file_types: "",
   include_dirs: "",
   exclude_dirs: "",
@@ -224,7 +224,7 @@ function dsToForm(ds: DataSource): FormValues {
     repo_url: githubRepoUrl(ds),
     clone_path: toStr(cfg.clone_path) || repoPath,
     root_path: toStr(cfg.root_path),
-    branches: toStr(cfg.branches) || "main",
+    branches: toStr(cfg.branches),
     file_types: toStr(cfg.file_types),
     include_dirs: toStr(cfg.include_dirs),
     exclude_dirs: toStr(cfg.exclude_dirs),
@@ -336,8 +336,13 @@ export default function DataSources() {
     setBranchLoading(true);
     setBranchError(null);
     try {
-      const branches = await fetchPreviewBranches(parsed.owner, parsed.repo);
+      const { branches, defaultBranch } = await fetchPreviewBranches(parsed.owner, parsed.repo);
       setFetchedBranches(branches);
+      // C10:字段为空或为旧硬编码 main 时,自动跟随仓库真实 default_branch
+      const current = getValues("branches")?.trim() ?? "";
+      if ((!current || current === "main") && branches.includes(defaultBranch)) {
+        setValue("branches", defaultBranch, { shouldDirty: true });
+      }
     } catch (err) {
       setBranchError(err instanceof Error ? err.message : "拉取分支失败");
     } finally {
@@ -563,7 +568,7 @@ export default function DataSources() {
                     </div>
                   </div>
                 ) : (
-                  <Input {...register("branches")} placeholder="main, hw-v1.2" />
+                  <Input {...register("branches")} placeholder="拉取分支后勾选;或手输逗号分隔分支" />
                 )}
                 {branchError && <p className="text-xs text-destructive">{branchError}</p>}
               </div>

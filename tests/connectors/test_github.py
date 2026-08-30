@@ -13,7 +13,7 @@
 """
 
 import subprocess
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -82,6 +82,7 @@ def test_github_ensure_cloned_first_time(tmp_path) -> None:
     clone_path = str(tmp_path / "new-clone")
     conn = ConnectorRegistry.create(_make_config(clone_path=clone_path))
     with patch("backend.connectors.github.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         conn._ensure_cloned("main")
     assert any("clone" in str(call.args[0]) for call in mock_run.call_args_list)
 
@@ -97,14 +98,43 @@ def test_github_ensure_cloned_exists_no_op(tmp_path) -> None:
 
 @pytest.mark.unit
 def test_github_ensure_cloned_failure_raises(tmp_path) -> None:
-    """clone 失败 → 报错,不降级逐文件 API(决策 4A)。"""
+    """clone 失败 → 报 RuntimeError(token 脱敏 + stderr 摘要),不降级逐文件 API。"""
     conn = ConnectorRegistry.create(_make_config(clone_path=str(tmp_path / "fail")))
     with patch(
         "backend.connectors.github.subprocess.run",
         side_effect=subprocess.CalledProcessError(1, "git"),
     ):
-        with pytest.raises(subprocess.CalledProcessError):
+        with pytest.raises(RuntimeError):
             conn._ensure_cloned("main")
+
+
+@pytest.mark.unit
+def test_github_clone_failure_redacts_token_and_reports_stderr(monkeypatch, tmp_path) -> None:
+    """clone 失败错误信息:含 stderr 真因、不含明文 token(C10 A2 安全断言)。"""
+    from subprocess import CalledProcessError
+
+    token = "ghp_SECRET123"
+    monkeypatch.setenv("GITHUB_TOKEN", token)
+    stderr_text = (
+        "Cloning into 'demo'...\n"
+        "fatal: could not read Username for "
+        f"'https://x-access-token:{token}@github.com': terminal prompts disabled"
+    )
+
+    def _boom(*args, **kwargs):
+        raise CalledProcessError(128, args[0], stderr=stderr_text)
+
+    conn = ConnectorRegistry.create(_make_config(clone_path=str(tmp_path / "c10")))
+    monkeypatch.setattr("backend.connectors.github.subprocess.run", _boom)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        conn._ensure_cloned("main")
+
+    msg = str(exc_info.value)
+    assert "fatal: could not read Username" in msg  # stderr 真因保留
+    assert token not in msg  # 明文 token 必须脱敏
+    assert "x-access-token:***@" in msg  # 鉴权 URL 保留脱敏形态(可诊断)
+
 
 
 # ====================  fetch + reset 同步(修 staleness bug)  ====================
@@ -115,6 +145,7 @@ def test_github_git_sync_branch_fetch_and_reset(tmp_path) -> None:
     """_git_sync_branch = git fetch + git reset --hard(非 checkout,修 staleness)。"""
     conn = ConnectorRegistry.create(_make_config(clone_path=str(tmp_path)))
     with patch("backend.connectors.github.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         conn._git_sync_branch("main")
     cmds = [str(call.args[0]) for call in mock_run.call_args_list]
     assert any("fetch" in c for c in cmds)
@@ -236,3 +267,4 @@ def test_local_git_not_registered() -> None:
     """
     import backend.connectors.local_git  # noqa: F401
     assert "local_git" not in ConnectorRegistry._connectors
+
