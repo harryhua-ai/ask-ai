@@ -3,12 +3,12 @@
 import asyncio
 import os
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -19,6 +19,81 @@ from backend.db.models import DataSource, SyncLog
 
 router = APIRouter(prefix="/data-sources", tags=["数据源管理"])
 EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
+
+# C9 上传护栏:单文件大小上限(20MB)
+MAX_UPLOAD_FILE_BYTES = 20 * 1024 * 1024
+
+
+def _upload_root(source_id: str) -> Path:
+    """上传语料落盘根目录(相对仓库根,与 filesystem connector 同 CWD 语义)。"""
+    return Path("data/uploads/data-sources") / source_id
+
+
+def _safe_upload_path(base: Path, rel: str) -> Path:
+    """相对路径规整 + 路径穿越防护:规整后必须落在 base 内,否则 400。
+
+    拒绝:空路径 / 绝对路径 / 含 ``..`` 段;``resolve()`` 后再校验前缀,
+    兜底已存在符号链接的逃逸。
+    """
+    if not rel or not rel.strip():
+        raise HTTPException(status_code=400, detail="文件相对路径为空")
+    p = PurePosixPath(rel)
+    if p.is_absolute() or any(part == ".." for part in p.parts):
+        raise HTTPException(status_code=400, detail=f"非法相对路径: {rel}")
+    base_resolved = base.resolve()
+    target = (base / p).resolve()
+    if target != base_resolved and base_resolved not in target.parents:
+        raise HTTPException(status_code=400, detail=f"路径越界: {rel}")
+    return target
+
+
+@router.post("/{source_id}/upload")
+async def upload_source_files(
+    source_id: str,
+    _: EditorDep,
+    request: Request,
+    files: Annotated[list[UploadFile], File()],
+    paths: Annotated[list[str], Form()],
+) -> dict[str, object]:
+    """上传语料文件到数据源上传目录(C9:持久语料,区别于聊天附件体系)。
+
+    - 落盘 ``data/uploads/data-sources/<source_id>/``,保留相对路径嵌套结构
+    - 路径穿越防护:相对路径规整后必须落在目标目录内
+    - 护栏:单文件 ≤ 20MB;源配置了 file_types 白名单时按后缀校验
+    - 再次上传 = 合并覆盖(同相对路径覆盖写;增量由 mtime/content_hash 检出)
+    """
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        result = await session.execute(select(DataSource).where(DataSource.id == source_id))
+        ds = result.scalar_one_or_none()
+    if ds is None:
+        raise HTTPException(status_code=404, detail="数据源不存在")
+    if ds.type != "filesystem":
+        raise HTTPException(status_code=400, detail="仅 filesystem 数据源支持上传")
+    if len(files) != len(paths):
+        raise HTTPException(status_code=400, detail="files 与 paths 数量不一致")
+    whitelist = {
+        t.strip().lower()
+        for t in (ds.config or {}).get("file_types", []) or []
+        if str(t).strip()
+    }
+    base = _upload_root(source_id)
+    saved = 0
+    for uf, rel in zip(files, paths):
+        rel_norm = str(rel).replace("\\", "/")
+        if (uf.size or 0) > MAX_UPLOAD_FILE_BYTES:
+            raise HTTPException(status_code=400, detail=f"文件超过 20MB 上限: {uf.filename}")
+        ext = PurePosixPath(rel_norm).suffix.lower()
+        if whitelist and ext not in whitelist:
+            raise HTTPException(status_code=400, detail=f"文件类型不在白名单: {rel_norm}")
+        target = _safe_upload_path(base, rel_norm)
+        content = await uf.read()
+        if len(content) > MAX_UPLOAD_FILE_BYTES:
+            raise HTTPException(status_code=400, detail=f"文件超过 20MB 上限: {uf.filename}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+        saved += 1
+    return {"saved": saved, "root": f"data/uploads/data-sources/{source_id}"}
 
 # 系统目录/构建产物:预览子目录时一律过滤,避免噪音与深层爆炸。
 SYSTEM_DIRS = frozenset(
@@ -264,6 +339,9 @@ async def create_data_source(
     if req.type == "github":
         await _validate_github_branches(req.config)
         await _check_clone_path_conflict(factory, source_id, req.config)
+    if req.type == "filesystem" and (req.config or {}).get("upload_mode"):
+        # C9 上传模式:root_path 由服务端指向落盘目录,用户不可见不可手填
+        req.config["root_path"] = f"data/uploads/data-sources/{source_id}"
     async with factory() as session:
         existing = await session.execute(select(DataSource).where(DataSource.id == source_id))
         if existing.scalar_one_or_none():

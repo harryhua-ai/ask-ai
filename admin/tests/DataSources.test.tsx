@@ -499,3 +499,29 @@ describe("C10 branches 默认分支", () => {
     expect(el?.value).toBe("");
   });
 });
+
+// ====================  C9:filesystem 内容来源双模式  ====================
+
+
+describe("C9 filesystem 内容来源", () => {
+  it("新建 filesystem 源:默认服务器路径模式,root_path 可见", () => {
+    renderWithSources([]);
+    fireEvent.click(screen.getByText("新增数据源"));
+    fireEvent.change(screen.getByDisplayValue("github"), {
+      target: { value: "filesystem" },
+    });
+    expect(screen.getByPlaceholderText("/data/docs")).toBeInTheDocument();
+    expect(screen.queryByLabelText("选择文件夹")).not.toBeInTheDocument();
+  });
+
+  it("切到上传文件夹模式:root_path 隐藏,出现文件夹选择器", () => {
+    renderWithSources([]);
+    fireEvent.click(screen.getByText("新增数据源"));
+    fireEvent.change(screen.getByDisplayValue("github"), {
+      target: { value: "filesystem" },
+    });
+    fireEvent.click(screen.getByText("上传文件夹"));
+    expect(screen.queryByPlaceholderText("/data/docs")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("选择文件夹")).toBeInTheDocument();
+  });
+});

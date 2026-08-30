@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
+import { splitIntoBatches } from "@/utils/upload";
 import type { DataSource, PreviewDir } from "@/types/api";
 
 export function useDataSources(options?: { refetchInterval?: number | false }) {
@@ -84,6 +85,32 @@ export function useTriggerSyncAll() {
       toast.error(`同步触发失败:${msg}`);
     },
   });
+}
+
+/** C9:分批上传语料文件(每批 50,串行;onProgress 汇报已完成文件数)。 */
+export async function uploadSourceFiles(
+  sourceId: string,
+  items: { file: File; path: string }[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<{ saved: number }> {
+  const batches = splitIntoBatches(items, 50);
+  let saved = 0;
+  let done = 0;
+  for (const batch of batches) {
+    const fd = new FormData();
+    for (const it of batch) {
+      fd.append("files", it.file, it.file.name);
+      fd.append("paths", it.path);
+    }
+    const r = await apiFetch<{ saved: number }>(`/data-sources/${sourceId}/upload`, {
+      method: "POST",
+      body: fd,
+    });
+    saved += r.saved;
+    done += batch.length;
+    onProgress?.(done, items.length);
+  }
+  return { saved };
 }
 
 /** 预览 GitHub 仓库分支列表 + 默认分支(供表单消除 main 硬编码)。 */

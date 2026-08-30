@@ -25,9 +25,12 @@ export async function apiFetch<T>(
 ): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
     ...((options.headers as Record<string, string>) || {}),
   };
+  // FormData 交给浏览器设置 multipart 边界,不能强设 JSON
+  if (!(options.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
   const resp = await fetch(`/api/admin${path}`, { ...options, headers });

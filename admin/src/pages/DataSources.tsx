@@ -11,6 +11,7 @@ import {
   useTriggerSync,
   useTriggerSyncAll,
   fetchPreviewBranches,
+  uploadSourceFiles,
 } from "@/hooks/useDataSources";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,6 +36,7 @@ const formSchema = z.object({
   repo_url: z.string().optional(),
   clone_path: z.string().optional(),
   root_path: z.string().optional(),
+  upload_mode: z.boolean().optional(),
   branches: z.string().optional(),
   file_types: z.string().optional(),
   include_dirs: z.string().optional(),
@@ -65,6 +67,7 @@ const EMPTY_FORM: FormValues = {
   repo_url: "",
   clone_path: "",
   root_path: "",
+  upload_mode: false,
   branches: "",
   file_types: "",
   include_dirs: "",
@@ -181,7 +184,8 @@ function buildConfig(v: FormValues): Record<string, unknown> {
       };
     case "filesystem":
       return {
-        root_path: v.root_path || "",
+        root_path: v.upload_mode ? "" : v.root_path || "",
+        upload_mode: v.type === "filesystem" ? v.upload_mode : false,
         file_types: splitComma(v.file_types),
         include_dirs: splitComma(v.include_dirs),
         exclude_dirs: splitComma(v.exclude_dirs),
@@ -224,6 +228,7 @@ function dsToForm(ds: DataSource): FormValues {
     repo_url: githubRepoUrl(ds),
     clone_path: toStr(cfg.clone_path) || repoPath,
     root_path: toStr(cfg.root_path),
+    upload_mode: cfg.upload_mode === true,
     branches: toStr(cfg.branches),
     file_types: toStr(cfg.file_types),
     include_dirs: toStr(cfg.include_dirs),
@@ -255,6 +260,10 @@ export default function DataSources() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [fetchedBranches, setFetchedBranches] = useState<string[]>([]);
   const [syncCustom, setSyncCustom] = useState(false);
+  const [pickedFiles, setPickedFiles] = useState<File[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(
+    null,
+  );
 
   const {
     register,
@@ -270,6 +279,7 @@ export default function DataSources() {
   });
   const type = watch("type");
   const rootPath = watch("root_path");
+  const watchUploadMode = watch("upload_mode") === true;
   const selectedBranches = splitComma(watch("branches"));
   const syncInterval = watch("sync_interval");
   const syncSelect =
@@ -281,6 +291,8 @@ export default function DataSources() {
     setBranchError(null);
     setFetchedBranches([]);
     setSyncCustom(false);
+    setPickedFiles([]);
+    setUploadProgress(null);
     setShowAdvanced(false);
     setShowForm(true);
   };
@@ -292,6 +304,8 @@ export default function DataSources() {
     setBranchError(null);
     setFetchedBranches([]);
     setSyncCustom(!["1h", "12h", "24h"].includes(fv.sync_interval));
+    setPickedFiles([]);
+    setUploadProgress(null);
     setShowAdvanced(false);
     setShowForm(true);
   };
@@ -314,7 +328,7 @@ export default function DataSources() {
       });
     } else {
       // id 可选:用户没填则不传,后端按 product+短 hash 自动生成
-      await createDs.mutateAsync({
+      const created = await createDs.mutateAsync({
         ...(v.id ? { id: v.id } : {}),
         type: v.type,
         product: v.product,
@@ -322,6 +336,18 @@ export default function DataSources() {
         sync_interval: v.sync_interval,
         config,
       });
+      // C9 上传模式:创建成功后把选中的文件夹分批直传(每批 50,串行)
+      if (v.upload_mode && pickedFiles.length > 0) {
+        const items = pickedFiles.map((f) => ({
+          file: f,
+          path: (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name,
+        }));
+        setUploadProgress({ done: 0, total: items.length });
+        await uploadSourceFiles(created.id, items, (done, total) =>
+          setUploadProgress({ done, total }),
+        );
+        setUploadProgress(null);
+      }
     }
     closeForm();
   };
@@ -588,9 +614,61 @@ export default function DataSources() {
           {type === "filesystem" && (
             <div className="space-y-3 border-t pt-3">
               <div className="space-y-1">
+                <Label>内容来源</Label>
+                <div className="flex gap-4 text-sm">
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="radio"
+                      name="content-source-mode"
+                      checked={!watchUploadMode}
+                      onChange={() => setValue("upload_mode", false, { shouldDirty: true })}
+                    />
+                    服务器路径
+                  </label>
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="radio"
+                      name="content-source-mode"
+                      checked={watchUploadMode}
+                      onChange={() =>
+                        setValue("upload_mode", true, {
+                          shouldDirty: true,
+                        })
+                      }
+                    />
+                    上传文件夹
+                  </label>
+                </div>
+              </div>
+              {watchUploadMode && (
+                <div className="space-y-1">
+                  <Label>选择文件夹 (创建后自动分批上传,再次上传合并覆盖)</Label>
+                  <input
+                    type="file"
+                    aria-label="选择文件夹"
+                    multiple
+                    {...{
+                      webkitdirectory: "",
+                      directory: "",
+                    }}
+                    onChange={(e) => setPickedFiles(Array.from(e.target.files ?? []))}
+                  />
+                  {pickedFiles.length > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      已选择 {pickedFiles.length} 个文件
+                      {uploadProgress
+                        ? ` · 上传中 ${uploadProgress.done}/${uploadProgress.total}`
+                        : ""}
+                    </p>
+                  )}
+                </div>
+              )}
+              {!watchUploadMode && (
+              <div className="space-y-1">
                 <Label>根路径</Label>
                 <Input {...register("root_path")} placeholder="/data/docs" />
               </div>
+              )}
               <div className="space-y-1">
                 <Label>文件类型 (逗号分隔,留空=全部)</Label>
                 <Input {...register("file_types")} placeholder=".md, .txt" />
