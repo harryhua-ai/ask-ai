@@ -82,3 +82,34 @@
 ## Status
 
 **CANDIDATE READY** —— Gate-1 停等 A Review 放行 push(本任务不 push、不部署、不碰数据)。
+
+---
+
+## Phase 2:T4 发布(Gate-2 前半)
+
+- **推送(Step 1)**:`git push origin worktree-exec/t1a-launch:main` → `4db4c41..bbfaa6a worktree-exec/t1a-launch -> main`(快进);本地 main 已 ff 至 `bbfaa6a`,main = origin/main = **bbfaa6a**
+- **CI**:run **33360499079** conclusion **success** https://github.com/harryhua-ai/ask-ai/actions/runs/33360499079
+- **磁盘预检**:`/dev/vda2 1.3T 277G 952G 23%`(可用 77%,远超 20% 红线)
+- **部署**:`./deploy/prod/update.sh` → 镜像拉取 + backend 重建;health 首验失败(BGE 慢启动,契约预期)→ 约 10 秒后 200,容器 `Up (healthy)`
+- **版本双验证(容器内原始输出)**:
+  - `cat /app/.git-sha` → `git_sha=bbfaa6a3adc977165d74db96738bec258d3a736d`
+  - `grep -c "_mount_widget_static\|CachedStaticFiles" /app/backend/main.py` → `4`
+- **AC3 容器内实证**:`ls -la /app/widget/dist` → `widget.js`(249364 字节,与本地构建逐字节同大小)+ `ask-ai-widget.css`
+- **CORS(事实修正,如实记录)**:任务指示"追加两 origin 并保留既有 localhost 行";实测 T4 `.env:35` **本就为** `CORS_ALLOW_ORIGINS=https://www.camthink.ai,https://wiki.camthink.ai`(两生产 origin 已在列,无 localhost 行)——契约冻结点 3 的目标状态已满足。首次 sed 追加造成行内 origin 重复,即以 `.env.bak` 恢复原状并 diff 核验一致;运行容器加载的正是该内容,无需重启。localhost 三件套"不回归"指代码默认值(`main.py` `_cors` 默认),未触碰。
+- **AC5 CORS 预检(运行中后端)**:`OPTIONS /api/ask` + `Origin: https://wiki.camthink.ai` → `access-control-allow-origin: https://wiki.camthink.ai` ✓(allow-methods GET, POST)
+- **公网验证**:`https://wiki-data.camthink.ai/widget/widget.js` → `HTTP/2 200`,`content-type: text/javascript`,`cache-control: public, max-age=300`,249364 字节;`/widget/` → `404` 无目录列表
+
+## Phase 3:P-1 清洗(不可逆,备份前置)
+
+- **before 计数(实测)**:conversations=**632**(契约 E7 的 627 为 08-30 推断值,以执行时实测为准)/ traces=261 / source_clicks=0 / business_signals=31
+- **事实修正**:E7 所列 `feedback[CASCADE]` 表不存在——feedback 为 conversations 表的**列**(`conversations.feedback`),随行删除;级联表实为 traces + source_clicks。business_signals 无 conversation_id 外键,仅有 `sample_conversation_ids` 采样列(无级联语义,行自然留存)
+- **备份**:`pg_dump --table=conversations --table=traces --table=source_clicks`(单文件含 schema+data)→ T4 `/home/ubuntu/ask-ai-p1-conversations-backup-20260831.sql`(2,025,109 字节,已留存不删)
+- **备份对账(金标准:实际恢复进一次性库 `p1_verify` 后计数)**:conversations=**632** / traces=**261** / source_clicks=**0**,与 before 完全一致 → 备份可独立恢复 ✓(验证库已删)
+- **删除**:`DELETE FROM conversations;` → **DELETE 632**(单语句,级联由 DB 语义处理,未手删子表)
+- **after 计数**:conversations=**0** / traces=**0** / source_clicks=**0** / business_signals=**31**(不变,无孤儿外键)
+- **删除后健康**:`/health` → `{"status":"ok"}`
+- **有意不做**:删除后未发起真实问答冒烟——任何冒烟对话会向"零基线"写入 1 行,违背 P-1 目的(北极星自灰度日起干净);生产写路径由 Phase 4 AC7(对话落库 channel=widget)在 wiki 灰度时点验证
+
+## Gate-2 状态
+
+**CANDIDATE READY**(Executor 自评)——Phase 2 + Phase 3 完成,证据如上;**停点**,Phase 4(wiki 嵌入)等用户确认上线时刻后执行。
