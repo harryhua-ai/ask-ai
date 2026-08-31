@@ -114,9 +114,23 @@ export interface FetchModelsResult {
 
 export function useFetchModels() {
   return useMutation({
-    mutationFn: (id: string) =>
-      apiFetch<FetchModelsResult>(`/llm-providers/${id}/fetch-models`, {
+    // T27:可携带表单未保存的 api_base/api_key(留空字段不传,后端回退 DB 凭证)
+    mutationFn: ({
+      id,
+      apiBase,
+      apiKey,
+    }: {
+      id: string;
+      apiBase?: string;
+      apiKey?: string;
+    }) => {
+      const body: Record<string, string> = {};
+      if (apiBase) body.api_base = apiBase;
+      if (apiKey) body.api_key = apiKey;
+      return apiFetch<FetchModelsResult>(`/llm-providers/${id}/fetch-models`, {
         method: "POST",
-      }),
+        ...(Object.keys(body).length > 0 ? { body: JSON.stringify(body) } : {}),
+      });
+    },
   });
 }

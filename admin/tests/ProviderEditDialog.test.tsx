@@ -85,3 +85,56 @@ describe("ProviderEditDialog", () => {
     );
   });
 });
+
+// ====================  T27:换供应商三缺陷修复  ====================
+
+
+describe("ProviderEditDialog T27", () => {
+  it("从 API 拉取携带表单当前 api_base/api_key(未保存也生效)", async () => {
+    mockFetch.mockResolvedValueOnce({ provider_id: "deepseek", models: ["m1"], error: null });
+    renderDialog();
+    const baseInput = screen.getByLabelText("API Base");
+    fireEvent.change(baseInput, { target: { value: "https://new.example.com/v1" } });
+    const keyInput = screen.getByPlaceholderText("留空则不修改");
+    fireEvent.change(keyInput, { target: { value: "sk-formkey" } });
+    fireEvent.click(screen.getByText(/从 API 拉取/));
+    await waitFor(() =>
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/llm-providers/deepseek/fetch-models",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ api_base: "https://new.example.com/v1", api_key: "sk-formkey" }),
+        }),
+      ),
+    );
+  });
+
+  it("拉取失败显示可读错误文本", async () => {
+    mockFetch.mockResolvedValueOnce({
+      provider_id: "deepseek",
+      models: [],
+      error: "api_base 校验失败",
+    });
+    renderDialog();
+    fireEvent.click(screen.getByText(/从 API 拉取/));
+    await waitFor(() => expect(screen.getByText("api_base 校验失败")).toBeInTheDocument());
+  });
+
+  it("api_base 下有 LLM_ALLOWED_HOSTS 指引说明", () => {
+    renderDialog();
+    expect(screen.getByText(/LLM_ALLOWED_HOSTS/)).toBeInTheDocument();
+  });
+
+  it("设为默认:置顶且保存 payload.model = 所设默认项", () => {
+    const onSave = vi.fn();
+    renderDialog({ onSave });
+    // 初始 ["v4-pro","v4-flash"],把 v4-flash 设为默认
+    fireEvent.click(screen.getByText("设为默认"));
+    fireEvent.click(screen.getByText("保存"));
+    const saved = onSave.mock.calls[0][0];
+    expect(saved.config.model).toBe("v4-flash");
+    expect(saved.config.available_models).toEqual(["v4-flash", "v4-pro"]);
+    // v4-flash 行现在显示「默认」徽标,不再有设为默认按钮
+    expect(screen.getAllByText("默认").length).toBe(1);
+  });
+});

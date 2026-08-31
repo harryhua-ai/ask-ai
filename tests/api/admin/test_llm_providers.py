@@ -732,3 +732,137 @@ async def test_fetch_models_sanitizes_error(auth_headers):
             delete(LLMProviderModel).where(LLMProviderModel.id == "test-prov-fetch-err")
         )
         await session.commit()
+
+
+# ===== T27:fetch-models 表单值优先 + allowlist 边界不放宽 =====
+
+
+async def _t27_seed_provider(provider_id: str, api_base: str, api_key_plain: str) -> None:
+    factory = app.state.session_factory
+    async with factory() as session:
+        session.add(
+            LLMProviderModel(
+                id=provider_id,
+                type="openai_compatible",
+                enabled=True,
+                config={
+                    "api_base": api_base,
+                    "api_key": encrypt_api_key(api_key_plain, app.state.settings.encryption_key),
+                    "model": "m1",
+                },
+            )
+        )
+        await session.commit()
+
+
+async def _t27_del_provider(provider_id: str) -> None:
+    factory = app.state.session_factory
+    async with factory() as session:
+        await session.execute(delete(LLMProviderModel).where(LLMProviderModel.id == provider_id))
+        await session.commit()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_fetch_models_body_api_base_takes_priority(auth_headers):
+    """T27①:body 非空 api_base 优先生效,不再只读 DB 旧凭证。"""
+    await _t27_seed_provider("t27-fetch-body", "https://api.test.com/v1", "sk-dbkey")
+    mock_provider = AsyncMock()
+    mock_provider.list_models = AsyncMock(return_value=["nm1", "nm2"])
+    try:
+        with patch(
+            "backend.api.admin.llm_providers.LLMRegistry.create", return_value=mock_provider
+        ) as mock_create:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/api/admin/llm-providers/t27-fetch-body/fetch-models",
+                    json={"api_base": "https://api.example.com/v1"},
+                    headers=auth_headers,
+                )
+        assert resp.status_code == 200
+        assert resp.json()["models"] == ["nm1", "nm2"]
+        assert mock_create.call_args.kwargs["api_base"] == "https://api.example.com/v1"
+    finally:
+        await _t27_del_provider("t27-fetch-body")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_fetch_models_body_key_priority_and_empty_key_falls_back_to_db(auth_headers):
+    """T27①:body 非空 api_key 生效;key 留空回退 DB 解密密钥。"""
+    await _t27_seed_provider("t27-fetch-key", "https://api.example.com/v1", "sk-dbkey")
+    mock_provider = AsyncMock()
+    mock_provider.list_models = AsyncMock(return_value=[])
+    try:
+        with patch(
+            "backend.api.admin.llm_providers.LLMRegistry.create", return_value=mock_provider
+        ) as mock_create:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/api/admin/llm-providers/t27-fetch-key/fetch-models",
+                    json={"api_base": "https://api.example.com/v1", "api_key": "sk-formkey"},
+                    headers=auth_headers,
+                )
+                assert resp.status_code == 200
+                assert mock_create.call_args.kwargs["api_key"] == "sk-formkey"
+
+                mock_create.reset_mock()
+                resp = await client.post(
+                    "/api/admin/llm-providers/t27-fetch-key/fetch-models",
+                    json={"api_base": "https://api.example.com/v1"},
+                    headers=auth_headers,
+                )
+                assert resp.status_code == 200
+                # key 留空 → 回退 DB 解密值
+                assert mock_create.call_args.kwargs["api_key"] == "sk-dbkey"
+    finally:
+        await _t27_del_provider("t27-fetch-key")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_fetch_models_body_api_base_outside_allowlist_rejected(auth_headers):
+    """T27 Frozen#4:SSRF 边界对 body api_base 同样生效,脱敏错误且不外呼。"""
+    await _t27_seed_provider("t27-fetch-evil", "https://api.test.com/v1", "sk-dbkey")
+    try:
+        with patch("backend.api.admin.llm_providers.LLMRegistry.create") as mock_create:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/api/admin/llm-providers/t27-fetch-evil/fetch-models",
+                    json={"api_base": "https://evil-host.example.net/v1"},
+                    headers=auth_headers,
+                )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["models"] == []
+        assert body["error"] == "api_base 校验失败"
+        assert "sk-dbkey" not in body["error"]
+        mock_create.assert_not_called()
+    finally:
+        await _t27_del_provider("t27-fetch-evil")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_update_provider_allowlist_422_regression(auth_headers):
+    """T27 回归锁:PATCH 保存 allowlist 外 host 仍 422,detail 数组含可读 msg,DB 不变。"""
+    await _t27_seed_provider("t27-patch-422", "https://api.test.com/v1", "sk-keep")
+    factory = app.state.session_factory
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.patch(
+                "/api/admin/llm-providers/t27-patch-422",
+                json={"config": {"api_base": "https://evil-host.example.net/v1"}},
+                headers=auth_headers,
+            )
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert isinstance(detail, list)
+        assert any("allowlist" in str(item.get("msg", "")) for item in detail)
+        async with factory() as session:
+            row = await session.get(LLMProviderModel, "t27-patch-422")
+            assert row.config["api_base"] == "https://api.test.com/v1"
+    finally:
+        await _t27_del_provider("t27-patch-422")

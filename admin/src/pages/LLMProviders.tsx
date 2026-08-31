@@ -100,14 +100,20 @@ export default function LLMProviders() {
     setAddTask(null);
   };
 
-  const handleSaveProvider = (patch: {
+  // T27:保存失败必须显式报错且弹窗保持打开(表单态保留),成功才关闭
+  const handleSaveProvider = async (patch: {
     type?: string;
     enabled?: boolean;
     config: Record<string, unknown>;
   }) => {
     if (!editProvider) return;
-    updateProvider.mutate({ id: editProvider.id, ...patch });
-    setEditId(null);
+    try {
+      await updateProvider.mutateAsync({ id: editProvider.id, ...patch });
+      toast.success("供应商已保存,点「应用变更」后生效");
+      setEditId(null);
+    } catch (err) {
+      toast.error(`保存失败:${err instanceof Error ? err.message : "未知错误"}`);
+    }
   };
 
   return (
