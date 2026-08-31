@@ -134,3 +134,16 @@
 ## 追加审查结论
 
 **波 2/3 = FINAL PASS;C9-UPLOAD-FIX 全任务(波 1+2+3)= FINAL PASS。** 放行推送扩大至全部 4 提交:`949b0bc + d893bb1 + a815306 + 4db4c41` 至 origin/main。
+
+---
+
+# 收口核验(推送任务,2026-08-31 午后)
+
+执行端交付推送收口(报告 §12,docs 仓 4cb4b03)。审查端独立复核三项,全部证实:
+
+- **git**:`main = origin/main = 4db4c41`,ahead=0;`76d75e7..origin/main` 恰为放行 4 提交(949b0bc→d893bb1→a815306→4db4c41);工作区干净、零分叉。
+- **CI**:gh 独立查证 run `33355154229`,conclusion=**success**,headSha=4db4c41 与推送 HEAD 一致。
+- **报告**:§12 推送收口节存在,含 CI 链接与原始输出。
+- T4 未动属任务范围(推送不含部署),生产仍 76d75e7,4 提交随下次常规发布(T1a)生效。
+
+**收口任务 = FINAL PASS。C9-UPLOAD-FIX 全链(三波 + 推送)正式关闭。**
