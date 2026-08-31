@@ -58,3 +58,5 @@ Deviation 裁定:①契约写 `backend/tests/*` 而仓库实际为根级 `tests/
 1. **Phase 3 前置 P-1 本地演练**(增补,必做):在本地 postgres 完整走 pg_dump 备份 → DELETE conversations → 级联计数核验 → 备份恢复演练(恢复到临时库核对行数),全部原始输出入报告;生产序列照抄。
 2. **Phase 2 增补 CORS 头实证**:T4 生效后 `curl -sI -H "Origin: https://wiki.camthink.ai"` 与 `Origin: https://www.camthink.ai"` 各打一次 `/api/ask` 预检(OPTIONS)与简单 GET,核响应含正确 `Access-Control-Allow-Origin`,截图/原始输出入报告。
 3. **不做本地镜像构建**(核定):mac arm64 vs 生产 amd64+GPU 不等价且成本高;AC3 维持 Phase 2 容器内实证。
+
+**执行偏差记录(同日)**:执行端已持**增补前**提示词开工(用户告知,中断成本高于增量价值,不召回)。裁定:原提示词已含安全底线(磁盘前置/P-1 备份先行/版本双验证/Gate-2 停点),上述两项转移为 **Gate-2 审查侧核验**——①CORS 头:审查端从公网 curl 带 Origin 头直接验证(无需 ssh);②P-1:审查端核执行报告的备份文件路径+行数对账证据,必要时 ssh 抽查备份文件存在性与大小。
