@@ -13,7 +13,15 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from backend.auth.jwt import create_access_token, hash_password
-from backend.db.models import Conversation, QuestionCluster, Trace, User
+from backend.db.models import (
+    Conversation,
+    DataSource,
+    Document,
+    QuestionCluster,
+    SyncLog,
+    Trace,
+    User,
+)
 from backend.main import app
 
 # 所有 admin API 测试共享 session 级事件循环(与 conftest 的 session fixture 对齐)
@@ -336,3 +344,167 @@ async def test_coverage_gaps_miss_type_four_types(auth_headers):
                 )
             )
             await session.commit()
+
+
+@pytest.mark.integration
+class TestSourceHealth:
+    """T28:/source-health doc_count/chunk_count 按数据源 id 前缀聚合。
+
+    documents.source_id 为复合键 "{数据源id}/{路径}"(五 connector 一致);
+    旧实现按完整键分组后用 sync_log 纯 id 精确查找 → 永不命中恒 0。
+    夹具一律使用真实复合键形态,防止再用纯 id 掩盖缺陷。
+    """
+
+    async def _seed(
+        self,
+        prefix: str,
+        docs: list[tuple[str, int]],
+        syncs: list[str],
+        source_type: str = "web_crawl",
+        product: str = "t28-product",
+    ) -> list[str]:
+        """按数据源 prefix 播种 DataSource + SyncLog + Document(复合键),返回待清理 source_ids。"""
+        factory = app.state.session_factory
+        async with factory() as session:
+            session.add(
+                DataSource(
+                    id=prefix,
+                    type=source_type,
+                    product=product,
+                    enabled=True,
+                    config={"base_url": f"https://{prefix}.example.com"},
+                )
+            )
+            for status in syncs:
+                session.add(SyncLog(source_id=prefix, source_type=source_type, status=status))
+            for i, (path, chunk_count) in enumerate(docs):
+                # 真实复合键形态:"{数据源id}/{路径}"
+                session.add(
+                    Document(
+                        content_hash=uuid.uuid5(uuid.NAMESPACE_URL, f"{prefix}/{path}").hex,
+                        source_id=f"{prefix}/{path}",
+                        source_type=source_type,
+                        product=product,
+                        title=f"t28 doc {prefix}/{path}",
+                        url=f"https://{prefix}.example.com/{path}",
+                        chunk_count=chunk_count,
+                    )
+                )
+            await session.commit()
+        return [prefix]
+
+    async def _cleanup(self, prefix: str, doc_count: int) -> None:
+        factory = app.state.session_factory
+        async with factory() as session:
+            await session.execute(
+                Document.__table__.delete().where(Document.source_id.like(f"{prefix}/%"))
+            )
+            await session.execute(SyncLog.__table__.delete().where(SyncLog.source_id == prefix))
+            await session.execute(DataSource.__table__.delete().where(DataSource.id == prefix))
+            await session.commit()
+
+    async def _get_items(self, auth_headers) -> dict[str, dict]:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/admin/analytics/source-health", headers=auth_headers)
+        assert resp.status_code == 200
+        return {item["source_id"]: item for item in resp.json()["items"]}
+
+    async def test_composite_key_multi_source_counts(self, auth_headers):
+        """多源复合键:各源 doc_count/chunk_count 按前缀聚合,不串源。"""
+        prefix_a = f"t28-src-a-{uuid.uuid4().hex[:8]}"
+        prefix_b = f"t28-src-b-{uuid.uuid4().hex[:8]}"
+        await self._seed(prefix_a, [("feed", 3), ("blog/x", 4)], ["success", "success"])
+        await self._seed(prefix_b, [("main/readme.md", 2)], ["failed"])
+        try:
+            items = await self._get_items(auth_headers)
+            a, b = items[prefix_a], items[prefix_b]
+            assert a["doc_count"] == 2
+            assert a["chunk_count"] == 7
+            assert a["total_syncs"] == 2
+            assert a["failed_syncs"] == 0
+            assert b["doc_count"] == 1
+            assert b["chunk_count"] == 2
+            assert b["failed_syncs"] == 1
+        finally:
+            await self._cleanup(prefix_a, 2)
+            await self._cleanup(prefix_b, 1)
+
+    async def test_source_without_documents_is_zero(self, auth_headers):
+        """sync_log 有而 documents 无的源:doc_count/chunk_count 为 0,不报错。"""
+        prefix = f"t28-src-empty-{uuid.uuid4().hex[:8]}"
+        await self._seed(prefix, [], ["success"])
+        try:
+            items = await self._get_items(auth_headers)
+            assert items[prefix]["doc_count"] == 0
+            assert items[prefix]["chunk_count"] == 0
+        finally:
+            await self._cleanup(prefix, 0)
+
+    async def test_chunk_count_summed_across_docs(self, auth_headers):
+        """chunk_count = 同前缀下全部文档 chunk 求和(含 0 chunk 文档)。"""
+        prefix = f"t28-src-sum-{uuid.uuid4().hex[:8]}"
+        await self._seed(prefix, [("a", 5), ("b", 0), ("c/d", 2)], ["success"])
+        try:
+            items = await self._get_items(auth_headers)
+            assert items[prefix]["doc_count"] == 3
+            assert items[prefix]["chunk_count"] == 7
+        finally:
+            await self._cleanup(prefix, 3)
+
+    async def test_no_slash_source_id_is_own_prefix(self, auth_headers):
+        """无斜杠 source_id(历史形态):整串即 id,照常命中计数。"""
+        prefix = f"t28-src-flat-{uuid.uuid4().hex[:8]}"
+        factory = app.state.session_factory
+        async with factory() as session:
+            session.add(
+                DataSource(
+                    id=prefix,
+                    type="filesystem",
+                    product="t28-flat",
+                    enabled=True,
+                    config={},
+                )
+            )
+            session.add(SyncLog(source_id=prefix, source_type="filesystem", status="success"))
+            session.add(
+                Document(
+                    content_hash=uuid.uuid5(uuid.NAMESPACE_URL, f"{prefix}/legacy").hex,
+                    source_id=prefix,  # 无斜杠:整串即数据源 id
+                    source_type="filesystem",
+                    product="t28-flat",
+                    title="legacy flat source_id",
+                    url="file:///legacy",
+                    chunk_count=4,
+                )
+            )
+            await session.commit()
+        try:
+            items = await self._get_items(auth_headers)
+            assert items[prefix]["doc_count"] == 1
+            assert items[prefix]["chunk_count"] == 4
+        finally:
+            await self._cleanup(prefix, 1)
+
+    async def test_response_field_set_unchanged(self, auth_headers):
+        """响应字段集合冻结:前端零改动承诺的直接证据。"""
+        prefix = f"t28-src-schema-{uuid.uuid4().hex[:8]}"
+        await self._seed(prefix, [("p", 1)], ["success"])
+        try:
+            items = await self._get_items(auth_headers)
+            expected = {
+                "source_id",
+                "source_type",
+                "product",
+                "enabled",
+                "doc_count",
+                "chunk_count",
+                "sync_success_rate",
+                "total_syncs",
+                "failed_syncs",
+                "health",
+                "last_sync",
+            }
+            assert set(items[prefix].keys()) == expected
+        finally:
+            await self._cleanup(prefix, 1)
