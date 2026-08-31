@@ -128,3 +128,14 @@ E2E 后清理:测试源 e2e-adv 经 UI 删除;e2e-adv/e2e-b 磁盘目录已删;e
 
 最终状态(Executor Self-assessment,Protocol v2.0 §79):**CANDIDATE READY**(v1 创建流 + v3 编辑流 + v4 默认全选)
 最终验收:待 Planner / Reviewer 独立审查(创建流 76d75e7→d893bb1;编辑流 d893bb1→a815306;默认全选 a815306→4db4c41)后出具 review.md。
+
+## 12. 推送收口(任务:C9-UPLOAD-FIX 收口推送)
+
+- 时间:2026-08-31 11:51(+0800,推送完成时刻约为 CI 触发 03:51:06Z)
+- 前置检查:工作区干净(status 空);main=4db4c41;origin/main=76d75e7;origin/main..main=4 ✓
+- 推送:`git push origin main` → `76d75e7..4db4c41  main -> main`(快进,无 force/rebase/amend)
+- 推送后:main = origin/main = **4db4c41**
+- CI:run **33355154229** 结论 **success**(test 1m1s ✓ / build-and-push 5m55s ✓;仅 Node.js 20 deprecation 非阻塞注记)
+  链接:https://github.com/harryhua-ai/ask-ai/actions/runs/33355154229
+- 放行范围核对:origin/main..main 恰为 949b0bc / d893bb1 / a815306 / 4db4c41,与审查放行范围一致
+- 生产状态:T4 仍运行 76d75e7,本 4 提交随下次常规发布生效(本任务不含部署)
