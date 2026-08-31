@@ -1,9 +1,11 @@
-# C9-UPLOAD-FIX Review(独立验收,按 DUAL_AGENT_PROTOCOL §12 五 Gate)
+# C9-UPLOAD-FIX Review(独立验收,按 DUAL_AGENT_PROTOCOL 五 Gate)
 
-- 任务:C9 文件夹上传流程修复(创建卡死 0/175 / 重复数据源 / 目录不存在空源)
+- 任务:C9 文件夹上传流程修复(创建卡死 0/175 / 重复数据源 / 目录不存在空源)+ 扩展波 2 编辑流 + 波 3 默认全选
 - 审查人:Planner / Reviewer(产品窗口)| 审查日期:2026-08-31
-- 审查范围:`76d75e7 → d893bb1`(main,领先 origin/main 2 提交,含搭车提交 949b0bc)
-- **Final Verdict:PASS**
+- 审查范围:波 1 `76d75e7 → d893bb1`(含搭车 949b0bc);波 2/3 `d893bb1 → 4db4c41`(a815306 + 4db4c41)
+- **Final Verdict:FINAL PASS(全任务:波 1 创建流 + 波 2 编辑流 + 波 3 默认全选)**
+
+> v2.0 协议生效后按新状态词重述:波 1 原判 PASS 视同 FINAL PASS;波 2/3 审查见文末追加节。
 
 ## 0. Baseline / Final Commit
 
@@ -92,3 +94,43 @@
 ## Final Verdict
 
 **PASS** —— 五 Gate 全过。放行推送 `949b0bc + d893bb1` 至 origin/main。
+
+---
+
+# 追加审查:波 2/3(编辑流 a815306 + 默认全选 4db4c41,2026-08-31 午间)
+
+> 依据:执行报告 v4(状态 CANDIDATE READY,三波合一)。波 2/3 契约 = 用户两条产品指令(执行报告 §10/§11 追溯固化):①"编辑 filesystem 源报『目录加载失败』不合理;上传到服务器的文件夹应该显示出来让用户挑选" ②"上传后包含目录应该默认全选"。同样属先执行后补录的生命周期偏差,处置同波 1:记录在案,此后任务一律先 plan.md。
+
+## Gate 1 — Contract Compliance(波 2/3):**PASS**
+
+| 契约项(用户指令) | 结果 | 审查证据 |
+|---|---|---|
+| 编辑态展示已上传目录树可勾选 | 满足 | E1(树渲染 docs-review2(2))+ E2(勾选 checked) |
+| 缺目录友好提示(不红色报错) | 满足 | G1/G2(真幽灵源 0fbd344b 灰字提示、零红色错误) |
+| 编辑保存不得抹 root_path(隐藏 bug) | 满足 | E4(PATCH 后 root_path 保持,服务端权威回写) |
+| 表单承诺的"再次上传合并覆盖"接通 | 满足 | F1/F3(合并 toast + 磁盘两目录并存) |
+| 上传后 include_dirs 默认全选顶层 | 满足 | D2(创建流 ['docs-review2'])+ F2(再上传重算双顶层) |
+| 勾选语义与同步语义不变 | 满足 | F4 同步 success items=4(与空列表=全包含语义等价,零丢失) |
+
+## Gate 2 — Scope Compliance(波 2/3):**PASS**
+
+`d893bb1..4db4c41` 真实 diff = 5 文件 +278/-3:后端 `data_sources.py` **+4 行**(PATCH 后 upload_mode 源强制回写 root_path)= 执行端已披露的 REQUIRED SUPPORTING CHANGE(服务端权威字段,前端无法保护;blast radius 仅 upload_mode PATCH 路径,采纳其定性);其余 4 文件(DirPicker missingHint / DataSources 编辑分支+默认全选 / 前后端测试)全部 EXPECTED。无 UNEXPECTED。代码审查无阻断项:编辑流上传失败不回滚源(源有存量内容,回滚反而毁数据——语义正确);全选回写失败不阻断主流程;全选走 updateDs 保缓存一致(E2E 现场抓到并修正的实现要点成立)。
+
+## Gate 3 — Engineering Verification(独立复跑,波 2/3):**PASS**
+
+- 后端:`test_data_sources_c9_edit.py + test_data_sources_c10.py` = **7 passed**(TEST_DATABASE_URL 已设,红线遵守);
+- 前端:vitest 全量 **30 文件 113/113**;`tsc --noEmit` exit 0。均审查端本机实际执行,与执行端报告一致。
+
+## Gate 4/5 — Runtime / Real-World(独立 E2E,波 2/3):**PASS**
+
+审查端独立剧本(与执行端不同夹具与路径),本地真实栈,14 项检查全过:D1-D3 创建流(源创建/include_dirs 全选/root_path 权威)、E1-E5 编辑流(目录树+勾选+PATCH 双保持)、F1-F4 再上传(合并+重算+磁盘并存+**UI 行内同步 success items=4**)、G1-G2 幽灵源友好态。
+
+**如实记录(审查端自身两次前提错误,非产品缺陷)**:首跑 8/14——①脚本假设 `GET /data-sources/{id}` 存在,实测该端点 405(仅 PATCH/DELETE),改列表查找后过;②G1 用 knowledge-0aa5b846 当幽灵源,实测其磁盘目录**已存在**(preview-dirs 200,含 ask-ai-local-data/* 内容),换真幽灵源 0fbd344b 复测通过。E2E 后环境清理:测试源+磁盘已删,数据源终态回到 7 个。
+
+## 数据侧新发现(转用户)
+
+- **knowledge-0aa5b846 不是空源**:磁盘目录存在且 config.include_dirs 已含 ask-ai-local-data/* 子树——此前"三空源"清单修正为:**真幽灵(目录缺失)= 0fbd344b / ed455da8 两个**;0aa5b846 有实内容,处置方式不同(若内容仍在用则保留)。
+
+## 追加审查结论
+
+**波 2/3 = FINAL PASS;C9-UPLOAD-FIX 全任务(波 1+2+3)= FINAL PASS。** 放行推送扩大至全部 4 提交:`949b0bc + d893bb1 + a815306 + 4db4c41` 至 origin/main。
