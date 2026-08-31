@@ -23,6 +23,7 @@ import { DirPicker } from "@/components/DirPicker";
 import type { DataSource } from "@/types/api";
 import { toast } from "sonner";
 import { toUploadItems, filterByWhitelist, isJunkPath } from "@/utils/upload";
+import { apiFetch } from "@/lib/api";
 
 // 决策 2A:github 为唯一 git 源类型(local_git 降为实现细节,不再暴露给用户)
 // Task 4:woocommerce 进数据源类型枚举
@@ -87,6 +88,21 @@ function splitComma(s: string | undefined): string[] {
     .split(",")
     .map((t) => t.trim())
     .filter(Boolean);
+}
+
+/** 上传落盘根目录(与后端 _upload_root 同语义)。 */
+const uploadRootOf = (sourceId: string) => `data/uploads/data-sources/${sourceId}`;
+
+/** 上传完成后取上传根目录下全部顶层子目录,作为 include_dirs 默认全选;失败返回空数组(不阻断流程)。 */
+async function fetchTopDirPaths(rootPath: string): Promise<string[]> {
+  try {
+    const { dirs } = await apiFetch<{ dirs: { path: string }[] }>(
+      `/data-sources/preview-dirs?root_path=${encodeURIComponent(rootPath)}`,
+    );
+    return dirs.map((d) => d.path);
+  } catch {
+    return [];
+  }
 }
 
 /** ISO 时间 → 本地可读时间(如 "07-31 14:30")，非法/空输入返回 "—"。 */
@@ -348,9 +364,28 @@ export default function DataSources() {
             const { saved } = await uploadSourceFiles(editingId, kept, (done, total) =>
               setUploadProgress({ done, total }),
             );
+            // 上传成功:重算顶层目录全集写入 include_dirs(默认全选,与当前内容保持一致)
+            let allSelNote = "";
+            const topDirs = await fetchTopDirPaths(uploadRootOf(editingId));
+            if (topDirs.length > 0) {
+              try {
+                await updateDs.mutateAsync({
+                  id: editingId,
+                  type: v.type,
+                  product: v.product,
+                  enabled: v.enabled,
+                  sync_interval: v.sync_interval,
+                  config: { ...config, include_dirs: topDirs },
+                });
+                allSelNote = `,已默认包含全部 ${topDirs.length} 个目录`;
+              } catch {
+                // 全选回写失败不阻断,保持表单保存时的 include_dirs
+              }
+            }
             toast.success(
               `已合并上传 ${saved}/${kept.length} 个文件` +
-                (skipped.length > 0 ? `(已跳过 ${skipped.length} 个)` : ""),
+                (skipped.length > 0 ? `(已跳过 ${skipped.length} 个)` : "") +
+                allSelNote,
             );
           } catch (err) {
             toast.error(`上传失败:${err instanceof Error ? err.message : "未知错误"},保存已生效,可重试上传`);
@@ -393,9 +428,29 @@ export default function DataSources() {
           const { saved } = await uploadSourceFiles(created.id, kept, (done, total) =>
             setUploadProgress({ done, total }),
           );
+          // 上传成功:默认全选已上传内容的顶层目录,用户无需逐一勾选
+          // 注意:必须走 updateDs(内含缓存失效),否则列表缓存仍旧,编辑预填拿不到 include_dirs
+          let allSelNote = "";
+          const topDirs = await fetchTopDirPaths(uploadRootOf(created.id));
+          if (topDirs.length > 0) {
+            try {
+              await updateDs.mutateAsync({
+                id: created.id,
+                type: created.type,
+                product: created.product,
+                enabled: created.enabled,
+                sync_interval: created.sync_interval,
+                config: { ...created.config, include_dirs: topDirs },
+              });
+              allSelNote = `,已默认包含全部 ${topDirs.length} 个目录`;
+            } catch {
+              // 全选回写失败不阻断创建,include_dirs 保持空(同步语义=全部包含)
+            }
+          }
           toast.success(
             `创建成功,已上传 ${saved}/${kept.length} 个文件` +
-              (skipped.length > 0 ? `(已跳过 ${skipped.length} 个系统文件或白名单外文件)` : ""),
+              (skipped.length > 0 ? `(已跳过 ${skipped.length} 个系统文件或白名单外文件)` : "") +
+              allSelNote,
           );
         } catch (err) {
           // 上传失败回滚刚建的空源,避免半成品源+表单残留诱发重复创建
