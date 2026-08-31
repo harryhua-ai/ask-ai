@@ -60,3 +60,26 @@ Deviation 裁定:①契约写 `backend/tests/*` 而仓库实际为根级 `tests/
 3. **不做本地镜像构建**(核定):mac arm64 vs 生产 amd64+GPU 不等价且成本高;AC3 维持 Phase 2 容器内实证。
 
 **执行偏差记录(同日)**:执行端已持**增补前**提示词开工(用户告知,中断成本高于增量价值,不召回)。裁定:原提示词已含安全底线(磁盘前置/P-1 备份先行/版本双验证/Gate-2 停点),上述两项转移为 **Gate-2 审查侧核验**——①CORS 头:审查端从公网 curl 带 Origin 头直接验证(无需 ssh);②P-1:审查端核执行报告的备份文件路径+行数对账证据,必要时 ssh 抽查备份文件存在性与大小。
+
+---
+
+# Gate-2 审查(Phase 2 发布 + Phase 3 P-1,2026-08-31 午后)
+
+执行端交付:推送(CI 33360499079)+ T4 发布(bbfaa6a)+ P-1 清洗(632 条,备份+金标准恢复对账)。**审查端独立复核,全部证实:**
+
+| 项 | 审查端独立证据 | 结果 |
+|---|---|---|
+| 推送 | main = origin/main = bbfaa6a,ahead 0;gh 查证 CI 33360499079 success,headSha 一致 | ✅ |
+| 部署产物 | **公网 widget.js SHA256 == 本地审查版**(a9065b57…)——密码学级证实部署即所审 | ✅ |
+| AC3 | (报告)容器内 ls dist + 字节数;审查端以公网哈希对账覆盖 | ✅ |
+| AC2 公网 | widget.js 200 + cache-control max-age=300;`/widget/` 404 | ✅ |
+| CORS | 公网带 Origin 实测:wiki→ACAO wiki ✓;www→ACOA www ✓;**localhost:3000→400 无 ACAO(正确拒绝)**——行为级证实 T4 env 只含两生产 origin | ✅ |
+| AC6 P-1 | ssh 只读独立核:备份文件在(`/home/ubuntu/ask-ai-p1-…-20260831.sql`,2,025,109B 与报告一致);conversations/traces/source_clicks = **0/0/0**,business_signals = 31 | ✅ |
+
+**两处事实修正,裁定采纳(Planner 假设错误,如实记录)**:
+1. 契约"追加两 origin、保留 localhost 行"基于本地 .env 形态的错误外推——**FACT:T4 .env 本就只有两生产 origin**(无 localhost 行),目标状态早已满足。执行端 sed 误造重复后停-恢复-diff 核验,处置正确(协议"发现不符即停"的标准行为)。
+2. E7 所列 feedback"表"实为 conversations 的列(随行删除);business_signals 无 conversation 外键(采样列),不级联——实测 31 行不动无孤儿,与该语义一致。627(08-30 推断)→ 实测 632,以实测为准。
+
+**审查侧吸收项闭环**:①CORS 头(上表);②备份可用性——执行端用**金标准**(恢复进一次性库 p1_verify 对账 632/261/0 一致后删库)完成,强于审查端原方案。
+
+**Verdict:Phase 2/3 = FINAL PASS(Gate-2 通过)。** 生产已运行 bbfaa6a、widget 公网可加载、CORS 双 origin 放行、数据池清零。剩余:Phase 4 wiki 嵌入,**等用户"wiki 上线确认"**(契约 Gate-3)。
