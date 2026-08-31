@@ -74,9 +74,9 @@ A should not prescribe unnecessary implementation HOW.
 
 B owns:
 
-`PLAN HOW / IMPLEMENT / TEST / DEBUG / FIX / VERIFY / INTEGRATE / DELIVER`
+`PLAN HOW / INVESTIGATE ENGINEERING ROOT CAUSE / IMPLEMENT / TEST / DEBUG / FIX / VERIFY / INTEGRATE / DELIVER`
 
-including implementation architecture inside the approved boundary.
+including implementation architecture and Engineering root-cause investigation inside the approved boundary.
 
 B must not silently change:
 
@@ -91,7 +91,46 @@ B must not silently change:
 
 If a decision changes **what users see, understand, can do, or how the Product behaves**, it belongs to A.
 
-If it changes only **how an already-defined behavior is implemented**, it belongs to B.
+If it changes only **why the implementation fails or how an already-defined behavior is implemented**, it belongs to B.
+
+---
+
+## **Investigation Boundary**
+
+A investigates Engineering details only to the depth necessary to confidently establish:
+
+- Product truth;
+- feasibility;
+- material risk;
+- Change Boundary;
+- Acceptance.
+
+A SHOULD NOT routinely pre-solve:
+
+- Engineering root cause;
+- implementation design;
+- code-level solution;
+- detailed test implementation;
+
+when B can determine them safely inside the AUTHORIZED Frozen Task Contract.
+
+B owns Engineering root-cause investigation, implementation design, debugging and test design inside the Frozen Contract.
+
+Evidence collected by A may identify where a problem is observed, establish relevant Engineering facts, or constrain the solution, but SHOULD NOT unnecessarily prescribe HOW B must fix it.
+
+A MAY investigate deeper when necessary to:
+
+- determine Product / Architecture feasibility;
+- establish security, safety or compatibility boundaries;
+- assess high-risk blast radius;
+- determine whether a valid Contract can be formed;
+- independently review B’s implementation and claims.
+
+Principle:
+
+`A investigates until WHAT / Boundary / Acceptance can be confidently defined.`
+
+`B investigates until WHY the implementation fails and HOW to correctly satisfy the Contract are understood.`
 
 ---
 
@@ -355,6 +394,20 @@ During execution:
 
 unless explicitly cancelled, superseded or re-planned by A.
 
+### **Contract Detail Boundary**
+
+The Task Contract freezes the behavior, boundaries, constraints and evidence required for acceptance.
+
+It SHOULD NOT unnecessarily freeze Engineering HOW when multiple valid implementations could satisfy the same Contract.
+
+A may record code locations, observed call paths, runtime behavior or other implementation facts as **Evidence Anchors**.
+
+Evidence Anchors are evidence, not implementation instructions unless explicitly identified as a required Product / Architecture / Security / Compatibility constraint.
+
+If removing an implementation detail would still allow B to choose among multiple correct implementations without changing Product Contract, Scope, Acceptance or required constraints, that detail SHOULD normally remain B-owned HOW rather than Frozen Contract.
+
+Detailed Engineering root-cause analysis, patch design and test implementation are B responsibilities unless deeper specification is necessary to establish a valid Contract or mandatory boundary.
+
 ## **Change Boundary**
 
 Define:
@@ -399,12 +452,18 @@ Verification depth scales with risk.
 
 B owns the complete Engineering closure:
 
-`Understand → Inspect → Plan HOW → Implement → Test → Debug → Fix → Runtime Verify → Real-World Self-Check → Regression → Candidate Ready`
+`Understand → Inspect → Investigate Root Cause → Plan HOW → Implement → Test → Debug → Fix → Runtime Verify → Real-World Self-Check → Regression → Candidate Ready`
 
 Implementation is not complete merely because code exists.
 
+B owns Engineering root-cause investigation, implementation design and test design inside the Frozen Contract.
+
 B should:
 
+- reproduce and understand relevant failures;
+- determine Engineering root cause where applicable;
+- choose the implementation HOW;
+- design sufficient Engineering tests;
 - fix root causes;
 - use minimum sufficient change;
 - preserve compatibility;
@@ -412,9 +471,11 @@ B should:
 - maintain Engineering quality;
 - resolve ordinary implementation defects independently.
 
+B should not expect A to pre-solve Engineering root cause or implementation HOW before execution.
+
 Ordinary bugs, test failures, crashes, state errors, integration errors and implementation mistakes remain B responsibility.
 
-If Planner’s implementation assumption is wrong but Contract remains valid:
+If Planner’s implementation assumption or Evidence Anchor is wrong but Contract remains valid:
 
 `B adapts HOW + records discrepancy.`
 
@@ -521,6 +582,8 @@ B actually executes applicable:
 - Real-World self-check
 
 Verification profile depends on task type and risk.
+
+B determines the detailed test implementation needed to provide sufficient evidence unless the Frozen Contract requires specific externally meaningful verification.
 
 No success claim from code inspection or another Agent’s report.
 
@@ -638,9 +701,12 @@ Use PARTIAL or BLOCKED and identify the missing evidence.
 |Routine Product decision inside established intent|A decides|
 |Current external evidence materially affects decision|A researches|
 |Product / UX behavior changes|A decides|
+|Product-level problem / correct behavior / acceptance unclear|A investigates and defines|
+|Engineering root cause unclear|B investigates|
 |Implementation HOW changes only|B decides|
-|Planner HOW assumption wrong, Contract valid|B adapts + records|
-|Ordinary implementation bug|B fixes + verifies|
+|Detailed Engineering test design|B decides|
+|Planner HOW assumption / Evidence Anchor wrong, Contract valid|B adapts + records|
+|Ordinary implementation bug|B investigates, fixes + verifies|
 |Local refactor inside Contract|B|
 |Major architecture/refactor initiative|A prioritizes/bounds; B implements|
 |Scope must expand|A approves/rejects/re-plans|
@@ -650,7 +716,7 @@ Use PARTIAL or BLOCKED and identify the missing evidence.
 |Ordinary integration conflict|B Integrator|
 |Integration changes Product Contract|A|
 |Automated tests PASS|Necessary evidence, not FINAL PASS|
-|Real-World Acceptance fails|B fixes; A re-reviews|
+|Real-World Acceptance fails|B investigates/fixes; A re-reviews|
 |New capability/evolution/systemic issue appears|A Lifecycle Intake|
 |Initiative FINAL PASS|A Lifecycle Review|
 
@@ -659,6 +725,8 @@ Core:
 `Do not escalate implementation problems as Product decisions.`
 
 `Do not silently make Product decisions as implementation choices.`
+
+`A defines the right outcome; B owns the Engineering path to reach it.`
 
 ---
 
@@ -687,6 +755,7 @@ Include at minimum:
 - Baseline / Final Commit
 - Files Changed
 - Implementation
+- Engineering Root Cause when applicable
 - Supporting Changes
 - Verification actually executed
 - Runtime / Real-World Self-Check
@@ -764,4 +833,4 @@ Prefer capability maturity over misleading task-count percentages.
 
 Final loop:
 
-`User Need → A Discovery / Research / Design → AUTHORIZED Contract → B Engineering → Candidate → A Independent Acceptance → Product Learning → Lifecycle Reassessment → Next Initiative`
+`User Need → A Discovery / Research / Design → AUTHORIZED Contract → B Engineering Investigation / Execution → Candidate → A Independent Acceptance → Product Learning → Lifecycle Reassessment → Next Initiative`
