@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -22,6 +22,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@
 import { DirPicker } from "@/components/DirPicker";
 import type { DataSource } from "@/types/api";
 import { toast } from "sonner";
+import { toUploadItems, filterByWhitelist, isJunkPath } from "@/utils/upload";
 
 // 决策 2A:github 为唯一 git 源类型(local_git 降为实现细节,不再暴露给用户)
 // Task 4:woocommerce 进数据源类型枚举
@@ -285,6 +286,12 @@ export default function DataSources() {
   const syncInterval = watch("sync_interval");
   const syncSelect =
     syncCustom || !["1h", "12h", "24h"].includes(syncInterval) ? "__custom" : syncInterval;
+  const watchedFileTypes = watch("file_types");
+  // 选中文件按当前白名单实时预览:将上传多少、跳过多少(与提交时同一套过滤逻辑)
+  const uploadPreview = useMemo(
+    () => filterByWhitelist(toUploadItems(pickedFiles), splitComma(watchedFileTypes)),
+    [pickedFiles, watchedFileTypes],
+  );
 
   const openCreate = () => {
     reset(EMPTY_FORM);
@@ -329,24 +336,50 @@ export default function DataSources() {
       });
     } else {
       // id 可选:用户没填则不传,后端按 product+短 hash 自动生成
-      const created = await createDs.mutateAsync({
-        ...(v.id ? { id: v.id } : {}),
-        type: v.type,
-        product: v.product,
-        enabled: v.enabled,
-        sync_interval: v.sync_interval,
-        config,
-      });
+      let created: DataSource;
+      try {
+        created = await createDs.mutateAsync({
+          ...(v.id ? { id: v.id } : {}),
+          type: v.type,
+          product: v.product,
+          enabled: v.enabled,
+          sync_interval: v.sync_interval,
+          config,
+        });
+      } catch (err) {
+        toast.error(`创建失败:${err instanceof Error ? err.message : "未知错误"}`);
+        return;
+      }
       // C9 上传模式:创建成功后把选中的文件夹分批直传(每批 50,串行)
       if (v.upload_mode && pickedFiles.length > 0) {
-        const items = pickedFiles.map((f) => ({
-          file: f,
-          path: (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name,
-        }));
-        setUploadProgress({ done: 0, total: items.length });
-        await uploadSourceFiles(created.id, items, (done, total) =>
-          setUploadProgress({ done, total }),
+        // 客户端先过滤:系统文件/白名单外文件不上传(后端整批 400 拒收,故必须在客户端滤净)
+        const { kept, skipped } = filterByWhitelist(
+          toUploadItems(pickedFiles),
+          splitComma(v.file_types),
         );
+        if (kept.length === 0) {
+          toast.error("没有符合文件类型白名单的可上传文件,已回滚该数据源");
+          await deleteDs.mutateAsync(created.id);
+          return;
+        }
+        setUploadProgress({ done: 0, total: kept.length });
+        try {
+          const { saved } = await uploadSourceFiles(created.id, kept, (done, total) =>
+            setUploadProgress({ done, total }),
+          );
+          toast.success(
+            `创建成功,已上传 ${saved}/${kept.length} 个文件` +
+              (skipped.length > 0 ? `(已跳过 ${skipped.length} 个系统文件或白名单外文件)` : ""),
+          );
+        } catch (err) {
+          // 上传失败回滚刚建的空源,避免半成品源+表单残留诱发重复创建
+          toast.error(
+            `上传失败:${err instanceof Error ? err.message : "未知错误"},已删除该数据源,请重试`,
+          );
+          await deleteDs.mutateAsync(created.id);
+          setUploadProgress(null);
+          return;
+        }
         setUploadProgress(null);
       }
     }
@@ -664,10 +697,11 @@ export default function DataSources() {
                     onChange={(e) => {
                       const picked = Array.from(e.target.files ?? []);
                       setPickedFiles(picked);
-                      // 按所选文件后缀预填白名单,用户按需删
+                      // 按所选文件后缀预填白名单(系统元数据文件不计入),用户按需删
                       const exts = [
                         ...new Set(
                           picked
+                            .filter((f) => !isJunkPath(f.name))
                             .map((f) => f.name.slice(f.name.lastIndexOf(".")).toLowerCase())
                             .filter((x) => x.startsWith(".")),
                         ),
@@ -679,7 +713,10 @@ export default function DataSources() {
                   />
                   {pickedFiles.length > 0 && (
                     <p className="text-xs text-muted-foreground">
-                      已选择 {pickedFiles.length} 个文件
+                      已选择 {pickedFiles.length} 个文件,将上传 {uploadPreview.kept.length} 个
+                      {uploadPreview.skipped.length > 0
+                        ? `(跳过 ${uploadPreview.skipped.length} 个系统文件或白名单外文件)`
+                        : ""}
                       {uploadProgress
                         ? ` · 上传中 ${uploadProgress.done}/${uploadProgress.total}`
                         : ""}
@@ -761,8 +798,15 @@ export default function DataSources() {
 
           <div className="flex justify-end gap-2 border-t pt-3">
             <Button type="button" variant="outline" onClick={closeForm}>取消</Button>
-            <Button type="submit" disabled={createDs.isPending || updateDs.isPending}>
-              {editingId ? "保存" : "创建"}
+            <Button
+              type="submit"
+              disabled={createDs.isPending || updateDs.isPending || !!uploadProgress}
+            >
+              {uploadProgress
+                ? `上传中 ${uploadProgress.done}/${uploadProgress.total}…`
+                : editingId
+                  ? "保存"
+                  : "创建"}
             </Button>
           </div>
         </form>
