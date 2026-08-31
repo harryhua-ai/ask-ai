@@ -334,6 +334,32 @@ export default function DataSources() {
         sync_interval: v.sync_interval,
         config,
       });
+      // C9 编辑态:再次选择文件夹 = 合并覆盖上传(与表单文案一致);保存已生效,上传失败不回滚
+      if (v.upload_mode && pickedFiles.length > 0) {
+        const { kept, skipped } = filterByWhitelist(
+          toUploadItems(pickedFiles),
+          splitComma(v.file_types),
+        );
+        if (kept.length === 0) {
+          toast.error("没有符合文件类型白名单的可上传文件,本次未上传");
+        } else {
+          setUploadProgress({ done: 0, total: kept.length });
+          try {
+            const { saved } = await uploadSourceFiles(editingId, kept, (done, total) =>
+              setUploadProgress({ done, total }),
+            );
+            toast.success(
+              `已合并上传 ${saved}/${kept.length} 个文件` +
+                (skipped.length > 0 ? `(已跳过 ${skipped.length} 个)` : ""),
+            );
+          } catch (err) {
+            toast.error(`上传失败:${err instanceof Error ? err.message : "未知错误"},保存已生效,可重试上传`);
+            setUploadProgress(null);
+            return;
+          }
+          setUploadProgress(null);
+        }
+      }
     } else {
       // id 可选:用户没填则不传,后端按 product+短 hash 自动生成
       let created: DataSource;
@@ -736,13 +762,23 @@ export default function DataSources() {
               </div>
               <div className="space-y-1">
                 <Label>
-                  包含目录 {rootPath ? "(勾选根路径下子目录)" : "(逗号分隔,填根路径后可浏览)"}
+                  包含目录{" "}
+                  {watchUploadMode
+                    ? "(勾选已上传内容的子目录)"
+                    : rootPath
+                      ? "(勾选根路径下子目录)"
+                      : "(逗号分隔,填根路径后可浏览)"}
                 </Label>
                 {rootPath ? (
                   <DirPicker
                     rootPath={rootPath}
                     value={splitComma(watch("include_dirs"))}
                     onChange={(dirs) => setValue("include_dirs", dirs.join(", "))}
+                    missingHint={
+                      watchUploadMode
+                        ? "该源还没有上传过文件,上传后这里会显示服务器上的目录结构"
+                        : undefined
+                    }
                   />
                 ) : (
                   <Input {...register("include_dirs")} placeholder="docs, guides" />

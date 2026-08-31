@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 
 import { usePreviewDirs } from "@/hooks/useDataSources";
+import { ApiError } from "@/lib/api";
 
 interface DirPickerProps {
   /** 数据源 root_path(已填才渲染本组件,但内部仍做空值兜底)。 */
@@ -16,6 +17,8 @@ interface DirPickerProps {
   value: string[];
   /** 勾选变更回调,传入新的目录数组(不可变更新)。 */
   onChange: (dirs: string[]) => void;
+  /** 目录不存在(404)时展示的友好提示;不传则按错误显示(服务器路径模式需要真实报错)。 */
+  missingHint?: string;
 }
 
 /**
@@ -23,7 +26,7 @@ interface DirPickerProps {
  * 顶层目录可展开/折叠显示第二层;勾选结果写入 include_dirs。
  * 数据由 usePreviewDirs 懒拉,rootPath 变才重拉(react-query cache)。
  */
-export function DirPicker({ rootPath, value, onChange }: DirPickerProps) {
+export function DirPicker({ rootPath, value, onChange, missingHint }: DirPickerProps) {
   const { data, isLoading, error } = usePreviewDirs(rootPath);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -38,6 +41,9 @@ export function DirPicker({ rootPath, value, onChange }: DirPickerProps) {
     );
   }
   if (error) {
+    if (missingHint && error instanceof ApiError && error.status === 404) {
+      return <p className="text-xs text-muted-foreground">{missingHint}</p>;
+    }
     return (
       <p className="text-xs text-destructive">
         目录加载失败:{error instanceof Error ? error.message : "未知错误"}

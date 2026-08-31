@@ -369,6 +369,10 @@ async def update_data_source(
             setattr(ds, key, value)
         if ds.type == "github":
             await _validate_github_branches(ds.config)
+        if ds.type == "filesystem" and (ds.config or {}).get("upload_mode"):
+            # C9 上传模式:root_path 始终由服务端指向落盘目录,与创建时同语义,
+            # 防止前端提交的空值把同步根路径抹掉
+            ds.config["root_path"] = f"data/uploads/data-sources/{source_id}"
         await session.commit()
         await session.refresh(ds)
     return _to_out(ds)
