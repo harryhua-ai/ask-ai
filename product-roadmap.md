@@ -266,20 +266,19 @@ mask_pii → BudgetLimiter 预扣 → 附件注入
 - **T4 通用化起步**:E3(Alembic,私有部署形态下必做)→ E1(常量出仓)→ E2(意图配置化)→ E4(onboarding + licensing)
 - **T5 按需/预留**:B5、C1(1b)、C3~C7、D2-D5 入口扩展、D4 Platform Assistant(由真实对接需求牵引);低优工程清单:ruff 存量 12 处、schemas 与 CLAUDE.md 若干文档不一致;**挂起项:GitHub PAT 本体轮换**(泄漏行已清但暴露未撤销,用户明确"后续再做,先忽略",勿再催办)
 
-## 7. 当前实现阶段快照(2026-08-28)
+## 7. 当前实现阶段快照(2026-08-30 REL-WIN 后)
 
-**总体判断:产品处于「预上线(内部验证)」阶段——后端与数据面在生产稳定运行,但 C 端流量入口尚未嵌入任何公开站点,真实访客数据为零。** 原始 Phase 1-3 全部落地,当前唯一 widget 集成点是 admin 登录页 + 登录后页面(管理员测试用);**T1 三站点嵌入(商城/官网/wiki)是产品真正上线运营的里程碑**,北极星数据观察期(dual 指标裁决)自 T1 落地后起算。中台定位下,入口层 HEADLESS 半开放、资源层插件化已就绪。下一阶段三线:T1 上线里程碑(实例线+产品线共同入口)→ 通用化剥离(E 类)→ 数据裁决后的商业闭环/质量地基(T2/T3)。
+**总体判断:上线就绪(All Green)——上线前全部准备项清零,距真实访客只差 T1a 一个契约(widget 分发物 + 三站点嵌入)。** 生产运行 `76d75e7`(容器内双特征实锤);数据面 **15/15 源全绿**(一致性自愈体系闭环:记账真实/口径统一/孤儿清零);admin 聊天恢复(P1 生效);官网数据源上线(116 篇,NG4500 盲区解除)。产品层能力新增:上传文件夹建源(C9)、表单健壮与错误脱敏(C10)、web_crawl connector(C8)。剩余唯一主线:**T1a 代码包(widget 托管 + CORS)→ P-1 清洗 → wiki 灰度 → 官网 → 商城**,北极星观察期自 wiki 灰度日启动。
 
 | 维度 | 状态 |
 |---|---|
-| 生产运行 | 后端/数据面在 tesla-t4 生产运行(入口 wiki-data.camthink.ai);**公开站点零嵌入,真实访客流量为零**(唯一集成:admin 登录页 + 登录后页面,管理员测试用) |
-| 通用化程度 | 架构层达标(插件/配置化/部署物);业务语义层 12 后端文件 + 6 前端文件 CamThink 硬编码,意图体系为最深单点(§5) |
-| 代码(2026-08-30 收敛完成) | main 历史已重写 + **文档全部转仅本地**(`4651ca8`,GitHub 只留代码);**收敛完成:main = origin/main = `88a4c9f`**,分叉消除(旧 SHA 81bd1db/be93264 作废 → c8117f4/88a4c9f);分支已退役,backup/sync-consistency-pre-rebase 留至 D-11 后;规划文档(含本篇、CLAUDE.md)为本地 untracked,执行端经绝对路径读取;CLAUDE.md 已固化环境策略 |
-| 已完成未验收 | **全部代码就绪待发布**:main = `76d75e7` = origin(P1 `5ca3dfe` + D4-ACC `ce59b15`/`fe98ca2` + WEB-DATA-WIN `309c1f5`..`76d75e7` 三契约);CI 33321125298;worktree 清零。**剩余:一次性发布(REL-WIN 契约)+ 发布后观察三项 → T1a** |
-| 数据规模 | 13 源在同步(T4 现 5 success / 9 partial,残留均为数据侧根因);知识源幽灵清理闭环 481/481;曾误删 560k chunk 事故后重建 |
-| 测试 | 后端 pytest(本地全量 **499 passed + 3 skipped**,排除 embedder/e2e 与 CI 同口径;embedder 无外网沙箱会因 BGE 下载挂起,缓存有模型后不卡)+ 前端 vitest(admin 88)+ Playwright E2E 三页;ruff 存量 12 处(I001×10/BLE001/SIM103,低优清单) |
-| 已知风险 | T4 磁盘曾 91-96%(事故根因);GPU 显存与 3 服务共享(sync embed 偶发 OOM);dev 库稀疏导致三页真实数据视觉验证欠账 |
-| 遗留挂起 | Task #25(数据源健康度;归属已拍板 D-9 拆分,待执行);TraceLanes 集成对话详情(deferred) |
+| 生产运行 | tesla-t4 运行 `76d75e7` 实锤;15/15 源全 success(两轮);磁盘 23% 余量健康;公开站点仍零嵌入(唯一集成 admin 聊天,已恢复可用) |
+| 数据规模 | 15 源全绿:10 github + 2 filesystem + 1 woocommerce + 1 官网爬取 + 1 测试新增;一致性自愈 + prune + 记账真实全部生产验证 |
+| 通用化程度 | 架构层达标;connector 4 类(web_crawl 新增);业务语义耦合未剥离(意图体系/常量,E 类待启动) |
+| 代码 | main = origin/main = `76d75e7`,worktree 清零;T1a 代码包未开发(widget 托管/CORS) |
+| 测试 | 后端 532 passed + 3 skipped(CI 口径);admin build ✓;ruff 77 净-1 |
+| 已知风险 | ne503/官网源 cron 连续 success 稳定性留意(观察建议);dev 库与生产库数据面已一致化 |
+| 遗留挂起 | PAT 本体轮换(用户挂起勿催);Task #25(D-9 已拍板待执行);TraceLanes(deferred);ruff 低优清单 |
 
 ## 8. 关键产品决策记录(已锁定,影响后续)
 
