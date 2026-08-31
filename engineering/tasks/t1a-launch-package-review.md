@@ -50,3 +50,11 @@ Deviation 裁定:①契约写 `backend/tests/*` 而仓库实际为根级 `tests/
 ## Verdict
 
 **Phase 1 = FINAL PASS。** 放行:推送 `worktree-exec/t1a-launch` → main(快进 `4db4c41..bbfaa6a`),CI 绿后按契约进 Phase 2(T4 发布)+ Phase 3(P-1 清洗),Gate-2 见。
+
+## Gate-2 前置增补(Reviewer,2026-08-31,应用户"本地先测"要求核定)
+
+本地已覆盖:Phase 1 全部单测/全量 + 审查端独立 E2E(本地全栈)。增补两项、明确一项不做:
+
+1. **Phase 3 前置 P-1 本地演练**(增补,必做):在本地 postgres 完整走 pg_dump 备份 → DELETE conversations → 级联计数核验 → 备份恢复演练(恢复到临时库核对行数),全部原始输出入报告;生产序列照抄。
+2. **Phase 2 增补 CORS 头实证**:T4 生效后 `curl -sI -H "Origin: https://wiki.camthink.ai"` 与 `Origin: https://www.camthink.ai"` 各打一次 `/api/ask` 预检(OPTIONS)与简单 GET,核响应含正确 `Access-Control-Allow-Origin`,截图/原始输出入报告。
+3. **不做本地镜像构建**(核定):mac arm64 vs 生产 amd64+GPU 不等价且成本高;AC3 维持 Phase 2 容器内实证。
