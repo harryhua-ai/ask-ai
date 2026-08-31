@@ -8,9 +8,9 @@
 
 ## 0. 速览(NOW / NEXT / LATER)
 
-- **NOW**:等用户"起草" → **T1a 契约**(首份走完整 plan.md → AUTHORIZED 流程)
-- **NEXT**:T1a 执行(widget 托管 + CORS + P-1 清洗)→ 一次发布(4 提交 + T1a 代码)→ wiki 灰度(北极星观察期启动)→ 官网 → 商城
-- **LATER**:T2/T3(商业闭环 vs 质量地基,commercial 占比数据裁决)→ T4 通用化(Alembic → 常量出仓 → 意图配置化 → onboarding+licensing)→ T1b 标准件分发
+- **NOW**:**T1a 契约已签发(AUTHORIZED,docs 仓 476a204)**——Phase 1 执行提示词已给,等执行端交付 CANDIDATE READY
+- **NEXT**:Phase 1 Review → push → Phase 2/3(T4 发布 + P-1 清洗)→ Phase 4 wiki 灰度(上线时刻用户确认)→ week-1 基线报告
+- **LATER**:官网 → 商城波次 → T2/T3(commercial 占比数据裁决)→ T4 通用化 → T1b 标准件分发;灰度阈值冻结(week 2+,用户批)
 - **CONTINUOUS**:候选池维护、D-12 恢复预案待窗口、数据侧用户持有项跟进
 
 ## 1. 原始四阶段规划(2026-07-27 founding spec)
