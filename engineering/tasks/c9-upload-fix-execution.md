@@ -2,7 +2,7 @@
 
 - 任务:C9 文件夹上传流程修复(创建卡死 0/175 / 重复数据源 / 目录不存在)
 - 报告版本:v4(2026-08-31;v3 追加编辑流契约 §10,v4 追加"上传后默认全选"契约 §11)
-- 状态:**PASS**(Executor Self-assessment;最终验收权属 Planner / Reviewer)
+- 状态:**CANDIDATE READY**(Protocol v2.0 §79 Executor 自评;最终验收权属 Planner / Reviewer。注:v1~v3 版本报告中的 "PASS" 均按 v2 语义读作 CANDIDATE READY)
 
 ## 1. Baseline Commit
 
@@ -126,5 +126,5 @@ E2E 后清理:测试源 e2e-adv 经 UI 删除;e2e-adv/e2e-b 磁盘目录已删;e
 
 ---
 
-最终状态(Executor Self-assessment):**PASS**(v1 创建流 + v3 编辑流 + v4 默认全选)
+最终状态(Executor Self-assessment,Protocol v2.0 §79):**CANDIDATE READY**(v1 创建流 + v3 编辑流 + v4 默认全选)
 最终验收:待 Planner / Reviewer 独立审查(创建流 76d75e7→d893bb1;编辑流 d893bb1→a815306;默认全选 a815306→4db4c41)后出具 review.md。
