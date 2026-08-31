@@ -1,7 +1,11 @@
-import { describe, it, expect } from "vitest";
-import { renderMarkdownSafe } from "../sanitize";
+import { describe, it, expect, afterEach } from "vitest";
+import { renderMarkdownSafe, sanitizeHtml } from "../sanitize";
 import { isAllowedUrl } from "../urlPolicy";
 import type { SourceLink } from "../../types";
+
+afterEach(() => {
+  document.body.innerHTML = "";
+});
 
 describe("renderMarkdownSafe", () => {
   it("strips <script> injection", () => {
@@ -60,7 +64,7 @@ describe("renderMarkdownSafe", () => {
     expect(out).toContain("Text between");
   });
 
-  it("consolidates [N] citations to paragraph end as source titles", () => {
+  it("consolidates [N] citations to paragraph end as numeric badges with title", () => {
     const sources: SourceLink[] = [
       { url: "https://github.com/camthink-ai/wiki/blob/main/overview.md", title: "overview", type: "github" },
       { url: "https://github.com/camthink-ai/wiki/blob/main/specs.md", title: "specs", type: "github" },
@@ -69,8 +73,54 @@ describe("renderMarkdownSafe", () => {
     expect(out).not.toContain("<sup>");
     expect(out).not.toContain("[1]");
     expect(out).toContain('ask-ai-ref');
-    expect(out).toContain("overview");
-    expect(out).toContain("specs");
+    // T29:锚点文本 = 引用编号 n(数字徽标,不再是空锚点+logo 背景图)
+    expect(out).toContain(">1</a>");
+    expect(out).toContain(">2</a>");
+    // T29:title 属性 = 来源标题,经白名单保留
+    expect(out).toContain('title="overview"');
+    expect(out).toContain('title="specs"');
+  });
+
+  it("renders multiple badges on one line in appearance order", () => {
+    const sources: SourceLink[] = [
+      { url: "https://github.com/camthink-ai/wiki/blob/main/a.md", title: "a", type: "github" },
+      { url: "https://github.com/camthink-ai/wiki/blob/main/b.md", title: "b", type: "github" },
+    ];
+    const out = renderMarkdownSafe("Claim [2] then [1] end.", sources);
+    const i1 = out.indexOf(">1</a>");
+    const i2 = out.indexOf(">2</a>");
+    expect(i1).toBeGreaterThanOrEqual(0);
+    expect(i2).toBeGreaterThanOrEqual(0);
+    // 同行按出现顺序排列:[2] 先出现 → 徽标 2 在前
+    expect(i2).toBeLessThan(i1);
+  });
+
+  it("allowlists title attribute through DOMPurify", () => {
+    const out = sanitizeHtml('<a href="https://github.com/a" title="hint">t</a>');
+    expect(out).toContain('title="hint"');
+    expect(out).toContain(">t</a>");
+  });
+
+  it("escapes malicious source title (quote break-out / HTML injection)", () => {
+    const sources: SourceLink[] = [
+      {
+        url: "https://github.com/camthink-ai/wiki/blob/main/doc.md",
+        title: '"><img src=x onerror=alert(1)>',
+        type: "github",
+      },
+    ];
+    const out = renderMarkdownSafe("fact [1] end.", sources);
+    // 序列化层:引号必转义 → 属性边界不可逃逸
+    expect(out).toContain('title="&quot;');
+    // DOM 层(末道 DOMPurify 输出挂载后的真实安全属性):
+    // 不产生 img 元素,title 为字面文本,href/编号不受影响
+    document.body.innerHTML = out;
+    const anchor = document.querySelector("a.ask-ai-ref");
+    expect(anchor).not.toBeNull();
+    expect(document.querySelector("img")).toBeNull();
+    expect(anchor!.getAttribute("title")).toBe('"><img src=x onerror=alert(1)>');
+    expect(anchor!.getAttribute("href")).toBe("https://github.com/camthink-ai/wiki/blob/main/doc.md");
+    expect(anchor!.textContent).toBe("1");
   });
 
   it("strips [N] when N exceeds sources length", () => {

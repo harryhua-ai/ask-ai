@@ -6,7 +6,7 @@ import type { SourceLink } from "../types";
 import { isAllowedUrl } from "./urlPolicy";
 
 const ALLOWED_TAGS = ["p", "br", "strong", "em", "code", "pre", "h4", "span", "ul", "ol", "li", "a"];
-const ALLOWED_ATTR = ["href", "target", "rel", "class"];
+const ALLOWED_ATTR = ["href", "target", "rel", "class", "title"];
 
 /** DOMPurify 清洗,移除危险标签/属性 */
 export function sanitizeHtml(html: string): string {
@@ -69,7 +69,8 @@ export function renderMarkdownSafe(text: string, sources?: SourceLink[]): string
       if (found.size === 0) return cleaned;
       const icons = Array.from(found).map((i) => {
         const src = sources[i];
-        return `<a href="${src.url}" class="ask-ai-ref" target="_blank" rel="noopener noreferrer"></a>`;
+        // T29:数字徽标 —— 锚点文本 = 引用编号 n,title = 来源标题(转义,防属性逃逸/注入)
+        return `<a href="${escapeHtml(src.url)}" title="${escapeHtml(src.title ?? "")}" class="ask-ai-ref" target="_blank" rel="noopener noreferrer">${i + 1}</a>`;
       });
       const trimmed = cleaned.replace(/[。，、.;；\s]+$/, "");
       const isChinese = /[一-鿿]/.test(trimmed);
