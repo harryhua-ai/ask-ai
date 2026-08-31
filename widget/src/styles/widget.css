@@ -171,13 +171,23 @@
 }
 .ask-ai-bubble-assistant .ask-ai-ref {
   display: inline-block;
-  width: 12px;
-  height: 12px;
+  min-width: 14px;
+  height: 14px;
   margin-left: 3px;
+  padding: 0 4px;
+  border-radius: 7px;
+  background: var(--ask-ai-primary, #2563eb);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
   vertical-align: middle;
-  background-image: url("../assets/CamThink.ai-black.png");
-  background-size: contain;
-  background-repeat: no-repeat;
+  text-decoration: none;
+}
+.ask-ai-bubble-assistant .ask-ai-ref:hover {
+  text-decoration: none;
+  filter: brightness(1.12);
 }
 .ask-ai-bubble-assistant .ask-ai-sources {
   display: block;
