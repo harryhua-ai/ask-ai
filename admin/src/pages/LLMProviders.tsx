@@ -220,15 +220,22 @@ export default function LLMProviders() {
           }}
           onDelete={() => {}}
           onToggle={(id, enabled) => toggleProvider.mutate({ id, enabled })}
-          onAdd={() => {
-            const id = window.prompt("新供应商 ID");
-            if (id) {
-              createProvider.mutate({
+          onAdd={(id) => {
+            createProvider.mutate(
+              {
                 id,
                 type: "openai_compatible",
                 config: { api_base: "", api_key: "", model: "", available_models: [] },
-              });
-            }
+              },
+              {
+                onSuccess: () =>
+                  toast.success("已创建,请点击「编辑」填写 API 地址、密钥与模型"),
+                onError: (err) =>
+                  toast.error(
+                    `创建失败:${err instanceof Error ? err.message : String(err)}`,
+                  ),
+              },
+            );
           }}
           onClose={() => setCredOpen(false)}
         />

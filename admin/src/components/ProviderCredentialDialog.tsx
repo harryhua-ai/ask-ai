@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Plus, Pencil, Trash2, Power } from "lucide-react";
 import {
   Dialog,
@@ -6,6 +7,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { LLMProvider } from "@/types/api";
 
@@ -14,7 +16,7 @@ interface Props {
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
   onToggle: (id: string, enabled: boolean) => void;
-  onAdd: () => void;
+  onAdd: (id: string) => void;
   onClose: () => void;
 }
 
@@ -26,6 +28,19 @@ export function ProviderCredentialDialog({
   onAdd,
   onClose,
 }: Props) {
+  // 新增走内联输入:window.prompt 在嵌入式浏览器(如 IDE 内嵌 webview)中
+  // 会被拦截返回 null,导致添加静默失效(C 修复)。
+  const [adding, setAdding] = useState(false);
+  const [newId, setNewId] = useState("");
+
+  const confirmAdd = () => {
+    const id = newId.trim();
+    if (!id) return;
+    onAdd(id);
+    setAdding(false);
+    setNewId("");
+  };
+
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-xl">
@@ -87,10 +102,38 @@ export function ProviderCredentialDialog({
         </div>
 
         <div className="flex justify-end pt-2">
-          <Button onClick={onAdd}>
-            <Plus className="mr-1.5 h-4 w-4" />
-            新增供应商
-          </Button>
+          {adding ? (
+            <div className="flex w-full items-center gap-2">
+              <Input
+                autoFocus
+                placeholder="供应商 ID(如 my-provider)"
+                value={newId}
+                onChange={(e) => setNewId(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") confirmAdd();
+                }}
+                className="h-8 text-xs"
+              />
+              <Button size="sm" onClick={confirmAdd}>
+                确认
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setAdding(false);
+                  setNewId("");
+                }}
+              >
+                取消
+              </Button>
+            </div>
+          ) : (
+            <Button onClick={() => setAdding(true)}>
+              <Plus className="mr-1.5 h-4 w-4" />
+              新增供应商
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>
