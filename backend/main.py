@@ -480,6 +480,34 @@ if _admin_dist.exists():
     )
 
 
+# T1a Phase1-T2:托管 widget 构建产物,供第三方站点 <script src="/widget/widget.js"> 嵌入。
+# 镜像 admin 挂载模式,但:无 SPA 回退(不 html=True,目录路径 404 禁目录列表);
+# 响应头 Cache-Control: public, max-age=300(契约冻结:更新 5 分钟内生效)。
+_widget_dist = Path(__file__).resolve().parent.parent / "widget" / "dist"
+
+
+class CachedStaticFiles(StaticFiles):
+    """StaticFiles + 固定 Cache-Control 响应头。"""
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "public, max-age=300"
+        return response
+
+
+def _mount_widget_static(app: FastAPI, dist: Path) -> None:
+    """dist 存在时把 widget 产物挂到 /widget(独立函数便于契约测试)。"""
+    if dist.exists():
+        app.mount(
+            "/widget",
+            CachedStaticFiles(directory=str(dist)),
+            name="widget",
+        )
+
+
+_mount_widget_static(app, _widget_dist)
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     """健康检查端点,供编排系统探活。"""

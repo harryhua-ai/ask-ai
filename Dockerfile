@@ -63,6 +63,7 @@ WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 
 COPY admin/dist /app/admin/dist
+COPY widget/dist /app/widget/dist
 
 # Cache-bust:随 git commit 变化,强制后续代码 COPY 层重建。
 # 修复 buildx gha cache(type=gha,mode=max)偶发 stale:
