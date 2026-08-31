@@ -19,15 +19,21 @@ import { toast } from "sonner";
 afterEach(cleanup);
 beforeEach(() => vi.clearAllMocks());
 
-// Mock 网络层 hooks,避免真实 fetch
+// Mock 网络层 hooks,避免真实 fetch;create/update mutateAsync 提升为共享 mock 供 payload 断言
+const mocks = vi.hoisted(() => ({
+  createMutateAsync: vi.fn(),
+  updateMutateAsync: vi.fn(),
+}));
+
 vi.mock("@/hooks/useDataSources", () => ({
   useDataSources: vi.fn(() => ({ data: [], isLoading: false })),
-  useCreateDataSource: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useUpdateDataSource: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useCreateDataSource: () => ({ mutateAsync: mocks.createMutateAsync, isPending: false }),
+  useUpdateDataSource: () => ({ mutateAsync: mocks.updateMutateAsync, isPending: false }),
   useDeleteDataSource: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useToggleDataSource: () => ({ mutate: vi.fn() }),
   useTriggerSync: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useTriggerSyncAll: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  usePreviewDirs: vi.fn(() => ({ data: { dirs: [] }, isLoading: false, error: null })),
   fetchPreviewBranches: vi.fn(),
   fetchPreviewFileTypes: vi.fn(),
 }));
@@ -97,8 +103,8 @@ describe("DataSources", () => {
     };
     renderWithSources([localGitDs]);
     fireEvent.click(screen.getByText("编辑"));
-    // 类型下拉归一为 github
-    expect(screen.getByDisplayValue("github")).toBeInTheDocument();
+    // 类型下拉归一为 github(选项显示中文可读名,选中值仍为 github)
+    expect(screen.getByDisplayValue("代码仓库")).toHaveValue("github");
     // repo_path → repo_url(与迁移脚本 build_github_config 一致的 camthink-ai org 规则)
     expect(
       screen.getByDisplayValue("https://github.com/camthink-ai/ne301.git"),
@@ -514,7 +520,7 @@ describe("C9 filesystem 内容来源", () => {
   it("新建 filesystem 源:默认服务器路径模式,root_path 可见", () => {
     renderWithSources([]);
     fireEvent.click(screen.getByText("新增数据源"));
-    fireEvent.change(screen.getByDisplayValue("github"), {
+    fireEvent.change(screen.getByDisplayValue("代码仓库"), {
       target: { value: "filesystem" },
     });
     expect(screen.getByPlaceholderText("/data/docs")).toBeInTheDocument();
@@ -524,7 +530,7 @@ describe("C9 filesystem 内容来源", () => {
   it("切到上传文件夹模式:root_path 隐藏,出现文件夹选择器", () => {
     renderWithSources([]);
     fireEvent.click(screen.getByText("新增数据源"));
-    fireEvent.change(screen.getByDisplayValue("github"), {
+    fireEvent.change(screen.getByDisplayValue("代码仓库"), {
       target: { value: "filesystem" },
     });
     fireEvent.click(screen.getByText("上传文件夹"));
@@ -555,5 +561,171 @@ it("拉取分支后 file_types 自动预填仓库全部后缀,用户按需删", 
     expect(
       (screen.getByDisplayValue(".c, .h, .md") as HTMLInputElement).value,
     ).toBe(".c, .h, .md");
+  });
+});
+
+// ====================  C8B:web_crawl 表单一等公民  ====================
+
+
+const c8bWebCrawlDs = (config: Record<string, unknown>) => ({
+  id: "web-crawl-test",
+  type: "web_crawl",
+  product: "camthink",
+  enabled: true,
+  config,
+  sync_interval: "24h",
+  created_at: "2026-07-01T00:00:00Z",
+  updated_at: "2026-07-01T00:00:00Z",
+  last_sync: null,
+});
+
+describe("C8B web_crawl 表单一等公民", () => {
+  it("类型下拉包含网站爬取选项(web_crawl)", () => {
+    renderWithSources([]);
+    fireEvent.click(screen.getByText("新增数据源"));
+    const select = screen.getByDisplayValue("代码仓库") as HTMLSelectElement;
+    const webOpt = Array.from(select.options).find((o) => o.value === "web_crawl");
+    expect(webOpt?.textContent).toBe("网站爬取");
+  });
+
+  it("新建 web_crawl:四字段表单出现,base_url 留空提交被拦截", async () => {
+    renderWithSources([]);
+    fireEvent.click(screen.getByText("新增数据源"));
+    fireEvent.change(screen.getByDisplayValue("代码仓库"), {
+      target: { value: "web_crawl" },
+    });
+    expect(screen.getByPlaceholderText("https://www.camthink.ai")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("500")).toBeInTheDocument();
+    // base_url 留空提交被 zod 拦截
+    fireEvent.click(screen.getByText("创建"));
+    await waitFor(() =>
+      expect(screen.getByText("站点地址必填")).toBeInTheDocument(),
+    );
+    expect(mocks.createMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("编辑 web_crawl 源:类型显示 web_crawl 不被归一 github,四字段按本类型预填", () => {
+    renderWithSources([
+      c8bWebCrawlDs({
+        base_url: "https://www.camthink.ai",
+        sitemap_url: "https://www.camthink.ai/sitemap_index.xml",
+        exclude_patterns: ["/store/"],
+        crawl_delay_ms: 800,
+      }),
+    ]);
+    fireEvent.click(screen.getByText("编辑"));
+    // 陷阱关闭的直接证据:类型选项显示「网站爬取」且选中值为 web_crawl,不再归一 github
+    expect(screen.getByDisplayValue("网站爬取")).toHaveValue("web_crawl");
+    expect(
+      screen.getByDisplayValue("https://www.camthink.ai"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByDisplayValue("https://www.camthink.ai/sitemap_index.xml"),
+    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue("/store/")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("800")).toBeInTheDocument();
+  });
+
+  it("编辑往返不改点保存:payload type=web_crawl 且 config 四键原样(AC2 形态)", async () => {
+    const config = {
+      base_url: "https://www.camthink.ai",
+      sitemap_url: "https://www.camthink.ai/sitemap_index.xml",
+      exclude_patterns: ["/store/"],
+      crawl_delay_ms: 800,
+    };
+    mocks.updateMutateAsync.mockResolvedValue({});
+    renderWithSources([c8bWebCrawlDs(config)]);
+    fireEvent.click(screen.getByText("编辑"));
+    fireEvent.click(screen.getByText("保存"));
+    await waitFor(() => expect(mocks.updateMutateAsync).toHaveBeenCalled());
+    expect(mocks.updateMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "web-crawl-test", type: "web_crawl", config }),
+    );
+  });
+
+  it("最简 config(仅 base_url)round-trip:保存后不引入空键,config 仍仅 base_url", async () => {
+    mocks.updateMutateAsync.mockResolvedValue({});
+    renderWithSources([c8bWebCrawlDs({ base_url: "https://www.camthink.ai" })]);
+    fireEvent.click(screen.getByText("编辑"));
+    fireEvent.click(screen.getByText("保存"));
+    await waitFor(() => expect(mocks.updateMutateAsync).toHaveBeenCalled());
+    expect(mocks.updateMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "web_crawl",
+        config: { base_url: "https://www.camthink.ai" },
+      }),
+    );
+  });
+
+  it("列表徽标:web_crawl 显示中文「网站爬取」,产品线副标题为 base_url", () => {
+    renderWithSources([c8bWebCrawlDs({ base_url: "https://www.camthink.ai" })]);
+    expect(screen.getByText("网站爬取")).toBeInTheDocument();
+    expect(screen.getByText("https://www.camthink.ai")).toBeInTheDocument();
+  });
+});
+
+// ====================  C8B:三旧类型 round-trip 回归(零波及)  ====================
+
+
+describe("C8B 三旧类型回归", () => {
+  const legacyCases = [
+    {
+      type: "github",
+      product: "ne301",
+      config: { repo_url: "https://github.com/camthink-ai/ne301.git", branches: ["main"] },
+    },
+    {
+      type: "filesystem",
+      product: "docs",
+      config: { root_path: "/data/docs", include_dirs: ["docs"] },
+    },
+    {
+      type: "woocommerce",
+      product: "store",
+      config: { store_url: "https://camthink.ai", consumer_key: "ck_x", consumer_secret: "cs_x" },
+    },
+  ];
+  it.each(legacyCases)("编辑 $type 源不改点保存:type 保持且 config 关键键不丢", async ({ type, product, config }) => {
+    mocks.updateMutateAsync.mockResolvedValue({});
+    renderWithSources([
+      {
+        id: `rt-${type}`,
+        type,
+        product,
+        enabled: true,
+        config,
+        sync_interval: "24h",
+        created_at: "2026-07-01T00:00:00Z",
+        updated_at: "2026-07-01T00:00:00Z",
+      },
+    ]);
+    fireEvent.click(screen.getByText("编辑"));
+    fireEvent.click(screen.getByText("保存"));
+    await waitFor(() => expect(mocks.updateMutateAsync).toHaveBeenCalled());
+    expect(mocks.updateMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type,
+        config: expect.objectContaining(config),
+      }),
+    );
+  });
+
+  it("local_git 历史归一用例仍在(#1):编辑归一 github 且 repo_path 转换", () => {
+    const localGitDs = {
+      id: "ne301-docs-local",
+      type: "local_git",
+      product: "ne301",
+      enabled: true,
+      config: { repo_path: "~/ask-ai-corpus/ne301", branches: ["main"] },
+      sync_interval: "24h",
+      created_at: "2026-07-01T00:00:00Z",
+      updated_at: "2026-07-01T00:00:00Z",
+    };
+    renderWithSources([localGitDs]);
+    fireEvent.click(screen.getByText("编辑"));
+    expect(screen.getByDisplayValue("代码仓库")).toHaveValue("github");
+    expect(
+      screen.getByDisplayValue("https://github.com/camthink-ai/ne301.git"),
+    ).toBeInTheDocument();
   });
 });

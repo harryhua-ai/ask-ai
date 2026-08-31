@@ -27,29 +27,40 @@ import { apiFetch } from "@/lib/api";
 
 // 决策 2A:github 为唯一 git 源类型(local_git 降为实现细节,不再暴露给用户)
 // Task 4:woocommerce 进数据源类型枚举
-const SOURCE_TYPES = ["github", "filesystem", "woocommerce"] as const;
+// C8B:web_crawl 进枚举(C8 后端 connector 已交付),关闭"未知类型归一 github"对爬站源的编辑陷阱
+const SOURCE_TYPES = ["github", "filesystem", "woocommerce", "web_crawl"] as const;
 type SourceType = (typeof SOURCE_TYPES)[number];
 
-const formSchema = z.object({
-  id: z.string().optional(),
-  type: z.enum(["github", "filesystem", "woocommerce"]),
-  product: z.string().min(1, "产品线必填"),
-  enabled: z.boolean(),
-  sync_interval: z.string().regex(/^\d+[hm]$/, "格式如 24h 或 30m"),
-  repo_url: z.string().optional(),
-  clone_path: z.string().optional(),
-  root_path: z.string().optional(),
-  upload_mode: z.boolean().optional(),
-  branches: z.string().optional(),
-  file_types: z.string().optional(),
-  include_dirs: z.string().optional(),
-  exclude_dirs: z.string().optional(),
-  exclude_regex: z.string().optional(),
-  max_file_size: z.string().optional(),
-  store_url: z.string().optional(),
-  consumer_key: z.string().optional(),
-  consumer_secret: z.string().optional(),
-});
+const formSchema = z
+  .object({
+    id: z.string().optional(),
+    type: z.enum(["github", "filesystem", "woocommerce", "web_crawl"]),
+    product: z.string().min(1, "产品线必填"),
+    enabled: z.boolean(),
+    sync_interval: z.string().regex(/^\d+[hm]$/, "格式如 24h 或 30m"),
+    repo_url: z.string().optional(),
+    clone_path: z.string().optional(),
+    root_path: z.string().optional(),
+    upload_mode: z.boolean().optional(),
+    branches: z.string().optional(),
+    file_types: z.string().optional(),
+    include_dirs: z.string().optional(),
+    exclude_dirs: z.string().optional(),
+    exclude_regex: z.string().optional(),
+    max_file_size: z.string().optional(),
+    store_url: z.string().optional(),
+    consumer_key: z.string().optional(),
+    consumer_secret: z.string().optional(),
+    base_url: z.string().optional(),
+    sitemap_url: z.string().optional(),
+    exclude_patterns: z.string().optional(),
+    crawl_delay_ms: z.string().optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.type === "web_crawl" && !(v.base_url ?? "").trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["base_url"], message: "站点地址必填" });
+    }
+  });
 
 // Task 3:类型中文可读名映射(未知值降级原始 key)
 const TYPE_LABELS: Record<string, string> = {
@@ -57,6 +68,7 @@ const TYPE_LABELS: Record<string, string> = {
   local_git: "代码仓库",
   filesystem: "文件目录",
   woocommerce: "商城",
+  web_crawl: "网站爬取",
 };
 
 type FormValues = z.infer<typeof formSchema>;
@@ -80,6 +92,10 @@ const EMPTY_FORM: FormValues = {
   store_url: "",
   consumer_key: "",
   consumer_secret: "",
+  base_url: "",
+  sitemap_url: "",
+  exclude_patterns: "",
+  crawl_delay_ms: "",
 };
 
 function splitComma(s: string | undefined): string[] {
@@ -155,6 +171,9 @@ function sourceLocation(ds: DataSource): { text: string; href: string | null } {
     case "woocommerce":
       text = cfgStr(cfg, "store_url");
       break;
+    case "web_crawl":
+      text = cfgStr(cfg, "base_url");
+      break;
   }
   return { text, href: text.startsWith("http") ? text : null };
 }
@@ -216,6 +235,19 @@ function buildConfig(v: FormValues): Record<string, unknown> {
         consumer_key: v.consumer_key || "",
         consumer_secret: v.consumer_secret || "",
       };
+    case "web_crawl": {
+      // 与 connectors/web_crawl.py 约定一致:可选键留空即不写 config(用 connector 默认:
+      // sitemap={base_url}/sitemap_index.xml、默认排清单、delay=500ms)
+      const delay = Number(v.crawl_delay_ms);
+      return {
+        base_url: (v.base_url || "").trim(),
+        ...(v.sitemap_url?.trim() ? { sitemap_url: v.sitemap_url.trim() } : {}),
+        ...(splitComma(v.exclude_patterns).length > 0
+          ? { exclude_patterns: splitComma(v.exclude_patterns) }
+          : {}),
+        ...(v.crawl_delay_ms && Number.isFinite(delay) ? { crawl_delay_ms: delay } : {}),
+      };
+    }
     default:
       return {};
   }
@@ -256,6 +288,10 @@ function dsToForm(ds: DataSource): FormValues {
     store_url: toStr(cfg.store_url),
     consumer_key: toStr(cfg.consumer_key),
     consumer_secret: toStr(cfg.consumer_secret),
+    base_url: toStr(cfg.base_url),
+    sitemap_url: toStr(cfg.sitemap_url),
+    exclude_patterns: toStr(cfg.exclude_patterns),
+    crawl_delay_ms: cfg.crawl_delay_ms != null ? String(cfg.crawl_delay_ms) : "",
   };
 }
 
@@ -622,7 +658,7 @@ export default function DataSources() {
               <Label>类型</Label>
               <select className="h-10 w-full rounded-md border px-3" {...register("type")}>
                 {SOURCE_TYPES.map((t) => (
-                  <option key={t} value={t}>{t}</option>
+                  <option key={t} value={t}>{TYPE_LABELS[t] ?? t}</option>
                 ))}
               </select>
             </div>
@@ -860,6 +896,38 @@ export default function DataSources() {
                 <div className="space-y-1">
                   <Label>Consumer Secret</Label>
                   <Input type="password" {...register("consumer_secret")} placeholder="cs_..." />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {type === "web_crawl" && (
+            <div className="space-y-3 border-t pt-3">
+              <div className="space-y-1">
+                <Label>站点地址 (base_url)</Label>
+                <Input {...register("base_url")} placeholder="https://www.camthink.ai" />
+                {errors.base_url && (
+                  <p className="text-xs text-destructive">{errors.base_url.message}</p>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                按 sitemap 增量爬取;Sitemap 与排除路径留空时使用站点默认值与默认排除清单。
+              </p>
+              <div className="space-y-1">
+                <Label>Sitemap 地址 (可选,默认 base_url/sitemap_index.xml)</Label>
+                <Input
+                  {...register("sitemap_url")}
+                  placeholder="https://www.camthink.ai/sitemap_index.xml"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label>排除路径 (逗号分隔,留空=默认排清单)</Label>
+                  <Input {...register("exclude_patterns")} placeholder="/store/, /tmp" />
+                </div>
+                <div className="space-y-1">
+                  <Label>抓取间隔 (毫秒,留空默认 500)</Label>
+                  <Input type="number" {...register("crawl_delay_ms")} placeholder="500" />
                 </div>
               </div>
             </div>
