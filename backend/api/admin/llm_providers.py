@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.api.admin.schemas import (
     ConnectivityTestResult,
+    FetchModelsRequest,
     LLMProviderCreate,
     LLMProviderOut,
     LLMProviderUpdate,
@@ -331,9 +332,16 @@ async def reload_providers(_: EditorDep, request: Request) -> dict:
 
 
 @router.post("/llm-providers/{provider_id}/fetch-models")
-async def fetch_models(provider_id: str, _: EditorDep, request: Request) -> dict:
+async def fetch_models(
+    provider_id: str,
+    _: EditorDep,
+    request: Request,
+    req: FetchModelsRequest | None = None,
+) -> dict:
     """调供应商 GET /models 拉取可用模型列表。
 
+    body 可选携带表单未保存的 api_base/api_key(T27):非空值优先生效,空值回退
+    DB 已存凭证;生效 api_base 复用 validate_llm_api_base(SSRF 边界不放宽)。
     失败返回脱敏错误（不泄露 key/内部异常，同 test 端点策略）。
     """
     settings = request.app.state.settings
@@ -347,15 +355,25 @@ async def fetch_models(provider_id: str, _: EditorDep, request: Request) -> dict
             raise HTTPException(status_code=404, detail="供应商不存在")
 
     config = dict(provider.config)
-    if config.get("api_key"):
+
+    # 表单值优先(T27):body 非空字段生效,空值回退 DB 凭证
+    form_api_base = (req.api_base or "").strip() if req else ""
+    form_api_key = (req.api_key or "").strip() if req else ""
+    eff_api_base = form_api_base or config.get("api_base", "")
+    if form_api_key:
+        eff_api_key = form_api_key
+    elif config.get("api_key"):
         try:
-            config["api_key"] = decrypt_api_key(config["api_key"], settings.encryption_key)
+            eff_api_key = decrypt_api_key(config["api_key"], settings.encryption_key)
         except ValueError:
             logger.warning("api_key 解密失败，按明文兼容继续: provider_id=%s", provider_id)
+            eff_api_key = config["api_key"]
+    else:
+        eff_api_key = ""
 
-    # revalidate api_base：防绕过 schema 直接改库后的 SSRF / 凭证外泄
+    # revalidate api_base：防绕过 schema 直接改库/表单乱填后的 SSRF / 凭证外泄
     try:
-        validate_llm_api_base(config.get("api_base", ""))
+        validate_llm_api_base(eff_api_base)
     except ValueError:
         logger.warning("fetch_models api_base 校验失败: provider_id=%s", provider_id)
         return {"provider_id": provider_id, "models": [], "error": "api_base 校验失败"}
@@ -364,8 +382,8 @@ async def fetch_models(provider_id: str, _: EditorDep, request: Request) -> dict
         llm = LLMRegistry.create(
             provider.type,
             provider_id=provider.id,
-            api_base=config.get("api_base", ""),
-            api_key=config.get("api_key", ""),
+            api_base=eff_api_base,
+            api_key=eff_api_key,
             model=config.get("model", ""),
         )
         models = await llm.list_models()

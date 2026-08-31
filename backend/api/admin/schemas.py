@@ -263,6 +263,17 @@ class LLMProviderUpdate(BaseModel):
     config: ProviderConfig | None = None
 
 
+class FetchModelsRequest(BaseModel):
+    """fetch-models 可选请求体(T27)。
+
+    携带编辑表单中尚未保存的 api_base/api_key:非空值优先生效,空值回退 DB 已存凭证。
+    生效 api_base 仍走 validate_llm_api_base(SSRF 边界与保存路径一致,不放宽)。
+    """
+
+    api_base: str | None = None
+    api_key: str | None = None
+
+
 class LLMChainItem(BaseModel):
     """LLM 路由链元素:{provider, model}。
 

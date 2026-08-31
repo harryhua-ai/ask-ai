@@ -12,6 +12,22 @@ export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
+/** T27:FastAPI detail 兼容格式化——422 校验错误为 [{loc,msg}] 数组,扁平化为 msg 文本;字符串原样;其余 JSON 化。 */
+export function formatApiDetail(detail: unknown): string {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) =>
+        item && typeof item === "object" && typeof (item as { msg?: unknown }).msg === "string"
+          ? (item as { msg: string }).msg
+          : String(item),
+      )
+      .join("; ");
+  }
+  if (detail == null) return "请求失败";
+  return JSON.stringify(detail);
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -41,12 +57,13 @@ export async function apiFetch<T>(
     throw new ApiError(401, "未登录或登录已过期");
   }
   if (!resp.ok) {
-    let detail = "请求失败";
+    let detail: unknown = "请求失败";
     try {
       const body = await resp.json();
       detail = body.detail || detail;
     } catch { /* ignore parse error */ }
-    throw new ApiError(resp.status, detail);
+    // T27:FastAPI 校验错误(422)的 detail 是 [{loc,msg}] 数组,扁平化为可读文本
+    throw new ApiError(resp.status, formatApiDetail(detail));
   }
   if (resp.status === 204) return undefined as T;
   return resp.json() as Promise<T>;
