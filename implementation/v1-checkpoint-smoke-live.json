@@ -1,0 +1,14 @@
+{
+ "smoke-public-rag-citation": {
+  "n_sources": 3,
+  "answer": "**工作温度范围**\n\nNE301 的工作温度范围为 **−20°C 至 +50°C**,可覆盖普通冷藏柜(2°C~8°C)、奶制品柜及冷冻柜(−18°C)等环境。[2][3]"
+ },
+ "smoke-insufficient": {
+  "n_sources": 1,
+  "answer": "**NG4500 是否支持 LoRaWAN 直连**\n\n官方资料未载明 NG4500 支持 LoRaWAN 直连。\n\n**NG4500 提供的连接方式**\n\n资料中列出的接口包括:**RS232、RS485、CAN、DI/DO**(用于连接 PLC 和传统工业设备),以及**双千兆以太网**(可隔离视觉网络与控制网络)。这些接口中并未包含 LoRaWAN 相关的无线或有线协议支持 [1]。"
+ },
+ "smoke-ghost-sim": {
+  "n_sources": 0,
+  "answer": "暂未在官方资料中找到相关信息。"
+ }
+}
