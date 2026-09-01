@@ -1,0 +1,51 @@
+{
+ "id": "B06",
+ "family": "product",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE503",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "推荐 NE503（硬件集成型买家，自研软件+买现成硬件），PoE 802.3AT/DC 12V，5-6W 功耗，匹配矿区固定供电。关键边界：NE503 无内置电池、不支持电池/太阳能直接供电，纯无线电池方案应选 NE301。覆盖行人检测/防碰撞（MHSC L7/8/9）、车队360°、生产监控（空载/满载识别）。",
+  "expected_behavior": "answered",
+  "source_file": "2026-05/NE503-EdgeIoT-AI-Tendayi-南非矿业方案准备.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/5-neoeyes-ne301-series/3-application-guide/7-warehouse-rack-detection.md",
+     "title": "7-warehouse-rack-detection",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/solar-powered-edge-ai-cameras-remote-monitoring/",
+     "title": "Solar-Powered Edge AI Cameras",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/code.json",
+     "title": "code",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**客户概况**\n\nEdge IoT & AI（Tendayi，南非约翰内斯堡）是面向撒哈拉以南非洲矿业运营的软件主导型系统集成商，业务模式为采购现成硬件、叠加自研软件和 AI 后部署到矿场 [1]。\n\n**应用场景与产品匹配**\n\n客户涉及四类场景：车队 360° 摄像头监控、行人检测与防碰撞（MHSC Level 7/8/9 合规）、驾驶员监控（疲劳、分心、安全带、酒精检测）、生产监控（矿石运输车空载/满载识别与计数）[1]。内部已将其判断为 Hardware Integration 类型买家，最佳匹配 **NE503**，会议定于 2026-05-22，当前状态为待确认 [1]。\n\n**相关产品能力参考**\n\nNE301 搭载 Neural-ART™ NPU（STM32N6/Cortex-M55），支持超低功耗实时 AI 推理；可通过 Web UI 在 2 小时内完成 YOLOv8 模型部署，输出含时间戳、设备 ID、目标类型、计数和边界框坐标的结构化 JSON，支持 MQTT/HTTP 集成；NE101/NE301 均支持 OTA 远程固件和配置更新，无需现场访问 [2][3]。",
+   "declined": null,
+   "done": {
+    "conversation_id": "d0dc4d6f-94cf-47ff-930e-b3fab994586f"
+   },
+   "conversation_id": "d0dc4d6f-94cf-47ff-930e-b3fab994586f",
+   "error": null,
+   "wall_s": 27.2,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "Edge IoT & AI（南非约翰内斯堡，矿业系统集成商）正在评估 CamThink 产品用于矿区部署。Tendayi ([邮箱]) 负责技术评估，已安排开会讨论具体方案。"
+  }
+ ],
+ "upload": null
+}

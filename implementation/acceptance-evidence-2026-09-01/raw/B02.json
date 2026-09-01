@@ -1,0 +1,45 @@
+{
+ "id": "B02",
+ "family": "product",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE101",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "此为产品咨询，非故障问题。\n\n**v1.2 相对于 v1 的硬件变更：**\n- 外部扩展接口 pin 序修改，优化信号布线\n- 新增 PIR（被动红外）传感器电路，支持运动触发唤醒\n- 新增 USB 供电指示灯\n\n**功耗方面：**\n- 两个版本的低功耗（睡眠）电流基本一致（实测 **22 µA**，默认版本不含 PIR/LED）\n- 相同工作条件下续航无差异\n\n**固件兼容性：**\n- ESP32 和相机模组在两个版本中相同\n- 最新固件完全向后兼容 v1 硬件\n- v1 上无法使用 PIR 相关功能（硬件未焊接 PIR 电路）\n- 源码中 OTA 硬件版本检查已被禁用（`lowpower_camera/main/ota.c`），进一步确认兼容性",
+  "expected_behavior": "answered",
+  "source_file": "2026-04/NE101-硬件版本v1与v1.2差异咨询.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/3-application-guide/0-low-power-image-acquisition.md",
+     "title": "0-low-power-image-acquisition",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/CHANGELOG.md",
+     "title": "CHANGELOG",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**主要区别**\nv1.2 相对 v1 有三处硬件变更:外部扩展接口 pin 序修改以优化信号布线;新增 PIR 传感器电路,支持运动触发唤醒;新增 USB 供电指示灯。v1 无 PIR 电路和 USB 供电指示灯,最可靠的判断方式是物理检查 PIR 传感器是否存在。[1][2]\n\n**功耗差异**\n两个版本在相同工作条件下续航无差异,低功耗(睡眠)电流基本一致,实测 22 µA(默认版本不含 PIR/LED)。[1]\n\n**固件兼容性**\n最新固件完全向后兼容 v1 硬件。两个版本使用的 ESP32 和相机模组相同,源码中 OTA 硬件版本检查已被禁用,进一步确认兼容性。注意:v1 硬件上无法使用 PIR 相关功能(硬件未焊接 PIR 电路)。[1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "fb8ee074-c702-4817-8d3e-66e9c12d08e9"
+   },
+   "conversation_id": "fb8ee074-c702-4817-8d3e-66e9c12d08e9",
+   "error": null,
+   "wall_s": 11.8,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户咨询 NE101 硬件版本 v1 和 v1.2 之间的差异，包括： 1. 两个硬件版本的主要区别 2. 功耗是否有差异 3. 最新固件是否兼容 v1 硬件"
+  }
+ ],
+ "upload": null
+}

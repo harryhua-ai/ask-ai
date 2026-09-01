@@ -1,0 +1,139 @@
+{
+ "id": "F02",
+ "family": "multi_turn",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE301/NE101",
+ "note": "",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/5-neoeyes-ne301-series/0-overview.md",
+     "title": "0-overview",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/5-neoeyes-ne301-series/5-ne301-battery-life.md",
+     "title": "5-ne301-battery-life",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/tools/battery-calculator/",
+     "title": "Battery Life Calculator",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/3-hardware-dev-resources/20-battery-recommendation.md",
+     "title": "20-battery-recommendation",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**睡眠功耗**\nNE301 采用双 MCU 架构，深度休眠由 STM32U0 芯片控制，功耗为 **6.1 μA** [1][2]。换算为待机功耗约 **0.15 mAh/天**（6.1 μA × 24 小时 ÷ 1000）[4][7]。\n\n**电池续航**\n续航取决于通信模式和抓拍频率，以 4 节 AA 碱性电池（有效容量约 1750 mAh）计算 [4]：WiFi 模式 1 次/天约 **13.3 年**，5 次/天约 **3.9 年**，10 次/天约 **2.1 年** [5][6]；简单拍照（非 AI）场景约 **13 年**，AI 模式（WiFi @200 MHz，1 次/天）约 **3.9 年** [2]。Cat-1 模式 10 次/天约 **1.0～1.1 年** [9]。整体来看，低频采集（1–5 次/天）可实现 **3–13 年**续航 [9]。若进行 AI 实时视频推理，工作功耗为 **170–180 mA**（WiFi 模式），续航会明显缩短 [1][10]。",
+   "declined": null,
+   "done": {
+    "conversation_id": "7dee3f1e-daa2-4c22-8171-d06b201366eb"
+   },
+   "conversation_id": "7dee3f1e-daa2-4c22-8171-d06b201366eb",
+   "error": null,
+   "wall_s": 22.5,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "NE301 的睡眠功耗和电池续航大概是什么水平?"
+  },
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/0-overview.md",
+     "title": "0-overview",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/ultra-low-power-smart-vision-camera-neoeyes-ne101-esp32%e2%80%91s3-based/",
+     "title": "NeoEyes NE101-Ultra Low Power Smart Vision Camera — ESP32‑S3 Based · Blog",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/tools/battery-calculator/",
+     "title": "Battery Life Calculator",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/3-hardware-dev-resources/20-battery-recommendation.md",
+     "title": "20-battery-recommendation",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**睡眠功耗**\nNE101 深度睡眠典型值约 **21–28 μA**,实验室标准深睡约 **22 μA** [7][8][2]。实测中(HW V1.2, FW V1.8, MQTT 模式),深度睡眠平均 **27.92 μA**,抓图阶段平均 **78.8 mA**(持续 30 秒) [1]。设备采用\"按需工作\"模式,抓拍上传循环约 10–20 秒后回到深睡 [7]。\n\n**电池续航**\n续航取决于通信模式和抓拍频率:\n- WiFi 模式:每日 1 次预计 **>10 年**,每日 10 次约 **3.1 年**(4× AA 共 2500mAh,实验室估算) [8]\n- Cat-1/蜂窝模式:特定实测条件下(MQTT、15 分钟间隔、3Ah 电池)预期 **约 33 天** [1];另一实际部署(1920×1080、补光灯常亮、15 分钟间隔、LTE)完整寿命为 **43.5 天** [3]。关闭补光灯时,官方标称 Cat-1 版可运行约 **1.24 年**(未注明抓拍频率) [7]\n\n**注意**\nNE101 正常深睡约 22–28 μA,但若固件/硬件版本不匹配(如 hw v1.2 跑 v2.0 固件)会导致 GPIO3 漏电,深睡功耗飙升至数百 μA–mA,续航崩溃 [2]。另外,config mode 未退出时设备持续保持 AP + WiFi + 传感器全开,功耗约 80–100 mA,可一夜耗尽电池,配置后应手动重启退出 [4][6]。NE101 与 NE301 功耗特性相近但不完全相同,NE301 的功耗数据仅供参考 [9]。",
+   "declined": null,
+   "done": {
+    "conversation_id": "63848562-1a48-4193-9d38-cba554a640c3"
+   },
+   "conversation_id": "63848562-1a48-4193-9d38-cba554a640c3",
+   "error": null,
+   "wall_s": 29.3,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "那 NE101 呢?"
+  },
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/3-hardware-dev-resources/22-solar-power-solution.md",
+     "title": "22-solar-power-solution",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/edge-ai-camera-outdoor-deployment-guide/",
+     "title": "NE301 Edge AI Camera Outdoor Deploying Guide:  Power, Connectivity, and Fleet Management",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/3-hardware-dev-resources/20-battery-recommendation.md",
+     "title": "20-battery-recommendation",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/solar-powered-edge-ai-cameras-remote-monitoring/",
+     "title": "Solar-Powered Edge AI Cameras",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/store/neoeyes-ne101/",
+     "title": "NeoEyes NE101 Modular Sensing Camera",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    }
+   ],
+   "answer": "**结论**\n两者均适配太阳能长期部署，且功耗特性相近 [1][4]。选择主要取决于是否需要设备端 AI 推理，而非供电能力 [6]。\n\n**选型建议**\nNE301 支持设备端 AI（YOLOv8、人员/车辆检测），输出 MQTT JSON 事件，适合人员计数、入侵检测、仪表读取等高频监控场景 [6]。NE101 仅图像采集，输出 JPEG 上传，AI 在服务器端运行，更适合低频快照或 HaLow 多节点组网 [6]。若抓拍频率低于每小时 1 次，NE101 用 AA 电池比太阳能更简单；若需高频或持续抓拍（如 1 分钟/次），太阳能才能实现无限续航 [5][6]。\n\n**部署补充**\n太阳能方案实测可靠，10W 光伏板日均发电 4200–7000 mAh，远超设备最大 637 mAh/天，即使在 1440 次/天 Cat-1 模式下也能持续运行 [1][5]。注意 NE101 需定制 USB-C 背盖才能接入太阳能套件，且该版本目前仅支持线下渠道订购 [9]。",
+   "declined": null,
+   "done": {
+    "conversation_id": "805c5559-e0e2-43f5-a6c9-d6da194bec75"
+   },
+   "conversation_id": "805c5559-e0e2-43f5-a6c9-d6da194bec75",
+   "error": null,
+   "wall_s": 28.3,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "这两个哪个更适合太阳能加电池的长期户外部署?"
+  }
+ ],
+ "upload": null
+}

@@ -1,0 +1,28 @@
+{
+ "id": "L-K2",
+ "family": "local_compare",
+ "channel": "widget",
+ "target": "local",
+ "expected_intent": null,
+ "product": null,
+ "note": "本地(76b2199,仅官网库)对照 prod(src=B01)",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "**结论:** 不可以。NE101 最大耐压约 7V，12V 会损坏设备。[1]\n\n**供电规格:** USB-C 供电为 5V/1A，背板供电（电池仓）为 6V 标称，最大耐压约 7V，不超过 7V。[1] 注意 Wiki 文档中的 \"4.0-6.0V 工作电压范围\" 是电池放电过程的工作电压，不是设备的耐压规格。[1]\n\n**建议:** 使用 5V DC 1A 或以上的电源，通过 USB-C 接口或电池端子连接。[1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "b485f2c0-b314-41d8-9485-5d2695aaf320"
+   },
+   "conversation_id": "b485f2c0-b314-41d8-9485-5d2695aaf320",
+   "error": null,
+   "wall_s": 11.8,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户询问 NE101 是否可以使用 12V 2A DC 电源适配器供电。"
+  }
+ ],
+ "upload": null
+}

@@ -1,0 +1,81 @@
+{
+ "id": "E04",
+ "family": "troubleshooting",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": null,
+ "product": null,
+ "note": "根因底稿:以 bank84 expected_answer 为准(模型上传无声失败)",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Hal/nn.c",
+     "title": "nn",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Services/Web/api/api_model_validation_module.c",
+     "title": "api_model_validation_module",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Services/AI/ai_service.c",
+     "title": "ai_service",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Core/Video/video_ai_node.c",
+     "title": "video_ai_node",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/AIToolStack/blob/main/frontend/src/i18n/locales/zh.json",
+     "title": "zh",
+     "type": "github",
+     "product": "AI-ToolStack"
+    }
+   ],
+   "answer": "**根因分析**  \n此类\"上传无报错但不生效\"的故障，优先检查以下四个常见原因：上传了原始 .tFLite 而非编译后的 .bin 打包产物、模型未通过 stedgeai 编译、模型大小超过 Flash 分区限制、上传后未在 Web UI 中切换激活新模型。[1]\n\n**排查建议**  \n1. **文件格式** — NE301 Web UI 上传入口期望 .bin 文件，需用 make pkg-model 或 Model Converter 生成，原始 .tflite 不会被正确加载。[1]  \n2. **模型切换** — 上传完成后需从 Web UI 下拉菜单中选择新模型进行激活，否则设备仍使用旧模型。[1]  \n3. **模型大小** — Flash 映射为每槽 5/5/8 MB，请确认模型文件不超限。若加载失败，设备日志会记录错误（如 model init failed、postprocess init failed），可抓取日志定位具体原因。[1][2]  \n\n**需客户补充的信息**  \n请提供创建模型文件的方法（含 stedgeai 编译方式）、模型文件大小、以及当前固件版本，以便进一步定位。[1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "770c2a49-b679-4136-8c8d-cd37a4111fc8"
+   },
+   "conversation_id": "770c2a49-b679-4136-8c8d-cd37a4111fc8",
+   "error": null,
+   "wall_s": 21.2,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "xaralampie 在 Discord 社区提问：上传自定义模型到 NE301，加载无报错但不生效。"
+  },
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/0-neomind/developer-guide/case-studies/2-yolo-device-inference.md",
+     "title": "2-yolo-device-inference",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "",
+   "declined": null,
+   "done": {
+    "conversation_id": "b676d8d9-fde4-4f80-b0c3-9314c4d05c56"
+   },
+   "conversation_id": "b676d8d9-fde4-4f80-b0c3-9314c4d05c56",
+   "error": null,
+   "wall_s": 55.2,
+   "is_reject_text": false,
+   "answered": false,
+   "message": "补充信息:模型是我自己用 YOLO11n 训的货道缺失检测,best.pt 转成项目 ZIP 后上传的,Web UI 显示加载成功,类别也配了,但实际推理结果一直是空的。哪里出问题了?"
+  }
+ ],
+ "upload": null
+}

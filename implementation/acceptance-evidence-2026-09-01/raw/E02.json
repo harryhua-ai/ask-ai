@@ -1,0 +1,75 @@
+{
+ "id": "E02",
+ "family": "troubleshooting",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": null,
+ "product": null,
+ "note": "根因底稿:以 bank56 expected_answer 为准",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/0-neomind/user-guide/3-onboard-device.md",
+     "title": "3-onboard-device",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/0-neomind/user-guide/10-troubleshooting.md",
+     "title": "10-troubleshooting",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/NeoMind/blob/main/web/src/i18n/locales/zh/plugins.json",
+     "title": "plugins",
+     "type": "github",
+     "product": "neomind"
+    },
+    {
+     "url": "https://github.com/camthink-ai/NeoMind/blob/main/crates/neomind-devices/src/adapters/mqtt.rs",
+     "title": "mqtt",
+     "type": "github",
+     "product": "neomind"
+    }
+   ],
+   "answer": "**问题定性**\n\n根据 NE101 与 NeoMind 两侧日志对照分析，MQTT 功能本身正常，v1.8 固件无缺陷。三个现象分别对应三个不同原因。[1][3]\n\n**Config 模式 MQTT 超时（根因）**\n\nConfig 模式走 `WIFI_MODE_APSTA`，同时开启 AP（192.168.1.1）和 STA（192.168.1.106）双接口。ESP32 lwIP 将 MQTT TCP SYN 从 AP 接口发出，无法到达 STA 侧 NeoMind（192.168.1.101:1883），因此 10 秒超时。修复方案是改用 STA-only 模式（即 schedule 模式）——session_log_3 证实该模式下 MQTT 约 400ms 连接成功，5 张照片全部上传。[1][3]\n\n**Schedule 模式断开与 NeoMind offline（均属正常）**\n\nSchedule 模式断开是正常低功耗行为：设备唤醒 → WiFi 连接 → MQTT 连接 → 发布 → 深度休眠，全程约 12 秒，12.3 秒处的 EOF 是 WiFi 关机进入休眠所致，5 张照片均已 PUSH SUCCESS。NeoMind 侧 rmqtt broker 运行稳定、零重启；\"offline\" 状态是 5 分钟无数据活动阈值触发，对低功耗定时上报设备属预期行为。[1][3]\n\n**补充**\n\n若客户同时遇到 Config 模式连接 TP-Link 路由器失败，根因相同——APSTA 模式下 ESP32 单射频同时承载 AP 和 STA，路由器信道不兼容时 STA 连接失败，且凭据仅在连接成功时保存，失败会循环提示。建议直接使用 schedule（STA-only）模式部署。[3]",
+   "declined": null,
+   "done": {
+    "conversation_id": "06d8ff3c-9108-4ba3-af8b-4f8d1a52dbd1"
+   },
+   "conversation_id": "06d8ff3c-9108-4ba3-af8b-4f8d1a52dbd1",
+   "error": null,
+   "wall_s": 19.7,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户报告 NE101 MQTT 连接 NeoMind (192.168.1.101:1883) 失败： - Web UI 始终显示 MQTT transport connection timeout - Schedule 模式下连接成功但随后断开 - 用 MQTTX 手动发 hello 消息 NeoMind 短暂显示在线"
+  },
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/3-application-guide/2-wifihalow-solution.md",
+     "title": "2-wifihalow-solution",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**可能原因**\n\n根据 v1.8 固件源码，Config 模式下 NE101 走 `WIFI_MODE_APSTA`，同时开启 AP（192.168.1.1）和 STA（192.168.1.106）双接口。[1] 你的电脑能 ping 通相机，说明 STA 接口网络正常；但 ESP32 lwIP 将 MQTT TCP SYN 从 AP 接口发出，无法到达 STA 侧 NeoMind（192.168.1.101:1883），因此 Web UI 显示 MQTT transport disconnected（或 timeout）。[1] 这与 hw-v1.2 还是 hw-v2.0 固件无关，v1.8 系列 Config 模式均采用 APSTA。[1]\n\n**建议**\n\n改用 Schedule 模式（STA-only）部署。该模式下设备仅启用 STA 接口，资料中 session_log_3 显示 MQTT 约 400ms 连接成功，5 张照片全部 PUSH SUCCESS。[1] 若需保留 Config 模式使用，当前固件存在 APSTA 双接口路由限制，无法通过配置规避。[2]",
+   "declined": null,
+   "done": {
+    "conversation_id": "749b6866-5b83-4792-bbb0-c2a8caa7d9eb"
+   },
+   "conversation_id": "749b6866-5b83-4792-bbb0-c2a8caa7d9eb",
+   "error": null,
+   "wall_s": 37.2,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "补充信息:broker 是我电脑上的 NeoMind(192.168.1.101:1883),相机和电脑在同一网段,电脑 ping 相机是通的,Web UI 一直显示 MQTT transport disconnected。固件 NE_101_v1.8(hw-v1.2),WiFi 版。"
+  }
+ ],
+ "upload": null
+}

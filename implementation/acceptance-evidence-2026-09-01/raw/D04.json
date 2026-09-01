@@ -1,0 +1,63 @@
+{
+ "id": "D04",
+ "family": "support",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "support",
+ "product": "NE101",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "客户的核心需求不是\"PlatformIO 格式的固件\"，而是\"不装 ESP-IDF 也能刷固件\"。NE101 固件仓库是纯 ESP-IDF CMake 项目，没有 PlatformIO 支持（无 platformio.ini）。但 GitHub Releases 提供预编译固件，用 esptool.py（PlatformIO 自带或 pip 安装）即可直接刷入。\n\n**关键证据:**\n- 仓库无 platformio.ini，纯 ESP-IDF CMake 项目\n- GitHub Releases v1.8 提供预编译 bin：`NE_101_v1.8.hw-v1.2._FCC.zip` / `NE_101_v1.8.hw-v1.2._CE.zip` | 1. 客户从 GitHub Releases 下载对应版本固件（FCC 或 CE）\n2. 用 esptool.py 一条命令刷入 4 个 bin 文件\n3. 确认客户设备硬件版本（FCC/CE）以推荐正确固件包",
+  "expected_behavior": "answered",
+  "source_file": "2026-05/NE101-PlatformIO固件刷写咨询.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/2-ne100-mb01-development-board/2-software-guide/4-example-cat1.md",
+     "title": "4-example-cat1",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/2-ne100-mb01-development-board/2-software-guide/0-development-environment-setup.md",
+     "title": "0-development-environment-setup",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/2-ne100-mb01-development-board/2-software-guide/3-example-pir.md",
+     "title": "3-example-pir",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/2-ne100-mb01-development-board/2-software-guide/6-example-arduino.md",
+     "title": "6-example-arduino",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/2-ne100-mb01-development-board/2-software-guide/1-system-flashing-and-initialization.md",
+     "title": "1-system-flashing-and-initialization",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**问题确认**\n\nNE101 固件仓库是纯 ESP-IDF CMake 项目，没有 PlatformIO 支持（无 platformio.ini）。但客户不需要安装 ESP-IDF 也能刷固件，GitHub Releases 提供预编译固件，用 esptool.py 即可直接刷入。[1][2]\n\n**预编译固件获取**\n\n从 GitHub Releases 下载 v1.8 最新版固件。注意 v1.8 命名规则与旧版不同：`NE_101_v1.8.hw-v1.2._FCC.zip`（FCC 区域）或 `NE_101_v1.8.hw-v1.2._CE.zip`（CE 区域），不再区分 PIR/ALARMIN。解压后包含 4 个刷写所需文件：应用固件 `NE101_YYYYMMDD.bin`、`bootloader/bootloader.bin`、`partition_table/partition-table.bin`、`ota_data_initial.bin`。[3][4]\n\n**刷写命令**\n\nesptool.py 可通过 PlatformIO 自带路径（`~/.platformio/packages/tool-esptoolpy/esptool.py`）或 pip 安装（`pip install esptool`）。macOS 下用 `ls /dev/tty.usb*` 查找串口。刷写命令如下：[3][5]\n\n```\nesptool.py --chip esp32s3 -p /dev/tty.usbmodemXXXX -b 460800 \\\n  write_flash 0x0 bootloader/bootloader.bin \\\n              0x8000 partition_table/partition-table.bin \\\n              0x1b000 ota_data_initial.bin \\\n              0x100000 NE101_YYYYMMDD.bin\n```\n\n分区偏移地址：bootloader@0x0，partition table@0x8000，otadata@0x1b000，app0@0x100000，app1@0x500000。建议确认客户设备硬件版本（FCC/CE）以选择正确的固件包。[3][4]",
+   "declined": null,
+   "done": {
+    "conversation_id": "2cfedd8f-c957-4bad-b3a9-f008d8c5a076"
+   },
+   "conversation_id": "2cfedd8f-c957-4bad-b3a9-f008d8c5a076",
+   "error": null,
+   "wall_s": 15.9,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户 Massimo 在 Mac 上使用 VS Code + PlatformIO 开发，ESP-IDF 安装失败，想要预编译固件通过 PlatformIO 刷入 NE101。用于动物检测项目。"
+  }
+ ],
+ "upload": null
+}

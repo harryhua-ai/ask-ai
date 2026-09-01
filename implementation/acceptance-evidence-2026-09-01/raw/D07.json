@@ -1,0 +1,32 @@
+{
+ "id": "D07",
+ "family": "support",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "support",
+ "product": "NE101",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "**问题 1**：OV5640 sensor 硬件异常导致 ESP32 相机 DMA buffer 不更新。`fb_get()` 返回非 NULL（上次有效帧）而非 NULL，固件无 freshness 检查，每次 capture 发同一帧。\n\n**问题 2**：NE101 双路发送机制 — 实时 webhook push（当前帧）+ flash 存储 retry queue（之前失败的积压）。两路共享同一 MQTT queue → push dispatcher，每次捕获周期同时发送当前帧和 flash 积压文件 | - 问题 1：断电 30 秒重启，观察补光灯是否在 capture 时闪烁。灯闪但图不变 → sensor 硬件需更换\n- 问题 2：进 CONFIG 模式（按键），连 WiFi AP `NE101_xxxx`，访问 `http://192.168.1.1`，导出 Session Log 分析 flash 积压和 webhook 超时模式",
+  "expected_behavior": "answered",
+  "source_file": "2026-06/NE101-James-图片缓存重复与多次发送.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "**相同图片的原因**  \nOV5640 sensor 硬件异常时，ESP32 camera DMA buffer 不更新，`fb_get()` 返回上次有效帧且固件无 freshness 检查，导致每次 capture 发送同一帧 [1]。快速测试：观察定时 capture 时补光灯是否闪烁。灯闪但图片不变，断电 30 秒重启后观察；若灯完全不闪，可能要更换 sensor 模块 [1][2]。\n\n**多次发送的原因**  \nNE101 有双路发送机制：实时 webhook push（当前帧）+ flash 存储 retry queue（之前失败积压）。两路共享 MQTT queue，每次捕获周期会同时发送当前帧和 flash 积压文件 [1]。因此之前超时的 webhook 请求被存入 flash，之后每次新捕获都会重发，直到成功 [2]。\n\n**排查建议**  \n按住按键进入 CONFIG 模式，连接 NE101 WiFi AP（`NE101_xxxx`），打开 `http://192.168.1.1`，导出 Session Log，检查 flash 积压情况和 webhook 超时模式 [1][2]。",
+   "declined": null,
+   "done": {
+    "conversation_id": "ea650ac1-8ab2-43b8-bd48-5d6954a332b6"
+   },
+   "conversation_id": "ea650ac1-8ab2-43b8-bd48-5d6954a332b6",
+   "error": null,
+   "wall_s": 8.6,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "1. 过去 24 小时拍摄的电表图片 byte-for-byte 完全相同（10am 和 9am 的图片逐字节一致） 2. 设置为每小时拍一次，但每次定时捕获会发送多张图片（使用 webhook）"
+  }
+ ],
+ "upload": null
+}

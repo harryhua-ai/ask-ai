@@ -1,0 +1,63 @@
+{
+ "id": "D01",
+ "family": "support",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "support",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "数据格式不兼容：Edge Impulse 使用 bbox 格式标注，AI tool stack 需要 polygon 格式。\n\n**关键证据:**\n- 输入数据：171 张图片（训练集 100 + 测试集 71），bbox 格式标注\n- 需要 bbox → polygon 转换（4 角点）\n- 类别映射：coke → ID:1, white → ID:2\n- **结论**: 数据格式转换需求 | 1. 使用 `convert_edgeimpulse_to_project_zip.py` 脚本进行格式转换\n2. 转换后验证 classes.json 和标注文件格式\n3. 导入到标注平台进行数据增强",
+  "expected_behavior": "answered",
+  "source_file": "2026-03/NE301-Edge-Impulse数据集转换.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/AIToolStack/blob/main/README.zh.md",
+     "title": "README.zh",
+     "type": "github",
+     "product": "AI-ToolStack"
+    },
+    {
+     "url": "https://github.com/camthink-ai/AIToolStack/blob/main/README.md",
+     "title": "README",
+     "type": "github",
+     "product": "AI-ToolStack"
+    },
+    {
+     "url": "https://www.camthink.ai/product/neoeyes-301/",
+     "title": "NeoEyes NE301: Edge Vision AI Camera | CamThink",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/tools/ai-tool-stack/",
+     "title": "AI Tool Stack — Edge AI Training &amp; Deployment Tool | CamThink",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/5-neoeyes-ne301-series/3-application-guide/1-ai-tool-stack/1-ai-tool-stack.md",
+     "title": "1-ai-tool-stack",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**转换流程**\n该需求已有解决方案。Edge Impulse 的 bbox 标注需转换为 AI Tool Stack 所需 polygon 格式（4 角点），类别映射为 coke → ID:1、white → ID:2，使用 `convert_edgeimpulse_to_project_zip.py` 脚本完成转换与打包。[1]\n\n**转换结果**\n数据集共 171 张图片（训练集 100 + 测试集 71），2 个类别，299 个边界框，图像尺寸 512x512，输出 ZIP 为 12.54 MB，可直接导入 AI Tool Stack 标注平台。转换后还需验证 classes.json 和标注文件格式，并可在平台内进行数据增强。[1][5]\n\n**模型导出**\n转换后的项目可在 AI Tool Stack 中完成训练与量化，最终导出 NE301 可用的模型包（.tflite + .bin），用于在设备 WebUI 上部署。[1][8]",
+   "declined": null,
+   "done": {
+    "conversation_id": "d7ac1bbe-cfbd-4f97-9071-d1754bf55523"
+   },
+   "conversation_id": "d7ac1bbe-cfbd-4f97-9071-d1754bf55523",
+   "error": null,
+   "wall_s": 15.4,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户 Andrew Lohbihler 需要将 Edge Impulse 格式的可乐罐检测数据集转换为 AI tool stack 的项目 ZIP 格式，并导出为 NE301 可用的模型文件。"
+  }
+ ],
+ "upload": null
+}

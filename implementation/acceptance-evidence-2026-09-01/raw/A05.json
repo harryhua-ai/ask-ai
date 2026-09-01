@@ -1,0 +1,57 @@
+{
+ "id": "A05",
+ "family": "commercial",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "commercial",
+ "product": "NE101",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "推荐 NE101 DevKit（WiFi/Cat-1 4G, 电池, PIR 触发, IP67）+ NE301 Cat-1（端侧 AI 推理, 4×AA, IP67, 无需云端）+ Morse Micro HaLowLink 网关 915MHz (NE101-HL01)。关键边界：NE101 Cat-1 与 HaLow 互斥（同一模组槽，每台二选一）；NE301 HaLow 未就绪。需确认工业（机械/管道/安全）/农业（作物/牲畜）具体场景及是否有软件/AI 工程师。",
+  "expected_behavior": "answered",
+  "source_file": "2026-07/e-control-Cesar-报价咨询.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/2-neoeyes-ne101-series/3-application-guide/2-wifihalow-solution.md",
+     "title": "2-wifihalow-solution",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/solar-powered-edge-ai-cameras-remote-monitoring/",
+     "title": "Solar-Powered Edge AI Cameras",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/5-neoeyes-ne301-series/0-overview.md",
+     "title": "0-overview",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/0-overview.md",
+     "title": "0-overview",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "",
+   "declined": null,
+   "done": {
+    "conversation_id": "2b797264-cbeb-43b0-bfca-f1b9704f6915"
+   },
+   "conversation_id": "2b797264-cbeb-43b0-bfca-f1b9704f6915",
+   "error": null,
+   "wall_s": 47.5,
+   "is_reject_text": false,
+   "answered": false,
+   "message": "客户对机器视觉（machine vision）感兴趣，聚焦工业监测和农业监测。同时想测试 HaLow 长距离拍照场景（巴拉圭 HaLow 早期采用阶段）。"
+  }
+ ],
+ "upload": null
+}

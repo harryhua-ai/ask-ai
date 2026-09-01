@@ -1,0 +1,28 @@
+{
+ "id": "L-K6",
+ "family": "local_compare",
+ "channel": "widget",
+ "target": "local",
+ "expected_intent": null,
+ "product": null,
+ "note": "本地(76b2199,仅官网库)对照 prod(src=C08)",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "**推荐方案：NE301 PoE**\n\n推荐使用 **NE301 PoE** 实现定时拍照 → MQTT/HTTP 回传 → 后端 OCR 的流程。NE301 以 MQTT 为主协议，同时支持 HTTP/Webhook/RTMP 可选上传，可满足图片回传后端的需求 [4][5][6]。PoE 版本支持单网线供电传数，也可用 USB Type-C 有线供电，部署简单 [4][5][6]。\n\n**方案要点**\n\nNE301 内置白色 LED 补光灯，可配关闭/自动/常亮且亮度可调，适合水表阀箱等暗光环境；标配 51°/88°/137° 三款 M12 镜头，手动调焦 3cm-4m，可覆盖 10-45cm 安装距离，88° 镜头是近距离抄表的折中选择 [1][2][3][7]。若后续改为端侧识别，NE301 的 YOLO 表计数字模型可直接识别数字式表盘，已验证各类机械表，可避免后端 OCR 依赖网络 [4][5][6]。\n\n**对比选型注意**\n\n不建议选 NE101：NE101 只能本地排程，不支持远程触发抓拍，且模组与 NE301 传感器不同、不兼容 [1][2][3]。NE301 固件原生支持 MQTT 远程抓拍命令（含 `enable_ai`、`store_to_sd` 等参数），为后续远程触发留有余地 [1][2][3]。另需注意：M-Bus、Modbus、BACnet 均非原生支持，如需这些协议需另配网关转换 [4][5][6][10]。",
+   "declined": null,
+   "done": {
+    "conversation_id": "e93f6d55-9ed8-4ca9-971b-42fffcdf7a4d"
+   },
+   "conversation_id": "e93f6d55-9ed8-4ca9-971b-42fffcdf7a4d",
+   "error": null,
+   "wall_s": 20.2,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "关于 水表抄表 — 定时拍照 → MQTT/HTTP 回传 → 后端 OCR 的产品咨询，推荐什么方案？"
+  }
+ ],
+ "upload": null
+}

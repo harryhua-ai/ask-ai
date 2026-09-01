@@ -1,0 +1,47 @@
+{
+ "id": "D12",
+ "family": "support",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "support",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Hal/wifi.c",
+     "title": "wifi",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Core/System/upgrade_manager.c",
+     "title": "upgrade_manager",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Common/Lib/mongoose/mongoose.c",
+     "title": "mongoose",
+     "type": "github",
+     "product": "ne301"
+    }
+   ],
+   "answer": "**DIP 开关设置**\n设备必须先进入烧录模式：将 DIP 开关 #2 拨到 ON，此时板上 DEBUG LED 常亮。DIP #2 OFF 时 SWD 路由到 U0（device ID 0x486），ON 时路由到 N6，外部 Flash 才可访问。若未开此开关，OCTOSPI 处于 XIP 模式，外部加载器无法访问 Flash，报错 \"failed to erase memory\"。烧录完成后将 DIP #2 拨回 OFF 并重新上电启动。[4][2][1]\n\n**烧录步骤**\n使用 STM32CubeProgrammer **v2.19.0**，v2.22.0 在 STM32N6 外部 Flash 操作上有已知问题（连接正常、擦除无限循环/失败）。.stldr 文件 `MX66UW1G45G_STM32N6570-DK.stldr` 随工具安装，无需额外下载。无需 pre-flash 步骤（不需改 product state / Debug Authentication / option bytes），DIP #2 ON + DEBUG LED 常亮即足够。[4][8][5][1]\n\n烧录地址与顺序：FSBL (0x70000000) → App (0x70100000) → Web UI (0x70400000) → AI Model (0x70900000)；WakeCore (STM32U0) 地址为 0x08000000。CLI 模板为 `STM32_Programmer_CLI -c port=SWD mode=HOTPLUG -el <ExternalLoader路径>/MX66UW1G45G_STM32N6570-DK.stldr -hardRst -w <bin> <addr>`。[4][2]\n\n**擦除失败排查**\n擦除失败（如 \"failed to erase memory\" sectors 或无限循环）时，优先确认：1) 工具版本为 v2.19.0；2) 改用 Under Reset 模式 `mode=UR reset=HARD_RST freq=1000`；3) 降低 SWD 频率；4) 更换 ST-Link 线或编程器（克隆品 + Dupont 接触不良常见）；5) 万用表测 DIP #2 物理通断；6) 核对 4-pin DEBUG 线序。[3][4][8]\n\nDEBUG 4-pin 接口：Pin 1 VCC_IN、Pin 2 SWDIO (PA13)、Pin 3 SWCLK (PA14)、Pin 4 GND。三线（SWDIO、SWCLK、GND）即可，VCC_IN 与 3V3 均不需要；NRST 在板上测试点 F2，不在该接口上，`mode=UR reset=HARD_RST` 无需 NRST。[8][1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "b13cebf2-73b7-41c3-8065-8b116eb3f672"
+   },
+   "conversation_id": "b13cebf2-73b7-41c3-8065-8b116eb3f672",
+   "error": null,
+   "wall_s": 22.4,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "How to flash firmware on NE301, external flash erase failure and DIP switch setup"
+  }
+ ],
+ "upload": null
+}

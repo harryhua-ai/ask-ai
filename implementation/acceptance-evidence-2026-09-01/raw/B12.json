@@ -1,0 +1,53 @@
+{
+ "id": "B12",
+ "family": "product",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE101",
+ "note": "",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/store/wifi-halow-module/",
+     "title": "Wi-Fi HaLow Communication Board",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/underground-meter-reading-lte-vs-halow-ne101/",
+     "title": "Underground Meter Reading:",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/scale-water-meter-deployment-edge-ai/",
+     "title": "Scaling a Water Meter Monitoring System for 50+ Units:\n      NE101 + NG4500 Architecture",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/scale-meter-digitization-edge-ai/",
+     "title": "Scaling a Water Meter Monitoring System for 50+ Units:\n      NE101 + NG4500 Architecture",
+     "type": "web_crawl",
+     "product": "website"
+    }
+   ],
+   "answer": "**Yes, supported**\n\nThe NE101 supports Wi-Fi HaLow as one of three connectivity options, alongside Wi-Fi and LTE Cat.1. [1][2] It uses the Quectel FGH100M module over SPI, based on IEEE 802.11ah, with two regional variants: 868 MHz (NE101-HL00) for Europe/Asia and 915 MHz (NE101-HL01) for North America. Range is 1 km+, with active current draw around 39 mA. [4]\n\n**Integration notes**\n\nThe HaLow module is plug-in and user-replaceable, but is mutually exclusive with the Cat-1 cellular module — they share the same board slot. [1][4] For network connectivity, a Morse Micro HaLowLink gateway is required to bridge to Ethernet/Wi-Fi; third-party 802.11ah gateways are theoretically compatible but only the Morse Micro gateway has been tested by CamThink. [4][3]\n\n**Known limitation**\n\nThere is a documented hardware pin conflict: the HaLow (MORSE) module and the USB Camera share the SPI bus. With a camera attached, repeated SPI initialization errors appear in logs (function still works); without a camera, a failed HaLow initialization can trigger a FreeRTOS crash and device reboot. [7][8]",
+   "declined": null,
+   "done": {
+    "conversation_id": "061baa70-7e5b-4d1b-a1f1-3eb5ee15e926"
+   },
+   "conversation_id": "061baa70-7e5b-4d1b-a1f1-3eb5ee15e926",
+   "error": null,
+   "wall_s": 16.1,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "Does NE101 support WiFi HaLow connectivity"
+  }
+ ],
+ "upload": null
+}

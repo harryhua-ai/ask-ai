@@ -1,0 +1,39 @@
+{
+ "id": "C01",
+ "family": "solution",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "- 自研 YOLO 模型部署在 NE301 STM32N6 NPU\n- 深度掌握 ST Edge AI 工具链（自编译模型、relocatable network）\n- 车辆检测场景，有持续优化模型的需求\n- 技术能力极强，自行处理模型编译/量化/部署",
+  "expected_behavior": "answered",
+  "source_file": "Harry/Eco-Counter.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/blog/solar-powered-edge-ai-cameras-remote-monitoring/",
+     "title": "Solar-Powered Edge AI Cameras",
+     "type": "web_crawl",
+     "product": "website"
+    }
+   ],
+   "answer": "**核心推荐**\n\n车辆/物体计数场景首选 **NE301（Cat.1 或 Wi-Fi 版）**，配置为 YOLOv8 设备端推理 → MQTT JSON → IoT 平台。[3] NE301 预装 YOLOv8 Nano 模型，COCO 类别已含 \"truck\" 类，开箱即可检测卡车，检测结果加时间戳经 MQTT 上报，由平台后端起计数逻辑。[5][2]\n\n**能力边界与升级路径**\n\nNE301 是单帧检测器，最高 1080P，算力 0.6 TOPS。[4][5] 若需跨帧车辆计数与重识别，建议升级 **NE503**（20 TOPS，容器化应用支持帧间状态，已有 people-counting 应用，vehicle-counting 沿用同一模式）；若需多相机全车辆重识别，可选 **NG4500**（Jetson Orin + DeepSORT）。[4] 若必须 4K 分辨率，同样推荐 NE503。[5][2]\n\n**附加说明**\n\n若需区分空载/满载，需额外训练二分类模型，NE301 的 0.6 TOPS 足够运行该负载。[5] 若用于车队车载安装，NE301 的 77mm 体积、IP67、DC 5V 车载供电和 GPIO 报警接口均可直接适配。[5]",
+   "declined": null,
+   "done": {
+    "conversation_id": "6e5520d5-e1e2-42de-8659-392bb9c6f8f2"
+   },
+   "conversation_id": "6e5520d5-e1e2-42de-8659-392bb9c6f8f2",
+   "error": null,
+   "wall_s": 14.7,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "关于 车辆检测计数 的产品咨询，推荐什么方案？"
+  }
+ ],
+ "upload": null
+}

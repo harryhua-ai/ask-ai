@@ -1,0 +1,39 @@
+{
+ "id": "A11",
+ "family": "commercial",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "commercial",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "### J12 引脚（相关信号）\n\n| Pin | Signal | 说明 |\n|-----|--------|------|\n| 2, 4 | GND | 公共地 |\n| 8 | VCC_3V3 | 3.3V 输出，需通过 PWR_VCC_EXT (PF10) 使能 |\n| 14 | LPUART1_TX (PA9) | UART 发送，3.3V TTL |\n| 16 | LPUART1_RX (PA10) | UART 接收，3.3V TTL |\n| 5 | GPIO (PD8) | 数字 I/O |\n| 10 | ADC/GPIO (PF4) | 模拟或数字输入 |",
+  "expected_behavior": "answered",
+  "source_file": "2026-06/NE301-MassimoCaravello-UART引脚与代码示例.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/FSBL/Core/Src/usart.c",
+     "title": "usart",
+     "type": "github",
+     "product": "ne301"
+    }
+   ],
+   "answer": "**J12 引脚与数量确认**\n\nJ12 扩展连接器相关信号：Pin 2、4 为 GND；Pin 8 为 VCC_3V3（3.3V 输出，需通过 PWR_VCC_EXT / PF10 使能）；Pin 14 为 LPUART1_TX (PA9)；Pin 16 为 LPUART1_RX (PA10)；Pin 5 为 GPIO (PD8)；Pin 10 为 ADC/GPIO (PF4)。UART 电平为 3.3V TTL。原型和量产数量已确认：原型 3 台（1 中央 + 2 用户），量产 3-10 台/安装。[1][2][5]\n\n**接线与 UART 协议**\n\nNE301 与 XIAO ESP32C3 接线：NE301 J12 Pin 14 (TX) → XIAO D7 / GPIO20 (RX",
+   "declined": null,
+   "done": {
+    "conversation_id": "475e8da6-5cb7-46af-9d86-6e4156cc922e"
+   },
+   "conversation_id": "475e8da6-5cb7-46af-9d86-6e4156cc922e",
+   "error": null,
+   "wall_s": 44.9,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "Massimo 确认选择 Option A（自集成 ESP32），请求： 1. J12 扩展连接器 UART/GPIO/3.3V 引脚定义 2. NE301 侧 UART 发送检测结果的代码示例 3. 双向 UART 通信确认（NE301 发检测、收 ESP32 状态） 4. 原型 3 台（1 中央 + 2 用户），量产 3-10 台/安装"
+  }
+ ],
+ "upload": null
+}

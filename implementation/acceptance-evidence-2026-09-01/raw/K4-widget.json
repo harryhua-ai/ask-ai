@@ -1,0 +1,47 @@
+{
+ "id": "K4-widget",
+ "family": "equiv",
+ "channel": "widget",
+ "target": "prod",
+ "expected_intent": null,
+ "product": null,
+ "note": "等价性对照,同题双通道(src=D06)",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/0-neomind/user-guide/3-onboard-device.md",
+     "title": "3-onboard-device",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/NeoMind/blob/main/crates/neomind-api/src/handlers/mqtt/brokers.rs",
+     "title": "brokers",
+     "type": "github",
+     "product": "neomind"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/0-neomind/user-guide/10-troubleshooting.md",
+     "title": "10-troubleshooting",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "这是 NE101 连接 NeoMind 的 MQTT 问题（David, AU 案例）。逐项分析如下：\n\n**Config 模式 MQTT 超时**\n\n根因是 APSTA 双接口路由。config 模式走 `WIFI_MODE_APSTA`,同时拉起 AP (192.168.1.1) 和 STA (192.168.1.106),ESP32 lwIP 将 MQTT TCP SYN 经 AP 接口发出,无法到达 STA 侧 NeoMind (192.168.1.101:1883),表现为 10s 超时。[1] 修复方式是改用 STA-only 模式（即 schedule 模式）,该模式走 `WIFI_MODE_STA` 单接口,日志确认约 400ms 完成 MQTT 连接并成功推送 5 张照片。[1]\n\n**Schedule 模式断开**\n\n这不是故障,而是正常的低功耗周期：wake → WiFi connect → MQTT connect → publish → deep sleep,整个周期约 12s。transport EOF 出现在 12.3s,对应 WiFi 关闭进入深度休眠,此时 5 张照片已全部 PUSH SUCCESS。[1] NeoMind 侧 rmqtt broker 运行稳定、无重启无错误,设备显示 offline 是 5 分钟无数据阈值触发,对定时上报的电池供电设备属预期行为。[2]\n\n**MQTTX 手动消息短暂在线**\n\n设备发布 topic 为 `NE101SensingCam/Snapshot`,auto-onboard 成功,telemetry（battery, devMac, fwVersion, hwVersion, images）完整接收,broker 监听 0.0.0.0:1883。[2] 这说明 MQTT 链路与 broker 本身正常,问题仅在 config 模式下的 APSTA 路由,而非 NeoMind 服务端或固件缺陷。[1]\n\n综合建议：日常使用应保持在 schedule 模式（STA）进行 MQTT 连接,避免在 config 模式（APSTA）下依赖 MQTT;设备休眠后 NeoMind 显示 offline 是预期行为,无需按故障处理。[1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "95fae854-0984-4798-be7a-4f805cd26e59"
+   },
+   "conversation_id": "95fae854-0984-4798-be7a-4f805cd26e59",
+   "error": null,
+   "wall_s": 32.1,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户报告 NE101 MQTT 连接 NeoMind (192.168.1.101:1883) 失败： - Web UI 始终显示 MQTT transport connection timeout - Schedule 模式下连接成功但随后断开 - 用 MQTTX 手动发 hello 消息 NeoMind 短暂显示在线"
+  }
+ ],
+ "upload": null
+}

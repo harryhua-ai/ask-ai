@@ -1,0 +1,53 @@
+{
+ "id": "H01",
+ "family": "unknown",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Common/Lib/si91x/protocol/wifi/src/sl_wifi.c",
+     "title": "sl_wifi",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Common/Lib/si91x/wireless/src/sl_si91x_driver.c",
+     "title": "sl_si91x_driver",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/edge-ai-camera-outdoor-deployment-guide/",
+     "title": "NE301 Edge AI Camera Outdoor Deploying Guide:  Power, Connectivity, and Fleet Management",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Common/Lib/si91x/protocol/wifi/inc/sl_wifi_types.h",
+     "title": "sl_wifi_types",
+     "type": "github",
+     "product": "ne301"
+    }
+   ],
+   "answer": "**支持 5GHz WiFi**\n\nNE301 使用 SiWN917M 芯片,其 WiFi 驱动包含完整的 5GHz 频段支持,包括 5GHz 接口枚举和区域配置。[2][3]\n\n**具体依据**\n- 驱动接口 `sl_wifi_is_interface_up` 包含 `SL_WIFI_CLIENT_5GHZ_INTERFACE`、`SL_WIFI_AP_5GHZ_INTERFACE`、`SL_WIFI_5GHZ_INTERFACE` 等 5GHz 相关接口定义。[2]\n- 区域配置函数 `sl_si91x_set_device_region` 支持对 EU/JP/KR/SG/CN 等区域分别设置 2.4GHz 和 5GHz 的射频配置。[3]\n- 信道表列出了 5GHz 频段信道 36 至 165(中心频率 5180 MHz 至 5825 MHz),用于 20MHz 信道带宽。[9]",
+   "declined": null,
+   "done": {
+    "conversation_id": "218c063b-b9c6-4b88-b658-3657c093398b"
+   },
+   "conversation_id": "218c063b-b9c6-4b88-b658-3657c093398b",
+   "error": null,
+   "wall_s": 14.0,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "NE301 支持 5GHz WiFi 吗?"
+  }
+ ],
+ "upload": null
+}

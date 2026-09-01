@@ -1,0 +1,57 @@
+{
+ "id": "B10",
+ "family": "product",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "### MLX90642 实际能力（源码确认）\n\n- **分辨率**: 32×24 像素（768 温度点），I²C 地址 0x66，默认 2Hz 刷新率（可调至 64Hz）\n- **输出**: `int16_t` 数组，单位 0.01°C，精度 ±1.5°C（数据手册典型值）\n- **驱动**: 固件已完整实现 — `mlx90642_dev_init()` / `measure_now()` / `get_image()` / `get_frame()` / 发射率配置\n- **板载显示**: `sexp start ir` 可在 TFT 上显示热力图（每 4×4 热像元映射 1 个显示像素）\n- **传感器定位**: 温度触发源，非视频流热像仪 | - **技术层面能做的**: 通过 `mlx90642_dev_get_image()` 读取 768 个温度值，MQTT 上报云端做自定义分析。适合学术研究/原型验证，非临床诊断。\n- **不能做的**: 不能作为医疗器械用于临床糖尿病足筛查。分辨率低、精度边界、无医疗认证、无分析软件。\n- **建议**: 如果客户是学术研究可以推 NE301 作为低成本数据采集节点跑 POC。如果是临床筛查产品需求，引导客户看专业医疗热像方案，不碰医疗认证线。",
+  "expected_behavior": "answered",
+  "source_file": "2026-07/NE301-内部-MLX90642热成像糖尿病足筛查能力评估.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/3-hardware-dev-resources/14-thermal-array.md",
+     "title": "14-thermal-array",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/3-hardware-dev-resources/23-sensor-extension-board.md",
+     "title": "23-sensor-extension-board",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Hal/SensorExt/sensor_exemple/sensor_exemple.c",
+     "title": "sensor_exemple",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://www.camthink.ai/store/mlx90642-thermal-ir-array-sensor/",
+     "title": "Thermal IR Array Sensor MLX90642 32×24",
+     "type": "woocommerce",
+     "product": "accessories"
+    }
+   ],
+   "answer": "**结论**\nNE301 + MLX90642 热成像方案**不满足糖尿病足临床筛查需求**。内部评估的结论是：技术层面能读取 768 个温度值并通过 MQTT 上报做自定义分析，但仅适合学术研究或原型验证，不能作为医疗器械用于临床诊断。[1][4]\n\n**关键差距**\n- **分辨率不足**：MLX90642 为 32×24 像素，足底有效像素仅约 20×15，而临床通常需要 320×240+ 才能清晰呈现足底温度分布。[1][4]\n- **精度处于边界**：传感器精度为 ±1.5°C，而临床显著温差阈值为 ≥2.2°C，3°C 以下温差不可靠，无法满足左右足对称对比等定量要求。[1][4]\n- **定位与软件缺失**：该传感器是温度触发源，非视频流热像仪，无常驻热图推流、无分析软件、无内置对比或报告算法；且无 FDA/CE 医疗器械认证。[1][4]\n\n**建议**\n- 若客户为**学术研究**，可推 NE301 作为低成本数据采集节点跑 POC，通过驱动 API 读取温度数据并自行开发分析逻辑。[1]\n- 若客户做**临床筛查产品**，应引导其选择专业医疗热像方案，避免触碰医疗认证线。[1][4]",
+   "declined": null,
+   "done": {
+    "conversation_id": "7197db14-2807-4e69-8bde-bb29354aaeb1"
+   },
+   "conversation_id": "7197db14-2807-4e69-8bde-bb29354aaeb1",
+   "error": null,
+   "wall_s": 20.9,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "Harry 内部评估：客户想用 NE301 + 扩展板做红外热成像，检测糖尿病患者脚底温度。需确认 MLX90642 + NE301 能否满足此医疗场景需求。"
+  }
+ ],
+ "upload": null
+}

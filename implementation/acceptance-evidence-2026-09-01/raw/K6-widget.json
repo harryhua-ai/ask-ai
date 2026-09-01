@@ -1,0 +1,28 @@
+{
+ "id": "K6-widget",
+ "family": "equiv",
+ "channel": "widget",
+ "target": "prod",
+ "expected_intent": null,
+ "product": null,
+ "note": "等价性对照,同题双通道(src=C08)",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "**推荐方案**\n推荐 **NE101** 作为定时拍照并回传后端的设备。NE101 支持定时采集（SNAP_TIMER + timed/interval 模式），可将图片经 Base64 编码通过 MQTT 推送到服务器，JSON payload 字段完整，后端可直接做 OCR [10]。该架构在西门子工业仪表读数案例中已验证可行，服务器端 OCR 及后续 BACnet 对接均与 NE101 无关，由服务器实现即可 [10]。\n\n**选型与配置**\n- 通讯方式选 **WiFi 版**，多栋建筑邻近时成本低；若存在 WiFi 死角，可用 **Cat-1 蜂窝版** 补充 [6]。\n- 若客户已有自己的 AI 读表方案、只需相机出照片，NE101 完全匹配该场景 [6]。\n- 如需 burst 拍照（例如 4 张 @5s → 休眠 15min），可由固件升级实现，客户无需自行改源码 [10]。\n\n**注意事项**\nNE101 不具备端侧 OCR，识别全部依赖后端服务器；如果要求设备本地识别读数、不依赖服务器，则应改用 **NE301 端侧 OCR 方案** [9]。另外，定时采集最低频率受限，若需要按需触发或高频率采集，需提前与技术支持确认具体能力 [9]。",
+   "declined": null,
+   "done": {
+    "conversation_id": "467fb365-48c4-44e8-856b-5791c6477d93"
+   },
+   "conversation_id": "467fb365-48c4-44e8-856b-5791c6477d93",
+   "error": null,
+   "wall_s": 27.6,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "关于 水表抄表 — 定时拍照 → MQTT/HTTP 回传 → 后端 OCR 的产品咨询，推荐什么方案？"
+  }
+ ],
+ "upload": null
+}

@@ -1,0 +1,45 @@
+{
+ "id": "B04",
+ "family": "product",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE101",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "- NE101 HaLow 915 版本内置 FGH100M 模组，可直接通过 HaLow 无线连接到兼容网关\n- 推荐网关：**Morse Micro HaLowLink1 或 HaLowLink2**\n  - Morse Micro 总部位于悉尼，原生支持 915MHz（AU 区域）\n  - Web UI 配置，即插即用，几步完成\n  - 网关接收 NE101 的 HaLow 信号 → 桥接至 Ethernet → 直连 Starlink 路由器\n- 无需额外硬件，野外部署简单（紧凑型、DC 供电）",
+  "expected_behavior": "answered",
+  "source_file": "2026-05/NE101-Lightbox-HaLow915网关方案.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/3-application-guide/2-wifihalow-solution.md",
+     "title": "2-wifihalow-solution",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/store/wifi-halow-module/",
+     "title": "Wi-Fi HaLow Communication Board",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    }
+   ],
+   "answer": "**网关推荐**\n推荐 **Morse Micro HaLowLink1 或 HaLowLink2** 作为 NE101 HaLow 915MHz 版本的网关。Morse Micro 总部位于悉尼,原生支持 915MHz(AU 区域),网关通过与 NE101 的 HaLow 无线连接,将信号桥接至 Ethernet。[1]\n\n**设置与野外部署**\nHaLowLink 网关采用 Web UI 配置,即插即用,几步即可完成设置。设备为紧凑型设计、DC 供电,无需额外硬件,适合野外部署。[1] 如需扩展链路覆盖,可在网关侧使用外部天线,无需修改 NE101 硬件。[4]\n\n**Starlink 回传**\n网关通过 Ethernet 接口直连 Starlink 路由器即可完成回传,拓扑为:NE101 → HaLowLink 网关 → Ethernet → Starlink 路由器。[1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "afe97dde-831b-4882-89b4-5c4316cb3be8"
+   },
+   "conversation_id": "afe97dde-831b-4882-89b4-5c4316cb3be8",
+   "error": null,
+   "wall_s": 17.7,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户（Lightbox，澳大利亚，[邮箱]）已收到 NE101 HaLow 915 版本样机，咨询： 1. 支持 HaLow 915MHz 的网关推荐 2. 要求易于设置、适合野外使用 3. 需要连接 Starlink 进行回传"
+  }
+ ],
+ "upload": null
+}

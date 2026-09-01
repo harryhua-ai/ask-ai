@@ -1,0 +1,63 @@
+{
+ "id": "B07",
+ "family": "product",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE503",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "此为功能咨询类问题，非故障排查。通过查阅产品规格书和 Quick Start 文档获取答案。\n\n**关键信息:**\n- 传感器: Sony IMX678，1/1.8\" CMOS，4K UHD（3856×2180）\n- 镜头: AF auto-zoom 8-32mm 电动变焦，F1.6-F1.7\n- 最小对焦距离: 规格书中未提及，需硬件团队确认\n- 容器运行时: containerd，支持 OCI 镜像\n- RTSP: 三路码流已可用（main/sub/third）\n- ONVIF: 规划中，暂不可用\n- AI 模型: YOLOv8n（目标检测）和 CLIP ViT-B/16（图像编码器）已预装\n- 多模型并行: AI Runtime 已支持\n- Web Console: 已可用 | 1. 客户可通过 RTSP 拉流在工作站上测试识别（ffplay rtsp://<ip>:8554/main）\n2. 验证通过后，将应用打包为容器部署到 NE503 边缘推理\n3. 最小对焦距离待硬件团队确认后回复",
+  "expected_behavior": "answered",
+  "source_file": "2026-05/NE503-样品机功能与测试方案咨询.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/6-neoeyes-ne503-series/3-software-guide/1-developer-guide.md",
+     "title": "1-developer-guide",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/store/neoeyes-503/",
+     "title": "NeoEyes NE503 4K PoE Edge AI Camera",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/inside-neoeyes-ne503-edge-ai-camera/",
+     "title": "Inside NeoEyes NE503: Open Edge AI Camera Architecture · Blog",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/6-neoeyes-ne503-series/4-application-guide/2-cookbook/0-hello-world.md",
+     "title": "0-hello-world",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/product/neoeyes-503/",
+     "title": "Edge AI Camera Platform",
+     "type": "web_crawl",
+     "product": "website"
+    }
+   ],
+   "answer": "**硬件与成像能力**\n\n传感器为 Sony IMX678，1/1.8\" CMOS，4K UHD（3856×2180）；镜头为 AF auto-zoom 8-32mm 电动变焦，F1.6-F1.7 [1]。最小对焦距离在规格书中未提及，需硬件团队确认 [1][10]。硬件平台为四核 Arm Cortex-A53 @ 1.3 GHz，Hailo NPU 20 TOPS（INT8），支持 H.265/H.264 编码、数字重叠 HDR、AI 降噪，工作温度 -40°C 至 +60°C，IP67 防护 [5][8][10]。\n\n**软件与开发能力**\n\n容器运行时为 containerd，支持 OCI 镜像，第三方开发者可通过 Web 控制台或 SSH 部署自定义容器应用；官方提供 neoruntime-sdks（Python/C++ SDK）和 neoruntime-apps 应用模板，可用 Docker buildx 构建 linux/arm64 镜像后部署 [1][2][3][6]。内存为 4GB 或 8GB LPDDR4（8GB 版本带宽 8.5 GB/s），存储为 64GB eMMC、TF 卡扩展；M.2 SSD 硬件已预留但当前固件不支持 [4][8][10]。样品机的具体内存配置需确认。\n\n**AI 功能与测试建议**\n\n当前样品已可用：YOLOv8n 目标检测、CLIP ViT-B/16 图像编码器预装；AI Runtime 支持多模型并行执行；Web 控制台可用；支持容器部署，并有 Person Detection Demo 作为首次 AI 应用起点 [1][4]。视频流方面，RTSP 三路码流（main/sub/third）已可用，可在工作站直接拉流测试识别；ONVIF 尚在规划中，暂不可用 [1]。建议先用预装 YOLOv8n 模型配合 RTSP 在工作站验证识别流程，再参考 Hello World 示例搭建自定义容器应用并部署到设备 [1][4][6]。",
+   "declined": null,
+   "done": {
+    "conversation_id": "9fbe0727-cd2a-4f9d-9cc6-9247544fe023"
+   },
+   "conversation_id": "9fbe0727-cd2a-4f9d-9cc6-9247544fe023",
+   "error": null,
+   "wall_s": 18.8,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户收到 NE503 样品机（未发布产品），希望了解当前样品单元的实际能力，以便规划第一次实际测试。客户不需要完整的生产数据手册，只需要知道样品机上有什么可用、如何搭建真实的测试环境。"
+  }
+ ],
+ "upload": null
+}

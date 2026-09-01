@@ -1,0 +1,32 @@
+{
+ "id": "C03",
+ "family": "solution",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "推荐 NE301 PoE：端侧 OCR 可行（0.6 TOPS NPU, YOLOv8 推理），PoE 供电适合楼宇固定部署，机械水表/电表/流量计抄表。关键边界：液晶屏表计需专业 OCR（与机械表盘不同，需专门模型）；BACnet 协议输出需确认转换方案（端侧 OCR 结果如何转 BACnet 进 BMS）。下一步：等客户确认安装位置、表数量、BACnet 转换方案。",
+  "expected_behavior": "answered",
+  "source_file": "Jade/Sauter自控.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "**推荐方案**\n\n首选 **NE301 PoE 端侧 OCR 方案**：设备端直接运行 OCR 读取机械水表/电表读数，通过 MQTT JSON 输出结构化数据，全程本地处理不上云 [2][7]。针对机械表盘（滚轮式/数字式），YOLO 表计数字模型可直接识别，已验证各类机械表 [9]。\n\n**协议转换路径**\n\nBACnet 缺口需两步确认：\n\n1. **优先走客户侧转换（推荐）**：向上级系统确认其 BMS 控制器/网关是否支持 MQTT 或 HTTP 数据接入（Sauter、Siemens、Honeywell 等主流厂商通常支持）。若可接收 MQTT JSON，NE301 直出 MQTT 即可，零额外硬件成本 [1]。\n2. **备选 NG4500 协议桥**：若客户要求端到端方案且无自有转换能力，可采用 NG4500 接收 NE301 的 MQTT 并转 BACnet/IP 输出。需注意此方案会加重方案、增加成本和故障点，仅在客户确有需求时使用 [1]。\n\n**选型与安装要点**\n\n- **供电与网络**：NE301 PoE 单网线供电传数；泵房等场景建议 PoE 有线优先，Cat-1 LTE + 外置天线备选 [7][9]。\n- **镜头与安装**：LCD 流量计显示屏建议安装距离 30-50cm，配 88° 镜头，支持手动调焦（3cm 至 4m）；玻璃面反光时建议偏 10-15° 安装；多个仪表位置/角度不同时，每台仪表单独配相机 [7]。\n- **上报频率**：1 秒至 1 天可配，适合周报、月报等低频抄表场景 [7]。\n- **LCD 段码屏需定制**：液晶显示屏 OCR 需定制训练，段码 LCD 字体非常规，建议先发照片确认可行性 [2]。",
+   "declined": null,
+   "done": {
+    "conversation_id": "781db5a6-9947-49b7-867f-61ab2b96d562"
+   },
+   "conversation_id": "781db5a6-9947-49b7-867f-61ab2b96d562",
+   "error": null,
+   "wall_s": 23.5,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "关于 楼宇自控 — 机械水表/电表/流量计 OCR 抄表，输出 BACnet 协议进 BMS 的产品咨询，推荐什么方案？"
+  }
+ ],
+ "upload": null
+}

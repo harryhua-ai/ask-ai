@@ -1,0 +1,45 @@
+{
+ "id": "D09",
+ "family": "support",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "support",
+ "product": "NE101",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "**固件版本：** v1.8(hw-v1.2)（2026-05-20）是 hw-v1.2 硬件的最新正式固件。GitHub Releases 中 v1.8(hw-v2.0)（2026-06-04）仅支持 hw-v2.0，不兼容 hw-v1.2。CMakeLists.txt 中 `PROJECT_VER` 为 `NE101_V1.9`，但尚未发布。\n\n**Webhook 机制（源码分析）：** `webhook.c` 的 `webhook_publish()` 从 NVS 读取 webhook URL，发起 HTTP POST（20s 超时），任何非 2xx 响应或网络错误均返回 -1 → `push.c` 记录 PUSH FAIL + 存储到 flash。代码逻辑简单直接，非固件 bug",
+  "expected_behavior": "answered",
+  "source_file": "2026-07/NE101-KenVowels-Webhook-PUSH-FAIL-WiFi.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Services/Web/api/api_webhook_module.c",
+     "title": "api_webhook_module",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Services/Webhook/webhook_service.c",
+     "title": "webhook_service",
+     "type": "github",
+     "product": "ne301"
+    }
+   ],
+   "answer": "**根因:config 模式 softAP 子网与上游网络重叠**\n\n按钮触发的快门拍照会唤醒进入 config 模式,此时设备开启自带 softAP(192.168.1.1/24)。若上游网关也在 192.168.1.x,两个子网重叠,该模式下的 DNS 解析中断,导致 Webhook 的 hostname 解析失败(getaddrinfo 返回 202 = EAI_FAIL,DNS 不可达而非域名拼写错误)[5][8][10]。session log 中 `:webhook.site:` 的前导冒号只是 ESP-IDF 日志的 `:%s:` 格式定界符,不是 URL 解析 bug[5][8]。\n\n**排除项与交叉验证**\n\nWiFi 连接和 ping 8.8.8.8 正常,说明链路层没问题;PIR/定时触发的自动上传运行在纯 STA 模式(softAP 关闭),同一 webhook URL 已返回多条 HTTP 200 成功记录 — 证明 Webhook 配置、URL、TLS 均有效,问题仅出现在按钮触发的 config 模式[5][10]。\n\n**修复建议**\n\n客户侧最简方案:把路由器 LAN 改为非 192.168.1.x 网段(如 192.168.50.1/24),config 模式 DNS 即恢复;按钮触发时失败的帧会存入 flash,并在下次自动唤醒时补传,不会丢图。固件侧已计划将 softAP 默认 IP 移到 192.168.4.1,随下一版本发布,无需手动刷机解决此问题[5][10]。另外当前 hw-v1.2 的最新正式固件仍是 v1.8(hw-v1.2),你的设备固件已是最新,无需升级[1][4]。",
+   "declined": null,
+   "done": {
+    "conversation_id": "3d08c6c3-b1d9-456d-b6cb-2b651495812f"
+   },
+   "conversation_id": "3d08c6c3-b1d9-456d-b6cb-2b651495812f",
+   "error": null,
+   "wall_s": 19.6,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "Ken Vowels 使用 NE101 WiFi 版（固件 NE_101_v1.8(hw-v1.2)_FCC），网页 UI 配置 Webhook + Instant Upload，WiFi 连接正常、ping 8.8.8.8 成功，但快门拍照后出现 PUSH FAIL，JPEG 存入 flash，无 HTTP POST 到达其域名或 webhook.site。"
+  }
+ ],
+ "upload": null
+}

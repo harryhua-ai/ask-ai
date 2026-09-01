@@ -1,0 +1,47 @@
+{
+ "id": "K1-admin",
+ "family": "equiv",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": null,
+ "product": null,
+ "note": "等价性对照,同题双通道(src=A08)",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/product/neoeyes-301/",
+     "title": "NeoEyes NE301: Edge Vision AI Camera | CamThink",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/store/ne301/",
+     "title": "NeoEyes NE301 Wireless Edge AI Camera",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    },
+    {
+     "url": "https://www.camthink.ai/store/ne301-poe/",
+     "title": "NeoEyes NE301 PoE Edge AI Camera",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    }
+   ],
+   "answer": "**Price**\nNE301 is available in three variants: Wi-Fi at **$199.90**, LTE Cat.1 at **$251.00**, and PoE at **$258.00** [1]. The store pages confirm the Wi-Fi version at **$199.90** and the PoE version at **$258.00**, both listed as in stock [3][4].\n\n**Ordering**\nThe NE301 Wi-Fi and PoE models can be ordered directly from the online store [3][4]. For configurations like the USB-C version needed for solar deployments, which is not available for direct online purchase, contact **sales@camthink.ai** to discuss the required setup [3].\n\n**Shipping**\nShipping options and delivery details are not specified in the provided materials [1][2][3][4]. For shipping information, contact sales at **sales@camthink.ai** or check the store checkout process.",
+   "declined": null,
+   "done": {
+    "conversation_id": "6899b6c7-5905-4bce-ac9a-79b30e79b83e"
+   },
+   "conversation_id": "6899b6c7-5905-4bce-ac9a-79b30e79b83e",
+   "error": null,
+   "wall_s": 16.7,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "What is the price of NE301, how to order and shipping options"
+  }
+ ],
+ "upload": null
+}

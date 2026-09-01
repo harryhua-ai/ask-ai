@@ -1,0 +1,31 @@
+{
+ "id": "J01",
+ "family": "attachment",
+ "channel": "widget",
+ "target": "prod",
+ "expected_intent": "support",
+ "product": "NE101",
+ "note": "期望:识别 CEREG=3 → SIM/运营商不匹配方向",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "**问题定位**\n\n你的日志显示蜂窝网络注册被拒。模组初始化正常、SIM 检测通过（`+CPIN: READY`）、拍照成功（142 KB），但 `AT+CEREG?` 持续返回 `+CEREG: 0,3`（Registration Denied），LTE attach 重试 3 次全部失败，图片因此存入本地 flash（pending=9）。 [1]\n\n**根因分析**\n\n日志中的关键信息与已知案例完全一致：设备驻留在 AT&T 网络（`LIMSRV,LTE,FDD,310,410`，MCC 310 / MNC 410），但 SIM 卡使用的是 Verizon 专用 APN `PODSYSTE.VZWENTP`。这是一张 Verizon MVNO SIM 卡试图在 AT&T 网络上注册，因为未授权被拒绝，属于 SIM 与驻留网络不匹配的问题，不是设备硬件故障。 [1]\n\n**排查建议**\n\n1. **联系运营商确认 SIM 状态** — 用日志中的 ICCID（`8901****3745`）向运营商核实数据套餐是否正常、是否被暂停。 [1]\n\n2. **确认现场 Verizon 信号覆盖** — 如果部署位置只有 AT&T 信号而没有 Verizon 覆盖，当前 SIM 无法使用，需要更换支持多运营商或 AT&T 兼容的 SIM 卡。 [1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "a2e8b16a-7750-4ec1-ba7f-3b6adc3b804f"
+   },
+   "conversation_id": "a2e8b16a-7750-4ec1-ba7f-3b6adc3b804f",
+   "error": null,
+   "wall_s": 13.3,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "我的 NE101 照片一直传不上云,每次都存本地 flash。附件是设备日志,帮我看看是什么问题?"
+  }
+ ],
+ "upload": {
+  "id": "e703883c-91d1-4a48-88e9-e95153798647",
+  "filename": "_upl_J01_ne101_device.log"
+ }
+}

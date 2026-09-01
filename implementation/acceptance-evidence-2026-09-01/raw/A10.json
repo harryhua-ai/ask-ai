@@ -1,0 +1,35 @@
+{
+ "id": "A10",
+ "family": "commercial",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "commercial",
+ "product": "NE503",
+ "note": "",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/store/neoeyes-503/",
+     "title": "NeoEyes NE503 4K PoE Edge AI Camera",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    }
+   ],
+   "answer": "**Purchase**\nNE503 is available on the product page. The store page lists a price of **$1049** with stock status \"instock\" [1]. A separate sales communication quotes **$1,199 per unit** and notes that trial units are not offered — a single unit purchase is the fastest way to test the camera [2]. Please note the price difference between these two sources.\n\n**Minimum Order Quantity**\nNo formal MOQ is stated, but the sales reply indicates a **single unit purchase** is acceptable for pilot testing, implying MOQ of 1 [2].\n\n**Lead Time**\nAccording to the sales communication, units ship from **late July**; ordering now delivers in **early August** for a pilot [2].",
+   "declined": null,
+   "done": {
+    "conversation_id": "b97245a2-2812-476d-bf8d-085b0bb92c45"
+   },
+   "conversation_id": "b97245a2-2812-476d-bf8d-085b0bb92c45",
+   "error": null,
+   "wall_s": 11.1,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "How to purchase NE503, minimum order quantity and lead time"
+  }
+ ],
+ "upload": null
+}

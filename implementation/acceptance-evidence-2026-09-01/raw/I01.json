@@ -1,0 +1,32 @@
+{
+ "id": "I01",
+ "family": "off_topic",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "off_topic",
+ "product": null,
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "应拒答：'我只能回答与 CamThink 产品相关的问题'",
+  "expected_behavior": "rejected",
+  "source_file": ""
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "我只能回答与 CamThink 产品相关的问题。",
+   "declined": null,
+   "done": {
+    "conversation_id": "297363f4-f4c0-4ab8-9a86-60a08e11c108"
+   },
+   "conversation_id": null,
+   "error": null,
+   "wall_s": 1.4,
+   "is_reject_text": true,
+   "answered": false,
+   "message": "What's the weather like today?"
+  }
+ ],
+ "upload": null
+}

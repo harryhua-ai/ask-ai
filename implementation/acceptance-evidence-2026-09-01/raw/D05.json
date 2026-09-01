@@ -1,0 +1,32 @@
+{
+ "id": "D05",
+ "family": "support",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "support",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "**问题 1: 电池耗尽**\n- 客户购买约 6 周后电池耗尽\n- 正常 4×AA 电池 Wi-Fi 模式 10 次/天约 2.1 年，Cat-1 模式约 1.1 年\n- 短时间内耗尽可能原因：触发频率过高、设备未正常进入 deep sleep、蜂窝模块持续在线\n- 需要日志确认具体原因，但电池已耗尽无法导出\n\n**问题 2: Web UI 慢**\n- 最可能原因：电池电压低导致系统降频节能\n- 配置阶段建议切换到 full speed 模式\n- 待换电池后验证是否恢复正常\n\n**问题 3: SIM/蜂窝选项不显示**\n- 源码分析：Web UI 只在 cellular_available == TRUE 时显示蜂窝选项\n- cellular_available 在 on_cellular_ready() 中设为 TRUE，前提是蜂窝模块初始化成功 | 1. 更换电池后导出日志，提供固件版本、触发频率、电池续航时长\n2. 配置阶段使用 full speed 模式，完成后切回 low power 模式\n3. 断电检查 Cat-1 模块安装和 SIM 卡位置，提供运营商和 APN 信息",
+  "expected_behavior": "answered",
+  "source_file": "2026-05/NE301-电池耗尽与SIM蜂窝选项不显示.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "**电池耗尽问题**\n\n正常 4×AA 电池 Wi-Fi 模式 10 次/天约 2.1 年，Cat-1 模式约 1.1 年。短期内耗尽可能由触发频率过高、设备未进入 deep sleep、蜂窝模块持续在线导致。因电池已耗尽无法导出日志，需先更换电池，然后导出日志、提供固件版本、触发频率和续航时长。另参考 NE101 案例，配置完成后未退出 config mode 也会导致持续高功耗，可检查 session log 末尾是否有 `enter deep sleep` 日志，并确认 config mode 是否已退出。[1][2][3]\n\n**Web UI 慢**\n\n最可能原因是低电量导致系统降频节能。配置阶段可切换到 full speed 模式，配置完成后切回 low power 模式。换电池后若仍报错，需截图进一步排查。[1][3][5]\n\n**SIM/蜂窝选项不显示**\n\n根因在于 Web UI 仅在 `cellular_available == TRUE` 时显示蜂窝选项，而该标志只在蜂窝模块初始化成功后被置 TRUE。NE301 的 SIM 卡插槽位于 Cat-1 plug-in 模块上而非主板，所以需断电检查 Cat-1 模块是否插紧（J11/J15 接口）、SIM 卡是否插在模块上，同时确认运营商和 APN 兼容性。后续客户反馈中，蜂窝选项已出现但无法连接，SIM 检测正常（IMSI 240422610822297，Hologram READY），但 AT+CSQ 返回 99,99 表示无射频信号。此时优先检查 APN 是否设置为 \"hologram\"，其次排查 Verizon 覆盖（EG915Q-NA 支持 B13/B66）以及频段配置。可用 AT 命令进一步定位：`AT+QENG=\"servingcell\"`、`AT+QCFG=\"band\"`、`AT+CEREG?`、`AT+CGDCONT?`。[1][3][4][7]",
+   "declined": null,
+   "done": {
+    "conversation_id": "83cb335a-0333-470c-b7bc-95af89623a9c"
+   },
+   "conversation_id": "83cb335a-0333-470c-b7bc-95af89623a9c",
+   "error": null,
+   "wall_s": 27.5,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户 Zac Diener ([邮箱], eLock Technologies LLC, Berkeley CA) 报告三个问题： 1. 电池完全耗尽，想查日志了解高功耗原因 2. Web UI 非常慢，切换标签页和修改配置加载时间长，偶发报错 3. SIM 卡已安装，但 System Settings > Communications > Change Communications Method 只有 Wi-Fi 选项"
+  }
+ ],
+ "upload": null
+}

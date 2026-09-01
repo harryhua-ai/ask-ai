@@ -1,0 +1,127 @@
+{
+ "id": "F01",
+ "family": "multi_turn",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE503",
+ "note": "",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/NeoMind-Extensions/blob/main/patches/usls/src/models/names/coco.rs",
+     "title": "coco",
+     "type": "github",
+     "product": "neomind"
+    }
+   ],
+   "answer": "**推荐型号**\n推荐 **NE503**。它配备 20 TOPS NPU,应用商店提供预置的 people-counting 与 vehicle-detection(含 LPR),车辆和行人检测计数接近开箱即用。[9][6]\n\n**对比说明**\nNE301 也能检测 person 以及 COCO 中的车辆类别,但算力仅 0.6 TOPS,且计数逻辑需要在服务端基于 MQTT 输出的 bbox + confidence 自行实现。[5][8][9]\n\n**夜间与部署**\n露天停车场若涉及夜间场景,NE503 自带 IR 补光和 AI-ISP 低照度彩色成像,无需外置补光;NE301 的户外防护虽够用,但资料中未提及其夜视能力。[9]",
+   "declined": null,
+   "done": {
+    "conversation_id": "6d3178a1-a9d0-4d29-ae98-c39243c5cc7e"
+   },
+   "conversation_id": "6d3178a1-a9d0-4d29-ae98-c39243c5cc7e",
+   "error": null,
+   "wall_s": 18.2,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "我们经营一个露天停车场,想做车辆和行人检测计数,推荐哪款相机?"
+  },
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/store/neoeyes-503/",
+     "title": "NeoEyes NE503 4K PoE Edge AI Camera",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/6-neoeyes-ne503-series/0-overview.md",
+     "title": "0-overview",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/inside-neoeyes-ne503-edge-ai-camera/",
+     "title": "Inside NeoEyes NE503: Open Edge AI Camera Architecture · Blog",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/build-loitering-detection-app-edge-ai-camera-ne503/",
+     "title": "Build a Loitering Detection App on an Edge AI Camera with NE503 · Blog",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/when-to-add-edge-ai-camera-existing-cctv/",
+     "title": "When to Add an Edge AI Camera Instead of Another IPC · Blog",
+     "type": "web_crawl",
+     "product": "website"
+    }
+   ],
+   "answer": "**定位与PoE**\nNE503 支持 PoE。它是一款 4K PoE Edge AI 相机,支持 PoE 802.3AT 单线供电与数据传输,也可用 DC 12V 输入,典型功耗 5-6W。[1][2][3]\n\n**核心规格**\n搭载 Hailo-15H SoC(20 TOPS NPU + 350 GOPS DSP),四核 Cortex-A53 CPU,4GB/8GB LPDDR4 + 64GB eMMC,支持 TF 卡扩展。成像采用 Sony IMX678 1/1.8\" 4K 传感器,AI-ISP 支持 <0.01 LUX 全彩夜视;镜头可选 AF(44.5° HFOV)或电动变焦(110° HFOV)。视频支持 H.264/H.265 4K@30fps 硬件编码,三路 RTSP 码流。防护等级 IP67/IK10,工作温度 -40°C 到 +60°C。[3][5]\n\n**软件与集成**\n基于嵌入式 Linux(Yocto)+ containerd,支持 Docker/OCI 容器部署应用,提供 Python SDK、aipc-cli、REST API,数据协议支持 MQTT / Event Bus。外部接口含 Alarm IN、Wiegand 输出、Line-In/Out、RS-485。资料中提及的应用场景包括周界监控、人员检测、车牌识别等。[2][6][7]",
+   "declined": null,
+   "done": {
+    "conversation_id": "5b22925b-ee07-4475-a4ed-a99c57cca1e1"
+   },
+   "conversation_id": "5b22925b-ee07-4475-a4ed-a99c57cca1e1",
+   "error": null,
+   "wall_s": 19.6,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "NE503 具体怎么样?它支持 PoE 吗?"
+  },
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/store/neoeyes-503/",
+     "title": "NeoEyes NE503 4K PoE Edge AI Camera",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/inside-neoeyes-ne503-edge-ai-camera/",
+     "title": "Inside NeoEyes NE503: Open Edge AI Camera Architecture · Blog",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/6-neoeyes-ne503-series/4-application-guide/2-cookbook/1-parking-lot.md",
+     "title": "1-parking-lot",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/store/mounting-ne101/",
+     "title": "Mounting Brackets for NeoEyes NE101 and NE301 Series",
+     "type": "woocommerce",
+     "product": "accessories"
+    },
+    {
+     "url": "https://www.camthink.ai/product/neoeyes-503/",
+     "title": "Edge AI Camera Platform",
+     "type": "web_crawl",
+     "product": "website"
+    }
+   ],
+   "answer": "**供电与网络**\n户外立柱若需单线供电并传输数据，优先用 PoE 802.3AT，典型功耗 5-6W，需自备 PoE 交换机和网线；也可用 DC 12V 适配器加标准交换机。[1] NE503 没有内置电池，不支持电池或太阳能直接供电，必须在立柱位置提供稳定外部电源。[4]\n\n**环境与安装**\nNE503 具备 IP67/IK10 防护，工作温度 -40°C 到 +60°C，适合户外长期运行。[1][2][10] 部署时要重点考虑电缆规划、安装位置、光照和维护方式，避免环境因素导致方案失败。[2] 出厂标配壁挂支架，如果改为立柱安装，需自行确认支架与立柱的适配性、支撑结构和所需杆长，并视立柱表面材质更换合适的紧固件。[1][5]\n\n**安全与初始化**\n户外立柱部署前应先更改 Web Console 和 SSH 默认凭据。[1] 当前视频集成以 RTSP 为主，M.2 SSD 暂不支持，若需扩展本地存储先使用 TF 卡。[1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "4df187f9-4625-475e-92f0-322073b4d5a2"
+   },
+   "conversation_id": "4df187f9-4625-475e-92f0-322073b4d5a2",
+   "error": null,
+   "wall_s": 43.7,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "如果装在户外立柱上,部署上要注意什么?"
+  }
+ ],
+ "upload": null
+}

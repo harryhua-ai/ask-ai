@@ -1,0 +1,72 @@
+{
+ "id": "J02",
+ "family": "attachment",
+ "channel": "widget",
+ "target": "prod",
+ "expected_intent": "support",
+ "product": "NE101",
+ "note": "附件+多轮续问",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/1-quick-start.md",
+     "title": "1-quick-start",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**根因**\n根据附件日志，`+CEREG: 0,3` 表示蜂窝网络注册被拒（Registration Denied）；`+QENG` 显示设备处于有限服务状态，驻留在 LTE 网络 310,410（AT&T），而 APN 配置为 `PODSYSTE.VZWENTP`（Verizon 专用）。这与已知案例 NE101 蜂窝网络注册被拒的情况完全一致。[1]\n\n**结论**\n问题出在 SIM 卡与当前驻留网络不匹配。设备使用的 Verizon MVNO SIM 卡未获授权在 AT&T 网络上注册，因此 AT&T 拒绝注册请求，LTE attach 重试 3 次均失败，上传被跳过，照片只能保存到本地 flash。日志中 SIM 检测正常、信号良好，说明不是 SIM 硬件或信号问题。[1]\n\n**建议**\n按已解决案例的处理方向：确认设备所在位置是否有 Verizon 信号覆盖；如果设备驻留在 AT&T 网络，则需要换用获授权在 AT&T 网络上注册的 SIM 卡，或调整部署位置使设备能驻留回 Verizon 网络。[1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "611bd043-e7f8-4aa1-b8da-3332430b1a26"
+   },
+   "conversation_id": "611bd043-e7f8-4aa1-b8da-3332430b1a26",
+   "error": null,
+   "wall_s": 25.1,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "我的 NE101 照片一直传不上云,每次都存本地 flash。附件是设备日志,帮我看看是什么问题?"
+  },
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/1-quick-start.md",
+     "title": "1-quick-start",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/3-application-guide/0-low-power-image-acquisition.md",
+     "title": "0-low-power-image-acquisition",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/AIToolStack/blob/main/backend/services/mqtt_service.py",
+     "title": "mqtt_service",
+     "type": "github",
+     "product": "AI-ToolStack"
+    }
+   ],
+   "answer": "**结论**\n可以换 AT&T SIM 卡，但根据已解决案例，**不需要换卡**——在现有卡上修改 APN 即可。[4]\n\n**原因**\n当前日志显示设备驻留在 AT&T 网络（310,410），但 APN 仍为 Verizon 专用的 `PODSYSTE.VZWENTP`，导致注册被拒（CEREG state=3）。[1] 同一案例中，客户将 APN 从 `PODSYSTE.VZWENTP` 改为 `data641003` 后，5 个启动周期全部注册成功（CEREG state=1），上传恢复正常。[4]\n\n**操作建议**\n在 Web UI 的 Network > Cellular Settings 中将 APN 改为 `data641003`，然后重启设备验证。[4] 若改后仍无法注册，再考虑更换 AT&T 兼容 SIM 或联系运营商确认套餐状态。[2][6]",
+   "declined": null,
+   "done": {
+    "conversation_id": "f5cda494-ab54-41e6-a968-8245429fba0e"
+   },
+   "conversation_id": "f5cda494-ab54-41e6-a968-8245429fba0e",
+   "error": null,
+   "wall_s": 23.5,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "那我换一张 AT&T 的 SIM 卡能解决吗?还是要在现有卡上改什么设置?"
+  }
+ ],
+ "upload": {
+  "id": "059d3692-1f43-4f1b-a620-cdf963947936",
+  "filename": "_upl_J02_ne101_device.log"
+ }
+}

@@ -1,0 +1,57 @@
+{
+ "id": "D03",
+ "family": "support",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "support",
+ "product": "NE101",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "非故障问题，属于部署配置指导。客户在使用 AIToolStack 时对 MQTT 配置不熟悉。\n\n**AIToolStack MQTT 架构：**\n- **内置 Broker (Mosquitto)**: Docker 部署时自动运行，默认 MQTT 端口 1883，MQTTS 端口 8883，支持匿名连接\n- **外置 Broker**: 支持在 Web UI (System Settings → External Broker) 中添加第三方 MQTT broker\n\n**配置要点：**\n- 所有 MQTT 设置可通过 AIToolStack Web UI 的 **System Settings** 页面管理\n- NE101 相机的 MQTT Host 必须填写服务器实际 IP（非 localhost）\n- 相机与服务器必须在同一网络 | 1. 向客户提供 AIToolStack MQTT 配置指导（内置/外置 Broker 两种方式）\n2. 引导客户通过 Web UI System Settings 配置 MQTT\n3. 如客户仍有困难，安排远程会议协助",
+  "expected_behavior": "answered",
+  "source_file": "2026-04/NE101-AIToolStack-Docker-MQTT连接指导.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Services/System/system_service.c",
+     "title": "system_service",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/3-application-guide/2-wifihalow-solution.md",
+     "title": "2-wifihalow-solution",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/AIToolStack/blob/main/backend/services/mqtt_service.py",
+     "title": "mqtt_service",
+     "type": "github",
+     "product": "AI-ToolStack"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/5-neoeyes-ne301-series/3-application-guide/1-ai-tool-stack/1-ai-tool-stack.md",
+     "title": "1-ai-tool-stack",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**问题定位**\n\nNE101 相机连接 AIToolStack Docker 的 MQTT 遇到困难，这属于部署配置指导而非设备故障。AIToolStack 提供两种 Broker 方式，均可通过 Web UI 的 **System Settings** 管理。[1]\n\n**配置步骤**\n\n先确认 AIToolStack 侧 Broker：\n\n- **内置 Broker（Mosquitto）**：Docker 部署时自动运行，默认 MQTT 端口 1883、MQTTS 端口 8883，支持匿名连接，无需额外设置。[9]\n\n- **外置 Broker**：如果使用自己的 Broker，在 **System Settings → External Broker → Add Broker** 中填入地址、端口和凭据，点 **Test Connection** 验证后再保存。[9]\n\n然后在 NE101 相机 Web 界面配置 MQTT，与 AIToolStack Broker 对齐：\n\n- **Host**：必须填服务器实际 IP，不能填 localhost。[1]\n\n- **Port**：1883（MQTT）或 8883（MQTTS）。[9]\n\n- 相机与服务器必须在**同一网络**。[1]\n\n配置完成后，相机图片会自动出现在 AIToolStack 中。[9]\n\n**后续安排**\n\n如果客户按以上步骤仍无法连通，再安排远程会议协助。建议先让客户在 AIToolStack Web UI 确认 MQTT 信息，并核对相机 Host/Port 与网络连通性。[1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "dd402c62-b611-48cb-8fd7-d04f3656af5b"
+   },
+   "conversation_id": "dd402c62-b611-48cb-8fd7-d04f3656af5b",
+   "error": null,
+   "wall_s": 18.1,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户已将 NE101 相机设置完成，但在将相机与 AIToolStack Docker 平台通过 MQTT 连接时遇到困难。客户请求周一上午远程会议协助。"
+  }
+ ],
+ "upload": null
+}

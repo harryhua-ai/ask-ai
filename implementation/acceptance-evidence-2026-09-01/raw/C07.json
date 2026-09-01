@@ -1,0 +1,45 @@
+{
+ "id": "C07",
+ "family": "solution",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE503",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "NE503（20 TOPS, Hailo-15H, Docker/containerd, RTSP/MQTT）",
+  "expected_behavior": "answered",
+  "source_file": "Mindy/Micae.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/blog/solar-powered-edge-ai-cameras-remote-monitoring/",
+     "title": "Solar-Powered Edge AI Cameras",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/people-counting-occupancy-dwell-time/",
+     "title": "People Counting, Occupancy, Dwell Time in Retail · Blog",
+     "type": "web_crawl",
+     "product": "website"
+    }
+   ],
+   "answer": "**推荐方案**\n\n对于 8+ 摄像头同步分析，推荐本地边缘 AI 盒子方案，对应 CamThink NG4500。该设备基于 NVIDIA Jetson Orin Nano 或 NX，支持 JetPack、TensorRT、DeepStream 工作流，适用于多流视觉应用。部署时应重点验证 RTSP 稳定性、解码负载和聚合算力。[3]\n\n**目标检测与 ALPR**\n\nNG4500 的 DeepStream 流水线可在同一平台上聚合多路视频并运行检测、跟踪等模型。资料未直接列出 NG4500 的预置 ALPR 应用；若采用摄像头端能力，NE503 可提供容器化 LPR 模型（tiny_yolov4 → lprnet）和带 LPR 的 vehicle-detection 应用，但单设备仅覆盖单路场景，不适合 8 路汇聚分析。[1][3]\n\n**People counting**\n\nNE503 适合新建固定站点的持续计数、占用和驻留统计，NE301 适合单点轻量计数。若 8+ 路摄像头需统一处理，应采用 NG4500 实现跨摄像头计数逻辑，避免逐台设备各自统计造成重复或漏计。[3]",
+   "declined": null,
+   "done": {
+    "conversation_id": "1cc34043-b5a6-4215-8f87-4814c5a0c25a"
+   },
+   "conversation_id": "1cc34043-b5a6-4215-8f87-4814c5a0c25a",
+   "error": null,
+   "wall_s": 34.2,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "关于 8+ 摄像头同步分析，object detection / ALPR / people counting 的产品咨询，推荐什么方案？"
+  }
+ ],
+ "upload": null
+}

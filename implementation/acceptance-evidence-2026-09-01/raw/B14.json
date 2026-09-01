@@ -1,0 +1,53 @@
+{
+ "id": "B14",
+ "family": "product",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE101",
+ "note": "H 双探:KB 可能不足",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/2-neoeyes-ne101-series/2-ne100-mb01-development-board/2-software-guide/2-example-uvc.md",
+     "title": "2-example-uvc",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/0-neomind/developer-guide/case-studies/4-onvif-bridge.md",
+     "title": "4-onvif-bridge",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/0-neomind/developer-guide/case-studies/7-ne101-camera-component/1-background.md",
+     "title": "1-background",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/0-neomind/developer-guide/case-studies/3-yolo-video-v2.md",
+     "title": "3-yolo-video-v2",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**Direct Answer**\n\nThe documentation contains conflicting statements, so ONVIF support on NE101 is **partial at best, not a full streaming solution**. One internal analysis explicitly states NE101 does not support ONVIF and RTSP, while the onvif-bridge case study shows NE101 v1.x passing some ONVIF operations. [2][3]\n\n**Evidence from Documents**\n\n- A product-matching analysis for a solar site camera requirement states CamThink NE301/NE101 **do not support ONVIF and RTSP**. [2]\n- Conversely, the onvif-bridge test matrix lists NeoEyes NE101 v1.x as **Pass** for `discover`, `get_device_info`, and `get_stream_uri` (PTZ marked N/A). [3][4]\n- Another case study states NeoEyes NE101/NE301 hardware devices **partially support the ONVIF protocol stack**, and onvif-bridge can serve as a universal integration path for them. [5]\n\n**Conclusion**\n\nThe retrieved sources are inconsistent. NE101 likely has partial ONVIF support — sufficient for discovery, device info, and stream URI retrieval via onvif-bridge — but a separate internal document says ONVIF and RTSP are not supported. For video streaming specifically, you should verify with the latest official NE101 specification, as the docs do not clearly confirm full ONVIF streaming capability. [2][3][5]",
+   "declined": null,
+   "done": {
+    "conversation_id": "ca795e3c-503b-456c-b0ec-ea6b16bba0f5"
+   },
+   "conversation_id": "ca795e3c-503b-456c-b0ec-ea6b16bba0f5",
+   "error": null,
+   "wall_s": 16.1,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "Does NE101 support ONVIF protocol for video streaming"
+  }
+ ],
+ "upload": null
+}

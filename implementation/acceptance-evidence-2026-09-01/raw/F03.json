@@ -1,0 +1,58 @@
+{
+ "id": "F03",
+ "family": "multi_turn",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE101",
+ "note": "",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "**推荐方案**\n\n选用 NE101 WiFi 版。NE101 不支持 LoRaWAN，通讯选项为 WiFi / Cat-1 / HaLow；该客户场景多栋建筑邻近且 WiFi 可行，因此 WiFi 版优先级最高 [1]。NE101 在仪表抄表场景中承担\"定时拍照 → 自动上传 → OCR 读数\"的链路，且客户已有自己的 AI 读表方案，NE101 只需输出照片即可 [1][2]。\n\n**镜头与补充**\n\n机械水表表盘刻度小，镜头需选择小 FOV（视场角），不能使用电表屏幕常用的广角方案 [1]。若现场存在 WiFi 死角，可用 Cat-1 蜂窝版补盲 [1]。\n\n**场景参考**\n\n如果水表用于消防水管校准等需要本地控制器触发拍照的场景，NE301（PoE 版）可通过 HTTP REST API `POST /api/v1/device/capture` 命令拍摄，网线同时供电和联网 [3]。但常规远程抄表推荐优先采用 NE101 WiFi 方案 [1]。",
+   "declined": null,
+   "done": {
+    "conversation_id": "d3094cb7-4aea-45fb-ad44-a71227fcbdd2"
+   },
+   "conversation_id": "d3094cb7-4aea-45fb-ad44-a71227fcbdd2",
+   "error": null,
+   "wall_s": 18.6,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "推荐一个机械水表抄表的拍照识别方案"
+  },
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "**扩展方案**\n\n针对 250 台表具分布在多栋邻近建筑的场景，优先选用 **NE101 WiFi 版** 作为主要部署方案，因为客户确认 WiFi 可行且多栋楼邻近 [1]。该方案可按建筑分片部署，每栋楼内仪表通过 WiFi 上传照片，客户侧使用已有的 AI 读表方案解析读数 [1]。\n\n**补充覆盖**\n\n对于 WiFi 信号死角，使用 **Cat-1 蜂窝版** 补充覆盖，形成 WiFi 为主、Cat-1 为辅的混合组网 [1]。水表需要在部署前确认比例，水表刻度小需选小 FOV 镜头，电表屏幕大可用广角 [1]。注意 NE101 不支持 LoRaWAN，通讯选项仅 WiFi / Cat-1 / HaLow [1]。",
+   "declined": null,
+   "done": {
+    "conversation_id": "0743f481-82cf-4d09-8675-bab4bd58994d"
+   },
+   "conversation_id": "0743f481-82cf-4d09-8675-bab4bd58994d",
+   "error": null,
+   "wall_s": 13.8,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "如果表具分布在多栋楼、一共大约 250 台,方案要怎么扩展?"
+  },
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "**推荐端侧 OCR**\n\nOCR 识别应在端侧完成，由设备本地直接处理，无需服务端参与。[1][2]\n\nNE301 支持端侧 OCR，照片在设备本地识别后输出 MQTT JSON（含读数、时间戳、置信度），全本地处理。[1] 此模式同样适用于相关产品：在 STM32N6 NPU 上本地运行表盘识别模型，推理结果直接经 MQTT 发送。[2] 服务端只需接收识别后的数值结果。",
+   "declined": null,
+   "done": {
+    "conversation_id": "8cee3e1f-71dd-4016-bdeb-e2630dd14fe4"
+   },
+   "conversation_id": "8cee3e1f-71dd-4016-bdeb-e2630dd14fe4",
+   "error": null,
+   "wall_s": 16.5,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "OCR 识别应该放在哪一层做?端侧还是服务端?"
+  }
+ ],
+ "upload": null
+}

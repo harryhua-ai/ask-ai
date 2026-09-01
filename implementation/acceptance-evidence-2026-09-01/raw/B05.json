@@ -1,0 +1,32 @@
+{
+ "id": "B05",
+ "family": "product",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE101",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "ESP32 和 ESP32-S3 使用完全不同的摄像头接口硬件：ESP32 用 I2S，ESP32-S3 用 LCD_CAM + GDMA。S3 的 JPEG 模式通常需要 PSRAM 存储帧缓冲，而 ESP32 不需要。\n\n**最可能原因:**\n1. **PSRAM 未启用** — ESP32-S3 JPEG 模式需要 PSRAM 帧缓冲，缺少 PSRAM 或未配置 `CONFIG_SPIRAM=y` 会导致 DMA 数据损坏\n2. **数据线映射错误** — 模组输出 D2-D9，客户可能误以为 D0-D7 导致 pin mapping 不匹配\n3 | 1. 启用 PSRAM（CONFIG_SPIRAM=y），设置 fb_location 为 PSRAM\n2. 检查数据线映射：pin_d0→D2, pin_d1→D3, ..., pin_d7→D9\n3. 降低 XCLK 频率至 8-16MHz\n4. 杜邦线长度控制在 5cm 以内",
+  "expected_behavior": "answered",
+  "source_file": "2026-05/OV5640模组-ESP32S3图像绿线.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "**主要结论**\n软件/配置问题,非模组硬件缺陷。同一模组在 ESP32 上图像正常,说明模组本身没问题;ESP32-S3 与 ESP32 的摄像头接口硬件完全不同(ESP32 用 I2S,ESP32-S3 用 LCD_CAM + GDMA),S3 的 JPEG 模式通常需要 PSRAM 存储帧缓冲,缺少或未启用会导致 DMA 数据损坏,表现为绿线。[1][2][4]\n\n**排查优先级**\n按以下顺序逐一排查:\n\n1. **PSRAM 配置** — 确认 ESP32-S3 模块有 PSRAM,且 sdkconfig 中已启用 `CONFIG_SPIRAM=y`,并将 `fb_location` 设为 `CAMERA_FB_IN_PSRAM`,`fb_count` 设为 2。[1][2][3]\n2. **数据线映射** — 该模组 8-bit DVP 模式输出 D2-D9(非 D0-D7)。`camera_config_t` 中 `pin_d0` 到 `pin_d7` 应依次接到模组 D2 到 D9(24-pin 引脚:D2=19, D3=21, D4=22, D5=20, D6=18, D7=16, D8=14, D9=12)。[1][2]\n3. **XCLK 频率** — 建议 8-16MHz,20MHz 可能过高。[1][2] 若以上配置均正常仍出问题,可将 XCLK 降至 5MHz(已知可用配置:`xclk_freq_hz = 5000000`, `pixel_format = PIXFORMAT_JPEG`,此时 PCLK = 3.125MHz),并确保杜邦线长度 <5cm。[2][3]\n\n**结论**\n这是一个信号完整性和配置问题,而非传感器缺陷。优先排查 PSRAM 是否启用和 `fb_location` 是否指向 PSRAM,其次检查数据线映射是否按 D2-D9 接线,最后可尝试降低 XCLK 至 8-16MHz 甚至 5MHz。若问题持续,可检查 sdkconfig 是否与上述配置一致。[2][3][4]",
+   "declined": null,
+   "done": {
+    "conversation_id": "f0df672c-3e4b-4e1d-a468-7829f7eeaf02"
+   },
+   "conversation_id": "f0df672c-3e4b-4e1d-a468-7829f7eeaf02",
+   "error": null,
+   "wall_s": 13.6,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户 Richard Pedretti（INVENTA Nuove Soluzioni Tecnologiche srl，意大利）购买 OV5640 摄像头模组，使用自研 ESP32-S3 硬件集成时出现图像绿线。同一模组在 ESP32 上图像正常。"
+  }
+ ],
+ "upload": null
+}

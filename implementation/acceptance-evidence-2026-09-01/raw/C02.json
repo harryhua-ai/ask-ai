@@ -1,0 +1,39 @@
+{
+ "id": "C02",
+ "family": "solution",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "| 日期 | 类型 | 摘要 |\n|------|------|------|\n| 2026-04-07 | 初步接触 | Dave 首次回复，确认 PIR/低功耗/Cat-1 支持 |\n| 2026-04-09 | 需求澄清 | 1 Master + 2 Slave 架构，6 大类技术问题 |\n| 2026-04-20 | 深度对齐 | 完整系统设计 + 传感器/夜视/供电/PIR 问题，请求阶梯定价 |",
+  "expected_behavior": "answered",
+  "source_file": "Harry/Maloric.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/3-hardware-dev-resources/22-solar-power-solution.md",
+     "title": "22-solar-power-solution",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**方案推荐**\n\n推荐 **NE301 标准板 + 双镜头 + 双 PIR** 方案，可完整覆盖 AeroGuard 的 270° 覆盖、太阳能供电、4G 上传三大核心需求，无需定制 PCB。NE301 平台已在实际项目中验证了事件抓拍（PIR/按钮/定时触发）、MQTT 远程拉流、RTMP 直播、端侧 YOLOv8 人/车检测等完整软件栈 [2][6]。\n\n双镜头方案基于 STM32N6 DCMIPP 双 VC + MIPI 多路复用器 + 双 I2C，可行性已确认 [2][9]。2026-07-21 更新的结论是：标准 NE301 板 + 2 camera + 2 PIR 即可满足需求——主 PIR 使用 4-pin 专用座（NP624M-F，全参数控制），副 PIR 接入 Alarm 输入接口（支持 2-pin 非智能 PIR），`IO_TRIGGER_MAX = 2` 两个通道独立不冲突，Web UI 可分别配置 [6]。\n\n**4G 与太阳能供电**\n\n4G 走 4G-over-USB 路径：J15 OTG2 接口已布线，SIM7672G（Cat-1 bis，带 GNSS）为新选型，数据链路已验证 [4][9]。\n\n太阳能采用 Solar SKU 参考设计，集成 MPPT 充电和 BMS，通过螺钉固定的 USB-C 接口取电，无需自研电源板 [10]。10W 光伏板日均充电 4200–7000 mAh，远高于设备最大功耗 637 mAh/天，能量正循环、免维护 [7]。功耗预算方面，单次事件约 48.2 mAh，10 次事件/天时太阳能余量约 10 倍，50 次事件/天时约 2 倍（偏紧） [10]。\n\n**待确认与建议**\n\n- 270° 检测覆盖（宽角 PIR 或 mmWave 雷达选型）和夜视（IR-cut + 红外补光，或星光大光圈传感器）仍待硬件团队评估；传感器子板（ABP2 + L76K GPS + 防拆）和电量计为新增项 [9]。\n- 建议在锁定定制范围前先做现场 POC，验证真实事件模式、覆盖空白和上传吞吐量，再决定是否推进定制设计 [3]。",
+   "declined": null,
+   "done": {
+    "conversation_id": "c50558c1-3483-484c-abdc-4968387a95b4"
+   },
+   "conversation_id": "c50558c1-3483-484c-abdc-4968387a95b4",
+   "error": null,
+   "wall_s": 31.6,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "关于 AeroGuard — 270° 双镜头 AI 安防相机，太阳能供电，4G 蜂窝上传 的产品咨询，推荐什么方案？"
+  }
+ ],
+ "upload": null
+}

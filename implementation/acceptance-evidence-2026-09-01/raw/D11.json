@@ -1,0 +1,57 @@
+{
+ "id": "D11",
+ "family": "support",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "support",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "NE301 使用 A/B 双槽位启动机制（`FSBL/Core/Src/boot.c:115` — `check_and_select_boot_slot()`）。固件升级损坏 Active App 槽位时，FSBL 应自动切到备用槽。\n\n三种可能情况：\n\n1. **App 镜像损坏**（最可能）：A/B 自动 failover → power-cycle 即可恢复\n2. **Config 分区损坏**：A/B 切槽成功但 WiFi/web 不可用 → SWD 重刷恢复\n3",
+  "expected_behavior": "answered",
+  "source_file": "2026-07/NE301-Hemant-Shelar-固件升级变砖恢复.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/AIToolStack/blob/main/backend/utils/ne301_update.py",
+     "title": "ne301_update",
+     "type": "github",
+     "product": "AI-ToolStack"
+    },
+    {
+     "url": "https://github.com/camthink-ai/AIToolStack/blob/main/backend/utils/ne301_export.py",
+     "title": "ne301_export",
+     "type": "github",
+     "product": "AI-ToolStack"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/5-neoeyes-ne301-series/3-application-guide/0-model-training-and-deployment/0-model-training-and-deployment.md",
+     "title": "0-model-training-and-deployment",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/AIToolStack/blob/main/backend/api/routes.py",
+     "title": "routes",
+     "type": "github",
+     "product": "AI-ToolStack"
+    }
+   ],
+   "answer": "**问题定位**\nNE301 使用 A/B 双槽位启动机制，固件升级损坏 Active App 槽位时，FSBL 会自动切换到备用槽。[1] 三种可能：App 镜像损坏（最常见，断电重启即可恢复）、Config 分区损坏（切槽成功但 WiFi/web 不可用，需 SWD 重刷）、FSBL 损坏（完全无电/无 LED，需 SWD 重刷 FSBL+App）。[1]\n\n**排查步骤**\n1. 完全断开电源 30 秒，再重新上电，观察是否有 LED 灯（闪烁/常亮/完全不亮），大约 20 秒后 WiFi AP 是否出现。[7]\n2. 需确认设备变体（WiFi/PoE/Cat-1）、刷写的固件文件名及升级方式（如 Web UI OTA），用于判断是 App 级还是 FSBL 级问题。[7]\n3. 如果设备能启动但无 WiFi/web，说明 A/B 切换成功但 OTA 可能损坏了 config 分区，可恢复；如果完全无反应，则可能是电源或 FSBL 损坏。[7]\n\n**SWD 恢复方法**\n1. 将 DIP #2 拨到 ON，SWD 路由到 N6，DEBUG LED 应保持常亮。[7]\n2. 用 ST-Link 连接 4-pin DEBUG 接口（Pin1=VCC_IN, Pin2=SWDIO, Pin3=SWCLK, Pin4=GND）。[7]\n3. 使用 STM32CubeProgrammer v2.19.0（禁用 v2.22.0，该版本存在已知外部 flash 擦除问题）。[7]\n4. 依次刷写 FSBL（0x70000000）→ App（0x70100000）。[7]\n5. DIP #2 拨回 OFF，重新上电。[7]",
+   "declined": null,
+   "done": {
+    "conversation_id": "d8750467-1bb0-44bf-8349-8ba601a12fc3"
+   },
+   "conversation_id": "d8750467-1bb0-44bf-8349-8ba601a12fc3",
+   "error": null,
+   "wall_s": 16.0,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户收到 Jade 的 NE301 测试跟进邮件后回复：尝试固件升级后设备完全丢失，无法开机。在官方社交渠道发帖求助无回应，对售后支持表示担忧。"
+  }
+ ],
+ "upload": null
+}

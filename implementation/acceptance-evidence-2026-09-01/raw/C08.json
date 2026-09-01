@@ -1,0 +1,32 @@
+{
+ "id": "C08",
+ "family": "solution",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE101",
+ "note": "G-深查引用",
+ "bank_ground_truth": {
+  "expected_answer": "泰国 IoT 方案集成商（Sigfox/IoT 背景），帮终端客户部署水表远程抄表方案。",
+  "expected_behavior": "answered",
+  "source_file": "Mindy/ThingsOnNet.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "**推荐方案**\n\n推荐 **NE101（WiFi 版，可选 Cat-1 蜂窝版）**。该型号是电池供电、蜂窝联网的拍摄终端，支持定时拍照并通过 MQTT/HTTP 将图像回传到服务器，后端 OCR 由服务器完成。[7][9] 在 Invinets 250 台水电表抄表案例中，客户已有 OCR 方案、仅需相机出图，最终推荐的就是 NE101 WiFi 版。[5]\n\n**部署与回传**\n\nNE101 支持定时/间隔拍照（SNAP_TIMER），图像可做 Base64 编码后通过 MQTT JSON payload 上报，服务器端 OCR 后再对接业务系统（如 BMS），这一工作流已被确认完全可行。[9] 若现场 WiFi 覆盖不佳，可用 Cat-1 蜂窝版补充信号死角。[5] 如果部署点有固定有线网络且需要更丰富的硬件接口，也可考虑 NE301 PoE，单网线供电传数，MQTT 为主协议。[4]\n\n**选型注意**\n\n水表表盘大小和安装距离决定镜头 FOV：水表刻度小需小 FOV，电表屏幕大可选广角。[5] 旧式或非常规表盘（如 BMeters GMDX）未实测过，建议先发照片确认兼容性。[4]",
+   "declined": null,
+   "done": {
+    "conversation_id": "811843d5-ceaf-4cd4-98fc-04a0946f6ab0"
+   },
+   "conversation_id": "811843d5-ceaf-4cd4-98fc-04a0946f6ab0",
+   "error": null,
+   "wall_s": 32.7,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "关于 水表抄表 — 定时拍照 → MQTT/HTTP 回传 → 后端 OCR 的产品咨询，推荐什么方案？"
+  }
+ ],
+ "upload": null
+}

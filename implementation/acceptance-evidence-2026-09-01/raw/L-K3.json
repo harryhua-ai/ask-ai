@@ -1,0 +1,47 @@
+{
+ "id": "L-K3",
+ "family": "local_compare",
+ "channel": "widget",
+ "target": "local",
+ "expected_intent": null,
+ "product": null,
+ "note": "本地(76b2199,仅官网库)对照 prod(src=B11)",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/blog/edge-ai-camera-outdoor-deployment-guide/",
+     "title": "NE301 Edge AI Camera Outdoor Deploying Guide:  Power, Connectivity, and Fleet Management",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/smart-refrigerator-cold-chain-retail-edge-ai/",
+     "title": "Refrigerator Shelf Monitoring with Edge AI Cameras",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/solar-powered-edge-ai-cameras-remote-monitoring/",
+     "title": "Solar-Powered Edge AI Cameras",
+     "type": "web_crawl",
+     "product": "website"
+    }
+   ],
+   "answer": "**Operating Temperature Range**\n\nThe NE301 has an operating temperature range of **−20°C to +50°C**, rated for extreme outdoor environments. [1] [2]\n\nThe IP67-rated enclosure handles dust and sustained water immersion (1 m for 30 minutes), supporting deployment across winter lows down to −20°C and summer highs up to +50°C. [1] [6]\n\n**Cold-Climate Note**\n\nAt −20°C, effective alkaline AA battery capacity drops approximately 25–35% compared to room temperature, so lithium AA cells are recommended for cold-climate deployments, as they retain roughly 85–90% capacity at −20°C. [6]",
+   "declined": null,
+   "done": {
+    "conversation_id": "cc5341f2-43f3-4ba2-82d8-b1c0f2bfeed7"
+   },
+   "conversation_id": "cc5341f2-43f3-4ba2-82d8-b1c0f2bfeed7",
+   "error": null,
+   "wall_s": 8.5,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "What is the operating temperature range of NE301 edge camera"
+  }
+ ],
+ "upload": null
+}

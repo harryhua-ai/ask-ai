@@ -1,0 +1,39 @@
+{
+ "id": "D08",
+ "family": "support",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "support",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "功能咨询。NE301 MQTT 控制命令使用 JSON 格式，关键字段为 `\"cmd\"`。\n\n源码证据: `ne301/Custom/Services/MQTT/mqtt_service.c`\n- 命令解析: line 3660-3750 (`mqtt_service_parse_control_cmd`)\n- Topic 匹配: line 3914 — `strstr(topic, \"down/control\")` 匹配控制 topic\n- 拍照执行: line 3765-3781 (`MQTT_CMD_CAPTURE`) | 发送 JSON 消息 `{\"cmd\":\"capture\"}` 到控制 topic。\n\n可选参数:\n- `params.enable_ai` (bool, 默认 false) — 启用 AI 推理\n- `params.store_to_sd` (bool, 默认 false) — 存储到 SD 卡\n- `params.chunk_size` (int, 默认 0=自动) — 分块大小",
+  "expected_behavior": "answered",
+  "source_file": "2026-06/TelemetrySolutions-BobPotter-NE301-MQTT触发拍照.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/5-neoeyes-ne301-series/3-application-guide/2-mqtt-data-interaction/2-mqtt-data-interaction.md",
+     "title": "2-mqtt-data-interaction",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**触发命令**\n\n向控制 Topic `ne301/2A1EA1/down/control` 发布 JSON 消息 `{\"cmd\":\"capture\"}` 即可触发拍照。NE301 的 MQTT 控制命令使用 JSON 格式，关键字段为 `\"cmd\"`，其中 `MQTT_CMD_CAPTURE` 分支执行拍照。[1]\n\n**可选参数**\n\n拍照命令支持以下可选参数，均非必填：\n\n- `params.enable_ai`（bool，默认 false）— 启用 AI 推理\n- `params.store_to_sd`（bool，默认 false）— 存储到 SD 卡\n- `params.chunk_size`（int，默认 0=自动）— 分块大小\n\n如需在拍照时启用 AI 推理，发送：`{\"cmd\":\"capture\",\"params\":{\"enable_ai\":true}}`。[1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "2d4e9f05-7d28-4d8e-a8c6-4a6ecd1f9be6"
+   },
+   "conversation_id": "2d4e9f05-7d28-4d8e-a8c6-4a6ecd1f9be6",
+   "error": null,
+   "wall_s": 16.1,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户已能通过 MQTT 接收 NE301 的 report 并解码图片，但不知道发送什么消息来触发拍照。 - Topic: `ne301/2A1EA1/down/control` - 客户设备地址: 2A1EA1"
+  }
+ ],
+ "upload": null
+}

@@ -1,0 +1,62 @@
+{
+ "id": "J04",
+ "family": "attachment",
+ "channel": "widget",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE301",
+ "note": "无关附件污染检查:附件不应把回答带偏",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/5-neoeyes-ne301-series/5-ne301-battery-life.md",
+     "title": "5-ne301-battery-life",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/edge-ai-camera-outdoor-deployment-guide/",
+     "title": "NE301 Edge AI Camera Outdoor Deploying Guide:  Power, Connectivity, and Fleet Management",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/3-hardware-dev-resources/20-battery-recommendation.md",
+     "title": "20-battery-recommendation",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/product/neoeyes-301/",
+     "title": "NeoEyes NE301: Edge Vision AI Camera | CamThink",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/smart-refrigerator-cold-chain-retail-edge-ai/",
+     "title": "Refrigerator Shelf Monitoring with Edge AI Cameras",
+     "type": "web_crawl",
+     "product": "website"
+    }
+   ],
+   "answer": "**工作温度范围**\n\nNE301 的工作温度范围在不同官方资料中存在不一致表述：\n\n- 部分资料标注为 **-20°C ~ 60°C**（工业级）[1][4]\n- 部分资料标注为 **-20°C ~ +50°C**[2][3][5][7]\n\n需以具体产品规格确认，但多数官网及产品页采用 **-20°C ~ +50°C**。若用于严寒地区，碱性电池性能会显著下降，建议改用锂铁电池（Li-FeS₂，工作温度 -40°C ~ 60°C）[4]。",
+   "declined": null,
+   "done": {
+    "conversation_id": "33f1cb5e-db5f-488a-84a8-5808153333fb"
+   },
+   "conversation_id": "33f1cb5e-db5f-488a-84a8-5808153333fb",
+   "error": null,
+   "wall_s": 13.5,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "NE301 的工作温度范围是多少?"
+  }
+ ],
+ "upload": {
+  "id": "da21f662-1f52-44e6-8ed2-0f6c121d5afa",
+  "filename": "_upl_J04_recipe.txt"
+ }
+}

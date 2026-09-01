@@ -1,0 +1,59 @@
+{
+ "id": "A08",
+ "family": "commercial",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "commercial",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/product/neoeyes-301/",
+     "title": "NeoEyes NE301: Edge Vision AI Camera | CamThink",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/store/ne301/",
+     "title": "NeoEyes NE301 Wireless Edge AI Camera",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/solar-powered-edge-ai-cameras-remote-monitoring/",
+     "title": "Solar-Powered Edge AI Cameras",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/store/ne301-sensor-expansion-kit/",
+     "title": "Multi-Sensor Expansion Development Kit for NE301",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    },
+    {
+     "url": "https://www.camthink.ai/store/multi-sensor-expansion-board/",
+     "title": "Sensor Expansion Board for NE101 and NE301",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    }
+   ],
+   "answer": "**Price**\n\nNE301 is available in three variants with different pricing: NE301 Wi-Fi at **$199.90**, NE301 LTE Cat.1 at **$251.00**, and NE301 PoE at **$258.00** [2][8]. The overall price range across variants is **$199.90–$258.00** [5]. Volume pricing is available for larger quantities [1].\n\n**How to Order**\n\nYou can purchase NE301 directly online from the CamThink store for the Wi-Fi and PoE versions [4][8]. The LTE Cat.1 version is also listed on the product page [2]. For volume orders, custom configurations, or the USB-C version (required for solar power kits), contact **sales@camthink.ai** [4][10]. A tailored quote can be arranged based on your target use cases [1].\n\n**Shipping**\n\nThe available materials do not specify standard shipping options or delivery times. The only shipping-related note is that orders containing the solar power kit may require a longer delivery time than standard orders [10]. For shipping details, contact the CamThink store.",
+   "declined": null,
+   "done": {
+    "conversation_id": "b79b1de7-9c4e-44b9-ab47-c58321429032"
+   },
+   "conversation_id": "b79b1de7-9c4e-44b9-ab47-c58321429032",
+   "error": null,
+   "wall_s": 15.8,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "What is the price of NE301, how to order and shipping options"
+  }
+ ],
+ "upload": null
+}

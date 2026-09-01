@@ -1,0 +1,28 @@
+{
+ "id": "K6-admin",
+ "family": "equiv",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": null,
+ "product": null,
+ "note": "等价性对照,同题双通道(src=C08)",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "**方案推荐**\n若核心需求是\"定时拍照 → MQTT/HTTP 回传 → 后端 OCR\",推荐 **NE101**,该架构已在 Siemens 工业仪表场景验证可行:NE101 定时采集图像,通过 MQTT(Base64)发送到服务器 OCR,再对接 BMS [10]。NE101 可选 WiFi / Cat-1 / HaLow,不支持 LoRaWAN [6]。若现场需要端侧直接出 OCR 结果,可选 **NE301 PoE**:本地运行 OCR 模型,通过 MQTT JSON 直发客户 broker,无云中间层 [4][9];NE301 也支持 HTTP/MQTT 远程触发拍照并返回 JPEG+JSON 元数据 [2]。\n\n**通信与接口**\n主协议为 MQTT(JSON,可含 Base64 图像),HTTP/Webhook/RTMP 可选 [5][10]。16-pin 扩展口提供 RS485/UART/I2C/SPI 硬件接口,但这是硬件接口而非 Modbus 或 M-Bus,数据走网络传输 [2][5]。NE301 PoE 支持单网线供电和传输,USB Type-C 有线供电也可用 [5]。\n\n**采集频率与 BACnet 注意**\n定时采集最低间隔 1 分钟,不支持 5 秒级高频;如需按需拍摄可用 MQTT Remote Trigger [9]。批量 burst 拍照(如 4 张 @5s)可通过固件升级支持 [10]。NE101/NE301 不原生支持 BACnet;若下游是 BMS,优先让客户侧控制器/网关做 MQTT→BACnet 转换,仅当客户无转换能力时才考虑 NG4500 协议桥 [1][4]。",
+   "declined": null,
+   "done": {
+    "conversation_id": "0bb18950-4823-4aa3-8f2e-3037e3b638cf"
+   },
+   "conversation_id": "0bb18950-4823-4aa3-8f2e-3037e3b638cf",
+   "error": null,
+   "wall_s": 40.0,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "关于 水表抄表 — 定时拍照 → MQTT/HTTP 回传 → 后端 OCR 的产品咨询，推荐什么方案？"
+  }
+ ],
+ "upload": null
+}

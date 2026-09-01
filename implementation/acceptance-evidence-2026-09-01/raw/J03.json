@@ -1,0 +1,38 @@
+{
+ "id": "J03",
+ "family": "attachment",
+ "channel": "widget",
+ "target": "prod",
+ "expected_intent": "support",
+ "product": "NG4500",
+ "note": "",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/1-neoedge-ng4500-series/1-quick-start.md",
+     "title": "1-quick-start",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**原因分析**\n\n日志显示 U-Boot 从 eMMC 加载内核后,无法挂载 rootfs 分区 `mmcblk0p2`,EXT4 报 `unable to read superblock`,随后内核 panic 并重启循环。这表示 rootfs 损坏/不完整,或启动配置存在 UUID 错配,并非 Recovery 模式误启动——Recovery 模式日志会出现 \"Attempting Recovery Boot\",而你的日志里没有。[1][2]\n\n**恢复办法**\n\n需要重烧系统镜像。请先确认设备型号,看机身底部标签,应为 NG4510、NG4511、NG4520 或 NG4521 之一,然后向技术支持索取对应型号的镜像链接和烧录步骤。烧录需要一台 Ubuntu PC(20.04 或 22.04)和一根 Micro USB 线。[2]\n\n**补充提醒**\n\n重烧前可确认 SW1 拨码开关 #1 处于 OFF 位置,确保设备处于正常启动模式,排除该开关导致的启动异常干扰。[1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "c178bb03-819e-477a-90c3-8038be364521"
+   },
+   "conversation_id": "c178bb03-819e-477a-90c3-8038be364521",
+   "error": null,
+   "wall_s": 23.9,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "NG4500 上电后起不来,一直重启循环。串口日志在附件里,帮我分析下原因和恢复办法。"
+  }
+ ],
+ "upload": {
+  "id": "a77a2dbc-9989-46f8-950c-185457c97f39",
+  "filename": "_upl_J03_ng4500_boot.log"
+ }
+}

@@ -1,0 +1,63 @@
+{
+ "id": "E01",
+ "family": "troubleshooting",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": null,
+ "product": null,
+ "note": "根因底稿:SIM(Verizon MVNO)与驻留网(AT&T)不匹配,CEREG=3 拒绝注册",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/1-quick-start.md",
+     "title": "1-quick-start",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Services/System/system_service.c",
+     "title": "system_service",
+     "type": "github",
+     "product": "ne301"
+    }
+   ],
+   "answer": "**根因**\n设备硬件和抓拍功能正常，图片拍摄成功，但蜂窝模组无法完成网络注册，导致图片无法上传。[1]\n`AT+CEREG?` 在全部 5 个启动周期中持续返回 `+CEREG: 0,3`（Registration Denied）；`+QENG` 显示 `LIMSRV`（有限服务），驻留在 AT&T 网络（MCC 310, MNC 410）。[1][7]\nSIM 卡是 Verizon MVNO（APN: `PODSYSTE.VZWENTP`），但设备所在位置无 Verizon 信号，SIM 未授权在 AT&T 网络上注册，注册请求被 AT&T 拒绝。[1][7]\nSIM 检测正常（`+CPIN: READY`），信号良好（RSSI=28，RSRP -82~-90 dBm），问题出在 SIM 与驻留网络不匹配，而非设备故障。[1][7]\n\n**排查建议**\n1. **联系运营商**：使用 ICCID `89011702274582137454` 确认数据套餐是否有效、未暂停。[1][7]\n2. **确认现场覆盖**：若部署地仅 AT&T 信号，当前 Verizon SIM 无法工作，需更换支持多运营商或 AT&T 兼容的 SIM。[1][7]\n\n**备注**\n资料显示，客户修改 APN 后 5 个启动周期 `CEREG state=1`，图片正常上传，进一步印证上述判定。[7]",
+   "declined": null,
+   "done": {
+    "conversation_id": "595a3c47-16ea-499b-ae2c-b4ff6d4b3781"
+   },
+   "conversation_id": "595a3c47-16ea-499b-ae2c-b4ff6d4b3781",
+   "error": null,
+   "wall_s": 15.7,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户反馈 NE101 设备在执行恢复出厂设置后，定时抓拍功能正常工作（图片拍摄成功），但所有抓拍图片都无法上传到云端。设备通过定时唤醒正常拍摄，但每次都因蜂窝网络连接失败而将图片保存到本地 Flash。"
+  },
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/1-quick-start.md",
+     "title": "1-quick-start",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**当前照片能否补传**\n\n当前 `AT+CEREG?` 返回 `+CEREG: 0,3`（Registration Denied），设备无法完成蜂窝网络注册，PPP 拨号和 MQTT 连接均无法建立，图片只能保存到本地 Flash。[1][9] 补传机制依赖蜂窝恢复后 MQTT 重连成功并自动回放 Flash 中的历史照片，因此在网络注册修复前，照片不会上传。[2]\n\n**解决建议**\n\n1. **修改 APN 匹配实际网络**：当前 APN `PODSYSTE.VZWENTP` 是 Verizon 专用，与设备驻留的 AT&T 网络不匹配。可尝试将 APN 修改为 `data641003`（资料中同样的故障场景修改后 5 个启动周期全部 CEREG state=1，照片成功上传）。APN 修改位置在 Web UI 的 Network > Cellular Settings。[1][4][8]\n\n2. **确认 SIM 与现场覆盖**：联系运营商确认 ICCID `89011702274582137454` 数据套餐有效且未暂停，并核实部署位置是否有 Verizon 信号覆盖。若只有 AT&T 信号，当前 Verizon SIM 会被拒绝注册，需更换 AT&T 兼容或多运营商 SIM。[1][4][8]\n\n**其他说明**\n\n设备已成功拍摄并保存图片，说明摄像头和本地存储正常，问题集中在蜂窝注册环节，非硬件故障。修复 APN 或更换 SIM 后，已存的本地图片会在网络恢复时自动补传。[1][2][8]",
+   "declined": null,
+   "done": {
+    "conversation_id": "99d77794-0f1a-4809-b9bb-7445e8795779"
+   },
+   "conversation_id": "99d77794-0f1a-4809-b9bb-7445e8795779",
+   "error": null,
+   "wall_s": 30.5,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "补充信息:我看了设备日志,AT+CEREG? 一直返回 +CEREG: 0,3。SIM 卡是 Verizon 的(APN: PODSYSTE.VZWENTP),但部署位置附近好像只有 AT&T 的基站信号。照片还能补传吗?这该怎么解决?"
+  }
+ ],
+ "upload": null
+}

@@ -1,0 +1,39 @@
+{
+ "id": "C04",
+ "family": "solution",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "NE301 Cat-1（AI 检测）+ PIR 触发\n- 对接平台: EarthRanger（野生动物保护管理平台），通过 Gundi 中间件\n- 切入点: 真实场地验证 + EarthRanger 集成 → 欧洲环保市场背书",
+  "expected_behavior": "answered",
+  "source_file": "Mindy/Anton-Asturias.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/blog/ai-species-identification-camera-trap-images/",
+     "title": "AI Species Identification for Camera Trap Images: Edge AI Workflow · Blog",
+     "type": "web_crawl",
+     "product": "website"
+    }
+   ],
+   "answer": "**推荐方案**\n推荐 **NE301 Cat-1 + PIR** 方案，满足\"AI 识别 + 蜂窝上传\"的野生动物监测场景。NE301 搭载 0.6 TOPS NPU，可在设备端完成边缘 AI 动物检测（物种分类 + 置信度），PIR 唤醒、6.1 μA 超低休眠功耗，支持 SD 卡存储，IP67 防护、-20~50°C 工作温度，适合野外长期部署。[2]\n\n**功能与部署**\n通过 Cat-1 蜂窝网络上传事件数据。参考 Asturias 合作方案，设备可经 HTTP POST 或 MQTT 将数据推送至中间件服务器，再对接 EarthRanger 等管理平台；目标动物覆盖鹿、狐狸、狼、野猪，野外实测由客户自行完成，无需 CamThink 提供平台。[1]\n\n**模型与识别建议**\nAI 识别按管线分层：设备端先做动物出现过滤和检测，再进行物种分类，低置信度或未知结果进入人工复核队列；分类结果需包含检测类别、置信度、预测物种、模型版本和复核状态，避免把模型输出直接当作最终观测记录。[3]\n\n注意：若部署区域无蜂窝覆盖，NE301 无原生 LoRaWAN 支持，需通过 16-pin 扩展连接器外接 LoRaWAN 模块做协议桥接，并定制固件。[2]",
+   "declined": null,
+   "done": {
+    "conversation_id": "67eb6056-2a1f-4959-a162-4494f06cd905"
+   },
+   "conversation_id": "67eb6056-2a1f-4959-a162-4494f06cd905",
+   "error": null,
+   "wall_s": 15.1,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "关于 野生动物智能监测，AI 识别 + 蜂窝上传 的产品咨询，推荐什么方案？"
+  }
+ ],
+ "upload": null
+}

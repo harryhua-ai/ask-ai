@@ -1,0 +1,45 @@
+{
+ "id": "C05",
+ "family": "solution",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE503",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "- NE503: 前端 AI 摄像头，人流统计/区域分析\n- NG4500: 后端边缘 AI 网关，对接现有 IPC 做事件联动",
+  "expected_behavior": "answered",
+  "source_file": "Mindy/Grand-Lisboa-Palace.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/0-neomind/use-cases/4-camera-ocr.md",
+     "title": "4-camera-ocr",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/0-neomind/use-cases/7-deepstream-ng4500.md",
+     "title": "7-deepstream-ng4500",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**推荐方案：以 NE301 为主力**\n客户是酒店集团，NE301 已有针对酒店的告警运营方案，覆盖停车场占用检测、楼宇入口人流统计、后场区域安全（厨房/设备间异常进入）、能耗管理辅助四个典型场景。NE301 具备完整的 Camera→AI→Encode→Stream 视觉管道，可直接承载这些需求。[1][2]\n\n**人流统计与区域入侵配置**\n人流统计选用目标检测模板，将 `processingCategories` 设为 `person`，配合 ROI `count` 统计区域内目标数量。区域入侵告警用 ROI 圈定禁入区，设 `processingRoiAction = filter`，目标进入即触发自动化告警推送。如需进出双向计数或停留时长分析，可参考 NG4500 上的越线计数与停留分析用例。[3][5]\n\n**关于 NE503 与 NG4500**\nNE503 算力达 20 TOPS，但当前定位为安防，且存在供货等待、应用生态不完善、价格较高的风险，暂不建议作为酒店主推。若后续需要更高算力的多路统计或复杂 AI 分析，可考虑 NG4500 系列（DeepStream 方案），两者不冲突，可按客户预算分层引入。[2][4][5]",
+   "declined": null,
+   "done": {
+    "conversation_id": "7e596fff-57e7-4611-adec-17fd186d7995"
+   },
+   "conversation_id": "7e596fff-57e7-4611-adec-17fd186d7995",
+   "error": null,
+   "wall_s": 15.8,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "关于 酒店安防监控、人流统计、AI 视觉分析 的产品咨询，推荐什么方案？"
+  }
+ ],
+ "upload": null
+}

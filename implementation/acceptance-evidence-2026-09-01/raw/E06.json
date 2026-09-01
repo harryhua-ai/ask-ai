@@ -1,0 +1,105 @@
+{
+ "id": "E06",
+ "family": "troubleshooting",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": null,
+ "product": null,
+ "note": "根因底稿:以 bank91 expected_answer 为准(NG4500 启动失败)",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/1-neoedge-ng4500-series/2-ng4500-cb01-development-board/2-software-guide/0-system-flashing-and-initialization.md",
+     "title": "0-system-flashing-and-initialization",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/1-neoedge-ng4500-series/4-FAQs.md",
+     "title": "4-FAQs",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/1-neoedge-ng4500-series/1-quick-start.md",
+     "title": "1-quick-start",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/1-neoedge-ng4500-series/2-ng4500-cb01-development-board/1-hardware-guide/1-hardware-connection.md",
+     "title": "1-hardware-connection",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/.image-upload/test/path-mapping-test-summary.md",
+     "title": "path-mapping-test-summary",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**问题定位**\nNG4500 系列存在一个已知问题:首次启动时可能卡在命令行,提示 `A start job is running for end-user configuration...` ,导致无法进入系统。如果客户的启动日志中出现该提示,可判断为此问题。[5]\n\n**排查建议**\n1. 官方解决方案是在烧录包目录下预先设置用户名和密码,以跳过首次启动的交互式配置步骤。具体执行步骤请参考 FAQ 中对应的 Method 1。[5]\n2. 如果设备完全没有启动迹象,请确认系统镜像已正确烧录。烧录前需将 SW1 拨码开关第 1 位拨至 ON 进入 Recovery 模式,用 Micro USB 连接 Ubuntu 主机,并确认 `lsusb` 输出中存在 ID `0955:7623` 的 NVIDIA Corp 设备;若未出现,请检查 SW1 拨码和 USB 线缆。[1][7]\n3. 若设备已进入系统初始化界面但卡住,请检查首次引导配置是否完成(接受许可协议、设置语言、键盘布局、时区等),同时确认使用原装电源适配器,且 Orin Nano 4/8G 模组的 Power Mode Switch 处于 OFF 状态。[4]\n\n**版本确认**\n如果设备还能执行命令,建议运行 `cat /etc/nv_tegra_release` 确认当前系统版本和设备型号,便于进一步判断是否为已知问题。[2]",
+   "declined": null,
+   "done": {
+    "conversation_id": "26489344-2602-44bb-a5f3-e25d925e7468"
+   },
+   "conversation_id": "26489344-2602-44bb-a5f3-e25d925e7468",
+   "error": null,
+   "wall_s": 30.3,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户通过 WhatsApp 发送 NG4500 启动失败的截图/日志，设备无法正常进入系统。"
+  },
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/lowpower_camera/blob/hw-v1.2/components/halow/morse/mm-iot-sdk/examples/http/src/restfs.c",
+     "title": "restfs",
+     "type": "github",
+     "product": "ne101"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Common/Lib/mongoose/mongoose.c",
+     "title": "mongoose",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Common/Lib/lwip/include/lwip/apps/fs.h",
+     "title": "fs",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_ll_usb.c",
+     "title": "stm32n6xx_ll_usb",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Common/Lib/lwip/apps/http/httpd.c",
+     "title": "httpd",
+     "type": "github",
+     "product": "ne301"
+    }
+   ],
+   "answer": "**问题定位**\n\n该日志表明内核已成功从启动介质加载，但 rootfs 所在分区（mmcblk0p2）的 ext4 超级块无法读取，属于 [4] 中列出的“引导分区数据损坏 — eMMC/NVMe 上的 extlinux.conf 或 rootfs 不可读”场景。突遇断电是典型的文件系统损坏诱因。[4]\n\n**排查建议**\n\n1. 开机按 F11 进入 Boot Manager Menu，确认 NVMe 磁盘是否被列为启动项。若能列出，说明 UEFI 与 SSD 物理连接正常，问题集中在分区数据，应重烧系统；若不能列出，则优先检查 SSD 物理连接是否松动。[4]\n2. 由于你的串口日志中 U-Boot 正常且已加载内核，说明引导链路基本完好，可直接按“能列出 → 引导分区损坏，重烧系统”的路径处理，重新烧录完整系统镜像。[4]\n3. 重烧前如条件允许，可尝试用只读方式挂载该分区备份数据，但不要继续写入，避免进一步损坏。\n\n**结论**\n\n大概率是断电导致 rootfs 文件系统损坏，而非硬件故障；重新烧录系统镜像可恢复。[4]",
+   "declined": null,
+   "done": {
+    "conversation_id": "2bab47bf-e955-4234-b561-4024b3717714"
+   },
+   "conversation_id": "2bab47bf-e955-4234-b561-4024b3717714",
+   "error": null,
+   "wall_s": 20.9,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "补充信息:串口日志显示 U-Boot 正常,加载内核后报 EXT4-fs (mmcblk0p2): unable to read superblock,然后 Kernel panic - not syncing: VFS: Unable to mount root fs。设备是突然断电一次之后就变成这样的。"
+  }
+ ],
+ "upload": null
+}

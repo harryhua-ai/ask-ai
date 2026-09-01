@@ -1,0 +1,59 @@
+{
+ "id": "H03",
+ "family": "unknown",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": null,
+ "note": "",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/NeoMind-DeviceTypes/blob/main/types/index.json",
+     "title": "index",
+     "type": "github",
+     "product": "neomind"
+    },
+    {
+     "url": "https://www.camthink.ai/product/neoeyes-ne503/",
+     "title": "CamThink Launches NeoEyes NE503 Open Edge AI Camera Platform | News",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/news/milesight-propels-vision-ai-transformation-by-announcing-a-new-brand-camthink-expanding-edge-ai-driven-innovations-to-industries-and-communities/",
+     "title": "Milesight Propels Vision AI Transformation by Announcing a New Brand CamThink, Expanding Edge AI-driven Innovations to Industries and Communities | News",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/news/camthink-debuts-event-triggered-camera-and-edge-computing-applications-at-embedded-world-2025/",
+     "title": "CamThink Debuts Event-triggered Camera and Edge Computing Applications at Embedded World 2025 | News",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://github.com/camthink-ai/NeoMind-Extensions/blob/main/extensions/lorawan-bridge/metadata.json",
+     "title": "metadata",
+     "type": "github",
+     "product": "neomind"
+    }
+   ],
+   "answer": "**没有 LoRaWAN 摄像头**\n\n根据现有资料，CamThink 目前没有像 Milesight 传感器那样走 LoRaWAN 协议的摄像头产品。[1]\n\n**现有摄像头规格**\n\nCamThink 的 NE301 Edge AI Camera 和 NE101 Sensing Camera 均未提及 LoRaWAN 支持。NE301 的联网方式为 Wi-Fi 6 / Bluetooth 5.4，可选 LTE Cat-1；NE101 则是低功耗电池供电加按键触发。[1][9]\n\n**LoRaWAN 相关能力**\n\nCamThink 在 LoRaWAN 上的布局仅限于 NeoMind 平台的 lorawan-bridge 扩展，用于连接 ChirpStack/TTN 等网络的传感器，且设备列表中列出的 Milesight 设备均为环境类传感器（如 AM102、GS101、TS101 等），没有摄像头类型。[1][5][10]",
+   "declined": null,
+   "done": {
+    "conversation_id": "ced564db-6e30-4d94-8763-29341a25340e"
+   },
+   "conversation_id": "ced564db-6e30-4d94-8763-29341a25340e",
+   "error": null,
+   "wall_s": 15.7,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "CamThink 有没有像 Milesight 那种走 LoRaWAN 的摄像头产品?"
+  }
+ ],
+ "upload": null
+}

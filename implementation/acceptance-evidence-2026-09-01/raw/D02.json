@@ -1,0 +1,57 @@
+{
+ "id": "D02",
+ "family": "support",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "support",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "转换脚本 `convert_yolo_to_project_zip.py` 没有读取 `household_trash.yaml` 中的真实类别名称，生成了通用的 `class_0`, `class_1` 等名称。\n\n**关键证据:**\n- 原脚本未导入 PyYAML 依赖\n- `extract_class_info()` 函数未接收类别名称参数\n- `convert_yolo_to_project_format()` 未使用真实 class_name\n- **结论**: 脚本 bug，缺少 YAML 类别名称读取逻辑 | 1. 使用修复后的 `convert_yolo_to_project_zip.py` 重新转换\n2. 运行前确认 `household_trash.yaml` 中的类别列表\n3. 验证 `classes.json` 和标注文件中的 class_name 字段",
+  "expected_behavior": "answered",
+  "source_file": "2026-03/NE301-YOLO数据集转换-家庭垃圾分类.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/AIToolStack/blob/main/backend/api/routes.py",
+     "title": "routes",
+     "type": "github",
+     "product": "AI-ToolStack"
+    },
+    {
+     "url": "https://github.com/camthink-ai/AIToolStack/blob/main/backend/utils/dataset_import.py",
+     "title": "dataset_import",
+     "type": "github",
+     "product": "AI-ToolStack"
+    },
+    {
+     "url": "https://github.com/camthink-ai/NeoMind-Extensions/blob/main/patches/usls/src/models/yolo/impl.rs",
+     "title": "impl",
+     "type": "github",
+     "product": "neomind"
+    },
+    {
+     "url": "https://github.com/camthink-ai/AIToolStack/blob/main/backend/utils/yolo_export.py",
+     "title": "yolo_export",
+     "type": "github",
+     "product": "AI-ToolStack"
+    }
+   ],
+   "answer": "**根因分析**\n原始转换脚本存在 bug：未解析 `household_trash.yaml` 中的真实类别名称，而是生成了通用的 `class_0`、`class_1` 等名称。关键证据包括：脚本未导入 PyYAML 依赖、`extract_class_info()` 未接收类别名称参数、`convert_yolo_to_project_format()` 未使用真实 class_name。[1]\n\n**排查与修复建议**\n1. 为转换脚本添加 PyYAML 依赖，并实现读取 YAML 中 `names` 字段的逻辑，该字段可以是 dict（如 `{0: 'banana', 1: 'apple', ...}`）或 list。[2][1]\n2. 将解析出的类别名称列表传入标注转换函数，确保每个 class_id 映射到正确的 class_name，而不是回退到 `class_{id}`。[1][5]\n3. 重新转换后验证 `classes.json` 和标注文件中的 class_name 字段，确认覆盖全部 30 个垃圾类别。[1]\n\n**备选方案**\n如果客户希望直接使用 AIToolStack 的导入功能，可改用其内置的 `YOLOImporter`，它会从 `classes.txt` 或 `names.txt` 中读取类别列表，并支持从 ZIP 文件导入。[3][9] 但需注意该导入器不读取 YAML，需将 YAML 中的类别名称导出为 `classes.txt` 或 `names.txt` 后再导入。[9][7]",
+   "declined": null,
+   "done": {
+    "conversation_id": "363a59da-add2-466b-8619-e365160be5d6"
+   },
+   "conversation_id": "363a59da-add2-466b-8619-e365160be5d6",
+   "error": null,
+   "wall_s": 18.5,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户 Jack 需要将 YOLO 格式的家庭垃圾分类数据集转换为 AI tool stack 的项目 ZIP 格式。原始转换脚本未读取 YAML 中的真实类别名称，导致所有标注的 class_name 字段不正确。"
+  }
+ ],
+ "upload": null
+}

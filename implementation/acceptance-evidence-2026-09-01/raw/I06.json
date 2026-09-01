@@ -1,0 +1,28 @@
+{
+ "id": "I06",
+ "family": "off_topic",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "off_topic",
+ "product": null,
+ "note": "",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "我只能回答与 CamThink 产品相关的问题。",
+   "declined": null,
+   "done": {
+    "conversation_id": "85f93e9a-b869-4f4f-9b20-e3aed6078269"
+   },
+   "conversation_id": null,
+   "error": null,
+   "wall_s": 1.1,
+   "is_reject_text": true,
+   "answered": false,
+   "message": "今天上证指数收盘多少点?"
+  }
+ ],
+ "upload": null
+}

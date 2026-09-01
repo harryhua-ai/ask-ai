@@ -1,0 +1,59 @@
+{
+ "id": "K3-widget",
+ "family": "equiv",
+ "channel": "widget",
+ "target": "prod",
+ "expected_intent": null,
+ "product": null,
+ "note": "等价性对照,同题双通道(src=B11)",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/blog/edge-ai-camera-outdoor-deployment-guide/",
+     "title": "NE301 Edge AI Camera Outdoor Deploying Guide:  Power, Connectivity, and Fleet Management",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/product/neoeyes-301/",
+     "title": "NeoEyes NE301: Edge Vision AI Camera | CamThink",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/smart-refrigerator-cold-chain-retail-edge-ai/",
+     "title": "Refrigerator Shelf Monitoring with Edge AI Cameras",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/3-hardware-dev-resources/20-battery-recommendation.md",
+     "title": "20-battery-recommendation",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/5-neoeyes-ne301-series/0-overview.md",
+     "title": "0-overview",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**Operating Temperature Range**\n\nThe NE301 is rated for **−20°C to +50°C** operation according to the official product page and deployment guides. [1][2][3]\n\n**Note on Discrepancy**\n\nOne hardware resource document lists the NE301 range as **−20°C to +60°C** (alongside the NE101). [4] If your deployment approaches the upper limit, confirm the specification with CamThink support before committing to a design.",
+   "declined": null,
+   "done": {
+    "conversation_id": "a49b07ac-fe0e-40cf-bcf8-4e828d26480f"
+   },
+   "conversation_id": "a49b07ac-fe0e-40cf-bcf8-4e828d26480f",
+   "error": null,
+   "wall_s": 13.0,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "What is the operating temperature range of NE301 edge camera"
+  }
+ ],
+ "upload": null
+}

@@ -1,0 +1,57 @@
+{
+ "id": "C06",
+ "family": "solution",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "| 项目 | 信息 |\n|------|------|\n| 公司 | Loop Parking Inc，多伦多 |\n| 人物 | Steeson Mathew，Founder/CEO |\n| 背景 | Plug & Play S24 + Founder Institute F22（加速器背书） |\n| 业务 | 实时停车管理 + ALPR，系统集成商（turn-key solution） |\n| 当前硬件 | Hikvision / Axis 传统 IP 相机（无端侧 AI） |",
+  "expected_behavior": "answered",
+  "source_file": "Mindy/LoopParking-会议准备-20260610.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/blog/edge-ai-for-real-time-analytics/",
+     "title": "Edge AI for Real-Time Analytics: Architecture &amp; Deployment Guide · Blog",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/solar-powered-edge-ai-cameras-remote-monitoring/",
+     "title": "Solar-Powered Edge AI Cameras",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/CHANGELOG_CN.md",
+     "title": "CHANGELOG_CN",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/product/neoeyes-301/",
+     "title": "NeoEyes NE301: Edge Vision AI Camera | CamThink",
+     "type": "web_crawl",
+     "product": "website"
+    }
+   ],
+   "answer": "**供电方式不同**  \n室内车库通常有稳定市电，可用 NE301 PoE 版本，通过以太网供电并配合 IP67 外壳的防水电缆接头，无需拆壳就能外部供电 [7]。路侧车位无市电，只能依靠电池或太阳能供电，NE301 支持 4×AA 电池、USB-C、太阳能、PoE 等多种输入 [5]，太阳能 + 锂电池组合也是远程户外部署的常用配置 [3]。\n\n**网络环境不同**  \n室内车库可用 PoE 网线同时解决供电和网络回传。路侧车位往往没有网线，需要靠 WiFi、Cat-1 LTE 或 Wi-Fi HaLow 等无线方式回传数据 [2][3][5]。这直接决定选择 NE301 的 WiFi 版、Cat-1 版还是 PoE 版。\n\n**安装与防护不同**  \n路侧露天安装要求 IP67 防水、低功耗和自供电 [5]，而室内车库则限制少得多。所以先确认停车场类型，才能确定供电、网络和安装条件，给出准确的 NE301 配置建议。",
+   "declined": null,
+   "done": {
+    "conversation_id": "2b5ea3cc-8b83-428d-8449-11cad1c0c2f1"
+   },
+   "conversation_id": "2b5ea3cc-8b83-428d-8449-11cad1c0c2f1",
+   "error": null,
+   "wall_s": 26.6,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "为什么先问这个：停车场类型决定供电方式、网络环境、安装位置，直接影响 NE301 的配置建议。室内车库可以 PoE，路侧车位只能电池/太阳能——两种完全不同的方案。"
+  }
+ ],
+ "upload": null
+}

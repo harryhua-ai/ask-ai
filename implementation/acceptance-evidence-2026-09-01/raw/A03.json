@@ -1,0 +1,63 @@
+{
+ "id": "A03",
+ "family": "commercial",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "commercial",
+ "product": "NG4500",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "1. AI Performance — NG4510(20/34 TOPS)、NG4521(100/157 TOPS)，远超 12 TOPS 基准\n2. Model Compatibility — NVIDIA Jetson Orin 平台，原生支持 PyTorch/TensorFlow/ONNX/TensorRT，生态兼容性好\n3. 5G Connectivity — 可选 Quectel RM520N-GL 5G 模块（$248 配件），评估样机含 5G\n4. ANATEL Certification — 询问客户是否具备认证能力（快则 6 个月），建议先测样、批量再认证\n5",
+  "expected_behavior": "answered",
+  "source_file": "2026-05/NG4500-GrupoItech-方案回复与ANATEL认证确认.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/1-neoedge-ng4500-series/0-overview.md",
+     "title": "0-overview",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/1-neoedge-ng4500-series/2-ng4500-cb01-development-board/0-dev-guide.md",
+     "title": "0-dev-guide",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/.image-upload/test/integration-test-results.md",
+     "title": "integration-test-results",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/.image-upload/test/path-mapping-test-summary.md",
+     "title": "path-mapping-test-summary",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/0-neomind/use-cases/7-deepstream-ng4500.md",
+     "title": "7-deepstream-ng4500",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "Grupo Itech 的需求（1-8 路摄像机、12 TOPS 基准、5G 蜂窝回传强制）与 NG4500 系列匹配，但需注意型号调整。\n\n**方案匹配度**\nAI 算力方面，全系列均远超 12 TOPS 基准：NG4510 为 20 TOPS（SUPER 34）、NG4511 为 40 TOPS（SUPER 67）、NG4520 为 70 TOPS（SUPER 117）、NG4521 为 100 TOPS（SUPER 157）。[1][9] 摄像机接入方面，基于 Jetson 平台的 DeepStream 7.1 流水线单台可并发处理 2-32 路 720p/1080p RTSP 流（Orin NX 8G），1-8 路需求完全在能力范围内。[7] 5G 回传方面，NG4500 支持选配 Quectel RM520N-GL 5G 模块（$248 配件），评估样机可包含 5G 配置。[1][2]\n\n**型号建议**\nNG4510（Jetson Orin Nano 4GB）已正式停产，配置 A 须替换为 NG4511（Jetson Orin Nano 8GB，40/67 TOPS），性能翻倍且价格相近。[1] 若客户需要复杂的多模型分析余量，可推荐 NG4521（Orin NX 16GB，100/157 TOPS）。[2] 模型生态兼容性无忧：NG4500 基于 NVIDIA Jetson Orin 平台，原生支持 PyTorch/TensorFlow/ONNX/TensorRT，多数模型无需重大移植。[1][2]\n\n**认证与下一步**\nANATEL 认证快则约 6 个月，需确认客户是否具备认证能力。建议先提供含 5G 的 NG4511 评估样机测试性能，满意后再就批量订单推进认证流程。[1][2] 需注意当前在线 SKU 不含 SSD 和 Wi-Fi/4G/5G 模块，需单独采购。[8]",
+   "declined": null,
+   "done": {
+    "conversation_id": "1fb9d7af-0490-4da6-972a-f849b977bbc7"
+   },
+   "conversation_id": "1fb9d7af-0490-4da6-972a-f849b977bbc7",
+   "error": null,
+   "wall_s": 25.2,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "Grupo Itech（巴西分销商，Milesight 推荐）寻求 AI Box 替代 Quectel QCS6490，终端客户为电信公司。技术负责人 Silas 回复了详细需求（1-8 路摄像机接入、12 TOPS 基准、5G 蜂窝回传强制要求）。回复邮件确认 NG4500 系列方案匹配，并询问 ANATEL 认证能力。"
+  }
+ ],
+ "upload": null
+}

@@ -1,0 +1,39 @@
+{
+ "id": "A07",
+ "family": "commercial",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "commercial",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "| # | 项目 | 状态 | 依据 |\n|---|------|------|------|\n| 1 | 双镜头 DCMIPP | ✅ 已分析可行 | 05/08 DCMIPP 双 VC 分析；06/30 定制 PCB 评估 |\n| 2 | 270° 检测 | 🆕 需评估 | 单 Fresnel 锥无法覆盖 270°，需多区 PIR 或 mmWave 选型 |\n| 3 | 4G-over-USB | ✅ 路径已确认 | J15 pin 11/12 = OTG2 已布线（05/13 分析） | - 锚定客户已有投入：5 项验证成果逐项确认，强调软件栈已锚定在 NE301 平台\n- 已分析项直接纳入 scope，不重开技术评估\n- 新增项明确需 Dave 硬件团队评估，不在邮件中展开\n- 同意 scoping call，Dave 主导，问下周时间窗口\n- 不报价、不给时间线 —— Dave 的领域",
+  "expected_behavior": "answered",
+  "source_file": "2026-07/NE301-Maloric-Fabrice-AeroGuard定制硬件scope.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/blog/solar-powered-edge-ai-cameras-remote-monitoring/",
+     "title": "Solar-Powered Edge AI Cameras",
+     "type": "web_crawl",
+     "product": "website"
+    }
+   ],
+   "answer": "根据现有资料,camThink 尚未给出具体的 NRE 金额、时间线或批量 BOM 报价。以下是从已确认信息中整理出的结论与可行路径。\n\n**定制硬件 scope(6 项)**\n客户已验证 5 项功能(事件抓拍、HD 回放、MQTT 拉流、RTMP 直播、端侧 AI 检测),并列出 6 项定制硬件需求:270° 双镜头单机(STM32N6 DCMIPP 双 VC)、270° 检测覆盖、4G-over-USB(SIM7672G)、传感器子板(ABP2+BMP390+IMU+L76K GPS+防拆)、电源管理(燃料计+太阳能 MPPT)、夜视(IR-cut 或星光传感器)。[1]\n\n**可行性评估结果**\n双镜头与 4G 方案在 5/6 月已完成硬件路径分析,可直接纳入定制 PCB 设计。其余 4 项需要硬件团队评估组件选型和 PCB 布局。SIM7672G 数据路径复用已确认的 J15 OTG2 接口。建议将该需求转化为带里程碑、NRE 和批量成本的开发计划,由 Dave 牵头硬件协调。[2]\n\n**替代方案:标准平台直接量产**\n您当前的双摄像头标准 NE301 板已实现 270° 成像。若采用单 PCB 双镜头定制,涉及镜头座、MIPI 多路复用、I2C 走线和主板改动,属于完整定制,带来 NRE 和交期成本。而标准 NE301 本身具备两个独立 PIR 触发接口(专用 4-pin 口 + Alarm 2-pin 口),可在不更换 PCB 的情况下加装第二个反方向 PIR,实现 270° 检测覆盖。该路线无 NRE、无定制 PCB 风险,可直接进入量产。[3]",
+   "declined": null,
+   "done": {
+    "conversation_id": "e6e35116-6d0d-48f8-bf47-da8ac9006f4b"
+   },
+   "conversation_id": "e6e35116-6d0d-48f8-bf47-da8ac9006f4b",
+   "error": null,
+   "wall_s": 17.6,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户 Fabrice Jolivet (Maloric) 在 NE301 WiFi 上完成端到端验证后，请求 CamThink 承担 AeroGuard 生产单元定制硬件开发，要求 scope / NRE / 时间线 / 批量 BOM 报价。"
+  }
+ ],
+ "upload": null
+}

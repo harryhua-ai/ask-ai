@@ -1,0 +1,45 @@
+{
+ "id": "H05",
+ "family": "unknown",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NG4500",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "根因澄清：NG4500 与相机是本地 RTSP/ONVIF 直连，不存在 cloud URL（客户误解）。解决方向：用 NeoMind 远程管理平台提供访问入口给 IT 审批；方案 B（办公室搭 NG4500+相机测试环境，给 NeoMind 远程访问链接，半天可搭完）最平衡。客户未买 NG4500，想先验证联动效果再买。",
+  "expected_behavior": "answered",
+  "source_file": "2026-06/NG4500-Flipkart-测试环境方案讨论.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/.image-upload/test/path-mapping-test-summary.md",
+     "title": "path-mapping-test-summary",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/0-neomind/use-cases/7-deepstream-ng4500.md",
+     "title": "7-deepstream-ng4500",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**付款与发货状态**：根据内部记录，Flipkart 的付款状态、发货状态以及 NG4500 现货状态均待 Dave 确认，目前尚无最终结果可回复。[1]\n\n**cloud URL 误解**：客户需要的 cloud URL 并不存在。NG4500 与相机通过本地 RTSP/ONVIF 直连，不需要云端地址。若需远程访问测试入口，可通过 NeoMind 远程管理平台提供。[1]\n\n**测试环境建议**：内部列出三种可行方案：A. 寄借 NG4500 样机；B. 办公室搭测试环境并提供 NeoMind 远程链接；C. 先给测试账号查看平台界面。可结合客户 IT 审批需求选择合适方式。[1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "ae235047-b4f6-4f71-a951-921646bdbd39"
+   },
+   "conversation_id": "ae235047-b4f6-4f71-a951-921646bdbd39",
+   "error": null,
+   "wall_s": 20.7,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "Flipkart 团队发邮件给 Dave，要求： 1. 确认付款状态和发货状态 2. 提供一个 **cloud URL** 用于连接相机与 NG4500 做测试——IT 团队需要这个 URL 走访问审批流程"
+  }
+ ],
+ "upload": null
+}

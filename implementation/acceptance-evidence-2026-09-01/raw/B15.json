@@ -1,0 +1,47 @@
+{
+ "id": "B15",
+ "family": "product",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE503",
+ "note": "H 双探:KB 可能不足",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/store/neoeyes-503/",
+     "title": "NeoEyes NE503 4K PoE Edge AI Camera",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/6-neoeyes-ne503-series/0-overview.md",
+     "title": "0-overview",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/product/neoeyes-ne503/",
+     "title": "CamThink Launches NeoEyes NE503 Open Edge AI Camera Platform | News",
+     "type": "web_crawl",
+     "product": "website"
+    }
+   ],
+   "answer": "**Pre-installed Models**\n\nThe NE503 ships with three pre-installed AI models: **Person Detection (YOLOv8n)**, **Face Landmarks**, and **CLIP Image Encoder**. [1][2]\n\nThese models support rapid development and evaluation of camera-side AI workloads. Custom Hailo HEF models can additionally be imported through the Web Console or registered with aipc-cli. [1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "cb5d0637-4c24-40e3-9a75-abda8c0745db"
+   },
+   "conversation_id": "cb5d0637-4c24-40e3-9a75-abda8c0745db",
+   "error": null,
+   "wall_s": 11.3,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "What AI models are pre-installed on NE503"
+  }
+ ],
+ "upload": null
+}

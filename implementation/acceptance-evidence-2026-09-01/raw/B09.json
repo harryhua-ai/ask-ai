@@ -1,0 +1,45 @@
+{
+ "id": "B09",
+ "family": "product",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE101",
+ "note": "G-深查引用",
+ "bank_ground_truth": {
+  "expected_answer": "NE101 为低功耗事件触发相机，架构上不支持平台远程发起抓拍。\n\n**关键证据：**\n- MQTT 仅订阅 `camera/{mac}/default` 做配置下发（`mqtt.c:63-73`），MQTT DATA 事件仅处理 `onboarding_handle_config`（`mqtt.c:99-113`），无命令 topic\n- HTTP API `g_webHandlers` 数组（`http.c:1653-1890`）含 30+ 端点但无 capture/trigger 类接口\n- 深度睡眠期间 WiFi/Cat-1 modem 全部断电，无法接收网络请求。唤醒源仅 Timer / PIR / Alarm(IO2) / Button(IO21)\n- 每次唤醒等同于一次复位（CLAUDE.md 架构描述）\n\n**结论**: 固件设计使然，非缺陷。 | 1. 定时调度替代：通过 MQTT `camera/{mac}/default` 下发新抓拍间隔配置，设备下次唤醒时生效\n2. 硬件触发：Alarm 输入引脚（IO2）可外接 GPIO/继电器，下降沿触发唤醒 + 抓拍 + 上传",
+  "expected_behavior": "answered",
+  "source_file": "2026-07/NE101-KenVowels-RemoteCaptureInquiry.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/0-neomind/developer-guide/case-studies/7-ne101-camera-component/1-background.md",
+     "title": "1-background",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/add-ai-to-existing-cctv-systems/",
+     "title": "How to Add AI to Existing CCTV Camera Systems · Blog",
+     "type": "web_crawl",
+     "product": "website"
+    }
+   ],
+   "answer": "**直接回答**\n\nNE101 不支持平台远程发起抓拍命令。[1]\n\n- MQTT 仅订阅 `camera/{mac}/default` 配置下发 topic，没有命令 topic [1]\n- HTTP API 无 capture/trigger 类接口 [1]\n- 固件设计使然，非缺陷 [1]\n\n**原因**\n\nNE101 是低功耗事件触发相机，深度睡眠期间 WiFi/Cat-1 modem 全部断电，无法接收任何网络请求。唤醒源仅限 Timer / PIR / Alarm(IO2) / Button(IO21)，每次唤醒等同于一次复位。[1][2]\n\n相机休眠时无法立即接收命令，必须等下次唤醒。[6]\n\n**替代方案**\n\n如需平台触发抓拍，有两条路径：\n\n1. **定时调度**：通过 MQTT 配置 topic 下发新抓拍间隔，设备下次按 RTC 唤醒时生效，适合已知时间点场景 [1][2]\n2. **硬件触发**：Alarm 输入引脚 IO2 外接 GPIO/继电器，下降沿触发唤醒 + 抓拍 + 上传，适合按需触发场景 [1][2]",
+   "declined": null,
+   "done": {
+    "conversation_id": "73e0c793-1239-48c1-9ef9-3c5a2eda3be3"
+   },
+   "conversation_id": "73e0c793-1239-48c1-9ef9-3c5a2eda3be3",
+   "error": null,
+   "wall_s": 19.9,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户 Ken Vowels（[邮箱]）询问 NE101 是否支持平台远程发起抓拍命令，用于设备测试和操作开始/结束读数。具体询问： 1. 是否支持通过 MQTT 或 HTTP API 发起远程抓拍 2. 相机休眠时能否立即接收命令，还是需要等下次唤醒"
+  }
+ ],
+ "upload": null
+}

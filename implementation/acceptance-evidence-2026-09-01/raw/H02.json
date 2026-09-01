@@ -1,0 +1,53 @@
+{
+ "id": "H02",
+ "family": "unknown",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NG4500",
+ "note": "",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/store/neoedge-ng4500/",
+     "title": "NG4500 Jetson Orin Nano/NX AI Box",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/1-neoedge-ng4500-series/0-overview.md",
+     "title": "0-overview",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/store/ng4500-cb01/",
+     "title": "NeoEdge NG4500-CB01 Carrier Board for Jetson Orin Nano/NX",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/scale-water-meter-deployment-edge-ai/",
+     "title": "Scaling a Water Meter Monitoring System for 50+ Units:\n      NE101 + NG4500 Architecture",
+     "type": "web_crawl",
+     "product": "website"
+    }
+   ],
+   "answer": "资料中未提供单独 NVIDIA Jetson Orin Nano 模块或开发套件的价格,因此无法直接对比两者价格。已知 NG4500 整机（含 Jetson 模块、工业外壳等）售价为 **$1199**，而单独购买 NG4500-CB01 载板为 **$249**（不含 Jetson 模块、散热、电源等）[3][6]。NG4500 相当于在 Orin Nano 基础上增加金属外壳、宽压 DC 输入、双网口、工业 I/O 和 M.2 扩展，是一款可直接部署的工业系统[3]。\n\n**性能**\nNG4500 的低配型号直接对应 Jetson Orin Nano：NG4510 采用 Orin Nano 4GB，标准 AI 性能为 **20 TOPS**，SUPER 模式为 **34 INT8 TOPS**；NG4511 采用 Orin Nano 8GB，标准 **40 TOPS**，SUPER 模式 **67 INT8 TOPS**[5][9]。若需要更高算力，NG4520/NG4521 采用 Orin NX，最高可达 **157 INT8 TOPS**（SUPER）[5][9]。软件生态与裸 Jetson 一致，支持 JetPack 6.0、CUDA、TensorRT、DeepStream 等[3]。\n\n**小结**\n若你已有裸 Jetson Orin Nano 开发板，NG4500 可以理解为将其封装为工业整机，并提供相同 NVIDIA 软件栈；价格上需按整机 $1199 或载板 $249 分别评估，具体性价比取决于你是否需要外壳、工业接口和现场部署能力[3][6]。",
+   "declined": null,
+   "done": {
+    "conversation_id": "6e3304de-69b3-49fd-8c6e-c29c63ac4fbd"
+   },
+   "conversation_id": "6e3304de-69b3-49fd-8c6e-c29c63ac4fbd",
+   "error": null,
+   "wall_s": 19.5,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "NG4500 和 NVIDIA Jetson Orin Nano 相比,价格和性能各怎么样?"
+  }
+ ],
+ "upload": null
+}

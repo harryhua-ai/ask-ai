@@ -1,0 +1,47 @@
+{
+ "id": "H04",
+ "family": "unknown",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/product/neoeyes-301/",
+     "title": "NeoEyes NE301: Edge Vision AI Camera | CamThink",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://github.com/camthink-ai/NeoMind/blob/main/crates/neomind-core/src/assets/model_registry.json",
+     "title": "model_registry",
+     "type": "github",
+     "product": "neomind"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/7-release-notes/0-firmware.md",
+     "title": "0-firmware",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**官方发布状态**\n\n尚未确定。所有资料均显示 AeroGuard 定制硬件项目仍处于 scoping 阶段，尚未提交正式方案，也不能确定正式发布时间。—— 项目状态为“草稿待发”，且回复策略明确“不报价、不给时间线——Dave 的领域”，说明发布时间表由 Dave 的硬件团队评估后才会确定。[1][4]\n\n**定价状态**\n\n没有 AeroGuard 定制硬件的定价信息。当前能够确认的是标准 NE301 系列机型的公开零售价：NE301 Wi-Fi 为 $199.90，NE301 LTE Cat.1 为 $251.00，NE301 PoE 为 $258.00。[6] AeroGuard 涉及的双镜头、270° 检测、4G-over-USB、传感器子板、电源管理和夜视等定制项仍未完成硬件选型评估，因此定制硬件的批量 BOM 报价与最终售价均未形成。[1][3][4]\n\n**建议**\n\n如果想尽快推进发布，可先验证 Dave 提出的替代方案——标准 NE301 板加 2 camera + 2 PIR 即可覆盖 270° 检测需求，无需全定制 PCB，可避免 NRE 与定制 PCB 风险，直接进入生产。[2][5] 若坚持定制硬件，需等待 Dave 硬件团队完成项目 2、4、5、6 的组件选型和 PCB 布局评估后，再给出时间线与报价。[3][4]",
+   "declined": null,
+   "done": {
+    "conversation_id": "25bd4847-3a06-4f37-954d-3a8877cad503"
+   },
+   "conversation_id": "25bd4847-3a06-4f37-954d-3a8877cad503",
+   "error": null,
+   "wall_s": 11.8,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "AeroGuard 什么时候正式发布?定价大概是多少?"
+  }
+ ],
+ "upload": null
+}

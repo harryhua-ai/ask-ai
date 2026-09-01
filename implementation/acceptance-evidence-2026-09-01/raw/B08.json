@@ -1,0 +1,63 @@
+{
+ "id": "B08",
+ "family": "product",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE101",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "### 扩展板\n\n- **NE301**: 专用传感器扩展板（Sensor Expansion Board），8个传感器（SHT30温湿度/LTR-31x环境光/LSM6DSR 6轴IMU/DTS6012M dToF 20m/MLX90642红外热阵列32×24/NP624M-F PIR/RKB1161LX1 24GHz毫米波/LMA3729T381 MEMS麦克风）+ 喇叭 + 3款屏幕（0.96\" OLED/1.14\" TFT/1.54\" TFT），原理图开放\n- **NE101**: ACS-04 传感器扩展板硬件已兼容（与蜂窝模块同一插槽，互斥使用），固件开发中可参考开源驱动自行适配",
+  "expected_behavior": "answered",
+  "source_file": "2026-06/NE101-NE301-Wesley-扩展板与HaLow咨询.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/store/wifi-halow-module/",
+     "title": "Wi-Fi HaLow Communication Board",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/underground-meter-reading-lte-vs-halow-ne101/",
+     "title": "Underground Meter Reading:",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/store/multi-sensor-expansion-board/",
+     "title": "Sensor Expansion Board for NE101 and NE301",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/2-neoeyes-ne101-series/0-overview.md",
+     "title": "0-overview",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/3-application-guide/2-wifihalow-solution.md",
+     "title": "2-wifihalow-solution",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**扩展板**\n- **NE301**: 有专用传感器扩展板,集成 8 个传感器 —— SHT30 温湿度、LTR-31x 环境光、LSM6DSR 6 轴 IMU、DTS6012M dToF 激光(20m)、MLX90642 红外热阵列(32×24)、NP624M-F PIR、RKB1161LX1 24GHz 毫米波雷达、LMA3729T381 MEMS 麦克风,另有喇叭和 3 款屏幕(0.96\" OLED / 1.14\" TFT / 1.54\" TFT),原理图开放,每个传感器可触发 AI 快照。[1][5]\n- **NE101**: 硬件层面已兼容 ACS-04 传感器扩展板,与蜂窝模块共用同一插槽、互斥使用;固件仍在开发中,可参考开源驱动自行适配。也可通过主板 16-pin GPIO 扩展接口 + UART,用 GPIO/SPI/UART 外接独立传感器或 MCU。[1][5]\n\n**Wi-Fi HaLow**\n- **协议概述**: 基于 IEEE 802.11ah,运行于 Sub-1GHz 频段(868 MHz / 915 MHz),传输距离 1km+,active 电流约 39mA,比传统 Wi-Fi 功耗低得多,无需 SIM 卡和资费。[1][7][9]\n- **NE101 集成方式**: 使用 FGH100M 模组,SPI 接口,通过主板插槽现场可更换(与现有 Cat-1 模组互换)。分两个频段版本:868 MHz(NE101-HL00)和 915 MHz(NE101-HL01)。需要 Morse Micro HaLowLink 网关将 HaLow 桥接至 Ethernet/WiFi 网络。[1][6][7]\n- **NE301 状态**: HaLow 仍在开发中,扩展接口已预留 SPI6,固件尚未就绪。[1]\n\n**兼容性注意**\nNE101 的 Cat-1 与 HaLow 不能共存 —— 两者占用同一主板插槽且 pinout 不同(Cat-1 走 UART,HaLow 走 SPI),只能二选一。选型建议:多节点(10-30 台)部署且想省 SIM 费用的场景优先选 NE101 + Wi-Fi HaLow;单节点偏远无信号场景选 Cat-1。[1][8][9]",
+   "declined": null,
+   "done": {
+    "conversation_id": "c97c8363-9d53-4153-a593-7df47f8e20a7"
+   },
+   "conversation_id": "c97c8363-9d53-4153-a593-7df47f8e20a7",
+   "error": null,
+   "wall_s": 26.4,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户已购买 NE101 和 NE301（Cat-1 变体），询问： 1. 扩展板（expansion board）详情与集成方式 2. Wi-Fi HaLow 详情与集成方式"
+  }
+ ],
+ "upload": null
+}

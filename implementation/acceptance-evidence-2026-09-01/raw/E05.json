@@ -1,0 +1,93 @@
+{
+ "id": "E05",
+ "family": "troubleshooting",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": null,
+ "product": null,
+ "note": "根因底稿:以 bank86 expected_answer 为准(固件升级变砖)",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_dma2d.c",
+     "title": "stm32n6xx_hal_dma2d",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Hal/usbd_conf.c",
+     "title": "usbd_conf",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/AIToolStack/blob/main/backend/utils/ne301_export.py",
+     "title": "ne301_export",
+     "type": "github",
+     "product": "AI-ToolStack"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_ll_adc.c",
+     "title": "stm32n6xx_ll_adc",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/AIToolStack/blob/main/backend/utils/ne301_update.py",
+     "title": "ne301_update",
+     "type": "github",
+     "product": "AI-ToolStack"
+    }
+   ],
+   "answer": "**故障定位**\nNE301 采用 A/B 双槽位启动机制（`FSBL/Core/Src/boot.c:115` — `check_and_select_boot_slot()`）。固件升级损坏 Active App 槽位时，FSBL 应自动切到备用槽。分三种情况判断：若 App 镜像损坏，A/B 自动 failover 后重新上电即可恢复；若 Config 分区损坏，切槽成功但 WiFi/web 不可用，需 SWD 重刷；若 FSBL 损坏，设备完全无电/无 LED，需 SWD 重刷 FSBL+App。[1]\n\n**排查步骤**\n先让客户断开电源 30 秒后重新连接，观察约 20 秒内是否有 LED 亮起、WiFi AP 是否出现。同时收集以下信息以确定恢复路径：LED 状态（闪烁、常亮、完全熄灭）、设备变体（WiFi/PoE/Cat-1）、所刷固件文件名及升级方式（是否为 Web UI OTA）、是否持有 ST-Link 编程器。[3] 关联案例中曾出现 SWD 始终读到 0x486（U0）的情况，最终确认是 DIP 开关未设置导致的误判，说明 DIP 开关状态是首要排查项。[2]\n\n**恢复操作**\nSWD 恢复流程：DIP #2 拨到 ON 位（将 SWD 路由到 N6，DEBUG LED 应保持常亮）；ST-Link 连接 4-pin DEBUG header（Pin1=VCC_IN, Pin2=SWDIO, Pin3=SWCLK, Pin4=GND）；使用 STM32CubeProgrammer v2.19.0（v2.22.0 有已知外部 Flash 擦除问题）；依次刷写 FSBL（地址 0x70000000）→ App（地址 0x70100000）；完成后 DIP #2 拨回 OFF，重新上电。[3] 恢复成功后重新升级时，按 FSBL → APP → Model → Web 的顺序刷写。[5] 同时应向客户说明：售后支持渠道有效，已受理此问题。[1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "861a2f03-4625-4693-8f16-758739032e75"
+   },
+   "conversation_id": "861a2f03-4625-4693-8f16-758739032e75",
+   "error": null,
+   "wall_s": 25.3,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户收到 Jade 的 NE301 测试跟进邮件后回复：尝试固件升级后设备完全丢失，无法开机。在官方社交渠道发帖求助无回应，对售后支持表示担忧。"
+  },
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/5-neoeyes-ne301-series/2-NE300-MB01-development-board/2-software-guide/2-windows-wsl-source-build-and-flash.md",
+     "title": "2-windows-wsl-source-build-and-flash",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/5-neoeyes-ne301-series/2-NE300-MB01-development-board/2-software-guide/1-system-flashing-and-initialization.md",
+     "title": "1-system-flashing-and-initialization",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/6-neoeyes-ne503-series/3-software-guide/2-system-flashing.md",
+     "title": "2-system-flashing",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**现状判断**\n设备完全无反应（无 LED、无 WiFi AP）说明固件已损坏，恢复必须通过 ST-Link 经 SWD 接口重新烧录，USB 数据线无法完成此操作。[5]\n\n**当前限制**\n你没有 ST-Link，只有 Windows 电脑，因此无法自行执行 SWD 烧录。资料明确要求先确认客户是否有 ST-Link，否则远程协助效果有限。[5] 在未获取 ST-Link 前，无法继续恢复流程。\n\n**建议操作**\n1. 获取 ST-Link V2/V3 编程器（推荐搭配 STM32CubeProgrammer v2.19.0）。[6]\n2. 获得 ST-Link 后，通过官方支持渠道申请远程会话，由技术支持直接指导或操作烧录。[9]\n3. 在购买或借用 ST-Link 期间，可先准备 Windows 环境，确认 ST-Link 驱动及 STM32CubeProgrammer 安装正常即可，无需 WSL。[1][2]\n\n资料未提及 Discord 支持渠道，无法确认其有效性。售后支持渠道（邮件或远程）已被证实可受理此类问题，但前提是你备好 ST-Link。[9]",
+   "declined": null,
+   "done": {
+    "conversation_id": "d6026727-1a1f-416b-b3a9-825b314defc4"
+   },
+   "conversation_id": "d6026727-1a1f-416b-b3a9-825b314defc4",
+   "error": null,
+   "wall_s": 26.9,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "补充信息:我这边没有 ST-Link,只有一台 Windows 电脑。设备现在完全没反应,接 USB 也不亮灯。我在官方 Discord 发帖两天没人回复。请告诉我现在应该怎么办?"
+  }
+ ],
+ "upload": null
+}

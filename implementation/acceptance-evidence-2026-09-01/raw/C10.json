@@ -1,0 +1,32 @@
+{
+ "id": "C10",
+ "family": "solution",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "product",
+ "product": "NE101",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "- **LoRaWAN**：NE101 不支持。通讯选项为 WiFi / Cat-1 / HaLow\n- **推荐 WiFi 版**：客户明确表示 WiFi 可行，且多栋楼邻近\n- **备选 Cat-1**：WiFi 信号死角可用蜂窝版补充\n- **镜头选型**：需要了解水表/电表比例（水表刻度小需小 FOV，电表屏幕大可广角）",
+  "expected_behavior": "answered",
+  "source_file": "2026-06/NE101-Invinets-Maksymiuk-仪表抄表方案.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "**结论**\nNE101 不支持 LoRaWAN，通讯选项为 WiFi / Cat-1 / HaLow。[1]\n\n**方案建议**\n客户明确 WiFi 可行且多栋楼邻近，推荐 WiFi 版；WiFi 信号死角可用 Cat-1 蜂窝版补充。[1]\n针对 250 台水电表、客户已有 AI 读表方案、只需相机出照片的场景，NE101 WiFi 版可满足拍照上传需求。[1]\n需进一步确认水表/电表比例：水表刻度小需小 FOV，电表屏幕大可广角，据此选择镜头。[1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "3af4f560-e065-47dc-a808-932a00664d70"
+   },
+   "conversation_id": "3af4f560-e065-47dc-a808-932a00664d70",
+   "error": null,
+   "wall_s": 12.5,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户通过 Betty 转来的两封邮件咨询： 1. 需要给某建筑业主提供抄表方案，约 250 台仪表分布在多栋建筑中 2. 换智能表太贵，想用 AI 拍照方案替代 3. 理想用 LoRaWAN，但 WiFi 也可接受 4. 客户已有自己的 AI 读表方案，只需要相机出照片"
+  }
+ ],
+ "upload": null
+}

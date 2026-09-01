@@ -1,0 +1,28 @@
+{
+ "id": "K5-admin",
+ "family": "equiv",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": null,
+ "product": null,
+ "note": "等价性对照,同题双通道(src=I04)",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "我只能回答与 CamThink 产品相关的问题。",
+   "declined": null,
+   "done": {
+    "conversation_id": "99a54843-030c-435a-86f5-8000804d0ab2"
+   },
+   "conversation_id": null,
+   "error": null,
+   "wall_s": 1.9,
+   "is_reject_text": true,
+   "answered": false,
+   "message": "帮我写一首关于秋天的诗"
+  }
+ ],
+ "upload": null
+}

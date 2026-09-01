@@ -1,0 +1,47 @@
+{
+ "id": "A09",
+ "family": "commercial",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "commercial",
+ "product": "NE101",
+ "note": "",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/news/milesight-propels-vision-ai-transformation-by-announcing-a-new-brand-camthink-expanding-edge-ai-driven-innovations-to-industries-and-communities/",
+     "title": "Milesight Propels Vision AI Transformation by Announcing a New Brand CamThink, Expanding Edge AI-driven Innovations to Industries and Communities | News",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/store/neoeyes-ne101/",
+     "title": "NeoEyes NE101 Modular Sensing Camera",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/0-neomind/developer-guide/case-studies/7-ne101-camera-component/1-background.md",
+     "title": "1-background",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**No Distributor Information Available**\n\nBased on the provided materials, there is no documentation describing how to become a CamThink distributor for the NE101 or any other product. The news release announces the CamThink brand and product launch but does not mention distributor programs, application processes, or regional partner contacts [1]. The NE101 store page lists price and stock but only includes product specifications and SKU selection guidance, with no channel or reseller information [2]. The third source is a technical developer guide unrelated to sales partnerships [3].\n\n**Suggested Next Step**\n\nSince the official materials do not cover distributor enrollment, the only practical step supported by the sources is to contact CamThink directly for sales and partnership inquiries, though no specific contact details are provided in the retrieved content [1].",
+   "declined": null,
+   "done": {
+    "conversation_id": "2e21c911-1125-4aae-ab00-f37801030b2e"
+   },
+   "conversation_id": "2e21c911-1125-4aae-ab00-f37801030b2e",
+   "error": null,
+   "wall_s": 10.8,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "How to become CamThink distributor for NE101 in our region"
+  }
+ ],
+ "upload": null
+}

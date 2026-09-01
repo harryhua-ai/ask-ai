@@ -1,0 +1,28 @@
+{
+ "id": "L-K5",
+ "family": "local_compare",
+ "channel": "widget",
+ "target": "local",
+ "expected_intent": null,
+ "product": null,
+ "note": "本地(76b2199,仅官网库)对照 prod(src=I04)",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "我只能回答与 CamThink 产品相关的问题。",
+   "declined": null,
+   "done": {
+    "conversation_id": "2645ad47-e5e4-4f17-a277-9d45b9bb8d89"
+   },
+   "conversation_id": null,
+   "error": null,
+   "wall_s": 1.3,
+   "is_reject_text": true,
+   "answered": false,
+   "message": "帮我写一首关于秋天的诗"
+  }
+ ],
+ "upload": null
+}

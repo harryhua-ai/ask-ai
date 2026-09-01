@@ -1,0 +1,59 @@
+{
+ "id": "K1-widget",
+ "family": "equiv",
+ "channel": "widget",
+ "target": "prod",
+ "expected_intent": null,
+ "product": null,
+ "note": "等价性对照,同题双通道(src=A08)",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://www.camthink.ai/product/neoeyes-301/",
+     "title": "NeoEyes NE301: Edge Vision AI Camera | CamThink",
+     "type": "web_crawl",
+     "product": "website"
+    },
+    {
+     "url": "https://www.camthink.ai/store/ne301/",
+     "title": "NeoEyes NE301 Wireless Edge AI Camera",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    },
+    {
+     "url": "https://www.camthink.ai/store/st-link-v2-emulator/",
+     "title": "ST-Link V2-Compatible Programmer and Debugger for STM32/STM8 | NE301 Cable Included",
+     "type": "woocommerce",
+     "product": "accessories"
+    },
+    {
+     "url": "https://www.camthink.ai/store/ne301-sensor-expansion-kit/",
+     "title": "Multi-Sensor Expansion Development Kit for NE301",
+     "type": "woocommerce",
+     "product": "aitoolstack"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/solar-powered-edge-ai-cameras-remote-monitoring/",
+     "title": "Solar-Powered Edge AI Cameras",
+     "type": "web_crawl",
+     "product": "website"
+    }
+   ],
+   "answer": "**NE301 Pricing**\n\nThe NE301 comes in three variants with different prices based on power and connectivity options [1]:\n\n- NE301 Wi-Fi: $199.90 [1]\n- NE301 LTE Cat.1: $251.00 [1]\n- NE301 PoE: $258.00 [1][8]\n\nThe store listing for the wireless version confirms $199.90 for the Wi-Fi model [3]. Note that a knowledge base record mentions an estimated retail price of ~$249, which may refer to a different configuration or quote [2].\n\n**How to Order**\n\nOrdering is available through the CamThink online store, where each NE301 variant has its own product page with a \"Shop Now\" option [1][3][8]. For configurations not available for direct online purchase, such as the USB-C version for solar use, you can contact sales@camthink.ai [3].\n\n**Shipping Options**\n\nThe provided materials do not specify shipping options or delivery details. For shipping-related questions, please contact CamThink directly via the sales channel.",
+   "declined": null,
+   "done": {
+    "conversation_id": "ddc9bba6-def1-423c-9b9b-e80bf282eeaa"
+   },
+   "conversation_id": "ddc9bba6-def1-423c-9b9b-e80bf282eeaa",
+   "error": null,
+   "wall_s": 17.4,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "What is the price of NE301, how to order and shipping options"
+  }
+ ],
+ "upload": null
+}

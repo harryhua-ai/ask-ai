@@ -1,0 +1,53 @@
+{
+ "id": "D13",
+ "family": "support",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "support",
+ "product": "NE101",
+ "note": "G-深查引用",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/2-neoeyes-ne101-series/2-ne100-mb01-development-board/2-software-guide/3-example-pir.md",
+     "title": "3-example-pir",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/3-hardware-dev-resources/20-battery-recommendation.md",
+     "title": "20-battery-recommendation",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/i18n/en/docusaurus-plugin-content-docs/current/2-neoeyes-ne101-series/0-overview.md",
+     "title": "0-overview",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://www.camthink.ai/blog/solar-powered-edge-ai-cameras-remote-monitoring/",
+     "title": "Solar-Powered Edge AI Cameras",
+     "type": "web_crawl",
+     "product": "website"
+    }
+   ],
+   "answer": "**Power Supply Requirements (NE101)**\n\n- **USB-C input**: 5V DC, 1A or above [1][2]\n- **Backplane/battery terminal input**: 6V nominal (4×AA batteries in series) [1][2]\n- **Maximum input voltage tolerance**: approximately 7V, never exceed 7V [1][2]\n- **Prohibited**: 12V or higher will damage the device [1][2]\n\n**Important distinction**: The 4.0–6.0V \"operating voltage range\" mentioned in the Wiki battery documentation refers to the battery discharge curve during operation, not the device's input voltage tolerance. Do not use that range as a basis for selecting an external power adapter [1][2].\n\n**Practical guidance**: A 5V DC supply (1A or above) is the safe choice, connectable via USB-C or the 2-pin battery connector (which accepts 5V DC directly) [1][8]. For battery operation, use 4× AA alkaline or Li-FeS₂ cells (6.0V nominal) [4][5].",
+   "declined": null,
+   "done": {
+    "conversation_id": "43df0063-f441-4468-a444-8731e34e76c5"
+   },
+   "conversation_id": "43df0063-f441-4468-a444-8731e34e76c5",
+   "error": null,
+   "wall_s": 14.9,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "What is the power supply requirement for NE101, voltage range"
+  }
+ ],
+ "upload": null
+}

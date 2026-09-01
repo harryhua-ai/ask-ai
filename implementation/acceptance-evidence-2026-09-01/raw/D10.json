@@ -1,0 +1,63 @@
+{
+ "id": "D10",
+ "family": "support",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": "support",
+ "product": "NE301",
+ "note": "",
+ "bank_ground_truth": {
+  "expected_answer": "根因（源码验证）：Web UI 上传入口期望打包后的 .bin（含 network_rel.bin + metadata JSON + checksums，MODEL_PACKAGE_MAGIC 'N6M1'），非原始 .tflite。模型须经 stedgeai toolchain 编译（stedgeai.mk：'Model packages must be generated with the matching stedgeai tool chain'，MODEL_STEDGEAI_VERSION_SUPPORTED v4.0.1），流程 .tflite → generate-reloc-model.sh → network_rel.bin → model_packager.py → 最终 .bin。其他可能：上传后未在 Web UI 切换激活新模型；模型超 Flash slot 5/8 MB 限制。",
+  "expected_behavior": "answered",
+  "source_file": "2026-07/NE301-Discord-xaralampie-模型上传无声失败.md"
+ },
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Hal/nn.c",
+     "title": "nn",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Services/Web/api/api_model_validation_module.c",
+     "title": "api_model_validation_module",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Services/AI/ai_service.c",
+     "title": "ai_service",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/ne301/blob/main/Custom/Core/Video/video_ai_node.c",
+     "title": "video_ai_node",
+     "type": "github",
+     "product": "ne301"
+    },
+    {
+     "url": "https://github.com/camthink-ai/AIToolStack/blob/main/frontend/src/i18n/locales/zh.json",
+     "title": "zh",
+     "type": "github",
+     "product": "AI-ToolStack"
+    }
+   ],
+   "answer": "**可能原因**\n\n根据此前同类问题，上传后无报错但不生效，通常是以下情况之一：上传了原始 .tflite 而非编译后的 .bin、模型未通过 stedgeai 编译、模型大小超过 Flash 分区限制、上传后未切换模型。[1]\n\n**排查步骤**\n\n1. 检查文件格式 — Web UI 期望 .bin 文件（用 make pkg-model 或 Model Converter 生成），不是 .tflite。[1]\n2. 检查模型是否已激活 — 上传后需从下拉菜单选择新模型才能生效。[1]\n3. 检查模型大小 — Flash 每个槽位限制为 5/8 MB，超出会静默失败。[1]\n\n**需要您提供**\n\n请补充：创建模型文件的方法（编译工具和流程）、文件大小、固件版本，以便进一步定位。[1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "f2686b12-e8a4-47bc-8342-5cd7d098b699"
+   },
+   "conversation_id": "f2686b12-e8a4-47bc-8342-5cd7d098b699",
+   "error": null,
+   "wall_s": 14.7,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "xaralampie 在 Discord 社区提问：上传自定义模型到 NE301，加载无报错但不生效。"
+  }
+ ],
+ "upload": null
+}

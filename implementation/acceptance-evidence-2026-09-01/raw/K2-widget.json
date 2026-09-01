@@ -1,0 +1,47 @@
+{
+ "id": "K2-widget",
+ "family": "equiv",
+ "channel": "widget",
+ "target": "prod",
+ "expected_intent": null,
+ "product": null,
+ "note": "等价性对照,同题双通道(src=B01)",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/0-neomind/developer-guide/case-studies/7-ne101-camera-component/1-background.md",
+     "title": "1-background",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/3-hardware-dev-resources/20-battery-recommendation.md",
+     "title": "20-battery-recommendation",
+     "type": "github",
+     "product": "wiki"
+    },
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/3-hardware-dev-resources/22-solar-power-solution.md",
+     "title": "22-solar-power-solution",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**不可以。** NE101 最大耐压约 7V,12V 会损坏设备。[1][2]\n\n**供电规格:** USB-C 供电为 5V/1A;背板供电(电池仓)为 6V 标称;最大耐压约 7V,不超过 7V。[1][2]\n\n**建议:** 使用 5V DC 1A 或以上的电源,通过 USB-C 接口或电池端子连接。正式外部供电方式为电池仓后部的 2-pin 电源连接器,接 5V DC (1A+)。[1][3]\n\n注意:Wiki 文档中的 \"4.0-6.0V 工作电压范围\" 是电池放电过程的工作电压,不是设备的耐压规格。[1][2]",
+   "declined": null,
+   "done": {
+    "conversation_id": "a3915555-75eb-4f09-b252-2ee0b910884b"
+   },
+   "conversation_id": "a3915555-75eb-4f09-b252-2ee0b910884b",
+   "error": null,
+   "wall_s": 14.1,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户询问 NE101 是否可以使用 12V 2A DC 电源适配器供电。"
+  }
+ ],
+ "upload": null
+}

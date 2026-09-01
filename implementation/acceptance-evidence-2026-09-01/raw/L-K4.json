@@ -1,0 +1,28 @@
+{
+ "id": "L-K4",
+ "family": "local_compare",
+ "channel": "widget",
+ "target": "local",
+ "expected_intent": null,
+ "product": null,
+ "note": "本地(76b2199,仅官网库)对照 prod(src=D06)",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "**结论概述**  \nMQTT 链路本身正常，NE101 v1.8 固件未发现问题。三个现象对应两个原因：config 模式下 APSTA 路由缺陷，以及 schedule 模式正常的低功耗行为。[1][4]\n\n**Config 模式 MQTT 超时**  \nWeb UI 的 transport connection timeout 发生在 config 模式。该模式启用 APSTA 双接口（AP 192.168.1.1 + STA 192.168.1.106），ESP32 lwIP 将 MQTT TCP SYN 从 AP 接口发出，无法到达 STA 侧 NeoMind（192.168.1.101:1883），因此 10 秒超时。[1][4]  \n建议改用 STA-only 模式，即 schedule 模式。日志 session_log_3 确认 schedule 模式下 MQTT 约 400ms 连上、5 张照片全部推送成功。[4]\n\n**Schedule 模式断开与 NeoMind 在线状态**  \nSchedule 模式断开不属于故障：设备执行“唤醒 → WiFi 连接 → MQTT 连接 → 发布 → 深度休眠”的完整周期，约 12 秒，transport EOF 是 WiFi 为休眠主动关闭，此时照片已全部 PUSH SUCCESS。[4]  \nNeoMind 侧 broker rmqtt 全程稳定无重启；设备休眠后超过 5 分钟无数据，即触发 inactive 阈值标记 offline，对电池供电的定时上报设备属预期行为。[1][4] 用 MQTTX 手动发 hello 产生了 metric activity，所以 NeoMind 短暂显示在线。[1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "ee3356b0-c003-4b52-ac42-e3b6415bfb0c"
+   },
+   "conversation_id": "ee3356b0-c003-4b52-ac42-e3b6415bfb0c",
+   "error": null,
+   "wall_s": 27.2,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户报告 NE101 MQTT 连接 NeoMind (192.168.1.101:1883) 失败： - Web UI 始终显示 MQTT transport connection timeout - Schedule 模式下连接成功但随后断开 - 用 MQTTX 手动发 hello 消息 NeoMind 短暂显示在线"
+  }
+ ],
+ "upload": null
+}

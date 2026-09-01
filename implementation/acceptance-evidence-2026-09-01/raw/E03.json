@@ -1,0 +1,50 @@
+{
+ "id": "E03",
+ "family": "troubleshooting",
+ "channel": "admin",
+ "target": "prod",
+ "expected_intent": null,
+ "product": null,
+ "note": "根因底稿:以 bank79 expected_answer 为准(定时漂移+功耗)",
+ "bank_ground_truth": null,
+ "turns": [
+  {
+   "http_status": 200,
+   "sources": [],
+   "answer": "这三个症状实际上是**同一个根因**导致的:硬件 v1.2 板子刷了为 hw v2.0 构建的 v1.8 固件,版本不匹配。[1][8]\n\n**根因:GPIO3 功能冲突**\n- hw v1.2:GPIO3 是 `SENSOR_POWER_IO`(输出,控制摄像头传感器供电)\n- hw v2.0 / fw v1.8:GPIO3 是 RTC INT(输入,上拉,EXT1 唤醒源)\n\n`misc_close()` 将 GPIO3 拉 LOW 切断传感器电源后,RTC 驱动紧接着把它重配为上拉输入。内部上拉电阻(~45kΩ)通过 GPIO3 持续给传感器供电电路拉电流,深睡电流从标准 22μA 飙升至数百 μA~mA。[1][8]\n\n**三个症状的对应机制**\n| 症状 | 机制 |\n|------|------|\n| 续航约 10 天、日耗 10%+ | GPIO3 上拉漏电,深睡电流放大 50-100 倍 |\n| 每 6h 两次拍照(漂移 46s-5m48s + 锚点补拍) | v1.2 无 RTC 芯片(PCF8563),固件每次 I2C 访问超时;回退内部定时器在睡眠中漂移,提前唤醒后锚点调度器又在正确时间触发一次 |\n| 03:03/09:03/15:03/21:03 的 SCHEDULE 空唤醒 | `KEY_SYS_SCHE_TIME` 默认 \"03:03:30\" + RTC 闹钟失败,触发仅做 NTP 校时的中间唤醒 |[1][8]\n\n**解决方案**\n刷写为 hw v1.2 构建的固件版本。GPIO3 恢复为电源控制行为,深睡时传感器供电正常切断,深睡电流回到约 22μA,电池寿命可恢复至正常水平。[1][8]\n\n已确认修复:James 换上正确的固件(hw v1.2 版本)后,每天 10% 掉电问题已解决。[1]",
+   "declined": null,
+   "done": {
+    "conversation_id": "c7c11ea2-462c-4079-8cd9-af916ff21ee3"
+   },
+   "conversation_id": "c7c11ea2-462c-4079-8cd9-af916ff21ee3",
+   "error": null,
+   "wall_s": 20.3,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "客户 James (WhatsApp) 报告 NE101 三个问题： 1. 电量日耗 10%+，续航仅约 10 天 2. 每 6h 发生两次拍照（定时漂移 46s-5m48s + 锚点补拍） 3. 每天 4 次 03:03/09:03/15:03/21:03 的 SCHEDULE 空唤醒（NTP 校时，不拍照）"
+  },
+  {
+   "http_status": 200,
+   "sources": [
+    {
+     "url": "https://github.com/camthink-ai/wiki-documents/blob/main/docs/2-neoeyes-ne101-series/0-overview.md",
+     "title": "0-overview",
+     "type": "github",
+     "product": "wiki"
+    }
+   ],
+   "answer": "**根因**\n\n根据知识库记录,James 的 NE101 硬件版本为 v1.2,但刷写了为 hw v2.0 构建的固件 NE_101_v1.8(hw-v2.0)_FCC。硬件 v1.2 中 GPIO3 是 `SENSOR_POWER_IO`(输出,控制传感器供电),",
+   "declined": null,
+   "done": {
+    "conversation_id": "4d775132-5489-48af-a4a4-e56b951e37f0"
+   },
+   "conversation_id": "4d775132-5489-48af-a4a4-e56b951e37f0",
+   "error": null,
+   "wall_s": 50.1,
+   "is_reject_text": false,
+   "answered": true,
+   "message": "补充信息:固件 NE_101_v1.8(hw-v1.2),WiFi 版。设置的是每 6 小时拍 1 张,但日志里每天有 4 次拍摄且集中在夜里,另外电池日耗 10% 左右,标称应该能撑更久。"
+  }
+ ],
+ "upload": null
+}
