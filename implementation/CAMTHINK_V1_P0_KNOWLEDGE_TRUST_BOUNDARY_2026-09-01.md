@@ -17,7 +17,7 @@
 | WORKTREE | `/Users/harryhua/Documents/GitHub/ask-ai-p0-trust-boundary`(独立 worktree,与 P1 窗零共享) |
 | PRODUCT_CODE_COMMIT | `0640bc3`(9 文件,+738/−6;含 21 个新测试) |
 | REPORT_PATH | `docs/implementation/CAMTHINK_V1_P0_KNOWLEDGE_TRUST_BOUNDARY_2026-09-01.md`(本文) |
-| REPORT_COMMIT | docs 本地仓 `c3a4244247eef2a087a6857ef7310aa7b27e1c1a` |
+| REPORT_COMMIT | docs 本地仓 `8c9c2b2`(回填 REPORT_COMMIT 见后续小提交) |
 
 **三行自证(按执行窗环境引导要求):**
 
