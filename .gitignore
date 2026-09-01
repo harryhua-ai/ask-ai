@@ -30,6 +30,7 @@ logs/
 .claude/
 .coverage
 .playwright-mcp/
+.playwright-cli/
 .superpowers/
 
 # 调试截图(开发期临时 UI 截图,不入库)

@@ -1,4 +1,0 @@
-- generic [active] [ref=e1]:
-  - 'heading "G006: legacy embed (no site-id)" [level=1] [ref=e2]'
-  - button [ref=e3] [cursor=pointer]:
-    - img "Ask AI" [ref=e4]

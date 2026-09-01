@@ -1,4 +1,0 @@
-- generic [active] [ref=e1]:
-  - 'heading "G004: camthink-store from UNAUTHORIZED origin (localhost:8081)" [level=1] [ref=e2]'
-  - button [ref=e3] [cursor=pointer]:
-    - img "Ask AI" [ref=e4]
