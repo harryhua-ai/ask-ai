@@ -838,7 +838,8 @@ async def test_fetch_models_body_api_base_outside_allowlist_rejected(auth_header
         assert resp.status_code == 200
         body = resp.json()
         assert body["models"] == []
-        assert body["error"] == "api_base 校验失败"
+        # P1 契约:fetch-models 的 api_base 错误同为产品级可操作文案,且不泄露 key
+        assert "尚未授权" in body["error"]
         assert "sk-dbkey" not in body["error"]
         mock_create.assert_not_called()
     finally:
@@ -847,7 +848,8 @@ async def test_fetch_models_body_api_base_outside_allowlist_rejected(auth_header
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_update_provider_allowlist_422_regression(auth_headers):
-    """T27 回归锁:PATCH 保存 allowlist 外 host 仍 422,detail 数组含可读 msg,DB 不变。"""
+    """P1 回归锁(契约演进):PATCH 保存未授权 host 仍 422,但 detail 是产品级可操作文案
+    (指明「尚未授权」+ 授权入口),不再暴露 LLM_ALLOWED_HOSTS/.env 实现指令;DB 不变。"""
     await _t27_seed_provider("t27-patch-422", "https://api.test.com/v1", "sk-keep")
     factory = app.state.session_factory
     try:
@@ -859,10 +861,215 @@ async def test_update_provider_allowlist_422_regression(auth_headers):
             )
         assert resp.status_code == 422
         detail = resp.json()["detail"]
-        assert isinstance(detail, list)
-        assert any("allowlist" in str(item.get("msg", "")) for item in detail)
+        assert isinstance(detail, str)
+        assert "尚未授权" in detail
+        assert "LLM_ALLOWED_HOSTS" not in detail
+        assert ".env" not in detail
         async with factory() as session:
             row = await session.get(LLMProviderModel, "t27-patch-422")
             assert row.config["api_base"] == "https://api.test.com/v1"
     finally:
         await _t27_del_provider("t27-patch-422")
+
+
+# ===== CAMTHINK_V1_ADMIN_P1:端点显式授权 + Golden Scenarios =====
+#
+# LLM-G003 未授权自定义端点 → 明确的信任/授权失败(产品级文案,不提 .env)
+# LLM-G004 显式授权后的自定义端点 → 校验/保存成功
+# LLM-G005 私有端点默认拒绝 → 仅显式授权可放行
+# LLM-G006 畸形/危险端点 → 无论表单如何提交都被拒绝
+# LLM-G007 内置供应商工作流无回归
+# 另:reload 运行时尊重授权表(撤销授权后 reload 跳过该供应商)
+
+_P1_HOSTS = {"api.together.xyz", "10.201.3.7"}
+
+
+async def _p1_cleanup_hosts() -> None:
+    from backend.db.models import LLMAllowedHost
+
+    factory = app.state.session_factory
+    async with factory() as session:
+        await session.execute(delete(LLMAllowedHost).where(LLMAllowedHost.host.in_(_P1_HOSTS)))
+        await session.commit()
+
+
+async def _p1_authorize(host: str, headers: dict) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/api/admin/llm-allowed-hosts", json={"host": host}, headers=headers
+        )
+    assert resp.status_code == 201, f"授权 {host} 失败: {resp.status_code} {resp.text}"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_p1_g003_unauthorized_custom_endpoint_rejected_with_actionable_message(auth_headers):
+    """G003:未授权公网自定义端点保存 → 422 + 产品级授权指引文案;DB 不变。"""
+    await _p1_cleanup_hosts()
+    await _t27_seed_provider("t27-p1-g003", "https://api.test.com/v1", "sk-keep")
+    factory = app.state.session_factory
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.patch(
+                "/api/admin/llm-providers/t27-p1-g003",
+                json={"config": {"api_base": "https://api.together.xyz/v1"}},
+                headers=auth_headers,
+            )
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert isinstance(detail, str)
+        assert "尚未授权" in detail
+        assert "api.together.xyz" in detail
+        # 契约 LLM-02:不得把实现层指令当作产品工作流暴露
+        assert ".env" not in detail and "LLM_ALLOWED_HOSTS" not in detail
+        async with factory() as session:
+            row = await session.get(LLMProviderModel, "t27-p1-g003")
+            assert row.config["api_base"] == "https://api.test.com/v1"
+    finally:
+        await _t27_del_provider("t27-p1-g003")
+        await _p1_cleanup_hosts()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_p1_g004_authorized_endpoint_save_succeeds_and_persists(auth_headers):
+    """G004:管理员显式授权后,同一保存 → 200;重读持久化。"""
+    await _p1_cleanup_hosts()
+    await _t27_seed_provider("t27-p1-g004", "https://api.test.com/v1", "sk-keep")
+    factory = app.state.session_factory
+    try:
+        await _p1_authorize("api.together.xyz", auth_headers)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.patch(
+                "/api/admin/llm-providers/t27-p1-g004",
+                json={"config": {"api_base": "https://api.together.xyz/v1", "model": "m2"}},
+                headers=auth_headers,
+            )
+            assert resp.status_code == 200
+            listed = await client.get("/api/admin/llm-providers", headers=auth_headers)
+        row = next(p for p in listed.json() if p["id"] == "t27-p1-g004")
+        assert row["config"]["api_base"] == "https://api.together.xyz/v1"
+        assert row["config"]["model"] == "m2"
+        assert row["config"]["api_key"] == "********"
+        async with factory() as session:
+            db_row = await session.get(LLMProviderModel, "t27-p1-g004")
+            assert db_row.config["api_base"] == "https://api.together.xyz/v1"
+    finally:
+        await _t27_del_provider("t27-p1-g004")
+        await _p1_cleanup_hosts()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_p1_g005_private_endpoint_default_deny_then_explicit_authorization(auth_headers):
+    """G005:私有端点(http://10.201.3.7:13000/v1)默认 422;
+    管理员显式授权(private 级自动判定)后保存成功。"""
+    await _p1_cleanup_hosts()
+    await _t27_seed_provider("t27-p1-g005", "https://api.test.com/v1", "sk-keep")
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            denied = await client.patch(
+                "/api/admin/llm-providers/t27-p1-g005",
+                json={"config": {"api_base": "http://10.201.3.7:13000/v1"}},
+                headers=auth_headers,
+            )
+            assert denied.status_code == 422
+            assert "默认拒绝" in denied.json()["detail"]
+            assert "端点授权" in denied.json()["detail"]
+
+            await _p1_authorize("10.201.3.7", auth_headers)
+
+            allowed = await client.patch(
+                "/api/admin/llm-providers/t27-p1-g005",
+                json={"config": {"api_base": "http://10.201.3.7:13000/v1"}},
+                headers=auth_headers,
+            )
+            assert allowed.status_code == 200
+            assert allowed.json()["config"]["api_base"] == "http://10.201.3.7:13000/v1"
+    finally:
+        await _t27_del_provider("t27-p1-g005")
+        await _p1_cleanup_hosts()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_p1_g006_malformed_endpoints_denied_regardless_of_authorization(auth_headers):
+    """G006:协议/主机名畸形的端点,即使主机已被授权也拒绝。"""
+    await _p1_cleanup_hosts()
+    await _t27_seed_provider("t27-p1-g006", "https://api.test.com/v1", "sk-keep")
+    try:
+        await _p1_authorize("api.together.xyz", auth_headers)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            for bad in (
+                "ftp://api.together.xyz/v1",  # 非 http/https
+                "file:///etc/passwd",  # 危险协议
+                "https://",  # 缺主机名
+                "api.together.xyz/v1",  # 缺协议
+            ):
+                resp = await client.patch(
+                    "/api/admin/llm-providers/t27-p1-g006",
+                    json={"config": {"api_base": bad}},
+                    headers=auth_headers,
+                )
+                assert resp.status_code == 422, f"api_base={bad!r} 应拒绝"
+    finally:
+        await _t27_del_provider("t27-p1-g006")
+        await _p1_cleanup_hosts()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_p1_g007_builtin_host_workflow_no_regression(auth_headers):
+    """G007:内置主机(api.deepseek.com)无需授权行即可创建/更新,工作流无回归。"""
+    await _p1_cleanup_hosts()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/admin/llm-providers",
+                json={
+                    "id": "test-prov-p1-g007",
+                    "type": "openai_compatible",
+                    "config": {
+                        "api_base": "https://api.deepseek.com/v1",
+                        "api_key": "sk-p1",
+                        "model": "m1",
+                    },
+                },
+                headers=auth_headers,
+            )
+            assert resp.status_code == 201
+            patch = await client.patch(
+                "/api/admin/llm-providers/test-prov-p1-g007",
+                json={"config": {"model": "m2"}},
+                headers=auth_headers,
+            )
+            assert patch.status_code == 200
+            assert patch.json()["config"]["model"] == "m2"
+    finally:
+        await _t27_del_provider("test-prov-p1-g007")
+        await _p1_cleanup_hosts()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_p1_reload_skips_provider_after_authorization_revoked(auth_headers):
+    """撤销授权后 reload:运行时构建跳过该供应商(skipped 含其 id),授权可审查可回收。"""
+    await _p1_cleanup_hosts()
+    await _t27_seed_provider("t27-p1-reload", "https://api.together.xyz/v1", "sk-keep")
+    # 与 test_reload_reconfigures_router 相同:测试上下文无 lifespan,注入假 router
+    fake_router = AsyncMock()
+    fake_router.reconfigure = MagicMock()
+    app.state.llm = fake_router
+    try:
+        await _p1_authorize("api.together.xyz", auth_headers)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            before = await client.post("/api/admin/llm-providers/reload", headers=auth_headers)
+            assert before.status_code == 200
+            assert "t27-p1-reload" not in before.json()["skipped"]
+
+            revoked = await client.delete(
+                "/api/admin/llm-allowed-hosts/api.together.xyz", headers=auth_headers
+            )
+            assert revoked.status_code == 204
+
+            after = await client.post("/api/admin/llm-providers/reload", headers=auth_headers)
+            assert after.status_code == 200
+            assert "t27-p1-reload" in after.json()["skipped"]
+    finally:
+        del app.state.llm
+        await _t27_del_provider("t27-p1-reload")
+        await _p1_cleanup_hosts()

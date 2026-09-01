@@ -269,6 +269,23 @@ class LLMRouting(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class LLMAllowedHost(Base):
+    """LLM 自定义端点显式授权(管理员通过产品工作流维护,持久化可审查)。
+
+    host: 小写主机名或 IP 字面量(不含 scheme/port),精确匹配,无通配符。
+    allow_private: True = 私有/内网端点授权(允许私有 IP 字面量与内网 http),
+                   由授权时的主机形态自动判定,不可手工改。
+    """
+
+    __tablename__ = "llm_allowed_hosts"
+
+    host: Mapped[str] = mapped_column(String(255), primary_key=True)
+    allow_private: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class QuestionCluster(Base):
     """问题聚类结果(Phase 3B Coverage Gaps + Top Questions)。"""
 

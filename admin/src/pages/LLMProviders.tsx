@@ -16,6 +16,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ChainChip } from "@/components/ChainChip";
 import { ProviderCredentialDialog } from "@/components/ProviderCredentialDialog";
+import { EndpointAuthDialog } from "@/components/EndpointAuthDialog";
+import { ShieldCheck } from "lucide-react";
 import { ProviderEditDialog } from "@/components/ProviderEditDialog";
 import { AddToTaskDialog } from "@/components/AddToTaskDialog";
 import { cn } from "@/lib/utils";
@@ -55,6 +57,7 @@ export default function LLMProviders() {
   const createProvider = useCreateProvider();
 
   const [credOpen, setCredOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [addTask, setAddTask] = useState<string | null>(null);
 
@@ -129,6 +132,10 @@ export default function LLMProviders() {
           <Button variant="outline" size="sm" onClick={() => setCredOpen(true)}>
             <SlidersHorizontal className="mr-1.5 h-3.5 w-3.5" />
             供应商凭证
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setAuthOpen(true)}>
+            <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
+            端点授权
           </Button>
           <Button size="sm" onClick={() => reload.mutate()} disabled={reload.isPending}>
             <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", reload.isPending && "animate-spin")} />
@@ -246,6 +253,7 @@ export default function LLMProviders() {
           onClose={() => setCredOpen(false)}
         />
       )}
+      {authOpen && <EndpointAuthDialog onClose={() => setAuthOpen(false)} />}
       {editProvider && (
         <ProviderEditDialog
           provider={editProvider}

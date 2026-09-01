@@ -120,9 +120,10 @@ describe("ProviderEditDialog T27", () => {
     await waitFor(() => expect(screen.getByText("api_base 校验失败")).toBeInTheDocument());
   });
 
-  it("api_base 下有 LLM_ALLOWED_HOSTS 指引说明", () => {
+  it("api_base 下有端点授权工作流指引(P1:不再提 .env/LLM_ALLOWED_HOSTS)", () => {
     renderDialog();
-    expect(screen.getByText(/LLM_ALLOWED_HOSTS/)).toBeInTheDocument();
+    expect(screen.getByText(/端点授权/)).toBeInTheDocument();
+    expect(screen.queryByText(/LLM_ALLOWED_HOSTS/)).toBeNull();
   });
 
   it("设为默认:置顶且保存 payload.model = 所设默认项", () => {
@@ -136,5 +137,16 @@ describe("ProviderEditDialog T27", () => {
     expect(saved.config.available_models).toEqual(["v4-flash", "v4-pro"]);
     // v4-flash 行现在显示「默认」徽标,不再有设为默认按钮
     expect(screen.getAllByText("默认").length).toBe(1);
+  });
+});
+
+describe("ProviderEditDialog · P1 端点授权指引", () => {
+  it("不暴露 .env / LLM_ALLOWED_HOSTS 实现层指引,改为指明「端点授权」产品工作流", () => {
+    renderDialog();
+    // Radix Dialog 渲染在 portal(document.body)下,查 body 而非 container
+    const text = document.body.textContent ?? "";
+    expect(text).not.toContain(".env");
+    expect(text).not.toContain("LLM_ALLOWED_HOSTS");
+    expect(text).toContain("端点授权");
   });
 });
