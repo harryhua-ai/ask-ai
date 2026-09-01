@@ -243,7 +243,7 @@ e945f59 (BASE_INTEGRATION_COMMIT)
 | BASE_PRIMARY | 262c1fc859ad3203337f77eb5b5c60e40d66929c |
 | MULTI_SITE_INPUT | 2d27dd8925bb9d9f1f5c8e2ffd85184c2e2a3f63 |
 | BASE_INTEGRATION_COMMIT | e945f59cb7aa2aaed432bebd4cb42328caa115af |
-| FINAL_COMMIT | ec76beb(9fffa0e merge + 门用例;分支 tip) |
+| FINAL_COMMIT | ec76beb6a4bb88dddc2e203272d0472eb26ad49b(9fffa0e merge + 门用例;分支 tip,已推 origin 主仓) |
 | BRANCH | integration/camthink-v1-unified-2026-09-01(已推 origin) |
 | WORKTREE | /Users/harryhua/Documents/GitHub/ask-ai/.worktrees/technical-insights(干净) |
 | CONFLICT_COUNT | 0 |
@@ -252,7 +252,7 @@ e945f59 (BASE_INTEGRATION_COMMIT)
 | WIDGET_RESULT | 57 passed + tsc 0 错 + build 成功 |
 | INT_V1_G001_G010 | 5 新增全绿 + 5 门既有测试/冒烟引用,全过 |
 | REPORT_PATH | docs/implementation/CAMTHINK_V1_UNIFIED_V1_INTEGRATION_2026-09-01.md |
-| REPORT_COMMIT | (见本仓 git log,提交即填) |
+| REPORT_COMMIT | 由下一提交回填(本报告全文+精确 FINAL_COMMIT 随该上游提交可检索) |
 | WORKTREE_CLEAN | YES |
 | PRODUCTION_DEPLOYED | NO |
 
