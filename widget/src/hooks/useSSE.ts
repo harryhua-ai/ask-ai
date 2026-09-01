@@ -1,12 +1,20 @@
 import { useCallback } from "react";
 import type { AttachmentRef, ChatMessage, SourceLink } from "../types";
 
-interface SSECallbacks {
+export interface SSEErrorMeta {
+  /** 后端 error 事件的失败类别:empty_generation / provider_error / stream_interrupted */
+  kind?: string;
+}
+
+export interface SSECallbacks {
   onSources: (sources: SourceLink[], conversationId: string) => void;
   onToken: (token: string) => void;
   onDone: (conversationId: string) => void;
-  onError: (message: string) => void;
+  onError: (message: string, meta?: SSEErrorMeta) => void;
 }
+
+// 与后端 SERVICE_UNAVAILABLE_MSG 保持一致的兜底文案
+const SERVICE_UNAVAILABLE = "服务暂时不可用,请稍后再试。";
 
 // widget 匿名会话标识(localStorage UUID,无服务端签发)
 function getSessionId(): string {
@@ -16,6 +24,71 @@ function getSessionId(): string {
     localStorage.setItem("ask_ai_session_id", s);
   }
   return s;
+}
+
+// 消费 /api/ask SSE 响应:解析 event/data 行,分发到对应回调。
+// 独立导出以便对真实流消费路径做单测。
+// 失败信号契约(与后端 P1 生成可靠性配套):
+// - error 事件 → onError(消息, {kind}) —— 零内容完成/生成异常/流中断;
+// - declined 事件(预算熔断)→ onError(reason);
+// - 未知事件类型忽略(向后兼容旧服务端,不崩溃)。
+export async function consumeSSE(resp: Response, callbacks: SSECallbacks): Promise<void> {
+  // HTTP 错误响应:4xx/5xx 不应作为 SSE 解析,否则每个 chunk 都会 JSON 解析失败
+  if (!resp.ok) {
+    console.error(`SSE 请求失败: ${resp.status}`);
+    const msg =
+      resp.status === 422
+        ? "问题内容过长或格式有误,请精简后重试。"
+        : resp.status === 403
+          ? "无权访问所选附件。"
+          : SERVICE_UNAVAILABLE;
+    callbacks.onError(msg);
+    return;
+  }
+  // 安全检查:提前校验 body 是否存在,避免非空断言
+  if (!resp.body) return;
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+
+    // SSE 事件以空行分隔
+    const events = buffer.split("\n\n");
+    buffer = events.pop() || "";
+
+    for (const event of events) {
+      const lines = event.trim().split("\n");
+      let eventType = "";
+      let dataStr = "";
+      for (const line of lines) {
+        if (line.startsWith("event: ")) eventType = line.slice(7).trim();
+        if (line.startsWith("data: ")) dataStr = line.slice(6);
+      }
+      if (!dataStr) continue;
+      try {
+        const data = JSON.parse(dataStr);
+        if (eventType === "sources") {
+          callbacks.onSources(data.sources || [], data.conversation_id);
+        } else if (eventType === "token") {
+          callbacks.onToken(data.content || "");
+        } else if (eventType === "error") {
+          callbacks.onError(data.message || SERVICE_UNAVAILABLE, { kind: data.kind });
+        } else if (eventType === "declined") {
+          callbacks.onError(data.reason || "服务繁忙,请稍后再试");
+        } else if (eventType === "done") {
+          callbacks.onDone(data.conversation_id);
+        }
+      } catch (e) {
+        // 非关键日志:JSON 解析失败时记录,便于排查 SSE 协议问题
+        console.warn("SSE JSON 解析失败:", e);
+      }
+    }
+  }
 }
 
 // SSE 流式接收 hook:解析 event/data 行,分发到对应回调
@@ -74,57 +147,7 @@ export function useSSE(apiUrl: string) {
       }),
     });
 
-    // HTTP 错误响应:4xx/5xx 不应作为 SSE 解析,否则每个 chunk 都会 JSON 解析失败
-    if (!resp.ok) {
-      console.error(`SSE 请求失败: ${resp.status}`);
-      const msg = resp.status === 422
-        ? "问题内容过长或格式有误,请精简后重试。"
-        : resp.status === 403
-          ? "无权访问所选附件。"
-          : "服务暂时不可用,请稍后再试。";
-      callbacks.onError(msg);
-      return;
-    }
-    // 安全检查:提前校验 body 是否存在,避免非空断言
-    if (!resp.body) return;
-
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-
-      // SSE 事件以空行分隔
-      const events = buffer.split("\n\n");
-      buffer = events.pop() || "";
-
-      for (const event of events) {
-        const lines = event.trim().split("\n");
-        let eventType = "";
-        let dataStr = "";
-        for (const line of lines) {
-          if (line.startsWith("event: ")) eventType = line.slice(7).trim();
-          if (line.startsWith("data: ")) dataStr = line.slice(6);
-        }
-        if (!dataStr) continue;
-        try {
-          const data = JSON.parse(dataStr);
-          if (eventType === "sources") {
-            callbacks.onSources(data.sources || [], data.conversation_id);
-          } else if (eventType === "token") {
-            callbacks.onToken(data.content || "");
-          } else if (eventType === "done") {
-            callbacks.onDone(data.conversation_id);
-          }
-        } catch (e) {
-          // 非关键日志:JSON 解析失败时记录,便于排查 SSE 协议问题
-          console.warn("SSE JSON 解析失败:", e);
-        }
-      }
-    }
+    await consumeSSE(resp, callbacks);
   }, [apiUrl]);
 
   return { ask, uploadFiles };

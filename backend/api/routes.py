@@ -33,7 +33,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from backend.api.schemas import AskRequest, ClickRequest, FeedbackRequest
 from backend.db.models import Attachment, Conversation, SourceClick, Trace
-from backend.pipeline.rag import RAGOrchestrator
+from backend.pipeline.rag import EmptyGenerationError, RAGOrchestrator
 from backend.services.attachments import (
     MAX_ATTACHMENTS_PER_MESSAGE,
     compute_storage_path,
@@ -47,6 +47,10 @@ from backend.utils.pii import mask_pii
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 limiter = Limiter(key_func=get_remote_address)
+
+# 生成失败兜底文案(PC-02):沿用既有产品文案;客户端旧版本收到的
+# 兜底 token 也用同一文案,保证升级前后用户可见行为一致。
+SERVICE_UNAVAILABLE_MSG = "服务暂时不可用,请稍后再试。"
 
 
 def get_rag(request: Request) -> RAGOrchestrator:
@@ -91,8 +95,12 @@ async def ask(
            - ``complete`` 事件 → 提取最终元数据,不直接转发。
         4. 空结果(拒答)时 ``stream_answer`` 仅产一条 ``complete`` 事件;
            此处将拒答文本作为 ``token`` SSE 事件补发,保证客户端可见。
-        5. 写入 Postgres conversations 表。
-        6. 发送 ``done`` SSE 事件,携带 ``conversation_id``。
+        5. 生成可靠性(PC-01/02/03):零可用内容完成、首 token 前异常、
+           部分 token 后中断均视为异常完成 —— 补发失败文案 token(若无内容)
+           并在 ``done`` 之前发 ``error`` SSE 事件(``kind`` 标注失败类别),
+           持久化 ``is_answered=False`` + ``Trace(type=generation_error)``。
+        6. 写入 Postgres conversations 表。
+        7. 发送 ``done`` SSE 事件,携带 ``conversation_id``。
     """
     masked_message = mask_pii(req.message)
 
@@ -148,6 +156,11 @@ async def ask(
         token_emitted = False
         intent: str | None = None
         trace_payload: dict | None = None
+        # 生成失败分类(PC-06,持久化与 error 事件共用):
+        # - empty_generation: 流正常结束但零可用内容(含仅空白);
+        # - provider_error: 首 token 前异常;
+        # - stream_interrupted: 已产出部分 token 后异常。
+        failure_kind: str | None = None
 
         try:
             async for chunk in rag.stream_answer(
@@ -177,18 +190,54 @@ async def ask(
                     elapsed = data.get("response_time_ms", 0)
                     intent = data.get("intent")
                     trace_payload = data.get("trace_payload")
-        except Exception:
+        except Exception as exc:
             # S5: LLM 流式生成中途异常(超时/网络错误)时,降级返回友好提示。
-            # 200 响应头已发送,无法改写状态码,但通过 SSE token 事件通知客户端。
+            # 200 响应头已发送,无法改写状态码,但通过 SSE token/error 事件通知客户端。
             logger.exception("SSE 流式生成异常, conversation_id=%s", conversation_id)
-            if not token_emitted:
-                full_answer = "服务暂时不可用,请稍后再试。"
-                yield {"event": "token", "data": json.dumps({"content": full_answer})}
+            if isinstance(exc, EmptyGenerationError):
+                failure_kind = "empty_generation"
+            else:
+                failure_kind = "stream_interrupted" if token_emitted else "provider_error"
 
-        # 空结果契约:stream_answer 仅产 complete(is_answered=False)时,
-        # 未发过 token 事件 —— 此处补发拒答文本,保证客户端可见
-        if not token_emitted and full_answer:
+        # 用户可见内容发射(恰好一次,三选一互斥):
+        # 1) 既有空结果契约:拒答文本(complete 且 is_answered=False)补发为 token;
+        # 2) PC-01 零内容守护:流结束仍无可用内容 → 补发失败文案 token + error 事件;
+        # 3) 正常回答/部分中断:token 已按原样转发,不重复发射(NA-04)。
+        if not token_emitted and failure_kind is None and full_answer:
             yield {"event": "token", "data": json.dumps({"content": full_answer})}
+        elif not full_answer.strip():
+            failure_kind = failure_kind or "empty_generation"
+            full_answer = SERVICE_UNAVAILABLE_MSG
+            yield {"event": "token", "data": json.dumps({"content": full_answer})}
+
+        # PC-02/PC-03:结构化失败信号,在 done 之前发出 —— 用户可见地
+        # 区分「回答完成」与「生成失败/中断」;旧客户端忽略未知事件类型,
+        # 行为退化为仅显示兜底 token 文本,仍满足可见失败要求。
+        if failure_kind is not None:
+            is_answered = False  # 失败绝不持久化为成功(NA-05)
+            yield {
+                "event": "error",
+                "data": json.dumps(
+                    {
+                        "conversation_id": conversation_id,
+                        "kind": failure_kind,
+                        "message": SERVICE_UNAVAILABLE_MSG,
+                    }
+                ),
+            }
+            # 持久化可观测性(PC-06):复用 Trace 行区分 生成失败 与 拒答/成功,
+            # 不扩表结构 —— type=generation_error,failure_kind 记入 config_snapshot。
+            base = trace_payload or {}
+            trace_payload = {
+                **base,
+                "type": "generation_error",
+                "stages": {**base.get("stages", {}), "error": {"kind": failure_kind}},
+                "total_ms": base.get("total_ms", elapsed),
+                "config_snapshot": {
+                    **base.get("config_snapshot", {}),
+                    "failure_kind": failure_kind,
+                },
+            }
 
         # 持久化到 Postgres
         try:

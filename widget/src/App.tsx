@@ -11,6 +11,9 @@ const SUGGESTED_QUESTIONS = [
   "AIToolStack 有哪些功能?",
 ];
 
+// 与后端 SERVICE_UNAVAILABLE_MSG 保持一致的失败兜底文案
+const SERVICE_UNAVAILABLE = "服务暂时不可用,请稍后再试。";
+
 export function App({ config }: { config: WidgetConfig }) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -51,12 +54,24 @@ export function App({ config }: { config: WidgetConfig }) {
         },
         onDone: (convId) => {
           setConversationId(convId);
-        },
-        onError: (errMsg) => {
+          // PC-01 客户端最后防线:流结束仍无任何内容(如旧版后端零内容完成)
+          // → 显示失败文案,绝不留空白气泡伪装成功
           setMessages((prev) =>
             prev.map((m) =>
-              m.id === assistantId ? { ...m, content: errMsg } : m,
+              m.id === assistantId && !m.content ? { ...m, content: SERVICE_UNAVAILABLE } : m,
             ),
+          );
+        },
+        onError: (errMsg, meta) => {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== assistantId) return m;
+              // 流中断(PC-03):部分内容保留,失败提示追加其后,不覆盖已有输出
+              if (meta?.kind === "stream_interrupted") {
+                return { ...m, content: m.content ? `${m.content}\n\n${errMsg}` : errMsg };
+              }
+              return { ...m, content: errMsg };
+            }),
           );
         },
       }, attachmentIds);
