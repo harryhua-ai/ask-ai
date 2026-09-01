@@ -59,7 +59,18 @@ export function renderMarkdownSafe(text: string, sources?: SourceLink[]): string
   html = html.replace(/((?:<li>.+<\/li>\n?)+)/g, (m) => `<ul>${m.trim().replace(/\n/g, "")}</ul>`);
   if (sources && sources.length > 0) {
     const lines = html.split("\n");
+    // CIT-01:代码块(<pre><code>)内的 [N] 是数组下标等代码内容,不是引用
+    // 标记——整块跳过,防止引用处理吞掉代码内容或误挂徽标。
+    let inPre = false;
     html = lines.map((line) => {
+      if (!inPre && line.includes("<pre>")) {
+        if (!line.includes("</pre>")) inPre = true;
+        return line;
+      }
+      if (inPre) {
+        if (line.includes("</pre>")) inPre = false;
+        return line;
+      }
       const found = new Set<number>();
       const cleaned = line.replace(/\[(\d+)\]/g, (_, n: string) => {
         const idx = parseInt(n, 10) - 1;
