@@ -252,7 +252,7 @@ e945f59 (BASE_INTEGRATION_COMMIT)
 | WIDGET_RESULT | 57 passed + tsc 0 错 + build 成功 |
 | INT_V1_G001_G010 | 5 新增全绿 + 5 门既有测试/冒烟引用,全过 |
 | REPORT_PATH | docs/implementation/CAMTHINK_V1_UNIFIED_V1_INTEGRATION_2026-09-01.md |
-| REPORT_COMMIT | 由下一提交回填(本报告全文+精确 FINAL_COMMIT 随该上游提交可检索) |
+| REPORT_COMMIT | 69bc422ed54b561fe9f002756ce2dec512ee6d26(报告全文 + 精确 FINAL_COMMIT 随该提交可检索) |
 | WORKTREE_CLEAN | YES |
 | PRODUCTION_DEPLOYED | NO |
 
