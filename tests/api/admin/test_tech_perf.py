@@ -103,7 +103,10 @@ async def test_tech_perf_returns_kpi(tech_perf_seed):
     assert resp.status_code == 200
     j = resp.json()
     assert j["kpi"]["p95_ms"] > 0
-    assert j["kpi"]["fail_rate"] <= j["kpi"]["retry_rate"] <= j["kpi"]["anomaly_rate"]
+    # 包含关系:真实失败 ⊆ 诊断异常;恢复信号独立存在
+    assert j["kpi"]["fail_rate"] <= j["kpi"]["anomaly_rate"]
+    assert "recovered_rate" in j["kpi"]
+    assert "health" in j
 
 
 async def test_tech_perf_stage_percentiles(tech_perf_seed):
@@ -127,14 +130,14 @@ async def test_tech_perf_kpi_count_delta_and_anomaly_pct(tech_perf_seed):
     assert resp.status_code == 200
     j = resp.json()
     kpi = j["kpi"]
-    # count 字段存在且为 int
-    for field in ("anomaly_count", "retry_count", "fail_count"):
+    # count 字段存在且为 int(anomaly/fail/recovered,重试率已退役为降级恢复)
+    for field in ("anomaly_count", "fail_count", "recovered_count"):
         assert field in kpi
         assert isinstance(kpi[field], int)
-    # delta 字段存在且为 float(环比,可为正/负/0)
-    for field in ("anomaly_delta", "retry_delta", "fail_delta"):
+    # delta 字段存在,上一窗缺失时为 null(不假装环比)
+    for field in ("anomaly_delta", "recovered_delta", "fail_delta"):
         assert field in kpi
-        assert isinstance(kpi[field], (int, float))
+        assert kpi[field] is None or isinstance(kpi[field], (int, float))
     # anomalies 项含 pct
     for a in j["anomalies"]:
         assert "pct" in a

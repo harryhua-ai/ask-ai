@@ -113,6 +113,7 @@ export interface LLMRouting {
 
 export interface TraceMarkers {
   retry: boolean;
+  failure: boolean;
   clarify: boolean;
   reject_short: boolean;
   degraded: boolean;

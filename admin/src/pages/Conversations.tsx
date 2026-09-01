@@ -89,22 +89,31 @@ export default function Conversations() {
     }, 300);
     return () => clearTimeout(t);
   }, [searchInput]);
-  // Phase 2:快速筛选 toggle(置信<0.6 走客户端过滤,其余 3 个走后端查询参数)
+  // Phase 2:快速筛选 toggle(置信<0.6 走客户端过滤,其余走后端查询参数)
+  // failure 支持来自技术洞察的深链(/conversations?failure=true)
   const [toggles, setToggles] = useState<{
     lowConf: boolean;
     retry: boolean;
+    failure: boolean;
     feedback: boolean;
     clarify: boolean;
-  }>({ lowConf: false, retry: false, feedback: false, clarify: false });
+  }>({
+    lowConf: false,
+    retry: false,
+    failure: searchParams.get("failure") === "true",
+    feedback: false,
+    clarify: false,
+  });
   useEffect(() => {
     setFilters((f) => ({
       ...f,
       has_retry: toggles.retry || undefined,
+      has_failure: toggles.failure || undefined,
       has_feedback: toggles.feedback || undefined,
       has_clarify: toggles.clarify || undefined,
       page: 1,
     }));
-  }, [toggles.retry, toggles.feedback, toggles.clarify]);
+  }, [toggles.retry, toggles.failure, toggles.feedback, toggles.clarify]);
   const { data, isLoading } = useConversations(filters);
   const { data: detail } = useConversationDetail(selectedId);
   const tagMutation = useTagConversation();
@@ -224,7 +233,13 @@ export default function Conversations() {
             color="var(--warn)"
           />
           <ToggleFilter
-            label="异常重试"
+            label="失败"
+            active={toggles.failure}
+            onToggle={() => setToggles((t) => ({ ...t, failure: !t.failure }))}
+            color="var(--err)"
+          />
+          <ToggleFilter
+            label="重试"
             active={toggles.retry}
             onToggle={() => setToggles((t) => ({ ...t, retry: !t.retry }))}
             color="var(--err)"
@@ -270,12 +285,20 @@ export default function Conversations() {
                         )}
                         {conv.trace_summary?.markers && (
                           <div className="flex items-center gap-1" data-markers>
+                            {conv.trace_summary.markers.failure && (
+                              <span
+                                data-marker="failure"
+                                title="生成失败"
+                                className="inline-block w-2 h-2 rounded-full"
+                                style={{ background: "var(--err)" }}
+                              />
+                            )}
                             {conv.trace_summary.markers.retry && (
                               <span
                                 data-marker="retry"
-                                title="异常重试"
+                                title="重试"
                                 className="inline-block w-2 h-2 rounded-full"
-                                style={{ background: "var(--err)" }}
+                                style={{ background: "var(--warn)" }}
                               />
                             )}
                             {conv.trace_summary.markers.clarify && (

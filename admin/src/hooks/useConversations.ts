@@ -11,7 +11,8 @@ export interface ConversationFilters {
   date_from?: string;
   date_to?: string;
   page?: number;
-  has_retry?: boolean; // Phase 2:异常重试
+  has_retry?: boolean; // literal 重试(stages 显式 retry_count;生产路径暂不写入)
+  has_failure?: boolean; // 真实失败(trace type=generation_error)
   has_feedback?: boolean; // Phase 2:有反馈
   has_clarify?: boolean; // Phase 2:触发澄清
 }
