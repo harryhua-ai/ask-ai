@@ -1,0 +1,60 @@
+{
+ "RB-CASE-B-ghost-sim": {
+  "question": "我的 NE101 照片一直传不上云,蜂窝注册失败,帮我看看怎么回事?",
+  "conversation_id": null,
+  "wall_s": 5.8,
+  "n_sources": 0,
+  "sources": [],
+  "answer": "暂未在官方资料中找到相关信息。",
+  "is_reject": true
+ },
+ "RB-PUB-temp": {
+  "question": "What is the operating temperature range of NE301 edge camera",
+  "conversation_id": "f7b83667-dc52-4a36-b84c-fa766e18d479",
+  "wall_s": 7.9,
+  "n_sources": 5,
+  "sources": [
+   {
+    "url": "https://www.camthink.ai/blog/edge-ai-camera-outdoor-deployment-guide/",
+    "title": "NE301 Edge AI Camera Outdoor Deploying Guide:  Power, Connectivity, and Fleet Management",
+    "type": "web_crawl",
+    "product": "website"
+   },
+   {
+    "url": "https://www.camthink.ai/blog/smart-refrigerator-cold-chain-retail-edge-ai/",
+    "title": "Refrigerator Shelf Monitoring with Edge AI Cameras",
+    "type": "web_crawl",
+    "product": "website"
+   },
+   {
+    "url": "https://www.camthink.ai/blog/solar-powered-edge-ai-cameras-remote-monitoring/",
+    "title": "Solar-Powered Edge AI Cameras",
+    "type": "web_crawl",
+    "product": "website"
+   },
+   {
+    "url": "https://www.camthink.ai/tools/battery-calculator/",
+    "title": "Battery Life Calculator",
+    "type": "web_crawl",
+    "product": "website"
+   },
+   {
+    "url": "https://www.camthink.ai/blog/camthink-neoeyes-ne301-edge-ai-stm32n6-guide/",
+    "title": "Camthink NeoEyes NE301 Guide: Edge AI Camera with STM32N6",
+    "type": "web_crawl",
+    "product": "website"
+   }
+  ],
+  "answer": "**Operating Temperature Range**\n\nThe NE301 operates from **−20°C to +50°C**, rated for extreme outdoor environments including refrigerated cabinets (2°C–8°C) and freezers (−18°C). [1][2][3][4]\n\n**Low-Temperature Note**\n\nAt −20°C, effective alkaline AA battery capacity drops approximately 25–35% versus room temperature; lithium AA cells retain ~85–90% capacity at −20°C and are recommended for cold-climate deployments. [3]",
+  "is_reject": false
+ },
+ "RB-PUB-offtopic": {
+  "question": "帮我写一首关于秋天的诗",
+  "conversation_id": null,
+  "wall_s": 0.7,
+  "n_sources": 0,
+  "sources": [],
+  "answer": "我只能回答与 CamThink 产品相关的问题。",
+  "is_reject": true
+ }
+}

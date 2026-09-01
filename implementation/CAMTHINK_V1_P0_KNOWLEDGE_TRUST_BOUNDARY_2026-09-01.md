@@ -170,4 +170,47 @@ BACKEND_PORT: 8010(worktree 后端,health 实测 200;证据 p0_e2e_evidence.*.js
  tests/scripts/test_migrate_channel_visibility.py | 新增(4)
 ```
 
-*执行端到此停止。本 PASS 仅为执行证据,不授权 CamThink V1 上线;终审归 Planner/Reviewer。*
+---
+
+## 10. Security Hardening Rework(Planner FINAL REVIEW = PARTIAL → rework,2026-09-01)
+
+Planner 主体方案全部接受;唯一合同缺口:**授权不确定性当前 fail-open**。本节为最小加固,基于 0640bc3 增量(不回退重做)。
+
+### 10.1 修复的三类合同违例(冻结契约 Part 4)
+
+| Case | 修复前 | 修复后 |
+|---|---|---|
+| A 无权威快照(首次 loader 失败) | `{}` → 全部候选放行 | **DENY**:不得放行未证实候选 |
+| B unknown / ghost 源前缀 | allow | **DENY**:不得进入生成上下文 |
+| C guard 意外异常 | 返回原始候选(=旁路) | **fail-closed**:丢弃全部候选 → 拒答门兜底(可用性损失而非安全损失) |
+| (保留)陈旧有效快照 + 刷新失败 | 沿用旧快照 | 不变(契约明示 MAY use stale snapshot) |
+| (附加)channel=None 未知请求上下文 | allow | DENY |
+
+已知源缺省 `channel_visibility` 键仍按默认公开(产品既有语义 + PC-02 防公开知识塌陷);未知前缀拒答不依赖该源快照值。
+
+### 10.2 变更与验证
+
+- `backend/services/source_visibility.py`:allows() 四行契约语义;`_snapshot_or_stale()` 返回 None 表示"从无权威快照";`{}`(loader 成功但零配置)同样全拒。
+- `backend/pipeline/rag.py` `_apply_visibility_guard`:异常 → ERROR 日志 + 丢弃全部候选。
+- 边界测试扩至 **23 例**(10 守卫 + 9 编排 + 4 迁移);全量 **570 passed + 3 skipped**。(注:admin analytics 一例在个别整轮顺序下偶发,隔离复现新旧代码均通过,与本地无关、未改动。)
+- black/ruff:新改动文件全清。
+
+### 10.3 活体证据(本地 :8010,零 weaviate 写入;`p0-trust-boundary-evidence/p0_rework_evidence.json`)
+
+| 场景 | 结果 |
+|---|---|
+| RB-CASE-B-ghost-sim(SIM 故障;幽灵前缀案例 chunk 元数据为公开) | **5.8s 干净拒答"暂未在官方资料中找到相关信息。"**——Case B 实证:未知前缀即使 chunk 元数据公开也拦在上下文入口(rework 前同状态会整段叙述案例) |
+| RB-PUB-temp(EN 规格题) | 5 源 grounding 完整作答(website 源=已知+缺省公开)——AC-05 保持 |
+| RB-PUB-offtopic(跑题诗) | 0.7s 标准拒答 |
+
+### 10.4 交付记录(rework)
+
+| 项 | 值 |
+|---|---|
+| BASELINE(增量基于) | `0640bc3`(原 P0 candidate,未回退) |
+| FINAL_COMMIT(rework) | `bc17d404d3949961448a071d1dca814b65367b31` |
+| BRANCH / WORKTREE | 同 §0(线性追加,无 amend/rebase) |
+| REMOTE | origin/worktree-exec/p0-trust-boundary = bc17d40(已推送,ls-remote 实证) |
+| 三行自证 | WORKTREE/分支同 §0;BACKEND_PORT 8010;未重新下载权重 / 未动 8000 主后端 / **未写共享 weaviate(本阶段全程只读)** |
+
+*执行端到此停止。本 rework PASS 仅为执行证据,不授权 CamThink V1 上线;终审归 Planner/Reviewer。*
