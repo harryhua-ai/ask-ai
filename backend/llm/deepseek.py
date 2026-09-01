@@ -52,6 +52,16 @@ class DeepseekProvider:
         self._max_tokens = max_tokens
         self._temperature = temperature
 
+    def _auth_headers(self) -> dict[str, str]:
+        """api_key 为空时不发 Authorization 头。
+
+        `Bearer ` 空值头会被 httpx 拒绝(LocalProtocolError: Illegal
+        header value),导致免鉴权自建网关(或未填 token 时)请求必崩。
+        """
+        if not self._api_key:
+            return {}
+        return {"Authorization": f"Bearer {self._api_key}"}
+
     @property
     def provider_id(self) -> str:
         return self._id
@@ -72,7 +82,7 @@ class DeepseekProvider:
                 try:
                     resp = await client.post(
                         f"{self._api_base}/chat/completions",
-                        headers={"Authorization": f"Bearer {self._api_key}"},
+                        headers=self._auth_headers(),
                         json={
                             "model": kwargs.get("model", self._model),
                             "messages": messages,
@@ -96,7 +106,9 @@ class DeepseekProvider:
                     if attempt < max_attempts - 1:
                         logger.warning(
                             "deepseek generate %s (attempt %d/%d), retrying",
-                            type(exc).__name__, attempt + 1, max_attempts,
+                            type(exc).__name__,
+                            attempt + 1,
+                            max_attempts,
                         )
                         continue
                     raise
@@ -126,7 +138,7 @@ class DeepseekProvider:
                     client.stream(
                         "POST",
                         f"{self._api_base}/chat/completions",
-                        headers={"Authorization": f"Bearer {self._api_key}"},
+                        headers=self._auth_headers(),
                         json={
                             "model": kwargs.get("model", self._model),
                             "messages": messages,
@@ -154,7 +166,9 @@ class DeepseekProvider:
                 if attempt < max_attempts - 1:
                     logger.warning(
                         "deepseek stream %s (attempt %d/%d), retrying",
-                        type(exc).__name__, attempt + 1, max_attempts,
+                        type(exc).__name__,
+                        attempt + 1,
+                        max_attempts,
                     )
                     continue
                 raise
@@ -180,7 +194,7 @@ class DeepseekProvider:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(
                 f"{self._api_base}/models",
-                headers={"Authorization": f"Bearer {self._api_key}"},
+                headers=self._auth_headers(),
             )
             resp.raise_for_status()
             data = resp.json().get("data") or []
