@@ -222,7 +222,7 @@ def _fake_doc(url: str):
 
 
 def test_fetch_deleted_diffs_state_file(tmp_path, monkeypatch):
-    """删除:上一轮有、本轮 sitemap 消失的 URL → fetch_deleted 返回并更新状态。"""
+    """删除(全量轮):上一轮有、本轮视野消失的 URL → 判删并更新状态。"""
     conn = _make_connector(tmp_path)
     state_path = tmp_path / "crawl-state" / "website-camthink.json"
     monkeypatch.setattr(
@@ -231,20 +231,15 @@ def test_fetch_deleted_diffs_state_file(tmp_path, monkeypatch):
         }
     )
     monkeypatch.setattr(conn, "_state_path", state_path)
-    # 上一轮状态文件里有 keep 与 gone 两个;本轮只剩 keep → gone 被判删
     state_path.parent.mkdir(parents=True)
     state_path.write_text(
-        json.dumps(
-            [
-                "website-camthink/keep",
-                "website-camthink/gone",
-            ]
-        )
+        json.dumps(["website-camthink/keep", "website-camthink/gone"])
     )
-    # 状态文件路径随 CWD(tmp_path)解析
+    # 模拟全量轮视野(含 fetch_all 已置 _last_run_full)
+    conn._seen_urls = {"https://www.camthink.ai/keep/"}
+    conn._last_run_full = True
     deleted = conn.fetch_deleted(datetime.now(UTC))
     assert deleted == ["website-camthink/gone"]
-    # 状态已更新为当前集合
     assert json.loads(state_path.read_text()) == ["website-camthink/keep"]
 
 
@@ -262,3 +257,222 @@ def test_registry_registers_web_crawl() -> None:
     )
     assert conn.source_id == "website-camthink"
     assert conn.product == "website"
+
+
+# --------------------------------------------------------------------------- #
+# WEB 覆盖任务:URL 规范化 / robots / 最小内容 / URL 感知哈希 / 抓取统计
+# --------------------------------------------------------------------------- #
+
+
+def test_canonical_url_normalizes_variants():
+    """规范化:去 query/fragment、host 小写、补尾斜杠、压缩 //;外域拒绝。"""
+    base = "https://www.camthink.ai"
+    f = wc.canonical_url
+    assert f(base, "/about?q=1#top") == "https://www.camthink.ai/about/"
+    assert f(base, "https://WWW.CAMTHINK.AI/about") == "https://www.camthink.ai/about/"
+    assert f(base, "https://www.camthink.ai//a//b/") == "https://www.camthink.ai/a/b/"
+    assert f(base, "/") == "https://www.camthink.ai/"
+    assert f(base, "https://evil.example.com/a/") is None
+    assert f(base, "//resources.camthink.ai/x/") is None
+
+
+def test_same_content_different_paths_get_distinct_hashes(tmp_path, monkeypatch):
+    """内容哈希含 URL 路径:同 md 不同页不得互撞(PG (content_hash,branch) 主键)。"""
+    pages = {
+        "https://www.camthink.ai/robots.txt": "User-agent: *\nAllow: /",
+        "https://www.camthink.ai/sitemap_index.xml": INDEX_XML,
+        "https://www.camthink.ai/post-sitemap.xml": URLSET,
+        "https://www.camthink.ai/page-sitemap.xml": URLSET,
+        "https://www.camthink.ai/product-sitemap.xml": URLSET,
+        "https://www.camthink.ai/a/": "<html><body><main><p>" + "x" * 300 + "</p></main></body></html>",
+        "https://www.camthink.ai/b/": "<html><body><main><p>" + "x" * 300 + "</p></main></body></html>",
+    }
+    urlset = """<?xml version="1.0"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url><loc>https://www.camthink.ai/a/</loc></url>
+      <url><loc>https://www.camthink.ai/b/</loc></url>
+    </urlset>"""
+    for k in ("post-sitemap.xml", "page-sitemap.xml", "product-sitemap.xml"):
+        pages[f"https://www.camthink.ai/{k}"] = urlset
+    _patch_http(monkeypatch, pages)
+    conn = _make_connector(tmp_path)
+    docs = list(conn.fetch_all())
+    by_path = {d.metadata["path"]: d for d in docs}
+    assert by_path["a"].content == by_path["b"].content  # 内容相同
+    assert by_path["a"].content_hash != by_path["b"].content_hash  # 哈希不同(URL 感知)
+
+
+def test_min_content_pages_rejected_and_counted(tmp_path, monkeypatch):
+    """薄内容页(< 200 字符)不入语料,计入 rejected.low_content(噪声防渗)。"""
+    pages = {
+        "https://www.camthink.ai/robots.txt": "User-agent: *\nAllow: /",
+        "https://www.camthink.ai/sitemap_index.xml": INDEX_XML,
+        "https://www.camthink.ai/post-sitemap.xml": URLSET,
+        "https://www.camthink.ai/page-sitemap.xml": URLSET,
+        "https://www.camthink.ai/product-sitemap.xml": URLSET,
+        "https://www.camthink.ai/thin/": "<html><body><p>ok</p></body></html>",
+        "https://www.camthink.ai/rich/": "<html><body><main><p>" + "y" * 300 + "</p></main></body></html>",
+    }
+    urlset = """<?xml version="1.0"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url><loc>https://www.camthink.ai/thin/</loc></url>
+      <url><loc>https://www.camthink.ai/rich/</loc></url>
+    </urlset>"""
+    for k in ("post-sitemap.xml", "page-sitemap.xml", "product-sitemap.xml"):
+        pages[f"https://www.camthink.ai/{k}"] = urlset
+    _patch_http(monkeypatch, pages)
+    conn = _make_connector(tmp_path)
+    docs = [d.url for d in conn.fetch_all()]
+    assert docs == ["https://www.camthink.ai/rich/"]
+    stats = conn.run_stats
+    assert stats["rejected"]["low_content"] == 1
+    assert stats["extracted"] == 1
+
+
+def test_robots_disallow_blocks_crawl_and_counts(tmp_path, monkeypatch):
+    """robots Disallow 对具名/通配 UA 组生效:被禁 URL 不抓取并计入 rejected.robots。"""
+    pages = {
+        "https://www.camthink.ai/robots.txt": (
+            "User-agent: *\nDisallow: /private/\nAllow: /"
+        ),
+        "https://www.camthink.ai/sitemap_index.xml": INDEX_XML,
+        "https://www.camthink.ai/post-sitemap.xml": URLSET,
+        "https://www.camthink.ai/page-sitemap.xml": URLSET,
+        "https://www.camthink.ai/product-sitemap.xml": URLSET,
+        "https://www.camthink.ai/rich/": "<html><body><main><p>" + "z" * 300 + "</p></main></body></html>",
+    }
+    urlset = """<?xml version="1.0"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url><loc>https://www.camthink.ai/private/secret/</loc></url>
+      <url><loc>https://www.camthink.ai/rich/</loc></url>
+    </urlset>"""
+    for k in ("post-sitemap.xml", "page-sitemap.xml", "product-sitemap.xml"):
+        pages[f"https://www.camthink.ai/{k}"] = urlset
+    requested = _patch_http(monkeypatch, pages)
+    conn = _make_connector(tmp_path)
+    docs = [d.url for d in conn.fetch_all()]
+    assert docs == ["https://www.camthink.ai/rich/"]
+    assert not any("/private/" in u for u in requested)
+    assert conn.run_stats["rejected"]["robots"] == 1
+
+
+def test_run_stats_reports_failures_without_breaking_crawl(tmp_path, monkeypatch):
+    """单页失败计入 run_stats.failed(+URL),不中断其余页面(可观测,不吞没)。"""
+    pages = {
+        "https://www.camthink.ai/robots.txt": "User-agent: *\nAllow: /",
+        "https://www.camthink.ai/sitemap_index.xml": INDEX_XML,
+        "https://www.camthink.ai/post-sitemap.xml": URLSET,
+        "https://www.camthink.ai/page-sitemap.xml": URLSET,
+        "https://www.camthink.ai/product-sitemap.xml": URLSET,
+        "https://www.camthink.ai/rich/": "<html><body><main><p>" + "w" * 300 + "</p></main></body></html>",
+    }
+    # 仅 products 页(会失败)与 rich 页入表,避免 URLSET 其余无页面 URL 干扰
+    urlset = """<?xml version="1.0"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url><loc>https://www.camthink.ai/products/neoeyes-503/</loc></url>
+      <url><loc>https://www.camthink.ai/rich/</loc></url>
+    </urlset>"""
+    for k in ("post-sitemap.xml", "page-sitemap.xml", "product-sitemap.xml"):
+        pages[f"https://www.camthink.ai/{k}"] = urlset
+    real_get = None
+
+    def _get(url, **kwargs):
+        if url.endswith("/products/neoeyes-503/"):
+            raise wc.requests.ConnectionError("boom")
+        return _patch_http_get(pages)(url, **kwargs)
+
+    real_get = _get
+    monkeypatch.setattr(wc.requests, "get", _get)
+    conn = _make_connector(tmp_path)
+    docs = [d.url for d in conn.fetch_all()]
+    assert docs == ["https://www.camthink.ai/rich/"]
+    assert conn.run_stats["failed"] == 1
+    assert any("products/neoeyes-503" in u for u in conn.run_stats["failed_urls"])
+    assert conn.run_stats["extracted"] == 1
+
+
+def _patch_http_get(pages: dict):
+    class _Resp:
+        status_code = 200
+
+        @property
+        def text(self):
+            return pages[_current[0]]
+
+        def raise_for_status(self):
+            return None
+
+    _current = [None]
+
+    def _get(url, **kwargs):
+        _current[0] = url
+        return _Resp()
+
+    return _get
+
+
+def test_fetch_deleted_only_after_full_crawl(tmp_path, monkeypatch):
+    """增量轮不删文档(BFS 发现页不因 sitemap 缺失被误删);全量轮才做差集删除。"""
+    conn = _make_connector(tmp_path)
+    state_path = tmp_path / "crawl-state" / "website-camthink.json"
+    monkeypatch.setattr(
+        wc.WebCrawlConnector, "_sitemap_entries", lambda self: {
+            "https://www.camthink.ai/keep/": None,
+        }
+    )
+    monkeypatch.setattr(conn, "_state_path", state_path)
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps(["website-camthink/keep", "website-camthink/gone"]))
+
+    # 增量轮:不做删除、不覆写状态
+    assert conn.fetch_deleted(datetime.now(UTC)) == []
+    assert json.loads(state_path.read_text()) == ["website-camthink/keep", "website-camthink/gone"]
+
+    # 全量轮:差集删除生效
+    conn._seen_urls = {"https://www.camthink.ai/keep/"}
+    conn._last_run_full = True
+    assert conn.fetch_deleted(datetime.now(UTC)) == ["website-camthink/gone"]
+    assert json.loads(state_path.read_text()) == ["website-camthink/keep"]
+
+
+def test_sitemap_entries_canonicalizes_and_dedupes(tmp_path, monkeypatch):
+    """sitemap URL 规范化:大小写 host/无尾斜杠变体与规范形态合并去重。"""
+    urlset = """<?xml version="1.0"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url><loc>https://www.camthink.ai/about</loc></url>
+      <url><loc>https://WWW.camthink.ai/about/</loc></url>
+    </urlset>"""
+
+    def _get(url, **kwargs):
+        if url.endswith("sitemap_index.xml"):
+            return _FakeText(INDEX_XML)
+        return _FakeText(urlset)
+
+    monkeypatch.setattr(wc.requests, "get", _get)
+    conn = _make_connector(tmp_path)
+    entries = conn._sitemap_entries()
+    assert entries == {"https://www.camthink.ai/about/": None}
+
+
+def test_excluded_links_counted_once_across_pages(tmp_path, monkeypatch):
+    """G005 计数语义:导航里反复出现的排除链接只计一次;已见链接不重复计数。"""
+    nav = '<a href="/store/x/">Store</a><a href="/rich/">Rich</a>'
+    page_html = f"<html><body><main><p>{'q' * 300}</p>{nav}</main></body></html>"
+    urlset = """<?xml version="1.0"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url><loc>https://www.camthink.ai/rich/</loc></url>
+    </urlset>"""
+    pages = {
+        "https://www.camthink.ai/robots.txt": "User-agent: *\nAllow: /",
+        "https://www.camthink.ai/sitemap_index.xml": INDEX_XML,
+        "https://www.camthink.ai/post-sitemap.xml": urlset,
+        "https://www.camthink.ai/page-sitemap.xml": urlset,
+        "https://www.camthink.ai/product-sitemap.xml": urlset,
+        "https://www.camthink.ai/rich/": page_html,
+    }
+    _patch_http(monkeypatch, pages)
+    conn = _make_connector(tmp_path)
+    docs = list(conn.fetch_all())
+    assert [d.url for d in docs] == ["https://www.camthink.ai/rich/"]
+    # /store/x/ 被 sitemap 阶段与页面链接发现各遇一次,但 unique 计数 = 1
+    assert conn.run_stats["rejected"]["exclude"] == 1

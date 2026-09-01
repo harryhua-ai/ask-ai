@@ -149,6 +149,27 @@ DEFAULT_INCREMENTAL_WINDOW = timedelta(hours=24)
 # 防止单次拉取无界膨胀;超出部分需手动全量补(如 --reindex)
 MAX_INCREMENTAL_LOOKBACK = timedelta(days=30)
 
+# WEB 合同#6/#7:全量抓取覆盖完整性低于该比例时记 partial(确定性、可解释)。
+# ≥80% 候选页成功抽取 → success(coverage 行仍记录失败明细);
+# <80% → partial(窗口不推进,下轮重试);0 抽取 → failed。
+COVERAGE_PARTIAL_RATIO = 0.8
+
+
+def _coverage_line(stats: dict) -> str:
+    """run_stats → 紧凑覆盖行(写入 SyncLog.error_detail,真实呈现抓取覆盖)。"""
+    rej = stats.get("rejected") or {}
+    rej_desc = ",".join(f"{k}:{v}" for k, v in rej.items() if v)
+    failed_urls = stats.get("failed_urls") or []
+    preview = ";failed_urls=" + ",".join(failed_urls[:5]) if failed_urls else ""
+    return (
+        f"coverage: discovered={stats.get('discovered', 0)}"
+        f" accepted={stats.get('accepted', 0)}"
+        f" extracted={stats.get('extracted', 0)}"
+        f" failed={stats.get('failed', 0)}"
+        + (f" rejected[{rej_desc}]" if rej_desc else "")
+        + preview
+    )
+
 
 def _compute_since(last_success: datetime | None, now: datetime) -> datetime:
     """计算本次增量窗口起点。
@@ -245,15 +266,18 @@ async def _handle_no_change(
         log_entry.items_updated = 0
         log_entry.items_unchanged = existing
     else:
-        # 有缺口:fetch_all 后按 refill_source_ids(整篇缺失 ∪ chunk 集合不一致)
-        # 过滤重灌(幂等 upsert)。多余 chunk 由 upsert 覆盖后随文档重建清理;
-        # 孤儿向量仅统计不删。partial 使窗口不推进并暴露详情,绝不静默跳过。
+        # 有缺口:先按 refill(整篇缺失 ∪ chunk 集合不一致)定向补灌;
+        # refill 为空则缺口属孤儿/多余向量(Weaviate 有账、Postgres 无账,
+        # 典型:documents 表丢失/重置导致账本漂移)——修因而非仅告警(合同#7):
+        # 全量重灌幂等自愈,重建 Postgres 账本行并覆盖向量,恢复两侧一致。
+        # partial 使窗口不推进并暴露详情,绝不静默跳过。
         missing_n = len(report.missing_source_ids)
         refill_n = len(report.refill_source_ids)
         mismatch_n = refill_n - missing_n  # chunk 集合不一致篇数(refill ⊇ missing)
         logger.info(
             "数据源 %s 一致性校验发现缺口:%d/%d chunks(actual/expected),"
-            "需重灌 %d 篇(整篇缺失 %d + chunk 不一致 %d),多余 chunk %d 个",
+            "需重灌 %d 篇(整篇缺失 %d + chunk 不一致 %d),多余 chunk %d 个,"
+            "孤儿 %d 篇",
             source_id,
             report.actual_chunks,
             report.expected_chunks,
@@ -261,6 +285,7 @@ async def _handle_no_change(
             missing_n,
             mismatch_n,
             report.stale_chunk_count,
+            report.orphan_count,
         )
         if report.refill_source_ids:
             refill_set = set(report.refill_source_ids)
@@ -272,8 +297,14 @@ async def _handle_no_change(
                 f"多余 chunk {report.stale_chunk_count} 个(已由 ingest 清理)"
             )
         else:
-            log_entry.items_updated = 0  # 仅孤儿/多余向量等无重灌项场景
-            gap_desc = "存在缺口但重灌清单为空,未自动补齐,需人工核查"
+            docs = list(connector.fetch_all())
+            results = pipeline.ingest_all(docs)  # 幂等:content_hash 去重 + 确定性 UUID 覆盖
+            log_entry.items_updated = sum(results.values())
+            gap_desc = (
+                f"孤儿 {report.orphan_count} 篇/多余 chunk {report.stale_chunk_count} 个"
+                f"(账本漂移),已全量重灌自愈 {len(docs)} 篇恢复账本一致;"
+                f"若下一轮校验仍不一致需人工核查"
+            )
         log_entry.status = "partial"
         log_entry.items_new = 0
         log_entry.error_detail = (
@@ -371,6 +402,31 @@ async def _sync_one(
         log_entry.items_new = sum(1 for v in results.values() if v > 0)
         log_entry.items_updated = sum(results.values())
         log_entry.items_deleted = len(deleted)
+
+        # WEB 合同#6/#7:全量抓取覆盖记账 —— coverage 行始终写入 error_detail
+        # (成功也留痕),完整性不足时降级 status,绝不让「85 页只活 2 页」
+        # 伪装成健康成功。仅对提供 run_stats 且声明全量轮的 connector 生效,
+        # git/filesystem/woocommerce 等连接器语义不变。
+        stats = getattr(connector, "run_stats", None)
+        if isinstance(stats, dict) and stats.get("full"):
+            log_entry.error_detail = (
+                f"{log_entry.error_detail or ''};{_coverage_line(stats)}".lstrip(";")
+            )
+            extracted = int(stats.get("extracted", 0))
+            accepted = int(stats.get("accepted", 0))
+            if accepted > 0 and extracted < accepted:
+                if extracted == 0:
+                    log_entry.status = "failed"
+                    log_entry.error_detail += (
+                        f";全部候选页抽取失败(accepted={accepted}),判定同步失败"
+                    )
+                elif extracted / accepted < COVERAGE_PARTIAL_RATIO:
+                    log_entry.status = "partial"
+                    log_entry.error_detail += (
+                        f";覆盖率不足({extracted}/{accepted}="
+                        f"{extracted / accepted:.0%} < {COVERAGE_PARTIAL_RATIO:.0%}),记 partial"
+                    )
+
         log_entry.finished_at = datetime.now(UTC)
         log_entry.duration_ms = int((time.monotonic() - start) * 1000)
         logger.info(
@@ -384,6 +440,11 @@ async def _sync_one(
     except Exception as exc:  # noqa: BLE001 - 单源失败不中断批次
         log_entry.status = "failed"
         log_entry.error_detail = str(exc)
+        # 失败路径同样尽力留 coverage 痕迹(异常中断时的已抓部分不消失)
+        connector_for_stats = locals().get("connector")
+        stats = getattr(connector_for_stats, "run_stats", None)
+        if isinstance(stats, dict) and stats.get("full"):
+            log_entry.error_detail = f"{log_entry.error_detail};{_coverage_line(stats)}"
         log_entry.finished_at = datetime.now(UTC)
         log_entry.duration_ms = int((time.monotonic() - start) * 1000)
         logger.error("同步失败 %s: %s", cfg.id, exc)

@@ -1,17 +1,27 @@
-"""web_crawl connector(C8):官网 sitemap 爬取数据源。
+"""web_crawl connector(C8 + WEB 覆盖修正):官网 sitemap 爬取数据源。
 
-流程:sitemap 索引发现(Yoast post/page/product 三子表,合并去重)→
-排除规则过滤(`/store/`、登录/隐私等非知识页)→ 纯 HTTP 抓取(UA +
-超时重试 + 延时限速)→ stdlib HTML 清洗为 Markdown(剥导航/页脚/脚本/
-cookie 提示,优先 main/article 正文)→ RawDocument(product=website,
-language=en,content_hash 增量)。
+流程:robots.txt 校验(Disallow 前缀,允许清单优先)→ sitemap 索引发现
+(Yoast post/page/product 三子表,URL 规范化合并去重)→ 排除规则过滤
+(`/store/`、登录/隐私等非知识页)→ 纯 HTTP 抓取(UA + 超时重试 + 延时
+限速)→ stdlib HTML 清洗为 Markdown(剥导航/页脚/脚本/cookie 提示,优先
+main/article 正文)→ 薄内容过滤 → RawDocument(product=website,
+language=en,content_hash=URL 感知增量)。
+
+WEB 覆盖修正(2026-09-01,合同#6/#7):
+- ``run_stats``:discovered/accepted/extracted/failed/rejected 全程记账,
+  单页失败与薄内容不再静默吞没,由同步层写入 SyncLog 真实呈现覆盖;
+- URL 规范化(canonical_url):sitemap 与页内链接统一形态(去 query/
+  fragment、host 小写、压缩 //、统一尾斜杠),杜绝变体重复知识;
+- content_hash 含 URL 路径:同内容不同页不再在 PG (content_hash,branch)
+  主键上互撞(旧实现 sha256(md) 会让后页覆盖前页账本行);
+- fetch_deleted 仅在全量轮做差集删除:增量轮的 sitemap-only 视野不再把
+  BFS 发现页误判为"已消失"而删除(覆盖震荡根因)。
 
 增量:全量靠 content_hash 去重;增量用 sitemap lastmod ≥ since 提速
-(无 lastmod 的 URL 不进增量,避免每轮全站重抓)。删除:持久化上一轮
-URL 清单(``data/crawl-state/<id>.json``),本轮消失的 URL 经
-``fetch_deleted`` 返回。
+(无 lastmod 的 URL 不进增量)。删除:见上(仅全量轮)。
 
-红线:爬取加 UA 与延时(默认 500ms/页),不对目标站点施压。
+红线:爬取加 UA 与延时(默认 500ms/页),robots Disallow 遵从,
+不对目标站点施压。
 """
 
 import hashlib
@@ -48,6 +58,10 @@ DEFAULT_EXCLUDE_PATTERNS: list[str] = [
     "/terms",
     "/cookie",
 ]
+
+# 薄内容阈值:提取正文低于该字符数的页面视为非知识页(模板/跳转/挑战页),
+# 不入语料并计入 rejected.low_content。config.min_content_chars 可覆盖。
+MIN_CONTENT_CHARS = 200
 
 # Yoast SEO sitemap 索引:仅取知识类三子表(post/page/product)
 _SITEMAP_KIND_RE = re.compile(r"(post|page|product)-sitemap")
@@ -100,6 +114,60 @@ def parse_urlset(xml_text: str) -> dict[str, str | None]:
         if loc:
             out.setdefault(loc, lastmod)
     return out
+
+
+def canonical_url(base_url: str, url: str) -> str | None:
+    """URL 规范化(WEB-G005):同站内容页的稳定唯一形态。
+
+    规则:scheme 限定 http(s);host 小写;去 fragment;去 query(内容页
+    不含查询参数,跟踪/排序变体不产生重复知识);压缩重复斜杠;统一补尾
+    斜杠;相对路径按 base_url 补全。外域或非法 URL 返回 None。
+
+    Returns:
+        规范化 URL;外域/非法返回 None。
+    """
+    base = urlparse(base_url)
+    if url.startswith("//"):
+        # 协议相对链接(//host/path):携带自己的 host,补 scheme 后按外域判定
+        url = f"{base.scheme}:{url}"
+    elif "://" not in url:
+        url = f"{base.scheme}://{base.netloc}{url}"
+    u = urlparse(url)
+    if u.scheme not in ("http", "https"):
+        return None
+    if u.netloc.lower() != base.netloc.lower():
+        return None
+    path = re.sub(r"//+", "/", u.path) or "/"
+    if not path.endswith("/"):
+        path += "/"
+    return f"{base.scheme}://{base.netloc.lower()}{path}"
+
+
+def parse_robots_disallows(text: str, agent: str = "ask-ai-crawler") -> list[str]:
+    """解析 robots.txt,返回对该 UA 生效的 Disallow 前缀列表。
+
+    组匹配:具名组(= agent,大小写不敏感)优先;无具名组时用 ``*`` 组;
+    Allow/未知行忽略;空行结束当前组。
+    """
+    groups: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, _, val = line.partition(":")
+        key = key.strip().lower()
+        val = val.strip()
+        if key == "user-agent":
+            current = groups.setdefault(val.lower(), [])
+        elif key == "disallow" and current is not None:
+            if val:
+                current.append(val)
+        # Allow / Sitemap / 未知字段:忽略(Disallow 空值 = 全允许,不记录)
+    named = groups.get(agent.lower())
+    if named:
+        return named
+    return groups.get("*", [])
 
 
 _SKIP_TAGS = frozenset(
@@ -279,13 +347,18 @@ def _url_to_source_path(url: str) -> str:
 
 @ConnectorRegistry.register("web_crawl")
 class WebCrawlConnector:
-    """官网 sitemap 爬取 connector(C8)。
+    """官网 sitemap 爬取 connector(C8 + WEB 覆盖修正)。
 
     config:
         - ``base_url`` (str, 必填): 站点根,如 ``https://www.camthink.ai``
         - ``sitemap_url`` (str, 可选): 缺省 ``{base_url}/sitemap_index.xml``
         - ``exclude_patterns`` (list[str], 可选): 提供时替换默认排除清单
         - ``crawl_delay_ms`` (int, 可选): 页面抓取间隔,默认 500(勿压站点)
+        - ``min_content_chars`` (int, 可选): 薄内容阈值,默认 200
+
+    run_stats(迭代结束后可读;同步层写入 SyncLog 呈现真实覆盖,合同#6/#7):
+        ``{full, discovered, accepted, extracted, failed, failed_urls,
+        rejected: {exclude, robots, low_content}}``
     """
 
     def __init__(self, config: SourceConfig) -> None:
@@ -300,9 +373,16 @@ class WebCrawlConnector:
             config.config.get("exclude_patterns", DEFAULT_EXCLUDE_PATTERNS)
         )
         self._delay_s = int(config.config.get("crawl_delay_ms", 500)) / 1000
+        self._min_content = int(config.config.get("min_content_chars", MIN_CONTENT_CHARS))
         self._channel_visibility = config.channel_visibility
         self._state_path = Path("data/crawl-state") / f"{config.id}.json"
         self._entries_cache: dict[str, str | None] | None = None
+        self._robots_cache: list[str] | None = None
+        # WEB-G006:抓取统计(迭代过程中累积,同步层读取)
+        self.run_stats: dict | None = None
+        self._last_run_full = False
+        self._seen_urls: set[str] = set()
+        self._rejected_urls: set[str] = set()
 
     @property
     def source_id(self) -> str:
@@ -338,8 +418,39 @@ class WebCrawlConnector:
         path = urlparse(url).path.lower()
         return any(pattern.lower() in path for pattern in self._excludes)
 
+    def _robots_disallows(self) -> list[str]:
+        """robots.txt Disallow 前缀(每轮缓存);获取失败按全允许处理。"""
+        if self._robots_cache is not None:
+            return self._robots_cache
+        try:
+            text = self._http_get(f"{self._base_url}/robots.txt")
+            disallows = parse_robots_disallows(text, USER_AGENT.split("/")[0])
+        except Exception as exc:  # noqa: BLE001 - 无 robots/抓取失败 → 全允许
+            logger.info("robots.txt 不可得,按全允许处理: %s", str(exc)[:120])
+            disallows = []
+        self._robots_cache = disallows
+        return disallows
+
+    def _robots_blocked(self, url: str) -> bool:
+        path = urlparse(url).path
+        return any(path.startswith(prefix) for prefix in self._robots_disallows())
+
+    _REJECTED_URLS_CAP = 500  # 每类拒绝原因记录的 URL 上限(证据可读性)
+
+    def _new_stats(self) -> dict:
+        return {
+            "full": False,
+            "discovered": 0,
+            "accepted": 0,
+            "extracted": 0,
+            "failed": 0,
+            "failed_urls": [],
+            "rejected": {"exclude": 0, "robots": 0, "low_content": 0},
+            "rejected_urls": {"exclude": [], "robots": [], "low_content": []},
+        }
+
     def _sitemap_entries(self) -> dict[str, str | None]:
-        """sitemap 索引 → 三子表(post/page/product)合并去重的 {url: lastmod}。"""
+        """sitemap 索引 → 三子表(post/page/product)规范化合并去重 {url: lastmod}。"""
         if self._entries_cache is not None:
             return self._entries_cache
         index_xml = self._http_get(self._sitemap_url)
@@ -348,9 +459,12 @@ class WebCrawlConnector:
             if not _SITEMAP_KIND_RE.search(sub):
                 continue
             for url, lastmod in parse_urlset(self._http_get(sub)).items():
-                if self._excluded(url):
+                canon = canonical_url(self._base_url, url)
+                if canon is None or self._excluded(canon):
+                    if canon is not None:
+                        self._stats_reject("exclude", canon)
                     continue
-                entries.setdefault(url, lastmod)
+                entries.setdefault(canon, lastmod)
             time.sleep(self._delay_s)  # 子表请求间限速
         logger.info("web_crawl %s: sitemap 共 %d 个 URL(排除后)", self._id, len(entries))
         self._entries_cache = entries
@@ -361,35 +475,45 @@ class WebCrawlConnector:
          ".zip", ".gz", ".mp4", ".mp3", ".ico", ".woff", ".woff2", ".ttf"}
     )
 
+    def _stats_reject(self, reason: str, url: str | None = None) -> None:
+        """拒绝计数;提供 url 时按唯一 URL 去重(导航重复链接不膨胀计数)。"""
+        if self.run_stats is None:
+            return
+        if url is not None:
+            if url in self._rejected_urls:
+                return
+            self._rejected_urls.add(url)
+            lst = self.run_stats["rejected_urls"].get(reason)
+            if lst is not None and len(lst) < self._REJECTED_URLS_CAP:
+                lst.append(url)
+        self.run_stats["rejected"][reason] = (
+            self.run_stats["rejected"].get(reason, 0) + 1
+        )
+
     def _same_domain_links(self, html: str) -> list[str]:
-        """提取同域内容页链接(去锚点/查询/资产后缀/排除项),供增量发现。"""
-        host = urlparse(self._base_url).netloc
+        """提取同域内容页链接(规范化/去资产后缀/排除项),供增量发现。"""
         out: list[str] = []
         for m in re.finditer(r'href=["\']([^"\']+)["\']', html):
             raw = m.group(1).strip()
             if raw.startswith(("#", "mailto:", "tel:", "javascript:")):
                 continue
-            if raw.startswith("//"):
-                # 协议相对链接(如 "//resources.camthink.ai"):外域跳过,同域转绝对
-                ext_host = urlparse(f"https:{raw}").netloc
-                if ext_host and ext_host != host:
-                    continue
-                raw = f"https:{raw}"
             # 站方残缺 href(如 "resources.camthink.ai" 无 scheme)会拼出
             # 垃圾 URL:无斜杠且含点 → 视为域名样式,跳过
             if "/" not in raw and "." in raw:
                 continue
-            absu = raw if raw.startswith("http") else f"{self._base_url}/{raw.lstrip('/')}"
-            pu = urlparse(absu)
-            if pu.netloc != host or pu.query:
+            absu = raw[2:] if raw.startswith("//") else raw
+            path_part = absu if absu.startswith("/") else f"/{absu}"
+            if Path(urlparse(f"https://x{path_part}").path).suffix.lower() in self._SKIP_HREF_EXTS:
                 continue
-            path = pu.path
-            if Path(path).suffix.lower() in self._SKIP_HREF_EXTS:
+            canon = canonical_url(self._base_url, absu)
+            if canon is None:
+                continue  # 外域(含协议相对外域)
+            if canon in self._seen_urls:
+                continue  # 已在视野(已知页),非拒绝
+            if self._excluded(canon):
+                self._stats_reject("exclude", canon)
                 continue
-            absu = f"{self._base_url}{path.rstrip('/')}/" if path.rstrip("/") else f"{self._base_url}/"
-            if absu in self._seen_urls or self._excluded(absu):
-                continue
-            out.append(absu)
+            out.append(canon)
         return out
 
     def _fetch_page(self, url: str) -> tuple[RawDocument, list[str]]:
@@ -409,7 +533,8 @@ class WebCrawlConnector:
             content=md,
             url=url,
             metadata={"language": "en", "path": path},
-            content_hash=hashlib.sha256(md.encode()).hexdigest(),
+            # content_hash 含 URL 路径:同内容不同页不互撞(PG 主键保护,WEB-G005)
+            content_hash=hashlib.sha256(f"{path}|{md}".encode()).hexdigest(),
             channel_visibility=self._channel_visibility,
         )
         return doc, new_links
@@ -431,34 +556,60 @@ class WebCrawlConnector:
     # ---------------- Connector 协议 ----------------
 
     def fetch_all(self) -> Iterator[RawDocument]:
-        """全量:sitemap 起点 + 同域链接发现(BFS,上限 max_pages)。"""
+        """全量:sitemap 起点 + 同域链接发现(BFS,上限 max_pages)+ 全程记账。"""
+        self.run_stats = self._new_stats()
+        self._rejected_urls = set()
+        self._robots_cache = None  # 每轮全量重新获取 robots
         self._seen_urls: set[str] = set(self._sitemap_entries())
+        self.run_stats["discovered"] = len(self._seen_urls)
+        self._last_run_full = True
+        self.run_stats["full"] = True
         queue = sorted(self._seen_urls)
         extra_cap = int(self._config.config.get("max_pages", 150))
         failures = 0
         successes = 0
         while queue:
             url = queue.pop(0)
+            if self._robots_blocked(url):
+                self._stats_reject("robots", url)
+                logger.info("robots Disallow,跳过 %s", url)
+                continue
+            self.run_stats["accepted"] += 1
             try:
                 doc, links = self._fetch_page(url)
             except RuntimeError as exc:
-                # 发现链接可能 404/残缺:单页失败跳过,不拖垮整轮同步
+                # 发现链接可能 404/残缺:单页失败跳过并记账,不拖垮整轮同步
                 failures += 1
+                self.run_stats["failed"] += 1
+                self.run_stats["failed_urls"].append(url)
                 logger.warning("页面抓取失败,跳过 %s: %s", url, str(exc)[:120])
                 continue
+            if len(doc.content.strip()) < self._min_content:
+                # 薄内容(模板壳/挑战页/空壳)不入语料,计入 rejected
+                self._stats_reject("low_content", url)
+                logger.info("薄内容页面跳过 %s(md=%d 字符)", url, len(doc.content.strip()))
+                continue
             successes += 1
+            self.run_stats["extracted"] += 1
             for link in links:
                 if link not in self._seen_urls and len(self._seen_urls) < len(
                     self._sitemap_entries()
                 ) + extra_cap:
                     self._seen_urls.add(link)
+                    self.run_stats["discovered"] += 1
                     queue.append(link)
             yield doc
         if successes == 0 and failures > 0:
             raise RuntimeError(f"全量抓取全部失败({failures} 页)")
 
     def fetch_changes(self, since: datetime) -> Iterator[RawDocument]:
-        """增量:仅 lastmod 存在且 ≥ since 的 URL(无 lastmod 不进增量)。"""
+        """增量:仅 lastmod 存在且 ≥ since 的 URL(无 lastmod 不进增量)。
+
+        增量轮视野仅限 sitemap(不 BFS),故 ``_last_run_full=False``:
+        fetch_deleted 在增量轮不做删除(防 BFS 发现页被误删,覆盖震荡根因)。
+        """
+        self.run_stats = self._new_stats()
+        self._last_run_full = False
         self._seen_urls: set[str] = set(self._sitemap_entries())
         for url in sorted(self._sitemap_entries()):
             lastmod = self._sitemap_entries()[url]
@@ -474,11 +625,18 @@ class WebCrawlConnector:
             if changed_at < since_utc:
                 continue
             doc, _ = self._fetch_page(url)
+            self.run_stats["extracted"] += 1
             yield doc
 
     def fetch_deleted(self, since: datetime) -> list[str]:
-        """删除:本轮已知 URL 集合(sitemap + 发现页)相比上一轮消失的文档。"""
-        known = set(getattr(self, "_seen_urls", set()) or set(self._sitemap_entries()))
+        """删除:仅全量轮做差集(上一轮状态 vs 本轮 全量视野)。
+
+        增量轮视野仅 sitemap,若据此判删会把 BFS 发现页误删(覆盖震荡),
+        故增量轮返回 [] 且不覆写状态文件。
+        """
+        if not self._last_run_full:
+            return []
+        known = set(self._seen_urls or set())
         current_ids = {f"{self._id}/{_url_to_source_path(u)}" for u in known}
         previous = self._load_state()
         self._save_state(current_ids)
