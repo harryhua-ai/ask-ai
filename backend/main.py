@@ -351,6 +351,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.override_matcher = override_matcher
         logger.info("OverrideMatcher 已加载(%d 条覆盖)", len(override_matcher._overrides))
 
+        # P0 PC-01:源可见性纵深守卫(chunk 级检索过滤之外的第二道防线)
+        from backend.services.source_visibility import SourceVisibilityGuard, make_db_loader
+
+        visibility_guard = SourceVisibilityGuard(
+            make_db_loader(app.state.session_factory),
+            ttl=float(os.environ.get("VISIBILITY_GUARD_TTL", "30")),
+        )
+        logger.info(
+            "SourceVisibilityGuard 已启用(纵深防线,ttl=%ss)",
+            os.environ.get("VISIBILITY_GUARD_TTL", "30"),
+        )
+
         app.state.rag = RAGOrchestrator(
             searcher=searcher,
             reranker=rerank_pipeline,
@@ -360,6 +372,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             intent_styles=prompt_config.get("intent_styles", {}),
             pruner=pruner,
             override_matcher=override_matcher,
+            visibility_guard=visibility_guard,
         )
         app.state.weaviate_client = weaviate_client
         app.state.engine = engine

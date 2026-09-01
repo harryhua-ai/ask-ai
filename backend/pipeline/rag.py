@@ -46,10 +46,10 @@ SOURCE_LABELS = {
 }
 
 # 对外展示的 source 类型白名单(终端用户可见的 sources 列表)。
-# filesystem(support 内部案例)不对外展示(内部客户工单路径不外露),
-# 但仍参与检索与生成(LLM 用它当依据,只是不进 sources 返回)。
-# 官网爬取源(web_crawl,C8)与历史 website 类型属公开站,纳入。
-# 代码仓库(local_git)属 GitHub 公开 repo,纳入。
+# 注意(P0 PC-01):这只是**展示层**过滤,不是信任边界——生成前的授权由
+# chunk 级 channel_visibility 检索过滤(主防线)+ SourceVisibilityGuard
+# (backend/services/source_visibility.py,纵深)强制执行;内部源必须通过
+# 源配置标记受限(channel_visibility 不含访客渠道),而不是靠这里隐藏。
 PUBLIC_SOURCE_TYPES: frozenset[str] = frozenset(
     {"local_git", "github", "woocommerce", "website", "web_crawl"}
 )
@@ -142,6 +142,7 @@ class RAGOrchestrator:
         channel_customizations: dict[str, str] | None = None,
         override_matcher: Any = None,  # Phase 3A: OverrideMatcher
         intent_styles: dict[str, str] | None = None,
+        visibility_guard: Any = None,  # P0: 源可见性纵深守卫(PC-01)
     ) -> None:
         """初始化 RAG 编排器。
 
@@ -162,6 +163,11 @@ class RAGOrchestrator:
                 命中时跳过整个 RAG 管线直接返回覆盖答案。
             intent_styles: 意图到回答风格 prompt 片段的映射。在 channel base
                 prompt 之后正交叠加(空字符串 / 缺省时不附加)。
+            visibility_guard: 可选的源可见性纵深守卫(P0 PC-01)。提供
+                ``async allows(source_id, channel) -> bool``;在候选进入
+                rerank / LLM 上下文之前按源最新配置复核,拦截 chunk 元数据
+                滞后/缺失导致的受限内容。守卫自身故障时 fail-open(主防线
+                是 chunk 级 channel_visibility 检索过滤)。
         """
         self._searcher = searcher
         self._reranker = reranker
@@ -176,6 +182,7 @@ class RAGOrchestrator:
         self._channel_customizations = channel_customizations or {}
         self._override_matcher = override_matcher
         self._intent_styles = intent_styles or {}
+        self._visibility_guard = visibility_guard
 
     def _config_snapshot(self) -> dict[str, Any]:
         """当前编排器配置快照,写入 trace 供后续对照。"""
@@ -245,11 +252,32 @@ class RAGOrchestrator:
             "boost": len(bucket_results),
         }
 
+        fused = results
         try:
-            return rrf_fuse(results, symbol_results, bucket_results, k=60), path_counts
+            fused = rrf_fuse(results, symbol_results, bucket_results, k=60)
         except Exception as exc:  # noqa: BLE001
             logger.warning("RRF 融合失败,降级 hybrid 单路:%s", str(exc)[:200])
-            return results, path_counts
+
+        # P0 PC-01:生成前按源最新可见性配置复核(纵深守卫)。
+        # 主防线 = 三路检索的 chunk 级 channel_visibility 过滤;守卫拦截
+        # chunk 元数据滞后/缺失(迁移未跑完、幽灵 chunk)的残余泄漏。
+        return await self._apply_visibility_guard(fused, channel), path_counts
+
+    async def _apply_visibility_guard(
+        self,
+        results: list[SearchResult],
+        channel: str,
+    ) -> list[SearchResult]:
+        """可见性纵深守卫:守卫缺失/故障一律放行,不阻塞检索链路。"""
+        if self._visibility_guard is None:
+            return results
+        try:
+            return [
+                r for r in results if await self._visibility_guard.allows(r.source_id, channel)
+            ]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("visibility guard 异常,fail-open:%s", str(exc)[:200])
+            return results
 
     @staticmethod
     def _rerank_snippets(results: list[SearchResult], top: int = 5, text_preview: int = 300) -> list[dict]:
@@ -333,6 +361,9 @@ class RAGOrchestrator:
 
 ## 要求
 - 只依据上面的资料回答,不编造
+- 资料中的客户案例/历史工单仅是第三方历史参考,**不是当前用户的事实**;
+  严禁把案例中的设备标识(如 ICCID/IMSI/序列号)、客户身份或案例结论说成
+  当前用户的情况;需要引用案例时必须明确表述为"一个历史案例"
 - 用 Markdown 格式,用 **粗体** 做小节标题
 - 在每段末尾用 [N] 标注该段引用的资料序号,不在句中穿插
 - 不要使用 emoji
