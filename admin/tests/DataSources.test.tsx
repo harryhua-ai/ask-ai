@@ -8,6 +8,7 @@ import {
   fetchPreviewBranches,
   fetchPreviewFileTypes,
   useTriggerSyncAll,
+  useSourceHealth,
 } from "@/hooks/useDataSources";
 
 vi.mock("sonner", () => ({
@@ -33,6 +34,7 @@ vi.mock("@/hooks/useDataSources", () => ({
   useToggleDataSource: () => ({ mutate: vi.fn() }),
   useTriggerSync: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useTriggerSyncAll: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useSourceHealth: vi.fn(() => ({ data: undefined, isLoading: false })),
   usePreviewDirs: vi.fn(() => ({ data: { dirs: [] }, isLoading: false, error: null })),
   fetchPreviewBranches: vi.fn(),
   fetchPreviewFileTypes: vi.fn(),
@@ -42,6 +44,7 @@ afterEach(() => {
   vi.mocked(useDataSources).mockReturnValue({ data: [], isLoading: false });
   vi.mocked(useTriggerSync).mockReset();
   vi.mocked(useTriggerSyncAll).mockReset();
+  vi.mocked(useSourceHealth).mockReturnValue({ data: undefined, isLoading: false });
 });
 
 function renderWithSources(sources: unknown[]) {
@@ -727,5 +730,161 @@ describe("C8B 三旧类型回归", () => {
     expect(
       screen.getByDisplayValue("https://github.com/camthink-ai/ne301.git"),
     ).toBeInTheDocument();
+  });
+});
+
+// ====================  DSH-01/02:数据源健康语义(当前态 vs 历史可靠性)  ====================
+
+
+const dshSource = (overrides: Record<string, unknown> = {}) => ({
+  id: "website-camthink",
+  type: "web_crawl",
+  product: "website",
+  enabled: true,
+  config: { base_url: "https://www.camthink.ai" },
+  sync_interval: "24h",
+  created_at: "2026-07-01T00:00:00Z",
+  updated_at: "2026-07-01T00:00:00Z",
+  last_sync: null,
+  last_sync_status: null,
+  last_sync_error: null,
+  ...overrides,
+});
+
+const dshHealth = (overrides: Record<string, unknown> = {}) => ({
+  source_id: "website-camthink",
+  source_type: "web_crawl",
+  product: "website",
+  enabled: true,
+  doc_count: 75,
+  chunk_count: 1200,
+  window_days: 30,
+  total_syncs: 25,
+  success_syncs: 24,
+  partial_syncs: 0,
+  failed_syncs: 1,
+  sync_success_rate: 0.96,
+  health: "healthy",
+  last_sync: "2026-09-01T02:00:00Z",
+  last_sync_status: "success",
+  last_sync_error: null,
+  ...overrides,
+});
+
+function renderWithHealth(sources: unknown[], items: unknown[] | undefined) {
+  vi.mocked(useDataSources).mockReturnValue({ data: sources as never, isLoading: false });
+  vi.mocked(useSourceHealth).mockReturnValue({
+    data: items ? { items: items as never, days: 30 } : undefined,
+    isLoading: false,
+  });
+  const qc = new QueryClient();
+  render(
+    <QueryClientProvider client={qc}>
+      <DataSources />
+    </QueryClientProvider>,
+  );
+}
+
+describe("DSH 数据源健康语义", () => {
+  it("G001 健康:当前成功 + 历史 96%(窗口/分母可见)+ 内容数", () => {
+    renderWithHealth(
+      [dshSource({ last_sync: "2026-09-01T02:00:00Z", last_sync_status: "success" })],
+      [dshHealth()],
+    );
+    // 健康列:正常 badge + 带窗口与分母的历史行
+    expect(screen.getByText("正常")).toBeInTheDocument();
+    expect(screen.getByText("96% 成功 · 近30天 25 次")).toBeInTheDocument();
+    // 内容数可见
+    expect(screen.getByText("75 篇")).toBeInTheDocument();
+    // 最新同步列:成功 badge
+    expect(screen.getByText("成功")).toBeInTheDocument();
+  });
+
+  it("G002 最新成功 + 历史差:两个事实同屏且措辞不冲突", () => {
+    renderWithHealth(
+      [dshSource({ last_sync_status: "success" })],
+      [
+        dshHealth({
+          sync_success_rate: 0.5,
+          success_syncs: 12,
+          failed_syncs: 10,
+          partial_syncs: 3,
+          total_syncs: 25,
+          health: "degraded",
+        }),
+      ],
+    );
+    expect(screen.getByText("成功")).toBeInTheDocument(); // 当前态
+    expect(screen.getByText("不稳定")).toBeInTheDocument(); // 历史态
+    expect(screen.getByText("50% 成功 · 近30天 25 次")).toBeInTheDocument();
+  });
+
+  it("G003 最新失败:失败 badge + 错误明细可见(可操作)", () => {
+    renderWithHealth(
+      [dshSource({ last_sync_status: "failed", last_sync_error: "sitemap 请求超时" })],
+      [
+        dshHealth({
+          last_sync_status: "failed",
+          last_sync_error: "sitemap 请求超时",
+          health: "degraded",
+        }),
+      ],
+    );
+    expect(screen.getByText("失败")).toBeInTheDocument();
+    expect(screen.getByText("sitemap 请求超时")).toBeInTheDocument();
+  });
+
+  it("G004 样本不足:不伪造百分比与可靠性结论", () => {
+    renderWithHealth(
+      [dshSource()],
+      [
+        dshHealth({
+          total_syncs: 2,
+          success_syncs: 1,
+          failed_syncs: 1,
+          sync_success_rate: 0.5,
+          health: "insufficient_data",
+        }),
+      ],
+    );
+    expect(screen.getByText("样本不足")).toBeInTheDocument();
+    // 不出现裸百分比(分母过小不给成功率结论)
+    expect(screen.queryByText(/成功 · 近30天/)).not.toBeInTheDocument();
+    expect(screen.getByText(/仅 2 次同步/)).toBeInTheDocument();
+  });
+
+  it("G005 禁用:已禁用状态与不健康可区分", () => {
+    renderWithHealth(
+      [dshSource({ enabled: false })],
+      [dshHealth({ enabled: false, health: "disabled" })],
+    );
+    // 健康列显示"已禁用"而非不稳定/严重
+    expect(screen.getByText("已禁用")).toBeInTheDocument();
+    expect(screen.queryByText("不稳定")).not.toBeInTheDocument();
+  });
+
+  it("健康数据缺失时优雅降级为 —,不阻塞表格", () => {
+    renderWithHealth([dshSource()], undefined);
+    expect(screen.getByText("数据源管理")).toBeInTheDocument();
+  });
+
+  it("悬停健康徽标可见分子/分母明细(含 partial)", () => {
+    renderWithHealth(
+      [dshSource()],
+      [
+        dshHealth({
+          success_syncs: 12,
+          partial_syncs: 3,
+          failed_syncs: 10,
+          sync_success_rate: 0.48,
+          health: "critical",
+        }),
+      ],
+    );
+    const badge = screen.getByText("严重");
+    expect(badge).toBeInTheDocument();
+    expect(badge.getAttribute("title")).toContain("12 次成功");
+    expect(badge.getAttribute("title")).toContain("3 次补齐");
+    expect(badge.getAttribute("title")).toContain("10 次失败");
   });
 });

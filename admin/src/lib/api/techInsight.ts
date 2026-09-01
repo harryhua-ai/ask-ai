@@ -85,11 +85,20 @@ export interface SourceHealthItem {
   enabled: boolean;
   doc_count: number;
   chunk_count: number;
-  sync_success_rate: number;
+  /** 成功率统计窗口(天),与请求参数一致。 */
+  window_days: number;
   total_syncs: number;
+  success_syncs: number;
+  /** 一致性自愈(部分补齐)次数:计入分母、不计入成功数。 */
+  partial_syncs: number;
   failed_syncs: number;
+  sync_success_rate: number;
+  /** healthy | degraded | critical | insufficient_data | disabled */
   health: string;
   last_sync: string | null;
+  /** 最近一次同步状态(success/failed/partial/null),全部时间范围。 */
+  last_sync_status: string | null;
+  last_sync_error: string | null;
 }
 
 export function fetchSourceHealth(

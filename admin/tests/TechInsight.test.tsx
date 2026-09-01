@@ -3,15 +3,65 @@ import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/re
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const { mockTechPerf, mockCoverageGaps } = vi.hoisted(() => ({
+const { mockTechPerf, mockCoverageGaps, mockSourceHealth, mockGapTrends } = vi.hoisted(() => ({
   mockTechPerf: vi.fn(),
   mockCoverageGaps: vi.fn(),
+  mockSourceHealth: vi.fn(),
+  mockGapTrends: vi.fn(),
 }));
 
 vi.mock("@/lib/api/techInsight", () => ({
   fetchTechPerformance: mockTechPerf,
   fetchCoverageGaps: mockCoverageGaps,
+  fetchSourceHealth: mockSourceHealth,
+  fetchGapTrends: mockGapTrends,
 }));
+
+// 缺口趋势默认空(KnowledgeGapsTab 用)
+mockGapTrends.mockResolvedValue({ trends: [] });
+
+// 数据源健康默认两条(技术洞察只应有摘要条,不再有完整表格)
+mockSourceHealth.mockResolvedValue({
+  items: [
+    {
+      source_id: "website-camthink",
+      source_type: "web_crawl",
+      product: "website",
+      enabled: true,
+      doc_count: 75,
+      chunk_count: 1200,
+      window_days: 30,
+      total_syncs: 25,
+      success_syncs: 24,
+      partial_syncs: 0,
+      failed_syncs: 1,
+      sync_success_rate: 0.96,
+      health: "healthy",
+      last_sync: "2026-09-01T02:00:00Z",
+      last_sync_status: "success",
+      last_sync_error: null,
+    },
+    {
+      source_id: "ne301-docs",
+      source_type: "github",
+      product: "ne301",
+      enabled: true,
+      doc_count: 10,
+      chunk_count: 100,
+      window_days: 30,
+      total_syncs: 3,
+      success_syncs: 1,
+      partial_syncs: 1,
+      failed_syncs: 1,
+      sync_success_rate: 0.3333,
+      health: "critical",
+      last_sync: "2026-09-01T01:00:00Z",
+      last_sync_status: "failed",
+      last_sync_error: "clone 失败",
+    },
+  ],
+  days: 30,
+});
 
 mockTechPerf.mockResolvedValue({
   kpi: {
@@ -136,5 +186,31 @@ describe("TechInsight 技术洞察页", () => {
       expect(screen.getByText(/澄清漏斗/)).toBeInTheDocument();
       expect(screen.getByText(/暂无数据|待接入/)).toBeInTheDocument();
     });
+  });
+});
+
+// ====================  DSH-02:数据源健康主位迁移至数据源管理  ====================
+
+
+describe("DSH 技术洞察的数据源健康摘要", () => {
+  it("呈现一行健康摘要(按 health 计数)+ 跳转数据源管理", async () => {
+    renderWithProviders(<Analytics />);
+    const summary = await screen.findByText("数据源健康(近 30 天)");
+    expect(summary).toBeInTheDocument();
+    // 计数摘要:正常 1 · 严重 1(不再逐源展开)
+    expect(screen.getByText(/正常 1/)).toBeInTheDocument();
+    expect(screen.getByText(/严重 1/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /明细与操作 → 数据源管理/ }),
+    ).toHaveAttribute("href", "/data-sources");
+  });
+
+  it("不再呈现与数据源页竞争的完整健康表格(无成功率列/逐源行)", async () => {
+    renderWithProviders(<Analytics />);
+    await screen.findByText("数据源健康(近 30 天)");
+    // 旧表格特征:逐源 source_id 行 + 裸百分比列头,均不应存在
+    expect(screen.queryByText("website-camthink")).not.toBeInTheDocument();
+    expect(screen.queryByText("同步成功率")).not.toBeInTheDocument();
+    expect(screen.queryByText("文档数")).not.toBeInTheDocument();
   });
 });
