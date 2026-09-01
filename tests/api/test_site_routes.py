@@ -77,6 +77,15 @@ def _budget_state():
     )
 
 
+@pytest.fixture(autouse=True)
+def _reset_ask_rate_limit():
+    """每条用例前清空 /ask 的 slowapi 内存计数(20/minute 按 127.0.0.1 累计,
+    全量回归时会被套件内其他 ask 用例挤爆 → 假 429)。"""
+    from backend.api.routes import limiter
+
+    limiter.reset()
+
+
 # --------------------------------------------------------------------------- #
 # POST /api/ask 站点门禁
 # --------------------------------------------------------------------------- #
