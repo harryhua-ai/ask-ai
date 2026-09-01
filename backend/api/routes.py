@@ -22,6 +22,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
 )
@@ -41,6 +42,11 @@ from backend.services.attachments import (
     sanitize_filename,
     validate_upload_file,
 )
+from backend.services.site_experiences import (
+    SiteDenied,
+    extract_request_origin,
+    resolve_site,
+)
 from backend.utils.budget import BudgetLimiter, estimate_tokens
 from backend.utils.pii import mask_pii
 
@@ -51,6 +57,9 @@ limiter = Limiter(key_func=get_remote_address)
 # 生成失败兜底文案(PC-02):沿用既有产品文案;客户端旧版本收到的
 # 兜底 token 也用同一文案,保证升级前后用户可见行为一致。
 SERVICE_UNAVAILABLE_MSG = "服务暂时不可用,请稍后再试。"
+
+# MSW:站点授权失败的对外统一文案(不区分未知站/禁用站/来源不匹配,防枚举)
+SITE_DENIED_MSG = "站点未授权或来源不受信任"
 
 
 def get_rag(request: Request) -> RAGOrchestrator:
@@ -103,6 +112,18 @@ async def ask(
         7. 发送 ``done`` SSE 事件,携带 ``conversation_id``。
     """
     masked_message = mask_pii(req.message)
+
+    # MSW:站点门禁 —— 显式 site_id 必须通过「站点存在且 enabled + 请求 Origin
+    # 精确命中」授权(CORS 仅为浏览器执行层,此处为服务端权威校验),否则
+    # fail-safe 403,rag 不被调用、对话不落库。legacy(无 site_id)不校验。
+    site = None
+    if req.site_id:
+        try:
+            site = await resolve_site(
+                session_factory, req.site_id, extract_request_origin(request)
+            )
+        except SiteDenied:
+            raise HTTPException(403, SITE_DENIED_MSG)
 
     # S2: 预算熔断 — 估算 prompt token + max_tokens 预扣
     est_input = estimate_tokens(masked_message) + sum(
@@ -168,6 +189,12 @@ async def ask(
                 channel=req.channel,
                 conversation_history=req.conversation_history,
                 attachments=attachment_objs or None,
+                page_context=(
+                    req.page_context.model_dump(exclude_none=True)
+                    if req.page_context
+                    else None
+                ),
+                site_name=site.display_name if site else None,
             ):
                 data = json.loads(chunk)
                 evt_type = data["type"]
@@ -253,6 +280,8 @@ async def ask(
                     response_time_ms=elapsed,
                     intent_tag=intent,
                     country=country,
+                    # MSW:仅记录已通过授权校验的站点标识(channel 语义不变)
+                    site_id=req.site_id if site else None,
                 )
                 session.add(conv)
                 if trace_payload:
@@ -275,6 +304,31 @@ async def ask(
         yield {"event": "done", "data": json.dumps({"conversation_id": conversation_id})}
 
     return EventSourceResponse(event_generator())
+
+
+@router.get("/widget/site-config")
+async def widget_site_config(
+    request: Request,
+    session_factory: SessionFactoryDep,
+    site_id: str = Query(min_length=1, max_length=100),
+) -> dict[str, Any]:
+    """公开站点体验配置(MSW;Widget 启动时按 data-site-id 拉取)。
+
+    与 /ask 同一套服务端 Origin 授权:站点存在且 enabled + 请求 Origin
+    精确命中 allowed_origins;否则 403 统一文案。响应仅含体验字段,
+    **不回** allowed_origins 等内部配置。
+    """
+    try:
+        site = await resolve_site(session_factory, site_id, extract_request_origin(request))
+    except SiteDenied:
+        raise HTTPException(403, SITE_DENIED_MSG)
+    return {
+        "site_id": site.site_id,
+        "display_name": site.display_name,
+        "welcome": site.welcome,
+        "language": site.language,
+        "starters": list(site.starters),
+    }
 
 
 @router.post("/feedback")
