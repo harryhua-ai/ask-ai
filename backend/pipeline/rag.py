@@ -36,6 +36,16 @@ REJECT_ANSWER = "暂未在官方资料中找到相关信息。"
 REJECT_OFF_TOPIC = "我只能回答与 CamThink 产品相关的问题。"
 REJECT_BUSINESS = "关于商务合作或价格咨询,请联系我们的销售团队。"
 
+
+class EmptyGenerationError(RuntimeError):
+    """LLM 流正常结束但零可用生成内容。
+
+    属异常完成而非成功:供应商可能返回 200 + 空 delta 流(或仅空白内容)。
+    由 SSE 层捕获并降级为用户可见的失败状态,禁止以
+    ``complete(answer="", is_answered=True)`` 伪装成功。
+    """
+
+
 SOURCE_LABELS = {
     "github": "[GitHub]",
     "wiki": "[Wiki]",
@@ -824,6 +834,18 @@ class RAGOrchestrator:
                 first_token_ms = int((time.monotonic() - t3) * 1000)
             full_answer += chunk
             yield json.dumps({"type": "token", "content": chunk})
+
+        # PC-01:零可用内容(空流 / 仅空白)= 异常完成,禁止以
+        # complete(is_answered=True) 伪装成功;抛给 SSE 层统一降级为
+        # 用户可见失败(与首 token 前异常共用同一条降级通道)。
+        if not full_answer.strip():
+            logger.error(
+                "LLM 流正常结束但零可用内容: query=%d chars, sources=%d, llm_ms=%d",
+                len(query),
+                len(sources),
+                int((time.monotonic() - t3) * 1000),
+            )
+            raise EmptyGenerationError("LLM stream completed with empty content")
 
         llm_ms = int((time.monotonic() - t3) * 1000)
         elapsed = int((time.monotonic() - start) * 1000)
