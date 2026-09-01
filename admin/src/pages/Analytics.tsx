@@ -267,57 +267,52 @@ function TechPerfTab({ range }: { range: string }) {
         </div>
       </div>
 
-      {/* 数据源健康度 */}
+      {/* 数据源健康(DSH-02:主展示位在「数据源管理」,此处仅保留指向性摘要,
+          不再呈现与数据源页重复竞争的健康表格) */}
       {healthData && healthData.items.length > 0 && (
-        <div
-          className="rounded-lg border p-4"
-          style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
-        >
-          <h2 className="text-[14px] font-medium text-[var(--t1)] mb-3">
-            数据源健康度
-          </h2>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>数据源</TableHead>
-                <TableHead>产品</TableHead>
-                <TableHead>文档数</TableHead>
-                <TableHead>同步成功率</TableHead>
-                <TableHead>状态</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {healthData.items.map((s) => (
-                <TableRow key={s.source_id}>
-                  <TableCell className="font-medium">{s.source_id}</TableCell>
-                  <TableCell>{s.product}</TableCell>
-                  <TableCell>{s.doc_count}</TableCell>
-                  <TableCell>
-                    {Math.round(s.sync_success_rate * 100)}%
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        s.health === "healthy"
-                          ? "default"
-                          : s.health === "degraded"
-                            ? "secondary"
-                            : "destructive"
-                      }
-                    >
-                      {s.health === "healthy"
-                        ? "健康"
-                        : s.health === "degraded"
-                          ? "降级"
-                          : "严重"}
-                    </Badge>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+        <SourceHealthSummary items={healthData.items} />
       )}
+    </div>
+  );
+}
+
+/** 数据源健康摘要:一行计数 + 跳转链接;逐源明细与操作见数据源管理页。 */
+function SourceHealthSummary({
+  items,
+}: {
+  items: { health: string }[];
+}) {
+  const counts = items.reduce<Record<string, number>>((acc, s) => {
+    acc[s.health] = (acc[s.health] ?? 0) + 1;
+    return acc;
+  }, {});
+  const parts: string[] = [];
+  if (counts.healthy) parts.push(`正常 ${counts.healthy}`);
+  if (counts.degraded) parts.push(`不稳定 ${counts.degraded}`);
+  if (counts.critical) parts.push(`严重 ${counts.critical}`);
+  if (counts.insufficient_data) parts.push(`样本不足 ${counts.insufficient_data}`);
+  if (counts.disabled) parts.push(`已禁用 ${counts.disabled}`);
+
+  return (
+    <div
+      className="rounded-lg border p-4"
+      style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
+      data-source-health-summary
+    >
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-[14px] font-medium text-[var(--t1)]">
+          数据源健康(近 30 天)
+        </h2>
+        <Link
+          to="/data-sources"
+          className="text-[12px] text-[var(--acc)] hover:underline"
+        >
+          明细与操作 → 数据源管理
+        </Link>
+      </div>
+      <div className="text-[13px] text-[var(--t2)]">
+        {parts.length > 0 ? parts.join(" · ") : "暂无数据源"}
+      </div>
     </div>
   );
 }

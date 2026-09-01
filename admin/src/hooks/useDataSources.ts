@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
+import { fetchSourceHealth } from "@/lib/api/techInsight";
 import { splitIntoBatches } from "@/utils/upload";
 import type { DataSource, PreviewDir } from "@/types/api";
 
@@ -8,6 +9,19 @@ export function useDataSources(options?: { refetchInterval?: number | false }) {
   return useQuery({
     queryKey: ["data-sources"],
     queryFn: () => apiFetch<DataSource[]>("/data-sources"),
+    refetchInterval: options?.refetchInterval,
+  });
+}
+
+/**
+ * 数据源健康度(DSH-01/02:数据源健康的主入口在本页)。
+ * 窗口固定 30 天;当前态(最近一次同步)由 /data-sources 的 last_sync_* 承载,
+ * 历史可靠性(窗口成功率)由此 hook 承载,按 source_id 与列表 join。
+ */
+export function useSourceHealth(options?: { refetchInterval?: number | false }) {
+  return useQuery({
+    queryKey: ["source-health"],
+    queryFn: () => fetchSourceHealth(30),
     refetchInterval: options?.refetchInterval,
   });
 }
