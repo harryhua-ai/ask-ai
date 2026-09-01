@@ -1,0 +1,49 @@
+# 站点体验配置(MSW:CAMTHINK_V1_MULTI_SITE_WIDGET_INTEGRATION)
+#
+# 本文件为站点身份/体验的权威源;lifespan 启动与 scripts/migrate_add_site_experiences.py
+# 将其幂等 upsert 进 site_experiences 表,运行时读取 DB。
+# ops 流程:改本文件 → 重启后端(或跑迁移脚本)→ 生效。
+#
+# 规则(冻结契约):
+# - site_id 是标识符不是凭证;授权 = 站点 enabled + 请求 Origin 精确命中 allowed_origins。
+# - origin 必须显式枚举(含 scheme;端口非 80/443 时必须带上),禁止通配符。
+# - starters 语义三站分离:website=发现/咨询,wiki=文档/实施/排障,store=购买决策。
+#   文案可在语义不变前提下继续打磨。
+
+sites:
+  - site_id: camthink-website
+    display_name: CamThink 官网
+    allowed_origins:
+      - https://www.camthink.ai
+      - https://camthink.ai
+    welcome: "Hi! I'm the CamThink assistant. Ask me anything about our AIoT products."
+    language: en
+    starters:
+      - "Which product fits my project?"
+      - "Compare NE503 and NE301"
+      - "Recommend a solution for smart agriculture"
+      - "What interfaces does NE503 support?"
+
+  - site_id: camthink-wiki
+    display_name: CamThink Wiki
+    allowed_origins:
+      - https://wiki.camthink.ai
+    welcome: "有问题就问我 —— 我熟悉 CamThink 设备的文档、配置与排障步骤。"
+    language: zh
+    starters:
+      - "这篇文档对应的设备如何开始配置?"
+      - "NE301 刷机失败怎么排查?"
+      - "设备 API 调用有示例吗?"
+      - "这个型号的固件在哪里下载?"
+
+  - site_id: camthink-store
+    display_name: CamThink Store
+    allowed_origins:
+      - https://store.camthink.ai
+    welcome: "Shopping for a CamThink device? Ask me before you order."
+    language: en
+    starters:
+      - "Is NE503 suitable for my project?"
+      - "Compare NE503 with NE301"
+      - "What is included in the box?"
+      - "Do you ship internationally?"

@@ -91,6 +91,10 @@ class Conversation(Base):
     gap_status: Mapped[str | None] = mapped_column(String(20))
     override_answer: Mapped[str | None] = mapped_column(Text)
 
+    # 多站点 Widget(MSW):站点体验标识;channel 保持传输语义(widget),站点仅作
+    # 分析维度。nullable —— legacy 嵌入与无站点上下文的对话为 NULL。
+    site_id: Mapped[str | None] = mapped_column(String(100))
+
     clicks: Mapped[list["SourceClick"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan"
     )
@@ -286,6 +290,29 @@ class LLMAllowedHost(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class SiteExperience(Base):
+    """站点体验身份(MSW:ONE Widget + 多站点体验)。
+
+    site_id 是**标识符**而非凭证:授权 = 站点存在且 enabled + 请求 Origin 归一化
+    后精确命中 ``allowed_origins``(服务端校验,CORS 仅为浏览器执行层)。
+    与 CustomizationBinding(channel 传输定制)语义分离,互相不重载。
+    """
+
+    __tablename__ = "site_experiences"
+
+    site_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    allowed_origins: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    starters: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    welcome: Mapped[str | None] = mapped_column(String(500))
+    language: Mapped[str | None] = mapped_column(String(10))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class QuestionCluster(Base):
     """问题聚类结果(Phase 3B Coverage Gaps + Top Questions)。"""
 
@@ -336,6 +363,7 @@ class Attachment(Base):
 Index("idx_conversations_created_at", Conversation.created_at)
 Index("idx_conversations_is_answered", Conversation.is_answered)
 Index("idx_conversations_channel", Conversation.channel)
+Index("idx_conversations_site", Conversation.site_id)
 Index(
     "idx_conversations_cluster_id",
     Conversation.cluster_id,
