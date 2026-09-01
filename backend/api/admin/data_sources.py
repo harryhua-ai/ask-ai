@@ -441,7 +441,9 @@ async def delete_data_source(source_id: str, _: EditorDep, request: Request) -> 
         ledger = (
             await session.execute(
                 select(Document.source_id, Document.chunk_count).where(
-                    Document.source_id.like(f"{source_id}/%")
+                    # AC-FIX-01:源 ID 是字面标识符,不是 LIKE 模式 ——
+                    # autoescape 转义 %/_ ,杜绝通配符越界吸走他源账本
+                    Document.source_id.startswith(f"{source_id}/", autoescape=True)
                 )
             )
         ).all()
@@ -473,7 +475,9 @@ async def delete_data_source(source_id: str, _: EditorDep, request: Request) -> 
         if ds is not None:
             await session.delete(ds)
         await session.execute(
-            delete(Document).where(Document.source_id.like(f"{source_id}/%"))
+            delete(Document).where(
+                Document.source_id.startswith(f"{source_id}/", autoescape=True)
+            )
         )
         await session.commit()
 
