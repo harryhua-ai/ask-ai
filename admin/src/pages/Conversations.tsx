@@ -11,6 +11,7 @@ import {
   useBatchTag,
   type ConversationFilters,
 } from "@/hooks/useConversations";
+import { useAuth } from "@/hooks/useAuth";
 import { fetchTraces, type TraceData } from "@/lib/api/traces";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -77,6 +78,8 @@ export default function Conversations() {
         : searchParams.get("answered") === "true",
     q: searchParams.get("q") ?? undefined,
   });
+  const { user } = useAuth();
+  const canWrite = user?.role === "admin" || user?.role === "editor";
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState(searchParams.get("q") ?? "");
   useEffect(() => {
@@ -147,6 +150,7 @@ export default function Conversations() {
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">对话审查</h1>
           <div className="flex gap-2">
+            {canWrite && (
             <Button
               variant="outline"
               size="sm"
@@ -155,6 +159,7 @@ export default function Conversations() {
             >
               {batchTag.isPending ? "标注中..." : "批量标注 Intent"}
             </Button>
+            )}
             {batchTag.data && (
               <span className="text-sm text-muted-foreground">
                 本次标注 {batchTag.data.tagged_count} 条
@@ -261,6 +266,12 @@ export default function Conversations() {
         <div className="space-y-2">
           {isLoading ? (
             <div className="text-center py-8 text-muted-foreground">加载中...</div>
+          ) : visibleItems.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground" data-empty-state>
+              {data?.total === 0
+                ? "暂无对话数据。对话发生后将在此处呈现。"
+                : "无匹配对话:当前筛选/搜索条件下没有结果,请调整条件后重试。"}
+            </div>
           ) : (
           visibleItems.map((conv) => {
               return (

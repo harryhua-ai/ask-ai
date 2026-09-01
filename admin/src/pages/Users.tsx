@@ -7,11 +7,16 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Pagination } from "@/components/Pagination";
 import { useAuth } from "@/hooks/useAuth";
+import NoPermission from "@/components/NoPermission";
 
 const PAGE_SIZE = 20;
 
 export default function Users() {
   const { user: currentUser } = useAuth();
+  // AFP-002:用户管理仅 admin;非 admin 直达 → 显式无权限态(非空表)
+  if (currentUser && currentUser.role !== "admin") {
+    return <NoPermission />;
+  }
   const [page, setPage] = useState(1);
   const { data: users, isLoading } = useUsers(page, PAGE_SIZE);
   const createUser = useCreateUser();

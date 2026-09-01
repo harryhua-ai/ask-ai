@@ -475,17 +475,6 @@ function KnowledgeGapsTab() {
         )}
       </div>
 
-      {/* 澄清漏斗占位(Phase 3 真实数据接入) */}
-      <div
-        className="rounded-lg border p-4"
-        style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
-      >
-        <h2 className="text-[14px] font-medium text-[var(--t1)] mb-3">
-          澄清漏斗
-        </h2>
-        <div className="text-[12px] text-[var(--t3)]">暂无数据(待接入)</div>
-      </div>
-
       {/* 覆盖缺口 */}
       <div
         className="rounded-lg border p-4"

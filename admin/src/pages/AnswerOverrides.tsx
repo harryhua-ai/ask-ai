@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "react-router-dom";
 import {
   useAnswerOverrides,
@@ -42,6 +43,8 @@ export default function AnswerOverrides() {
   const updateOverride = useUpdateOverride();
   const deleteOverride = useDeleteOverride();
 
+  const { user } = useAuth();
+  const canWrite = user?.role === "admin" || user?.role === "editor";
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState<OverrideForm>(EMPTY_FORM);
   const [jsonError, setJsonError] = useState<string | null>(null);
@@ -88,7 +91,9 @@ export default function AnswerOverrides() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">答案覆盖管理</h1>
+        {canWrite && (
         <Button onClick={() => setShowCreate(!showCreate)}>新增覆盖</Button>
+        )}
       </div>
 
       {showCreate && (
@@ -188,6 +193,7 @@ export default function AnswerOverrides() {
                 {ov.created_at ? new Date(ov.created_at).toLocaleString("zh-CN") : "-"}
               </TableCell>
               <TableCell>
+                {canWrite && (
                 <Button
                   size="sm"
                   variant="destructive"
@@ -200,6 +206,7 @@ export default function AnswerOverrides() {
                 >
                   删除
                 </Button>
+                )}
               </TableCell>
             </TableRow>
           ))}

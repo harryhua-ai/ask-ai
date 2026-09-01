@@ -412,13 +412,14 @@ describe("TechInsight 知识缺口 tab", () => {
     });
   });
 
-  it("澄清漏斗显示暂无数据", async () => {
+  it("AFP-007:不再渲染「澄清漏斗(待接入)」占位面板", async () => {
     renderWithProviders(<Analytics />);
     fireEvent.click(await screen.findByText("知识缺口"));
     await waitFor(() => {
-      expect(screen.getByText(/澄清漏斗/)).toBeInTheDocument();
-      expect(screen.getByText(/暂无数据|待接入/)).toBeInTheDocument();
+      expect(screen.getByText(/覆盖缺口/)).toBeInTheDocument();
     });
+    expect(screen.queryByText(/澄清漏斗/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/待接入/)).not.toBeInTheDocument();
   });
 });
 

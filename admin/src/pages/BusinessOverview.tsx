@@ -88,7 +88,7 @@ export default function BusinessOverview() {
           {/* 服务总览 KPI 行 */}
           <div className="grid grid-cols-4 gap-4">
             <KpiCard
-              label="总服务客户"
+              label="服务对话数"
               value={data.service.total}
               delta={
                 data.service.prev_total != null && data.service.prev_total > 0

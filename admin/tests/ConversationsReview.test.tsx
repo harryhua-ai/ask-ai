@@ -3,6 +3,9 @@ import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/re
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+vi.mock("@/hooks/useAuth", () => ({
+  useAuth: () => ({ user: { role: "admin", email: "t@x.com" } }),
+}));
 vi.mock("@/hooks/useConversations", () => ({
   useConversations: () => ({
     data: {

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useAuth } from "@/hooks/useAuth";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -596,6 +597,7 @@ export default function DataSources() {
     setValue("branches", next.join(", "), { shouldDirty: true });
   };
 
+  const { user } = useAuth();
   const handleDelete = async (id: string) => {
     if (!window.confirm(`确定删除数据源 ${id} 吗?`)) return;
     await deleteDs.mutateAsync(id);
@@ -607,6 +609,8 @@ export default function DataSources() {
     triggerSync.mutate(ds.id);
   };
 
+  const canWrite =
+    user?.role === "admin" || user?.role === "editor";
   const handleSyncAll = async () => {
     // 后端顺序同步所有启用源(一个后台任务,避免并发 GPU OOM);
     // 把返回的 source_ids 批量入 syncingIds + triggeredAt,复用现有轮询逐个检测完成。
@@ -693,6 +697,7 @@ export default function DataSources() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">数据源管理</h1>
+        {canWrite && (
         <div className="flex gap-2">
           <Button
             variant="outline"
@@ -703,6 +708,7 @@ export default function DataSources() {
           </Button>
           <Button onClick={openCreate}>新增数据源</Button>
         </div>
+        )}
       </div>
       {showForm && (
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-3 rounded-lg border bg-card p-4">
@@ -1124,6 +1130,7 @@ export default function DataSources() {
               </TableCell>
               <TableCell>{ds.sync_interval}</TableCell>
               <TableCell className="space-x-2">
+                {canWrite && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -1132,6 +1139,9 @@ export default function DataSources() {
                 >
                   {syncingIds.has(ds.id) ? "同步中..." : "同步"}
                 </Button>
+                )}
+                {canWrite && (
+                <>
                 <Button size="sm" variant="outline" onClick={() => openEdit(ds)}>
                   编辑
                 </Button>
@@ -1143,6 +1153,8 @@ export default function DataSources() {
                 >
                   删除
                 </Button>
+                </>
+                )}
               </TableCell>
             </TableRow>
             );

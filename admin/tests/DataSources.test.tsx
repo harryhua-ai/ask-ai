@@ -11,6 +11,9 @@ import {
   useSourceHealth,
 } from "@/hooks/useDataSources";
 
+vi.mock("@/hooks/useAuth", () => ({
+  useAuth: () => ({ user: { role: "admin", email: "t@x.com" } }),
+}));
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));

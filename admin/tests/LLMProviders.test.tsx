@@ -4,6 +4,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import LLMProviders from "@/pages/LLMProviders";
 import { ApiError } from "@/lib/api";
 
+vi.mock("@/hooks/useAuth", () => ({
+  useAuth: () => ({ user: { role: "admin", email: "t@x.com" } }),
+}));
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
