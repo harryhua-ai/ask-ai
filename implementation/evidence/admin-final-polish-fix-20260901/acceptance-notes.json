@@ -1,0 +1,46 @@
+[
+ {
+  "item": "6-login-error",
+  "friendly": true,
+  "rawLeaked": false
+ },
+ {
+  "item": "7-metric-label",
+  "renamed": true,
+  "oldGone": true
+ },
+ {
+  "item": "8-funnel-removed",
+  "gone": true,
+  "gapsKept": true
+ },
+ {
+  "item": "3a-create-isolated-source",
+  "status": 409
+ },
+ {
+  "item": "3b-seed-vectors",
+  "s": [
+   422,
+   422
+  ]
+ },
+ {
+  "item": "3c-delete-source",
+  "rowGone": true
+ },
+ {
+  "item": "3d-cleanup-verified",
+  "pgRows": "0",
+  "weaviateChunks": 0
+ },
+ {
+  "item": "1-viewer-datasources-no-write",
+  "clean": true
+ },
+ {
+  "item": "4-viewer-users-denied",
+  "denied": true,
+  "notEmptyTable": true
+ }
+]
