@@ -14,6 +14,7 @@ api_key 安全:
 """
 
 import logging
+import re
 import time
 from typing import Annotated
 
@@ -24,16 +25,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.api.admin.schemas import (
     ConnectivityTestResult,
     FetchModelsRequest,
+    LLMAllowedHostCreate,
+    LLMAllowedHostOut,
     LLMProviderCreate,
     LLMProviderOut,
     LLMProviderUpdate,
     LLMRoutingOut,
     LLMRoutingUpdate,
+    _is_non_global_ip,
     validate_llm_api_base,
 )
 from backend.auth.crypto import decrypt_api_key, encrypt_api_key
 from backend.auth.dependencies import CurrentUser, require_role
-from backend.db.models import LLMProviderModel, LLMRouting
+from backend.db.models import LLMAllowedHost, LLMProviderModel, LLMRouting
 from backend.llm.registry import LLMRegistry
 
 logger = logging.getLogger(__name__)
@@ -41,6 +45,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["LLM 供应商管理"])
 EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
 ViewerDep = Annotated[CurrentUser, Depends(require_role("admin", "editor", "viewer"))]
+AdminDep = Annotated[CurrentUser, Depends(require_role("admin"))]
 
 
 @router.get("/local-models")
@@ -101,6 +106,136 @@ def _encrypt_sensitive(config: dict, encryption_key: str) -> dict:
     return encrypted
 
 
+# ---------------------------------------------------------------------------
+# 端点显式授权(LLM-02/LLM-03):DB 信任存储 + 端点级 api_base 校验
+# ---------------------------------------------------------------------------
+
+# 合法归一化主机:小写字母/数字/点/连字符,不以连字符或点开头结尾
+_HOST_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")
+
+
+def normalize_allowed_host(raw: str) -> tuple[str, bool]:
+    """归一化授权输入 → (host, allow_private)。
+
+    容忍粘贴完整 URL(剥 scheme/port/path/userinfo,IPv6 剥方括号),
+    转小写;通配符、空白、空主机一律拒绝。
+    allow_private 由主机形态自动判定(非全局 IP 字面量 → 内网级)。
+    """
+    s = (raw or "").strip().lower()
+    if not s or "*" in s:
+        raise ValueError("主机名无效:不允许通配符或空值")
+    if "://" in s:
+        s = s.split("://", 1)[1]
+    s = s.split("/", 1)[0]
+    if "@" in s:
+        s = s.rsplit("@", 1)[1]
+    if s.startswith("[") and "]" in s:
+        s = s[1 : s.index("]")]
+    elif s.count(":") == 1:
+        s = s.split(":", 1)[0]
+    if not s or not _HOST_RE.match(s) or len(s) > 255:
+        raise ValueError(f"主机名无效: {raw!r}")
+    return s, _is_non_global_ip(s)
+
+
+async def load_endpoint_authorization(
+    factory: async_sessionmaker[AsyncSession],
+) -> tuple[frozenset[str], frozenset[str]]:
+    """读取 DB 端点授权 → (public 级主机集, private 级主机集)。"""
+    async with factory() as session:
+        rows = (await session.execute(select(LLMAllowedHost))).scalars().all()
+    public = frozenset(r.host for r in rows if not r.allow_private)
+    private = frozenset(r.host for r in rows if r.allow_private)
+    return public, private
+
+
+async def ensure_api_base_authorized(
+    api_base: str, factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """校验 api_base(内置/env/DB 授权三层信任),未通过抛 422 产品级文案。"""
+    if not api_base:
+        return
+    public, private = await load_endpoint_authorization(factory)
+    try:
+        validate_llm_api_base(api_base, authorized_public=public, authorized_private=private)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/llm-allowed-hosts", response_model=list[LLMAllowedHostOut])
+async def list_allowed_hosts(_: ViewerDep, request: Request) -> list[LLMAllowedHostOut]:
+    """列出端点授权记录(viewer+ 可读,与其它 LLM 配置读取一致)。"""
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        rows = (
+            (await session.execute(select(LLMAllowedHost).order_by(LLMAllowedHost.host)))
+            .scalars()
+            .all()
+        )
+    return [
+        LLMAllowedHostOut(
+            host=r.host,
+            allow_private=r.allow_private,
+            note=r.note,
+            created_by=r.created_by,
+            created_at=r.created_at.isoformat() if r.created_at else "",
+        )
+        for r in rows
+    ]
+
+
+@router.post("/llm-allowed-hosts", response_model=LLMAllowedHostOut, status_code=201)
+async def authorize_allowed_host(
+    req: LLMAllowedHostCreate, admin: AdminDep, request: Request
+) -> LLMAllowedHostOut:
+    """新增端点授权(仅 admin):显式、可审查、可撤销,持久化在 DB。
+
+    私有/非全局 IP 字面量自动记为内网级(allow_private=True)。
+    重复授权返回 409。
+    """
+    try:
+        host, allow_private = normalize_allowed_host(req.host)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        existing = await session.execute(select(LLMAllowedHost).where(LLMAllowedHost.host == host))
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail=f"主机 {host} 已授权")
+        row = LLMAllowedHost(
+            host=host,
+            allow_private=allow_private,
+            note=(req.note or "").strip() or None,
+            created_by=admin.email,
+        )
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    logger.info("端点已授权: host=%s allow_private=%s by=%s", host, allow_private, admin.email)
+    return LLMAllowedHostOut(
+        host=row.host,
+        allow_private=row.allow_private,
+        note=row.note,
+        created_by=row.created_by,
+        created_at=row.created_at.isoformat() if row.created_at else "",
+    )
+
+
+@router.delete("/llm-allowed-hosts/{host}", status_code=204)
+async def revoke_allowed_host(host: str, _: AdminDep, request: Request) -> None:
+    """撤销端点授权(仅 admin)。撤销后新校验立即拒绝,reload 时运行时跳过。"""
+    normalized, _ = normalize_allowed_host(host)
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        row = await session.execute(select(LLMAllowedHost).where(LLMAllowedHost.host == normalized))
+        row = row.scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status_code=404, detail="授权记录不存在")
+        await session.delete(row)
+        await session.commit()
+    logger.info("端点授权已撤销: host=%s", normalized)
+
+
 @router.get("/llm-providers", response_model=list[LLMProviderOut])
 async def list_providers(_: ViewerDep, request: Request) -> list[LLMProviderOut]:
     """列出全部 LLM 供应商(viewer+ 可访问),按 id 排序,api_key 已脱敏。"""
@@ -124,6 +259,8 @@ async def create_provider(req: LLMProviderCreate, _: EditorDep, request: Request
     settings = request.app.state.settings
     encrypted_config = _encrypt_sensitive(req.config.model_dump(), settings.encryption_key)
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    # api_base 授权校验在端点层执行(需查 DB 授权,见 ProviderConfig docstring)
+    await ensure_api_base_authorized(req.config.api_base, factory)
     async with factory() as session:
         existing = await session.execute(
             select(LLMProviderModel).where(LLMProviderModel.id == req.id)
@@ -167,6 +304,8 @@ async def update_provider(
         if req.enabled is not None:
             provider.enabled = req.enabled
         if req.config:
+            # api_base 授权校验在端点层执行(需查 DB 授权,见 ProviderConfig docstring)
+            await ensure_api_base_authorized(req.config.api_base, factory)
             # 仅加密新传入的敏感字段;"********" 占位符会被 _encrypt_sensitive 原样保留,
             # 随后在此处被剔除,避免用占位符覆盖 DB 中的真实密文。
             # exclude_unset=True：只取客户端显式传入的字段，避免默认值覆盖 DB 原值（部分更新语义）
@@ -263,14 +402,14 @@ async def test_provider(provider_id: str, _: EditorDep, request: Request) -> Con
 
     # 与 fetch-models 相同：连通性测试也会携带解密后的 key，请求前必须防 SSRF
     try:
-        validate_llm_api_base(config.get("api_base", ""))
-    except ValueError:
+        public, private = await load_endpoint_authorization(factory)
+        validate_llm_api_base(
+            config.get("api_base", ""), authorized_public=public, authorized_private=private
+        )
+    except ValueError as exc:
         logger.warning("test_provider api_base 校验失败: provider_id=%s", provider_id)
         return ConnectivityTestResult(
-            provider_id=provider_id,
-            success=False,
-            latency_ms=None,
-            error="api_base 校验失败",
+            provider_id=provider_id, success=False, latency_ms=None, error=str(exc)
         )
 
     try:
@@ -373,10 +512,11 @@ async def fetch_models(
 
     # revalidate api_base：防绕过 schema 直接改库/表单乱填后的 SSRF / 凭证外泄
     try:
-        validate_llm_api_base(eff_api_base)
-    except ValueError:
+        public, private = await load_endpoint_authorization(factory)
+        validate_llm_api_base(eff_api_base, authorized_public=public, authorized_private=private)
+    except ValueError as exc:
         logger.warning("fetch_models api_base 校验失败: provider_id=%s", provider_id)
-        return {"provider_id": provider_id, "models": [], "error": "api_base 校验失败"}
+        return {"provider_id": provider_id, "models": [], "error": str(exc)}
 
     try:
         llm = LLMRegistry.create(

@@ -5,7 +5,7 @@ import os
 import socket
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field
 
 
 class LoginRequest(BaseModel):
@@ -155,53 +155,77 @@ class BindingUpdate(BaseModel):
     customization_id: str
 
 
-# prod 模式 LLM api_base 白名单（防 SSRF + 凭证外泄）
+# 内置预授权 LLM 主机(既有产品语义:三家直连默认可用,无需 DB 授权行)
 _DEFAULT_LLM_HOSTS = {"api.deepseek.com", "api.openai.com", "api.anthropic.com"}
 
 
-def _allowed_llm_hosts() -> set[str]:
-    """返回允许的 LLM 主机白名单（默认 + env LLM_ALLOWED_HOSTS 扩展）。"""
-    hosts = set(_DEFAULT_LLM_HOSTS)
+def _env_allowed_llm_hosts() -> set[str]:
+    """部署级预授权扩展(env LLM_ALLOWED_HOSTS),与 DB 显式授权叠加生效。"""
     extra = os.environ.get("LLM_ALLOWED_HOSTS", "")
-    return hosts | {h.strip().lower() for h in extra.split(",") if h.strip()}
+    return {h.strip().lower() for h in extra.split(",") if h.strip()}
 
 
-def validate_llm_api_base(url: str) -> str:
-    """校验 LLM api_base，防 SSRF 与凭证外泄。
+def _is_non_global_ip(host: str) -> bool:
+    """主机是否为非全局 IP 字面量(内网族)。
 
-    所有环境都只允许默认供应商主机或通过 ``LLM_ALLOWED_HOSTS`` 显式配置的主机。
-    这不是 UI 校验，而是携带解密凭证发起出站请求前的安全边界。
-    prod 额外拒绝 DNS 解析到内网、loopback、保留和 link-local 地址。
-    本地 LLM 若确实需要使用，必须显式加入 allowlist；不允许依赖 APP_MODE
-    的默认值放行任意目标。
+    覆盖 RFC1918 / loopback / link-local / reserved,以及 is_global=False 的
+    共享地址段(含 CGNAT 100.64/10,如 Tailscale 网关)。
+    """
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_link_local or ip.is_private or ip.is_loopback or ip.is_reserved or not ip.is_global
+
+
+def validate_llm_api_base(
+    url: str,
+    *,
+    authorized_public: frozenset[str] = frozenset(),
+    authorized_private: frozenset[str] = frozenset(),
+) -> str:
+    """校验 LLM api_base,防 SSRF 与凭证外泄。
+
+    信任模型(显式授权、可审查、默认拒绝):
+      - 内置三家主机 + env ``LLM_ALLOWED_HOSTS``:部署级预授权(公网语义);
+      - ``authorized_public`` / ``authorized_private``:DB 显式授权
+        (管理员通过「模型配置 → 端点授权」维护),private 级才可放行
+        私有/内网地址与内网 http;
+      - 任何授权都不放宽协议(仅 http/https)与畸形输入检查。
+    prod 额外要求 https 并拒绝解析到内网族的公网主机(private 级显式授权除外,
+    即管理员明确信任该内网通道)。错误文案只描述产品级操作,不暴露实现层指令。
     """
     if not url:
         return url
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise ValueError("api_base 只允许 http/https 协议")
-    if os.environ.get("APP_MODE", "dev") == "prod" and parsed.scheme != "https":
-        raise ValueError("prod 模式 api_base 必须使用 https")
     host = (parsed.hostname or "").lower()
     if not host:
         raise ValueError("api_base 缺少主机名")
 
-    try:
-        literal_ip = ipaddress.ip_address(host)
-    except ValueError:
-        literal_ip = None
-    if literal_ip is not None and (
-        literal_ip.is_link_local
-        or literal_ip.is_private
-        or literal_ip.is_loopback
-        or literal_ip.is_reserved
-    ):
-        raise ValueError(f"禁止 api_base 指向内网地址 {literal_ip}")
-
-    if host not in _allowed_llm_hosts():
-        raise ValueError(f"api_base 主机 {host} 不在 allowlist（通过 LLM_ALLOWED_HOSTS 配置）")
+    private_tier = host in authorized_private
+    if _is_non_global_ip(host):
+        if not private_tier:
+            raise ValueError(
+                f"内网/私有地址 {host} 默认拒绝:"
+                "请由管理员在「模型配置 → 端点授权」中显式授权后使用"
+            )
+    else:
+        allowed = (
+            _DEFAULT_LLM_HOSTS | _env_allowed_llm_hosts() | authorized_public | authorized_private
+        )
+        if host not in allowed:
+            raise ValueError(
+                f"API 地址主机 {host} 尚未授权:" "请由管理员在「模型配置 → 端点授权」中添加后重试"
+            )
 
     if os.environ.get("APP_MODE", "dev") != "prod":
+        return url
+
+    if parsed.scheme != "https" and not private_tier:
+        raise ValueError("prod 模式 api_base 必须使用 https(内网端点需显式授权内网级别)")
+    if private_tier:
         return url
 
     try:
@@ -210,16 +234,17 @@ def validate_llm_api_base(url: str) -> str:
         raise ValueError(f"api_base 主机 {host} 无法解析") from exc
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
-        if ip.is_link_local or ip.is_private or ip.is_loopback or ip.is_reserved:
+        if _is_non_global_ip(str(ip)):
             raise ValueError(f"prod 模式禁止 api_base 指向内网地址 {ip}")
     return url
 
 
 class ProviderConfig(BaseModel):
-    """LLM 供应商配置（结构化校验，防 SSRF / cost 放大）。
+    """LLM 供应商配置（结构化校验，防 cost 放大）。
 
-    api_base 经 validate_llm_api_base 校验；max_tokens/temperature 限界
-    防止管理员误设导致成本放大。
+    api_base 不在此处校验:端点授权需查 DB(llm_allowed_hosts),
+    校验由 API 端点层结合授权集合执行(validate_llm_api_base)。
+    max_tokens/temperature 限界防止管理员误设导致成本放大。
     """
 
     model_config = {"extra": "forbid"}
@@ -230,11 +255,6 @@ class ProviderConfig(BaseModel):
     max_tokens: int = Field(default=4096, ge=1, le=128000)
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
     available_models: list[str] = Field(default_factory=list)
-
-    @field_validator("api_base")
-    @classmethod
-    def _check_api_base(cls, v: str) -> str:
-        return validate_llm_api_base(v)
 
 
 class LLMProviderOut(BaseModel):
@@ -272,6 +292,27 @@ class FetchModelsRequest(BaseModel):
 
     api_base: str | None = None
     api_key: str | None = None
+
+
+class LLMAllowedHostOut(BaseModel):
+    """LLM 端点授权记录输出 schema。"""
+
+    host: str
+    allow_private: bool
+    note: str | None
+    created_by: str | None
+    created_at: str
+
+
+class LLMAllowedHostCreate(BaseModel):
+    """LLM 端点授权创建 schema。
+
+    host 接受裸主机名/IP,也容忍携带 scheme/port/path 的粘贴输入
+    (服务端归一化后存储;通配符与非法输入在端点层 422)。
+    """
+
+    host: str = Field(..., min_length=1, max_length=255)
+    note: str | None = Field(default=None, max_length=500)
 
 
 class LLMChainItem(BaseModel):

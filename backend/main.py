@@ -141,6 +141,10 @@ async def _build_llm_state(
     if db_config is None:
         return {}, {}, [], False
     providers_list, routing_dict = db_config
+    # 端点显式授权(P1):运行时构建与保存路径同一信任存储,撤销授权即不再加载
+    from backend.api.admin.llm_providers import load_endpoint_authorization
+
+    authz_public, authz_private = await load_endpoint_authorization(factory)
     providers: dict[str, object] = {}
     skipped: list[str] = []
     for prov in providers_list:
@@ -156,7 +160,11 @@ async def _build_llm_state(
                     prov["id"],
                 )
         try:
-            validate_llm_api_base(cfg.get("api_base", ""))
+            validate_llm_api_base(
+                cfg.get("api_base", ""),
+                authorized_public=authz_public,
+                authorized_private=authz_private,
+            )
             provider = LLMRegistry.create(
                 prov["type"],
                 provider_id=prov["id"],
@@ -220,7 +228,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 )
                 logger.info("已创建官网爬取数据源: website-camthink")
 
-# Admin 用户
+            # Admin 用户
             admin_email = os.environ.get("ADMIN_EMAIL", "admin@camthink.ai")
             existing_admin = (
                 await session.execute(sa_select(User).where(User.email == admin_email))
