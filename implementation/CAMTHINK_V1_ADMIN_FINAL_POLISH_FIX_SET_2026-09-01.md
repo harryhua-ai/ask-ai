@@ -170,3 +170,45 @@ afp001-acceptance-b 误计入 A(正是一致性模块既有结论),最终以 Get
 - REPORT_COMMIT = 见 docs 仓提交记录
 
 Executor PASS 不构成 Final Acceptance,Planner 独立验收为准。
+
+---
+
+## 13. Acceptance Cleanup 附记(2026-09-01,Planner FINAL REVIEW = PARTIAL 后)
+
+按验收清理指令完成三项,历史证据(§1-§12)未改写:
+
+### AC-FIX-01 literal 前缀所有权
+- **原始缺陷**:DELETE 路径账本枚举/清理使用 `Document.source_id.like(f"{source_id}/%")`,
+  而源 ID 允许含 `%`/`_` —— 通配符越界可吸走他源账本与向量(违反合同
+  「不得删除另一个源的知识」)。
+- **修复**:`startswith(f"{source_id}/", autoescape=True)`(SQLAlchemy 自动
+  转义 %/_ 与转义符,ID 视为字面标识符;前缀边界与可索引性不变)。
+  两处:账本枚举 + documents 清理;向量段本为 Equal 精确匹配,未动。
+- **回归测试**(`test_data_source_delete_wildcards.py`,3 组全绿):
+  1. 前缀重叠 source-a vs source-ab;
+  2. 下划线 afp_src_a vs afpXsrcXa(未修复时 purge 账本吸入他源文档,RED 实证);
+  3. 百分号 afp%pct vs afp-x-pct(同上 RED 实证)。
+  每组断言:删 A → A 配置/账本/向量清零;B 配置/文档原样;purge 账本
+  精确等于 A 自己的文档清单。
+- 测试辅助 _doc_count 同步改字面语义(测试自身也曾犯同款 LIKE 毛病,
+  修复前后差异正是缺陷实证)。
+
+### AC-FIX-02 仓库卫生
+- `admin/node_modules`、`widget/node_modules`(worktree 依赖复用软链,
+  mode 120000 symlink)已移出 git 跟踪;
+- 根因:原 .gitignore 规则 `node_modules/`(带斜杠)只匹配目录,不匹配
+  symlink 文件 → 已追加显式条目 `admin/node_modules`、`widget/node_modules`;
+- 本地依赖复用软链保留在文件系统,仅不可再提交。
+
+### AC-FIX-03 交付元数据
+- 原始实现提交:6b9f9c438bad85a9829b09d37022365712cbf8e3
+- 验收清理提交:262c1fc(仅 data_sources.py + .gitignore + 新回归测试)
+- **清理后 FINAL_COMMIT**:见下(HEAD of worktree-exec/admin-final-polish)
+- REPORT_COMMIT:本文件所在 docs 提交(见提交记录)
+
+### 清理验证
+- 删除生命周期测试:8/8(原 5 + 通配符 3);
+- admin 后端全量:156 passed;FinalPolish 前端:10 passed;
+- `git diff 0dc0f43...HEAD --name-only`:20 个文件,0 个 node_modules,
+  无授权范围外内容;`git ls-tree -r HEAD | grep -c node_modules` = 0;
+- worktree 工作区干净(node_modules 软链为 gitignore 防护下的本地复用件)。
