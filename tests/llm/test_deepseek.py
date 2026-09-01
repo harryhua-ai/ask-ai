@@ -559,3 +559,29 @@ async def test_stream_empty_api_key_omits_authorization_header():
     method, url = captured["method_url"]
     assert (method, url) == ("POST", "https://api.test.com/v1/chat/completions")
     assert "Authorization" not in captured["stream_kwargs"]["headers"]
+
+
+@pytest.mark.asyncio
+async def test_generate_with_api_key_sends_bearer_header():
+    """FOLLOW-G004:generate 有 key 时维持 Authorization: Bearer(既有行为锁定)。"""
+    prov = DeepseekProvider("t", api_base="https://api.test.com/v1", api_key="sk-live", model="m")
+    captured: dict = {}
+
+    async def fake_post(url, headers=None, json=None):
+        captured["headers"] = headers or {}
+
+        class _Resp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "choices": [{"message": {"content": "ok"}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                }
+
+        return _Resp()
+
+    with patch("httpx.AsyncClient.post", side_effect=fake_post):
+        await prov.generate([{"role": "user", "content": "hi"}])
+    assert captured["headers"] == {"Authorization": "Bearer sk-live"}
