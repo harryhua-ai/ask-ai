@@ -167,7 +167,8 @@ class RAGOrchestrator:
                 ``async allows(source_id, channel) -> bool``;在候选进入
                 rerank / LLM 上下文之前按源最新配置复核,拦截 chunk 元数据
                 滞后/缺失导致的受限内容。守卫自身故障时 fail-open(主防线
-                是 chunk 级 channel_visibility 检索过滤)。
+                是 chunk 级 channel_visibility 检索过滤)。守卫异常时 fail-closed:丢弃全部
+                候选,由拒答门兜底(授权失败不得变成授权旁路)。
         """
         self._searcher = searcher
         self._reranker = reranker
@@ -276,8 +277,13 @@ class RAGOrchestrator:
                 r for r in results if await self._visibility_guard.allows(r.source_id, channel)
             ]
         except Exception as exc:  # noqa: BLE001
-            logger.warning("visibility guard 异常,fail-open:%s", str(exc)[:200])
-            return results
+            # P0-rework Case C:授权子系统故障不得变成授权旁路 → fail-closed:
+            # 丢弃全部候选(下游拒答门兜底)——可用性损失,而非安全损失。
+            logger.error(
+                "visibility guard 异常,fail-closed 丢弃全部 %d 候选:%s",
+                len(results), str(exc)[:200],
+            )
+            return []
 
     @staticmethod
     def _rerank_snippets(results: list[SearchResult], top: int = 5, text_preview: int = 300) -> list[dict]:

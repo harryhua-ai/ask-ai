@@ -1,12 +1,15 @@
-"""SourceVisibilityGuard 单元测试(PC-01 防御纵深层)。
+"""SourceVisibilityGuard 单元测试(PC-01 防御纵深层;P0-rework fail-closed 语义)。
 
-行为契约:
-- loader 返回 {source_id_prefix: channel_visibility};guard 按请求渠道探测:
-  渠道在白名单 → 可见;不在/白名单为空 → 不可见。
-- admin 渠道按 widget 探测(与 HybridSearcher._VISIBILITY_CHANNEL_ALIAS 一致)。
-- 未知 source 前缀(不在 DB 配置中)→ 允许(chunk 级过滤为主防线,guard 只做纵深)。
-- loader 故障 → 沿用最近一次成功快照;从未成功 → 全部允许(fail-open)。
-- TTL 内复用快照,过期后重新加载。
+冻结契约(Part 4):AUTHORIZATION FAILURE MUST NOT BECOME AUTHORIZATION BYPASS。
+
+- Known source + explicitly allowed                → ALLOW
+- Known source + explicitly not allowed            → DENY
+- Unknown / ghost source                           → DENY(不得进入生成上下文)
+- No authoritative snapshot available              → DENY(不得放行未证实候选)
+- Stale valid snapshot exists + refresh failure    → MAY use stale snapshot
+
+附加:admin 按 widget 访客等价探测;channel=None 属未知请求上下文 → DENY;
+TTL 内复用快照,过期后重新加载;loader 返回 {} 为权威空配置(全部拒)。
 """
 
 import asyncio
@@ -44,37 +47,55 @@ async def test_admin_probes_as_widget():
     assert await guard.allows("src-a/case.md", "admin") is False
 
 
-async def test_unknown_source_prefix_allows():
+async def test_unknown_source_prefix_denies():
+    """Case B:unknown / ghost source 不得进入生成上下文。"""
     guard = SourceVisibilityGuard(_loader_from({"src-a": ("internal",)}), ttl=60)
-    assert await guard.allows("other-source/doc.md", "widget") is True
+    assert await guard.allows("other-source/doc.md", "widget") is False
 
 
-async def test_none_channel_allows():
-    """channel=None 时与 HybridSearcher 语义一致:不收紧(该路径本就无过滤)。"""
-    guard = SourceVisibilityGuard(_loader_from({"src-a": ("internal",)}), ttl=60)
-    assert await guard.allows("src-a/case.md", None) is True
+async def test_unknown_prefix_denied_even_when_public_snapshot():
+    """未知前缀拒答不依赖该源在快照里的值——压根不在权威配置中即拒。"""
+    guard = SourceVisibilityGuard(_loader_from({"src-a": ("widget", "api")}), ttl=60)
+    assert await guard.allows("ghost-chunk/doc.md", "widget") is False
 
 
-async def test_loader_error_uses_last_good_snapshot():
+async def test_none_channel_denies():
+    """channel=None 属未知请求上下文:不确定性不得放行(fail-closed)。"""
+    guard = SourceVisibilityGuard(_loader_from({"src-a": ("widget", "api")}), ttl=60)
+    assert await guard.allows("src-a/case.md", None) is False
+
+
+async def test_loader_error_uses_stale_snapshot():
+    """Stale valid snapshot + refresh failure → MAY use stale snapshot。"""
     calls = {"n": 0}
 
     async def flaky_loader():
         calls["n"] += 1
         if calls["n"] == 1:
-            return {"src-a": ("internal",)}
+            return {"src-a": ("internal",), "pub-src": ("widget", "api")}
         raise RuntimeError("db down")
 
     guard = SourceVisibilityGuard(flaky_loader, ttl=0)
     assert await guard.allows("src-a/case.md", "widget") is False
-    assert await guard.allows("src-a/case.md", "widget") is False  # 用旧快照,仍拒绝
+    # 刷新失败仍沿用旧快照:受限源继续拒,公开源继续允许
+    assert await guard.allows("src-a/case.md", "widget") is False
+    assert await guard.allows("pub-src/doc.md", "widget") is True
 
 
-async def test_loader_error_without_snapshot_fails_open():
+async def test_loader_error_without_snapshot_denies():
+    """Case A:无权威快照可用 → 不得放行未证实候选。"""
     async def broken_loader():
         raise RuntimeError("db down")
 
     guard = SourceVisibilityGuard(broken_loader, ttl=0)
-    assert await guard.allows("src-a/case.md", "widget") is True
+    assert await guard.allows("src-a/case.md", "widget") is False
+    assert await guard.allows("any-thing/doc.md", "widget") is False
+
+
+async def test_empty_authoritative_mapping_denies_everything():
+    """loader 成功但返回空映射 = 权威"零配置":无已授权源,全部拒。"""
+    guard = SourceVisibilityGuard(_loader_from({}), ttl=60)
+    assert await guard.allows("whatever/doc.md", "widget") is False
 
 
 async def test_ttl_refreshes_snapshot():
