@@ -338,3 +338,13 @@ pytest 用隔离 TEST_DATABASE_URL→ask_ai_test(未指主库);evidence 走一�
   计划:`engineering/tasks/msw-multi-site-widget-plan.md`;证据:`engineering/tasks/msw-evidence/`
 
 本报告为执行端自评(PASS),**不构成 FINAL ACCEPTANCE**;Planner 独立验收为准。
+
+---
+
+## Addendum — Acceptance Cleanup(2026-09-01,Planner 初审卫生项)
+
+- **Finding**:441f22d 误将本地 Playwright CLI 临时产物(`.playwright-cli/console-*.log` ×9、`page-*.yml` ×9)带入产品仓 lineage(证据运行时 `git add -A` 扫入;持久证据本就在 docs 仓,与这批产物无关)。
+- **Cleanup**:CLEAN_FINAL_COMMIT = `2d27dd8` —— 仅删除该目录 18 个文件 + `.gitignore` 增一行 `.playwright-cli/`(紧邻既有 `.playwright-mcp/` 规则);零产品代码/测试/schema/配置变更。
+- **Verification**:`git diff e945f59...HEAD --name-only | grep playwright-cli` = 0 命中;相对 441f22d 的完整 diff = 18 删除 + 1 行 ignore。
+- **Regression**:后端全量 722 passed / 4 failed(同节 §23/§27 基线证实的环境性失败)/ 5 skipped;Widget 57/57 + tsc 通过 —— 与清理前完全一致。
+- 分支 `worktree-exec/multi-site-widget` 已推送;§30 FINAL_COMMIT 自本附记起更新为 `2d27dd8`。

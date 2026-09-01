@@ -43,3 +43,7 @@ BACKEND_PORT: 8012(health 实测 200;隔离库 ask_ai_msw)
 - 生产 + 本地主库须跑 `scripts/migrate_add_site_experiences.py`(幂等);
 - CORS_ALLOW_ORIGINS 补三站点 origin;
 - 核对 wiki/store 域名假设(wiki.camthink.ai / store.camthink.ai)。
+
+## Acceptance Cleanup 附记(2026-09-01)
+
+Planner 初审卫生项已清:441f22d 误入的 `.playwright-cli/` 临时产物(18 文件)已在 `2d27dd8` 删除 + `.gitignore` 补 `.playwright-cli/`;零产品变更;回归与清理前一致(722P/4F 环境既有/5S + Widget 57/57)。详见实现报告 Addendum。
