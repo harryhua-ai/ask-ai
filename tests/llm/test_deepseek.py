@@ -499,3 +499,63 @@ async def test_generate_empty_api_key_omits_authorization_header():
     with patch("httpx.AsyncClient.post", side_effect=fake_post):
         await prov.generate([{"role": "user", "content": "hi"}])
     assert "Authorization" not in captured["headers"]
+
+
+@pytest.mark.asyncio
+async def test_stream_empty_api_key_omits_authorization_header():
+    """FOLLOW-G005:stream 空.key 不发 Authorization 头(与 generate/list_models 同一助手)。
+
+    回归锁:无条件 'Bearer ' 空值头会让 httpx 在本地抛
+    LocalProtocolError: Illegal header value,widget SSE 与连通性路径
+    对免鉴权网关/未填 token 场景必崩。
+    """
+
+    import httpx
+
+    provider = DeepseekProvider(
+        provider_id="deepseek",
+        api_base="https://api.test.com/v1",
+        api_key="",
+        model="m",
+    )
+
+    class FakeStreamResp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        async def aiter_lines(self):
+            yield "data: [DONE]"
+
+    class FakeStreamCM:
+        def __init__(self, kwargs):
+            self._kwargs = kwargs
+
+        async def __aenter__(self):
+            captured["stream_kwargs"] = self._kwargs
+            return FakeStreamResp()
+
+        async def __aexit__(self, *exc):
+            return False
+
+    captured: dict = {}
+
+    class FakeClient:
+        def stream(self, method, url, **kwargs):
+            captured["method_url"] = (method, url)
+            return FakeStreamCM(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    with patch("backend.llm.deepseek.httpx.AsyncClient", return_value=FakeClient()):
+        chunks = [tok async for tok in provider.stream([{"role": "user", "content": "hi"}])]
+
+    assert chunks == []  # 只有 [DONE],无内容 token
+    method, url = captured["method_url"]
+    assert (method, url) == ("POST", "https://api.test.com/v1/chat/completions")
+    assert "Authorization" not in captured["stream_kwargs"]["headers"]
