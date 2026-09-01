@@ -1,0 +1,72 @@
+[
+ {
+  "page": "viewer:sidebar",
+  "nav": [
+   "业务概览",
+   "对话审查",
+   "技术洞察",
+   "数据源",
+   "对话接入",
+   "模型配置",
+   "答案覆盖"
+  ]
+ },
+ {
+  "page": "/data-sources",
+  "buttons": [
+   "退出",
+   "同步全部",
+   "新增数据源",
+   "同步",
+   "编辑",
+   "删除"
+  ],
+  "bodyHead": "Ask AI | 运营 | 业务概览 | 对话审查 | 技术洞察 | 配置 | 数据源 | 对话接入 | 模型配置 | 答案覆盖 | 欢迎，discovery-viewer@example.com | viewer | 退出 | 数据源管理 | 同步全部 | 新增数据源 | 产品线\t类型\t状态\t健康 (近30天)\t最新同步\t内容\t同步间隔\t操作 | ne101 | https://github.com/camthink-ai/lowpower_camera.git | "
+ },
+ {
+  "page": "/llm-providers",
+  "buttons": [
+   "退出",
+   "供应商凭证",
+   "端点授权",
+   "应用变更",
+   "1deepseek默认",
+   "添加",
+   "1deepseekdeepseek-v4-flash"
+  ],
+  "bodyHead": "Ask AI | 运营 | 业务概览 | 对话审查 | 技术洞察 | 配置 | 数据源 | 对话接入 | 模型配置 | 答案覆盖 | 欢迎，discovery-viewer@example.com | viewer | 退出 | 模型配置 | 按流水线环节配置各阶段模型 · 改完点应用变更生效 | 供应商凭证 | 端点授权 | 应用变更 | 向量模型 | embedding | BAAI/bge-m3 | mps | 排序模型 | rerank | BAAI/bge-reranker-v"
+ },
+ {
+  "page": "/users",
+  "buttons": [
+   "退出",
+   "新增用户",
+   "上一页",
+   "下一页"
+  ],
+  "bodyHead": "Ask AI | 运营 | 业务概览 | 对话审查 | 技术洞察 | 配置 | 数据源 | 对话接入 | 模型配置 | 答案覆盖 | 欢迎，discovery-viewer@example.com | viewer | 退出 | 用户管理 | 新增用户 | 邮箱\t姓名\t角色\t状态\t操作 | 上一页 | 第 1 页 | 下一页"
+ },
+ {
+  "page": "/conversations",
+  "buttons": [
+   "退出",
+   "批量标注 Intent",
+   "置信<0.6",
+   "失败",
+   "重试",
+   "有反馈",
+   "触发澄清",
+   "上一页",
+   "下一页"
+  ],
+  "bodyHead": "Ask AI | 运营 | 业务概览 | 对话审查 | 技术洞察 | 配置 | 数据源 | 对话接入 | 模型配置 | 答案覆盖 | 欢迎，discovery-viewer@example.com | viewer | 退出 | 对话审查 | 批量标注 Intent | 全部渠道 | widget | discord | 全部意图 | 商务咨询 | 产品咨询 | 技术支持 | 无关闲聊 | 全部状态 | 已回答 | 拒答 | 全部反馈 | 赞 | 踩 | 置信<0.6 | 失败 | 重试 | 有反馈 | 触发澄清 | NG4500"
+ },
+ {
+  "page": "/answer-overrides",
+  "buttons": [
+   "退出",
+   "新增覆盖"
+  ],
+  "bodyHead": "Ask AI | 运营 | 业务概览 | 对话审查 | 技术洞察 | 配置 | 数据源 | 对话接入 | 模型配置 | 答案覆盖 | 欢迎，discovery-viewer@example.com | viewer | 退出 | 答案覆盖管理 | 新增覆盖 | 匹配模式\t类型\t状态\t创建者\t创建时间\t操作 | 暂无答案覆盖"
+ }
+]

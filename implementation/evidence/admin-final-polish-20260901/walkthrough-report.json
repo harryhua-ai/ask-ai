@@ -1,0 +1,213 @@
+[
+ {
+  "page": "/",
+  "console": [],
+  "failedReq": [],
+  "links": [
+   "/admin :: 业务概览",
+   "/admin/conversations :: 对话审查",
+   "/admin/analytics :: 技术洞察",
+   "/admin/data-sources :: 数据源",
+   "/admin/customizations :: 对话接入",
+   "/admin/llm-providers :: 模型配置",
+   "/admin/answer-overrides :: 答案覆盖",
+   "/admin/users :: 用户管理",
+   "/admin/conversations?intent=commercial :: 销售咨询0%0",
+   "/admin/conversations?intent=product :: 产品方案56%9NE301 的工作温度范围是多少?3NE30",
+   "/admin/conversations?intent=support :: 技术支持25%4NG4500 怎么恢复出厂设置?1我的 NE",
+   "/admin/conversations?intent=commercial :: 查看销售对话",
+   "/admin/conversations :: 查看全部"
+  ],
+  "buttons": [
+   "退出",
+   "刷新业务信号",
+   "今天",
+   "近 7 天",
+   "30 天",
+   "应用"
+  ]
+ },
+ {
+  "page": "/conversations",
+  "console": [],
+  "failedReq": [],
+  "links": [
+   "/admin :: 业务概览",
+   "/admin/conversations :: 对话审查",
+   "/admin/analytics :: 技术洞察",
+   "/admin/data-sources :: 数据源",
+   "/admin/customizations :: 对话接入",
+   "/admin/llm-providers :: 模型配置",
+   "/admin/answer-overrides :: 答案覆盖",
+   "/admin/users :: 用户管理"
+  ],
+  "buttons": [
+   "退出",
+   "批量标注 Intent",
+   "置信<0.6",
+   "失败",
+   "重试",
+   "有反馈",
+   "触发澄清",
+   "上一页",
+   "下一页"
+  ]
+ },
+ {
+  "page": "/analytics",
+  "console": [],
+  "failedReq": [],
+  "links": [
+   "/admin :: 业务概览",
+   "/admin/conversations :: 对话审查",
+   "/admin/analytics :: 技术洞察",
+   "/admin/data-sources :: 数据源",
+   "/admin/customizations :: 对话接入",
+   "/admin/llm-providers :: 模型配置",
+   "/admin/answer-overrides :: 答案覆盖",
+   "/admin/users :: 用户管理",
+   "/admin/conversations :: 在对话审查中排查 →",
+   "/admin/data-sources :: 明细与操作 → 数据源管理"
+  ],
+  "buttons": [
+   "退出",
+   "今天",
+   "近 7 天",
+   "30 天",
+   "应用",
+   "技术性能",
+   "知识缺口"
+  ]
+ },
+ {
+  "page": "/data-sources",
+  "console": [],
+  "failedReq": [],
+  "links": [
+   "/admin :: 业务概览",
+   "/admin/conversations :: 对话审查",
+   "/admin/analytics :: 技术洞察",
+   "/admin/data-sources :: 数据源",
+   "/admin/customizations :: 对话接入",
+   "/admin/llm-providers :: 模型配置",
+   "/admin/answer-overrides :: 答案覆盖",
+   "/admin/users :: 用户管理",
+   "https://github.com/camthink-ai/lowpower_camera.git :: https://github.com/camthink-ai",
+   "https://www.camthink.ai :: https://www.camthink.ai"
+  ],
+  "buttons": [
+   "退出",
+   "同步全部",
+   "新增数据源",
+   "同步",
+   "编辑",
+   "删除"
+  ]
+ },
+ {
+  "page": "/customizations",
+  "console": [],
+  "failedReq": [],
+  "links": [
+   "/admin :: 业务概览",
+   "/admin/conversations :: 对话审查",
+   "/admin/analytics :: 技术洞察",
+   "/admin/data-sources :: 数据源",
+   "/admin/customizations :: 对话接入",
+   "/admin/llm-providers :: 模型配置",
+   "/admin/answer-overrides :: 答案覆盖",
+   "/admin/users :: 用户管理"
+  ],
+  "buttons": [
+   "退出",
+   "编辑"
+  ]
+ },
+ {
+  "page": "/llm-providers",
+  "console": [],
+  "failedReq": [],
+  "links": [
+   "/admin :: 业务概览",
+   "/admin/conversations :: 对话审查",
+   "/admin/analytics :: 技术洞察",
+   "/admin/data-sources :: 数据源",
+   "/admin/customizations :: 对话接入",
+   "/admin/llm-providers :: 模型配置",
+   "/admin/answer-overrides :: 答案覆盖",
+   "/admin/users :: 用户管理"
+  ],
+  "buttons": [
+   "退出",
+   "供应商凭证",
+   "端点授权",
+   "应用变更",
+   "1deepseek默认",
+   "添加",
+   "1deepseekdeepseek-v4-fla"
+  ]
+ },
+ {
+  "page": "/answer-overrides",
+  "console": [],
+  "failedReq": [],
+  "links": [
+   "/admin :: 业务概览",
+   "/admin/conversations :: 对话审查",
+   "/admin/analytics :: 技术洞察",
+   "/admin/data-sources :: 数据源",
+   "/admin/customizations :: 对话接入",
+   "/admin/llm-providers :: 模型配置",
+   "/admin/answer-overrides :: 答案覆盖",
+   "/admin/users :: 用户管理"
+  ],
+  "buttons": [
+   "退出",
+   "新增覆盖"
+  ]
+ },
+ {
+  "page": "/users",
+  "console": [],
+  "failedReq": [],
+  "links": [
+   "/admin :: 业务概览",
+   "/admin/conversations :: 对话审查",
+   "/admin/analytics :: 技术洞察",
+   "/admin/data-sources :: 数据源",
+   "/admin/customizations :: 对话接入",
+   "/admin/llm-providers :: 模型配置",
+   "/admin/answer-overrides :: 答案覆盖",
+   "/admin/users :: 用户管理"
+  ],
+  "buttons": [
+   "退出",
+   "新增用户",
+   "删除",
+   "上一页",
+   "下一页"
+  ]
+ },
+ {
+  "page": "viewer:/data-sources",
+  "buttons": [
+   "登录"
+  ]
+ },
+ {
+  "page": "viewer:/llm-providers",
+  "buttons": [
+   "登录"
+  ]
+ },
+ {
+  "page": "viewer:/users",
+  "buttons": [
+   "登录"
+  ]
+ },
+ {
+  "page": "viewer:sidebar",
+  "buttons": []
+ }
+]
