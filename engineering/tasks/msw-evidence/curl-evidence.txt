@@ -1,0 +1,121 @@
+===== E1: site-config website (Origin http://localhost:8081) =====
+{"site_id":"camthink-website","display_name":"CamThink 官网","welcome":"Hi! I'm the CamThink assistant. Ask me anything about our AIoT products.","language":"en","starters":["Which product fits my project?","Compare NE503 and NE301","Recommend a solution for smart agriculture","What interfaces does NE503 support?"]}
+===== E2: site-config wiki (Origin http://localhost:8082) =====
+{"site_id":"camthink-wiki","display_name":"CamThink Wiki","welcome":"有问题就问我 —— 我熟悉 CamThink 设备的文档、配置与排障步骤。","language":"zh","starters":["这篇文档对应的设备如何开始配置?","NE301 刷机失败怎么排查?","设备 API 调用有示例吗?","这个型号的固件在哪里下载?"]}
+===== E3: site-config store (Origin http://localhost:8083) =====
+{"site_id":"camthink-store","display_name":"CamThink Store","welcome":"Shopping for a CamThink device? Ask me before you order.","language":"en","starters":["Is NE503 suitable for my project?","Compare NE503 with NE301","What is included in the box?","Do you ship internationally?"]}
+===== E4 G004: site-config store from WRONG origin =====
+{"detail":"站点未授权或来源不受信任"}
+HTTP=403
+===== E5 G005: site-config UNKNOWN site =====
+{"detail":"站点未授权或来源不受信任"}
+HTTP=403
+===== E6: site-config NO origin =====
+{"detail":"站点未授权或来源不受信任"}
+HTTP=403
+
+===== E7 G003: store ask w/ NE503 page_context (Origin 8083, SSE) =====
+event: sources
+data: {"conversation_id": "58d2d09b-f1f8-4519-956c-146f89d2b771", "sources": [{"url": "https://www.camthink.ai/blog/inside-neoeyes-ne503-edge-ai-camera/", "title": "Inside NeoEyes NE503: Open Edge AI Camera Architecture \u00b7 Blog", "type": "web_crawl", "product": "website"}, {"url": "https://www.camthink.ai/blog/ne503-event-output-integration/", "title": "NE503 System Integration: Video, AI Events and Control \u00b7 Blog", "type": "web_crawl", "product": "website"}, {"url": "https://www.camthink.ai/blog/when-to-add-edge-ai-camera-existing-cctv/", "title": "When to Add an Edge AI Camera Instead of Another IPC \u00b7 Blog", "type": "web_crawl", "product": "website"}, {"url": "https://www.camthink.ai/blog/deploy-custom-yolo-hailo15h-ne503/", "title": "Deploy Custom YOLO on Hailo-15H with NE503 \u00b7 Blog", "type": "web_crawl", "product": "website"}, {"url": "https://www.camthink.ai/blog/ne503-open-ai-camera-platform/", "title": "NE503 Open AI Camera: Custom Models &amp; Integration \u00b7 Blog", "type": "web_crawl", "product": "website"}]}
+
+event: token
+data: {"content": "**"}
+
+event: token
+data: {"content": "\u63a5\u53e3"}
+
+event: token
+data: {"content": "\u80fd\u529b"}
+
+event: token
+data: {"content": "**\n\n"}
+
+event: token
+data: {"content": "NE"}
+
+event: token
+data: {"content": "503"}
+
+event: token
+data: {"content": " "}
+
+event: token
+data: {"content": "\u652f\u6301"}
+
+event: token
+data: {"content": " **"}
+
+event: token
+data: {"content": "IEEE"}
+
+event: token
+data: {"content": " "}
+
+event: token
+data: {"content": "802"}
+
+event: token
+data: {"content": "."}
+
+event: token
+data: {"content": "3"}
+
+event: token
+data: {"content": "at"}
+
+event: token
+data: {"content": " Po"}
+
+event: token
+data: {"content": "E"}
+
+event: token
+data: {"content": "**("}
+
+event: token
+data: {"content": "\u5355"}
+
+event: token
+data: {"content": "\u6839"}
+
+event: token
+data: {"content": "\u4ee5\u592a"}
+
+event: token
+data: {"content": "\u7f51"}
+
+event: token
+data: {"content": "\u7ebf"}
+
+event: token
+data: {"content": "\u540c\u65f6"}
+
+event: token
+data: {"content": "\u4f9b\u7535"}
+
+event: token
+data
+===== E8 G004: ask store site from WRONG origin 8081 =====
+{"detail":"站点未授权或来源不受信任"}
+HTTP=403
+===== E9 G006: legacy ask (no site_id) =====
+event: sources
+data: {"conversation_id": "ba4f89a1-6448-489c-ad15-fbb139a16a3c", "sources": [{"url": "https://www.camthink.ai/blog/inside-neoeyes-ne503-edge-ai-camera/", "title": "Inside NeoEyes NE503: Open Edge AI Camera Architecture \u00b7 Blog", "type": "web_crawl", "product": "website"}, {"url": "https://www.camthink.ai/blog/ne503-event-output-integration/", "title": "NE503 System Integration: Video, AI Events and Control \u00b7 Blog", "type": "web_crawl", "product": "website"}, {"url": "https://www.camthink.ai/blog/when-to-add-edge-ai-camera-existing-cctv/", "title": "When to Add an Edge
+
+===== E10 G007/G008: malicious page context (injection title + internal-source request) =====
+"sources": [{"url": "https://www.camthink.ai/wp-json/", "title": "wp-json", "type": "web_crawl", "product": "website"}]
+
+
+(E10 源类型集合:)
+=== G001 website state:
+"{\"welcome\":\"Hi! I'm the CamThink assistant. Ask me anything about our AIoT products. | Which product f\",\"starters\":[\"Which product fits my project?\",\"Compare NE503 and NE301\",\"Recommend a solution for smart agriculture\",\"What interfaces does NE503 support?\"]}"
+=== G002 wiki state:
+"{\"welcome\":\"有问题就问我 —— 我熟悉 CamThink 设备的文档、配置与排障步骤。 | 这篇文档对应的设备如何开始配置? | NE301 刷机失败怎么排查? | 设备 API 调用有示例吗\",\"starters\":[\"这篇文档对应的设备如何开始配置?\",\"NE301 刷机失败怎么排查?\",\"设备 API 调用有示例吗?\",\"这个型号的固件在哪里下载?\"]}"
+=== G003 store state:
+"{\"welcome\":\"Shopping for a CamThink device? Ask me before you order. | Is NE503 suitable for my projec\",\"starters\":[\"Is NE503 suitable for my project?\",\"Compare NE503 with NE301\",\"What is included in the box?\",\"Do you ship internationally?\"]}"
+=== G004 mismatch: user-visible failure state:
+"[\"NE503 适合我的项目吗?\",\"NE503 适合我的项目吗?\",\"此站点未被授权使用 Ask AI。\",\"此站点未被授权使用 Ask AI。\"]"
+=== G005 unknown site: widget falls back to default experience (site-config 403)
+"[\"NE503 支持哪些接口?\",\"如何开始使用 NeoMind?\",\"NE101 的功耗是多少?\",\"AIToolStack 有哪些功能?\"]"
+=== G006 legacy embed: default Chinese starters, no site fields
+"{\"welcome\":\"你好!我是 Ask Camthink.ai,有什么可以帮你?\",\"starters\":[\"NE503 支持哪些接口?\",\"如何开始使用 NeoMind?\",\"NE101 的功耗是多少?\",\"AIToolStack 有哪些功能?\"]}"
