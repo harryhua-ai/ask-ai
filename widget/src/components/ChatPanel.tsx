@@ -9,13 +9,15 @@ interface Props {
   isStreaming: boolean;
   conversationId: string | null;
   suggestedQuestions: string[];
+  /** MSW:站点欢迎语;缺省回退内置问候(legacy 行为不变) */
+  welcome?: string;
   onSend: (text: string, attachmentIds: string[]) => void;
   onClose: () => void;
   onFeedback: (msgId: string, feedback: "up" | "down") => void;
   onUpload: (files: File[]) => Promise<AttachmentRef[]>;
 }
 
-export function ChatPanel({ config, messages, isStreaming, conversationId, suggestedQuestions, onSend, onClose, onFeedback, onUpload }: Props) {
+export function ChatPanel({ config, messages, isStreaming, conversationId, suggestedQuestions, welcome, onSend, onClose, onFeedback, onUpload }: Props) {
   const [input, setInput] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentRef[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -64,7 +66,7 @@ export function ChatPanel({ config, messages, isStreaming, conversationId, sugge
       <div className="ask-ai-messages">
         {messages.length === 0 && (
           <div style={{ color: "#6b7280", fontSize: "14px", textAlign: "center", marginTop: "20px" }}>
-            你好!我是 Ask Camthink.ai,有什么可以帮你?
+            {welcome ?? "你好!我是 Ask Camthink.ai,有什么可以帮你?"}
           </div>
         )}
         {messages.map((msg) => (

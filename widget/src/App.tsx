@@ -1,6 +1,8 @@
-import { useState, useCallback } from "react";
-import type { WidgetConfig, ChatMessage } from "./types";
+import { useState, useCallback, useEffect } from "react";
+import type { WidgetConfig, ChatMessage, SiteExperienceConfig } from "./types";
 import { useSSE } from "./hooks/useSSE";
+import { fetchSiteConfig, resolveStarters } from "./utils/siteConfig";
+import { collectPageContext } from "./utils/pageContext";
 import { ChatPanel } from "./components/ChatPanel";
 import fabIcon from "./assets/CamThink.ai-black.png";
 
@@ -19,7 +21,29 @@ export function App({ config }: { config: WidgetConfig }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  // MSW:站点体验配置(启动时按 siteId 拉取;失败 fail-safe 回退默认体验,
+  // site_id 仍随 ask 发送,由服务端裁决 → SSE 层可见「站点未授权」失败)
+  const [siteConfig, setSiteConfig] = useState<SiteExperienceConfig | null>(null);
   const { ask, uploadFiles } = useSSE(config.apiUrl);
+
+  useEffect(() => {
+    if (!config.siteId) return;
+    let cancelled = false;
+    fetchSiteConfig(config.apiUrl, config.siteId)
+      .then((cfg) => {
+        if (!cancelled) setSiteConfig(cfg);
+      })
+      .catch(() => {
+        /* 保持默认体验;不做二次降级提示,失败在 ask 时服务端可见 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [config.apiUrl, config.siteId]);
+
+  const starters =
+    messages.length === 0 ? resolveStarters(siteConfig, SUGGESTED_QUESTIONS) : [];
+  const welcome = messages.length === 0 ? siteConfig?.welcome : undefined;
 
   const handleSend = useCallback(async (text: string, attachmentIds: string[]) => {
     const userMsg: ChatMessage = {
@@ -74,11 +98,15 @@ export function App({ config }: { config: WidgetConfig }) {
             }),
           );
         },
-      }, attachmentIds);
+      }, attachmentIds, {
+        siteId: config.siteId,
+        pageContext: collectPageContext(),
+        language: config.language ?? siteConfig?.language,
+      });
     } finally {
       setIsStreaming(false);
     }
-  }, [messages, ask]);
+  }, [messages, ask, config.siteId, config.language, siteConfig]);
 
   const handleFeedback = useCallback(async (_msgId: string, feedback: "up" | "down") => {
     if (!conversationId) return;
@@ -105,7 +133,8 @@ export function App({ config }: { config: WidgetConfig }) {
           messages={messages}
           isStreaming={isStreaming}
           conversationId={conversationId}
-          suggestedQuestions={messages.length === 0 ? SUGGESTED_QUESTIONS : []}
+          suggestedQuestions={starters}
+          welcome={welcome}
           onSend={handleSend}
           onClose={() => setIsOpen(false)}
           onFeedback={handleFeedback}

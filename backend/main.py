@@ -263,6 +263,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 logger.info("已创建 default customization + widget 绑定")
             await session.commit()
 
+        # MSW:站点体验 seed(config/sites.yaml 为权威,幂等 upsert 进
+        # site_experiences;env SITES_CONFIG_PATH 可覆盖配置路径)
+        from backend.services.site_experiences import seed_default_sites
+
+        _sites_cfg = os.environ.get("SITES_CONFIG_PATH")
+        await seed_default_sites(
+            app.state.session_factory, Path(_sites_cfg) if _sites_cfg else None
+        )
+
         # Seed: 将 YAML 中的 LLM 供应商 + 路由迁移到 DB(首次启动时)
         llm_yaml = load_yaml_config(settings.config_dir / "llm_providers.yaml")
         async with app.state.session_factory() as session:

@@ -21,7 +21,13 @@ export interface MountedWidget {
 
 declare global {
   interface Window {
-    AskAIConfig?: { apiUrl?: string; language?: string; primaryColor?: string };
+    AskAIConfig?: {
+      apiUrl?: string;
+      language?: string;
+      primaryColor?: string;
+      /** MSW:站点体验标识;pageContext 见 utils/pageContext.ts */
+      siteId?: string;
+    };
   }
 }
 
@@ -29,6 +35,7 @@ type ConfigOverrides = {
   apiUrl?: string;
   language?: string;
   primaryColor?: string;
+  siteId?: string;
 };
 
 function readDataset(el: HTMLElement | null | undefined): ConfigOverrides {
@@ -38,6 +45,7 @@ function readDataset(el: HTMLElement | null | undefined): ConfigOverrides {
     apiUrl: d.apiUrl || undefined,
     language: d.language || undefined,
     primaryColor: d.primaryColor || undefined,
+    siteId: d.siteId || undefined,
   };
 }
 
@@ -47,6 +55,7 @@ function readDataset(el: HTMLElement | null | undefined): ConfigOverrides {
  * 2. 页面预置 #ask-ai-widget-root 元素的 data-*
  * 3. window.AskAIConfig(旧路径,兼容保留)
  * 4. 默认值
+ * MSW:data-site-id 走同一条链(缺省 undefined = legacy 公共 widget)。
  */
 export function resolveConfig(
   script: HTMLScriptElement | null | undefined,
@@ -66,6 +75,8 @@ export function resolveConfig(
       fromPreset.primaryColor ??
       fromGlobal.primaryColor ??
       DEFAULT_PRIMARY_COLOR,
+    siteId:
+      fromScript.siteId ?? fromPreset.siteId ?? fromGlobal.siteId ?? undefined,
   };
 }
 
