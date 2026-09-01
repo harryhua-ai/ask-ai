@@ -1,0 +1,39 @@
+{
+ "conversation_id": "1ce2e247-1b9d-43e1-b74a-b5324a368c29",
+ "wall_s": 37.0,
+ "n_sources": 5,
+ "sources": [
+  {
+   "url": "https://www.camthink.ai/blog/ultra-low-power-smart-vision-camera-neoeyes-ne101-esp32%e2%80%91s3-based/",
+   "title": "NeoEyes NE101-Ultra Low Power Smart Vision Camera — ESP32‑S3 Based · Blog",
+   "type": "web_crawl",
+   "product": "website"
+  },
+  {
+   "url": "https://www.camthink.ai/blog/iot-camera-meter-reading-edge-ai/",
+   "title": "IoT Camera Meter Reading Without Replacement | CamThink · Blog",
+   "type": "web_crawl",
+   "product": "website"
+  },
+  {
+   "url": "https://www.camthink.ai/blog/solar-powered-edge-ai-cameras-remote-monitoring/",
+   "title": "Solar-Powered Edge AI Cameras",
+   "type": "web_crawl",
+   "product": "website"
+  },
+  {
+   "url": "https://www.camthink.ai/blog/underground-meter-reading-lte-vs-halow-ne101/",
+   "title": "Underground Meter Reading:",
+   "type": "web_crawl",
+   "product": "website"
+  },
+  {
+   "url": "https://www.camthink.ai/blog/external-trigger-low-power-camera/",
+   "title": "Low-Power Edge Camera External Trigger Guide :\r\nPIR, GPIO, MQTT, and Battery Life – NE101 & NE301 Guide",
+   "type": "web_crawl",
+   "product": "website"
+  }
+ ],
+ "answer": "**电池掉电快**\n- 最大因素是唤醒/捕获频率。NE101 平时处于深度睡眠，耗电主要发生在每次唤醒的活动窗口（通常 5–15 秒）；将捕获次数从 20 次/天降到 5 次/天，电池寿命约可提升 4 倍。[6][2]\n- 填充灯模式影响明显。出厂默认是 Always Off；若设为 Always On 会显著缩短电池寿命，Automatic 模式只按需点亮，影响很小。[9][2]\n- 如果使用 LTE Cat.1 且信号较弱，调制解调器会提高发射功率，每次传输耗电会明显高于 Wi-Fi/HaLow；信号良好时差异不大。[5]\n- 环境温度也会降低电池实际可用容量，例如 -10~0°C 下容量可能降至 40–60%，超过 50°C 时降至 70–80%。[8][4]\n\n**拍照时间漂移**\n- 检索到的资料没有直接解释时间漂移的原因。NE101 在深度睡眠期间由 RISC-V 协处理器管理 RTC 定时器，定时捕获通过 Web UI 的 Capture Settings 配置。[3][5]\n- 捕获计划和上传参数可通过 MQTT 命令或 NeoMind 平台远程更新，但资料未说明这些操作与时间漂移有直接关系。[10]\n\n**排查建议**\n- 先用 Battery Life Calculator 按实际捕获频率、网络模式和电池类型建模，并结合部署地信号强度与温度进行核对，重点检查捕获频率和填充灯配置。[2][8]\n- 对时间漂移，请先核对 Web UI 中 Capture Settings 的定时配置是否与预期一致，并确认设备 RTC 当前值；资料未覆盖的原因建议联系 CamThink 技术支持或检查固件版本说明。[5]",
+ "is_reject": false
+}

@@ -1,0 +1,21 @@
+{
+ "conversation_id": "ea30d093-2247-4f85-a92c-e7f5ff6fdcbb",
+ "wall_s": 13.7,
+ "n_sources": 2,
+ "sources": [
+  {
+   "url": "https://www.camthink.ai/blog/non-contact-meter-reading-camera-ne101/",
+   "title": "Why NE101 Works as a Non-Contact Meter Reading Capture Node",
+   "type": "web_crawl",
+   "product": "website"
+  },
+  {
+   "url": "https://www.camthink.ai/blog/iot-camera-meter-reading-edge-ai/",
+   "title": "IoT Camera Meter Reading Without Replacement | CamThink · Blog",
+   "type": "web_crawl",
+   "product": "website"
+  }
+ ],
+ "answer": "根据现有资料，无法提供蜂窝注册失败的具体排查步骤，因为资料未涉及该故障模式。以下为资料中与蜂窝传输相关的配置线索，建议逐项核对。 [1]\n\n**配置入口**\nNE101 的 Wi-Fi 或 4G 凭据、捕获时间表和上传端点均可通过设备 web UI 配置，单台设备配置通常不到 30 分钟。蜂窝注册失败时，应先确认设备 web UI 中的 4G 凭据是否填写正确、是否已生效。 [1]\n\n**传输方式与数据路径**\nNE101 在无可靠 Wi-Fi 覆盖的环境（地下室、室外表井、偏远站点）可选 LTE Cat.1 模块传输。图像压缩后会经 Wi-Fi 或 LTE 推送，传输通常 2–8 秒完成。 [2] NE101 将图片直接发送到你配置的 HTTP/HTTPS 端点或 MQTT broker，CamThink 不中转、不存储、不处理图片数据。 [1] 因此蜂窝注册失败时，除设备侧配置外，还需要检查 SIM 卡激活状态、网络信号以及目标端点是否可达。\n\n建议：资料未提供蜂窝注册失败的详细诊断步骤，优先核对设备 web UI 中的 4G 配置、SIM 卡有效性及上传端点配置；若仍无法解决，请联系 CamThink 技术支持获取进一步排障支持。 [1]",
+ "is_reject": false
+}
