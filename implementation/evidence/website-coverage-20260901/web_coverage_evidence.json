@@ -1,0 +1,1385 @@
+{
+ "target": "https://www.camthink.ai",
+ "ran_at": "2026-09-01T10:55:48.858461+00:00",
+ "run1": {
+  "stats": {
+   "full": true,
+   "discovered": 134,
+   "accepted": 134,
+   "extracted": 113,
+   "failed": 1,
+   "failed_urls": [
+    "https://www.camthink.ai/shop/"
+   ],
+   "rejected": {
+    "exclude": 60,
+    "robots": 0,
+    "low_content": 20
+   },
+   "rejected_urls": {
+    "exclude": [
+     "https://www.camthink.ai/store/",
+     "https://www.camthink.ai/cookie-policy/",
+     "https://www.camthink.ai/terms-of-service/",
+     "https://www.camthink.ai/login/",
+     "https://www.camthink.ai/store/0-96-oled-module/",
+     "https://www.camthink.ai/store/power-ng45/",
+     "https://www.camthink.ai/store/1-14-tft-lcd-module/",
+     "https://www.camthink.ai/store/neoedge-ng4500/",
+     "https://www.camthink.ai/store/ng4500-cb01/",
+     "https://www.camthink.ai/store/ov5640/",
+     "https://www.camthink.ai/store/ne101-dev-kit/",
+     "https://www.camthink.ai/store/neoeyes-ne101/",
+     "https://www.camthink.ai/store/ne301-poe/",
+     "https://www.camthink.ai/store/ne301/",
+     "https://www.camthink.ai/store/heatsink01/",
+     "https://www.camthink.ai/store/10w-solar-panel-battery-kit/",
+     "https://www.camthink.ai/store/multi-sensor-expansion-board/",
+     "https://www.camthink.ai/store/mlx90642-thermal-ir-array-sensor/",
+     "https://www.camthink.ai/store/2-54mm-40p-dupont-jumper-wires/",
+     "https://www.camthink.ai/store/electret-condenser-microphone/",
+     "https://www.camthink.ai/store/1-54-tft-lcd-module/",
+     "https://www.camthink.ai/store/20m-dtof-ranging-module/",
+     "https://www.camthink.ai/store/ne301-sensor-expansion-kit/",
+     "https://www.camthink.ai/store/ne300-mb01-ai-camera-mainboard/",
+     "https://www.camthink.ai/store/24ghz-radar-human-presence-sensor-module/",
+     "https://www.camthink.ai/store/usb-a-to-usb-c-cable/",
+     "https://www.camthink.ai/store/rectangular-speake-hdk-302008za-3c13/",
+     "https://www.camthink.ai/store/lte-cat1-module/",
+     "https://www.camthink.ai/store/usb-camera-module/",
+     "https://www.camthink.ai/store/module-4g/",
+     "https://www.camthink.ai/store/module-5g/",
+     "https://www.camthink.ai/store/ne101-mb01/",
+     "https://www.camthink.ai/store/sensor-imx219/",
+     "https://www.camthink.ai/store/module-wifi/",
+     "https://www.camthink.ai/store/ssd/",
+     "https://www.camthink.ai/store/sensor-imx477/",
+     "https://www.camthink.ai/store/wifi-halow-module/",
+     "https://www.camthink.ai/store/neoeyes-503/",
+     "https://www.camthink.ai/store/mounting-ne101/",
+     "https://www.camthink.ai/store/st-link-v2-emulator/",
+     "https://www.camthink.ai/store/m12-mount-lens/",
+     "https://www.camthink.ai/store/bevigor-aa-lithium-battery-4-pack/",
+     "https://www.camthink.ai/store/uart-adapter/",
+     "https://www.camthink.ai/cart/",
+     "https://www.camthink.ai/store/ne101/",
+     "https://www.camthink.ai/privacy-policy/",
+     "https://www.camthink.ai/store/neoedge-ai-box/",
+     "https://www.camthink.ai/store/neoedge-carrier-board/",
+     "https://www.camthink.ai/store/neoeyes-vision-ai-camera/",
+     "https://www.camthink.ai/store/ne101-cm00/",
+     "https://www.camthink.ai/wp-json/oembed/1.0/embed/",
+     "https://www.camthink.ai/wp-json/",
+     "https://www.camthink.ai/wp-json/wp/v2/pages/5865/",
+     "https://www.camthink.ai/my-account/",
+     "https://www.camthink.ai/wp-json/wslu-social-login/type/google/",
+     "https://www.camthink.ai/wp-json/wslu-social-login/type/linkedin/",
+     "https://www.camthink.ai/wp-json/wp/v2/pages/4661/",
+     "https://www.camthink.ai/store/ne301/feed/",
+     "https://www.camthink.ai/wp-json/wp/v2/product/2092/",
+     "https://www.camthink.ai/wp-json/wp/v2/pages/1491/"
+    ],
+    "robots": [],
+    "low_content": [
+     "https://www.camthink.ai/blog/all-in-one-anpr-camera/",
+     "https://www.camthink.ai/business-inquiry/",
+     "https://www.camthink.ai/campaign/developer-education-program/",
+     "https://www.camthink.ai/register/",
+     "https://www.camthink.ai/solutions/infrastructure-monitoring/",
+     "https://www.camthink.ai/solutions/remote-field-monitoring/",
+     "https://www.camthink.ai/solutions/security-monitoring/",
+     "https://www.camthink.ai/tools/",
+     "https://www.camthink.ai/product/ne301/",
+     "https://www.camthink.ai/blog/event-triggered-vs-continuous-wildlife-monitoring/",
+     "https://www.camthink.ai/blog/solar-powered-edge-ai-cameras-remote-iot-monitoring/",
+     "https://www.camthink.ai/blog/construction-site-security-camera-edge-ai/",
+     "https://www.camthink.ai/blog/ne101-fill-light-dark-meter-ocr/",
+     "https://www.camthink.ai/blog/wifi-halow-solution-guide/",
+     "https://www.camthink.ai/blog/ne503-container-app-tutorial/",
+     "https://www.camthink.ai/blog/existing-ip-camera-edge-ai-compatibility/",
+     "https://www.camthink.ai/blog/planogram-compliance-computer-vision-edge-ai/",
+     "https://www.camthink.ai/blog/ppe-detection-existing-cctv/",
+     "https://www.camthink.ai/blog/parking-occupancy-detection-existing-cctv/",
+     "https://www.camthink.ai/product/"
+    ]
+   }
+  },
+  "documents": {
+   "index": [
+    "687eec8f9c6c",
+    3167,
+    "Build Vision AI Faster"
+   ],
+   "blog": [
+    "69010a3a0fe9",
+    1277,
+    "Blog · CamThink"
+   ],
+   "blog/5-things-the-neoeyes-ne301-can-help-you-do-today": [
+    "b95b6c64eba3",
+    6973,
+    "5 Things the NeoEyes NE301 Can Help You Do Today"
+   ],
+   "blog/a-comprehensive-product-overview-for-camthink-neoeyes-ne301": [
+    "d7409e6102e0",
+    5656,
+    "A Comprehensive Product Overview for CamThink NeoEyes NE301 "
+   ],
+   "blog/add-ai-to-existing-cctv-systems": [
+    "50800ed0eb73",
+    462,
+    "How to Add AI to Existing CCTV Camera Systems · Blog"
+   ],
+   "blog/ai-species-identification-camera-trap-images": [
+    "d861aaae33b3",
+    10259,
+    "AI Species Identification for Camera Trap Images: Edge AI Wo"
+   ],
+   "blog/build-loitering-detection-app-edge-ai-camera-ne503": [
+    "fe19c730c686",
+    568,
+    "Build a Loitering Detection App on an Edge AI Camera with NE"
+   ],
+   "blog/build-planogram-compliance-system-edge-ai": [
+    "af41b56c131d",
+    5616,
+    "Planogram Compliance with Edge AI: Camera &amp; Compute Guid"
+   ],
+   "blog/build-retail-shelf-monitoring-camera-system-edge-ai": [
+    "df4718194e12",
+    6687,
+    "How to Build a Shelf Gap Detection Prototype with NE301 · Bl"
+   ],
+   "blog/camthink-neoeyes-ne301-edge-ai-stm32n6-guide": [
+    "ff9ab77ca35e",
+    13098,
+    "Camthink NeoEyes NE301 Guide: Edge AI Camera with STM32N6"
+   ],
+   "blog/construction-site-security-camera-comparison": [
+    "54007e450112",
+    19010,
+    "Construction Site Security Camera Comparison: Edge AI vs Sta"
+   ],
+   "blog/deploy-custom-yolo-hailo15h-ne503": [
+    "af1a856fedd0",
+    485,
+    "Deploy Custom YOLO on Hailo-15H with NE503 · Blog"
+   ],
+   "blog/edge-ai-box-existing-ip-cameras": [
+    "1736136e0e94",
+    429,
+    "Edge AI Box for Existing IP Cameras · Blog"
+   ],
+   "blog/edge-ai-camera-outdoor-deployment-guide": [
+    "8e0dfd57bf15",
+    14137,
+    "NE301 Edge AI Camera Outdoor Deploying Guide:  Power, Connec"
+   ],
+   "blog/edge-ai-camera": [
+    "5ab7c51d5e0f",
+    503,
+    "What is an Edge AI Camera? Architecture and Product Fit · Bl"
+   ],
+   "blog/edge-ai-for-real-time-analytics": [
+    "0ec66d1f77f8",
+    21674,
+    "Edge AI for Real-Time Analytics: Architecture &amp; Deployme"
+   ],
+   "blog/edge-ai-vs-cloud-vision": [
+    "f1fe6bdcf9fb",
+    15808,
+    "Edge AI vs Cloud Vision: Architecture, TCO, and Deployment F"
+   ],
+   "blog/edge-ai-wildfire-monitoring": [
+    "64b969e02b12",
+    673,
+    "Where Edge AI Vision Hardware Fits in Remote Wildfire Monito"
+   ],
+   "blog/edge-camera-wifi-lte-halow-comparison": [
+    "1e54eeaa303d",
+    15804,
+    "WiFi vs LTE Cat.1 vs WiFi HaLow:"
+   ],
+   "blog/event-triggered-vs-continuous-video-monitoring": [
+    "124f6130106d",
+    13635,
+    "Event-Triggered vs Continuous Video Monitoring · Blog"
+   ],
+   "blog/external-trigger-low-power-camera": [
+    "ed59c70269e2",
+    24568,
+    "Low-Power Edge Camera External Trigger Guide :\r\nPIR, GPIO, M"
+   ],
+   "blog/how-does-the-esp32-camera-achieve-freer-expansion": [
+    "94246451d257",
+    5661,
+    "how Does the ESP32 Camera Achieve Free Eexpansion？ · Blog"
+   ],
+   "blog/inside-neoeyes-ne503-edge-ai-camera": [
+    "2e0918accc93",
+    19944,
+    "Inside NeoEyes NE503: Open Edge AI Camera Architecture · Blo"
+   ],
+   "blog/iot-camera-meter-reading-edge-ai": [
+    "96a114a84a6a",
+    24777,
+    "IoT Camera Meter Reading Without Replacement | CamThink · Bl"
+   ],
+   "blog/ip-camera-vs-edge-ai-ipc": [
+    "079338ac62da",
+    24017,
+    "Traditional IP Camera vs Edge AI IPC: When to Upgrade to Neo"
+   ],
+   "blog/large-language-model": [
+    "60fca75d811b",
+    5964,
+    "How to Deploy the DeepSeek-R1 Model Locally on AI Box · Blog"
+   ],
+   "blog/ne101-dark-meter-reading-ocr": [
+    "28fd76cc3332",
+    13652,
+    "Dark Meter Reading OCR:"
+   ],
+   "blog/ne101-lens-selection-guide-meter-reading": [
+    "42d68cd491e5",
+    13403,
+    "NE101 Lens Selection Guide for Meter Reading and Remote Visu"
+   ],
+   "blog/ne503-evaluation-guide": [
+    "0de2c9460ab2",
+    653,
+    "How to Evaluate NE503 for Your AI Camera Product or System ·"
+   ],
+   "blog/ne503-event-output-integration": [
+    "387d0be1a432",
+    8934,
+    "NE503 System Integration: Video, AI Events and Control · Blo"
+   ],
+   "blog/ne503-open-ai-camera-platform": [
+    "a0967edd035f",
+    11279,
+    "NE503 Open AI Camera: Custom Models &amp; Integration · Blog"
+   ],
+   "blog/non-contact-meter-reading-camera-ne101": [
+    "f169a602a6a1",
+    14107,
+    "Why NE101 Works as a Non-Contact Meter Reading Capture Node"
+   ],
+   "blog/out-of-stock-detection-edge-ai-camera": [
+    "c1234386d665",
+    4688,
+    "Out-of-Stock Detection with Edge AI Cameras: Shelf Gaps Expl"
+   ],
+   "blog/people-counting-occupancy-dwell-time": [
+    "dc1cc2e3eed2",
+    9728,
+    "People Counting, Occupancy, Dwell Time in Retail · Blog"
+   ],
+   "blog/remote-wildlife-monitoring-camera-system": [
+    "eac2d5eca607",
+    818,
+    "Remote Wildlife Monitoring Camera System: Solar, PIR, HaLow "
+   ],
+   "blog/restaurant-qsc-automation-edge-ai-monitoring": [
+    "b1a3a9b5ccff",
+    20981,
+    "Restaurant QSC Automation with Edge AI Camera NE301 + YOLOv8"
+   ],
+   "blog/retail-queue-wait-time-analytics": [
+    "d6c072c6654b",
+    9388,
+    "Retail Queue Analytics: Measure Queue Length and Wait Time ·"
+   ],
+   "blog/retail-shelf-monitoring-edge-ai-guide": [
+    "a7a6d86faef0",
+    6206,
+    "Hardware Architecture for Retail Shelf Monitoring · Blog"
+   ],
+   "blog/retail-video-analytics-integration": [
+    "7fa8de00e9f1",
+    10502,
+    "Retail Video Analytics Integration for POS, VMS, and IoT · B"
+   ],
+   "blog/scale-meter-digitization-edge-ai": [
+    "f2768179cc16",
+    20579,
+    "Scaling a Water Meter Monitoring System for 50+ Units:\n     "
+   ],
+   "blog/size-edge-ai-box-multiple-cctv-cameras": [
+    "aec1f816b2df",
+    464,
+    "How to Size an Edge AI Box for Multiple CCTV Cameras · Blog"
+   ],
+   "blog/small-animal-camera-trap-setup": [
+    "795a6bc4184f",
+    9442,
+    "Small Animal Camera Trap Setup: Height, Lens and Trigger Zon"
+   ],
+   "blog/smart-bin-overflow-detection-edge-ai": [
+    "5be780d354c5",
+    20403,
+    "Replace Ultrasonic Bin Sensors with On-Device Vision AI"
+   ],
+   "blog/smart-bin-waste-management-ne301-tutorial": [
+    "bd7ae3529370",
+    3890,
+    "Smart Waste Management with NeoEyes NE301: Edge AI Bin Overf"
+   ],
+   "blog/smart-refrigerator-cold-chain-retail-edge-ai": [
+    "5beb3d696465",
+    17262,
+    "Refrigerator Shelf Monitoring with Edge AI Cameras"
+   ],
+   "blog/smart-waste-management-edge-ai-ne301": [
+    "4432790adbd0",
+    6286,
+    "How NE301 Edge AI Redefines Smart Waste Management for Campu"
+   ],
+   "blog/smart-waste-monitoring-edge-ai": [
+    "99f8ec5c4245",
+    22148,
+    "Building a Vision AI Waste Bin Monitoring System — Architect"
+   ],
+   "blog/solar-powered-edge-ai-cameras-remote-monitoring": [
+    "a93130f75371",
+    23665,
+    "Solar-Powered Edge AI Cameras"
+   ],
+   "blog/the-best-mcu-based-edge-ai-camera-for-developers-in-2026": [
+    "611cbc967a1b",
+    5822,
+    "The Best MCU-Based Edge AI Camera for Students and Developer"
+   ],
+   "blog/ultra-low-power-smart-vision-camera-neoeyes-ne101-esp32%e2%80%91s3-based": [
+    "8b26efca8c4e",
+    6222,
+    "NeoEyes NE101-Ultra Low Power Smart Vision Camera — ESP32‑S3"
+   ],
+   "blog/underground-meter-reading-lte-vs-halow-ne101": [
+    "1bc8e6e0fb79",
+    19005,
+    "Underground Meter Reading:"
+   ],
+   "blog/validate-existing-cctv-footage-edge-ai-poc": [
+    "2da98f13a998",
+    480,
+    "Validate CCTV Footage Before an Edge AI PoC · Blog"
+   ],
+   "blog/when-to-add-edge-ai-camera-existing-cctv": [
+    "bdab19932d9b",
+    526,
+    "When to Add an Edge AI Camera Instead of Another IPC · Blog"
+   ],
+   "blog/why-edge-ai-struggles-toward-production": [
+    "1368e0bbd45d",
+    5680,
+    "From PoC to Production: Why Edge AI Projects Struggle to Sca"
+   ],
+   "blog/zone-intrusion-detection-camera-system-guide": [
+    "e880726bdc77",
+    849,
+    "Zone Intrusion Detection Guide: remote sites, fixed PoE zone"
+   ],
+   "campaign/student-activity": [
+    "4488ec4898bb",
+    1420,
+    "Design the Future"
+   ],
+   "campaign/welcome-offer": [
+    "fc43ff2c5897",
+    3498,
+    "Start Your FirstEdge AI Build –10% OFF"
+   ],
+   "case-studies/nexascent-water-meter-ocr-ne101": [
+    "bd5dd2bc7c67",
+    1013,
+    "Non-Contact Water Meter OCR:How NexAscent Uses NE101 as the "
+   ],
+   "company/about-us": [
+    "42218a4ea1d3",
+    2202,
+    "About Us - CamThink"
+   ],
+   "company/contact-us": [
+    "57695b36736d",
+    788,
+    "Let's Start the Conversation"
+   ],
+   "developer-center": [
+    "97e57cd3769c",
+    1457,
+    "Plan Your Edge Vision Integration"
+   ],
+   "developer-center/models": [
+    "fe86427a05b5",
+    1715,
+    "AI Model Zoo - Download Curated Detection Models | CamThink"
+   ],
+   "news/camthink-debuts-event-triggered-camera-and-edge-computing-applications-at-embedded-world-2025": [
+    "8885f9e3c784",
+    3583,
+    "CamThink Debuts Event-triggered Camera and Edge Computing Ap"
+   ],
+   "news/camthink-turns-one-open-edge-ai-deployment": [
+    "3482568207cd",
+    4034,
+    "CamThink Turns One: Open Edge AI Hardware for Real-World AI "
+   ],
+   "news/milesight-propels-vision-ai-transformation-by-announcing-a-new-brand-camthink-expanding-edge-ai-driven-innovations-to-industries-and-communities": [
+    "9b1aae94bf35",
+    4650,
+    "Milesight Propels Vision AI Transformation by Announcing a N"
+   ],
+   "news/neoeyes-ne503-launch": [
+    "71317bc00dfd",
+    6178,
+    "CamThink Launches NeoEyes NE503 Open Edge AI Camera Platform"
+   ],
+   "payment-methods": [
+    "74b78947d835",
+    538,
+    "Payment Methods"
+   ],
+   "product/neoedge-ai-box-ng4500": [
+    "fabfa7eb76a4",
+    3850,
+    "Industrial-Grade Edge AI Box"
+   ],
+   "product/neoeyes-301": [
+    "ae2ed06d92d7",
+    8761,
+    "NeoEyes NE301: Edge Vision AI Camera | CamThink"
+   ],
+   "product/neoeyes-503": [
+    "6ae344fb11ea",
+    6952,
+    "Edge AI Camera Platform"
+   ],
+   "product/neoeyes-ai-camera-ne101": [
+    "f39deeff0620",
+    2877,
+    "Low-Power Sensing Camera"
+   ],
+   "product/neomind": [
+    "016dcf0fbfc3",
+    15914,
+    "Edge AI that runsyour IoT"
+   ],
+   "shipping-policy": [
+    "287a0bd6ec07",
+    6329,
+    "Shipping Policy"
+   ],
+   "solutions": [
+    "b8b50ede96c4",
+    577,
+    "Open Vision HardwareFor Faster Edge AI Deployment"
+   ],
+   "tools/ai-tool-stack": [
+    "712803e4628b",
+    1892,
+    "AI Tool Stack — Edge AI Training &amp; Deployment Tool | Cam"
+   ],
+   "tools/battery-calculator": [
+    "b942e14b8054",
+    2052,
+    "Battery Life Calculator"
+   ],
+   "warranty-and-return-policy": [
+    "036dbe415492",
+    5617,
+    "Warranty &amp; Return Policy"
+   ],
+   "news": [
+    "a451f852c049",
+    470,
+    "News | CamThink"
+   ],
+   "company/about": [
+    "1cf8a181aff6",
+    2202,
+    "About Us - CamThink"
+   ],
+   "blog/scale-water-meter-deployment-edge-ai": [
+    "d255928da406",
+    20579,
+    "Scaling a Water Meter Monitoring System for 50+ Units:\n     "
+   ],
+   "company/news/camthink-neoeyes-ne301": [
+    "2fc53adc3437",
+    5656,
+    "A Comprehensive Product Overview for CamThink NeoEyes NE301 "
+   ],
+   "product/neoeyes-ne503": [
+    "fbc605390589",
+    6178,
+    "CamThink Launches NeoEyes NE503 Open Edge AI Camera Platform"
+   ],
+   "resource/blog": [
+    "4493a1ea6605",
+    1277,
+    "Blog · CamThink"
+   ],
+   "developer-center/models/face-detection-yolo11n": [
+    "d68f2732dd3e",
+    728,
+    "Face Detection (YOLO11n) · CamThink"
+   ],
+   "developer-center/models/face-person-detection-yolov8x": [
+    "5d41fac56f14",
+    711,
+    "Face + Person Detection (YOLOv8x) · CamThink"
+   ],
+   "developer-center/models/yolov8s-barcode-detection": [
+    "9e523f216428",
+    712,
+    "YOLOV8s-Barcode-Detection · CamThink"
+   ],
+   "developer-center/models/animal-detection-yolov11s": [
+    "760112f38d20",
+    763,
+    "yolov11s-animal-detection · CamThink"
+   ],
+   "developer-center/models/face-detection-yolo11x": [
+    "0041b7a56193",
+    645,
+    "Face Detection (YOLO11x) · CamThink"
+   ],
+   "developer-center/models/forklift-detection-yolov8m": [
+    "f6e9e524dfa3",
+    633,
+    "Forklift Detection (YOLOv8m) · CamThink"
+   ],
+   "developer-center/models/tennis-ball-detection-yolov8": [
+    "b8cf01167366",
+    684,
+    "Tennis Ball Detection (YOLOv8) · CamThink"
+   ],
+   "developer-center/models/smoking-detection-yolov11": [
+    "9e6943fd60e4",
+    673,
+    "Smoking Detection (YOLOv11) · CamThink"
+   ],
+   "developer-center/models/shelf-product-detection-yolov8": [
+    "d2deb15b92be",
+    633,
+    "Shelf Product Detection (YOLOv8) · CamThink"
+   ],
+   "developer-center/models/litter-detection-yolov8": [
+    "14c7b8042397",
+    680,
+    "Litter Detection (YOLOv8) · CamThink"
+   ],
+   "developer-center/models/fish-detection-yolo11s": [
+    "446aed29a3ed",
+    830,
+    "Fish Detection (YOLOv11s) · CamThink"
+   ],
+   "developer-center/models/blood-cell-detector-yolo-ds1-640": [
+    "b25c1a3b9bd8",
+    742,
+    "blood-cell-detector-yolo-ds1-640 · CamThink"
+   ],
+   "developer-center/models/cs2-yolo12m-weapon-detection": [
+    "ae0195340648",
+    801,
+    "cs2-yolo12m-weapon-detection · CamThink"
+   ],
+   "developer-center/models/spendsense-receipt-yolo": [
+    "47a127740685",
+    688,
+    "spendsense-receipt-yolo · CamThink"
+   ],
+   "developer-center/models/helmet-and-number-plate-detection": [
+    "52f41c2ede82",
+    853,
+    "Helmet_and_Number_plate_detection · CamThink"
+   ],
+   "developer-center/models/dental-anomalies-yolov8": [
+    "d748a63ab528",
+    783,
+    "Dental-anomalies-yolov8 · CamThink"
+   ],
+   "developer-center/models/cell-yolov8": [
+    "67d3054d8a1a",
+    635,
+    "cell_yolov8 · CamThink"
+   ],
+   "developer-center/models/drone-detection": [
+    "0eea51a41929",
+    737,
+    "Drone_Detection · CamThink"
+   ],
+   "developer-center/models/traffic-signals-detection-yolov8m": [
+    "51226ec91993",
+    813,
+    "Traffic_signals_detection_YOLOv8m · CamThink"
+   ],
+   "developer-center/models/fire-smoke-detection-box": [
+    "1cf895b52373",
+    676,
+    "fire_smoke_detection_box · CamThink"
+   ],
+   "developer-center/models/yolo-receipt-det": [
+    "2c3187a0a203",
+    615,
+    "yolo-receipt-det · CamThink"
+   ],
+   "developer-center/models/nepal-vehicle-license-plate-detection": [
+    "cfda1dc0dd91",
+    698,
+    "Nepal-Vehicle-License-Plate-Detection · CamThink"
+   ],
+   "developer-center/models/the-helmet-detection": [
+    "1047bf05cd9b",
+    900,
+    "the_helmet_detection · CamThink"
+   ],
+   "developer-center/models/helmet-detection-yolo11": [
+    "0ed394c0855c",
+    675,
+    "helmet-detection-yolo11 · CamThink"
+   ],
+   "developer-center/models/hardhat-detection": [
+    "3396dbdce27a",
+    670,
+    "HARDHAT_DETECTION · CamThink"
+   ],
+   "developer-center/models/truck-wheel-detector-yolov8-model": [
+    "89be2b22bd42",
+    793,
+    "truck-wheel-detector-yolov8-model · CamThink"
+   ],
+   "developer-center/models/yolo-endoscopy": [
+    "cade663bb20c",
+    802,
+    "yolo-endoscopy · CamThink"
+   ],
+   "developer-center/models/nepal-vehicle-license-plates-detection-version2": [
+    "57fdb2f3d25a",
+    706,
+    "Nepal_Vehicle_License_Plates_Detection_Version2 · CamThink"
+   ],
+   "developer-center/models/blood-cell-detector-yolo-ds1-320": [
+    "75f50f10e518",
+    699,
+    "blood-cell-detector-yolo-ds1-320 · CamThink"
+   ],
+   "developer-center/models/yolo-table-detection": [
+    "24545bfbc317",
+    734,
+    "yolo_table_detection · CamThink"
+   ]
+  }
+ },
+ "run2_stats": {
+  "full": true,
+  "discovered": 134,
+  "accepted": 134,
+  "extracted": 113,
+  "failed": 1,
+  "failed_urls": [
+   "https://www.camthink.ai/shop/"
+  ],
+  "rejected": {
+   "exclude": 60,
+   "robots": 0,
+   "low_content": 20
+  },
+  "rejected_urls": {
+   "exclude": [
+    "https://www.camthink.ai/store/",
+    "https://www.camthink.ai/cookie-policy/",
+    "https://www.camthink.ai/terms-of-service/",
+    "https://www.camthink.ai/login/",
+    "https://www.camthink.ai/store/0-96-oled-module/",
+    "https://www.camthink.ai/store/power-ng45/",
+    "https://www.camthink.ai/store/1-14-tft-lcd-module/",
+    "https://www.camthink.ai/store/neoedge-ng4500/",
+    "https://www.camthink.ai/store/ng4500-cb01/",
+    "https://www.camthink.ai/store/ov5640/",
+    "https://www.camthink.ai/store/ne101-dev-kit/",
+    "https://www.camthink.ai/store/neoeyes-ne101/",
+    "https://www.camthink.ai/store/ne301-poe/",
+    "https://www.camthink.ai/store/ne301/",
+    "https://www.camthink.ai/store/heatsink01/",
+    "https://www.camthink.ai/store/10w-solar-panel-battery-kit/",
+    "https://www.camthink.ai/store/multi-sensor-expansion-board/",
+    "https://www.camthink.ai/store/mlx90642-thermal-ir-array-sensor/",
+    "https://www.camthink.ai/store/2-54mm-40p-dupont-jumper-wires/",
+    "https://www.camthink.ai/store/electret-condenser-microphone/",
+    "https://www.camthink.ai/store/1-54-tft-lcd-module/",
+    "https://www.camthink.ai/store/20m-dtof-ranging-module/",
+    "https://www.camthink.ai/store/ne301-sensor-expansion-kit/",
+    "https://www.camthink.ai/store/ne300-mb01-ai-camera-mainboard/",
+    "https://www.camthink.ai/store/24ghz-radar-human-presence-sensor-module/",
+    "https://www.camthink.ai/store/usb-a-to-usb-c-cable/",
+    "https://www.camthink.ai/store/rectangular-speake-hdk-302008za-3c13/",
+    "https://www.camthink.ai/store/lte-cat1-module/",
+    "https://www.camthink.ai/store/usb-camera-module/",
+    "https://www.camthink.ai/store/module-4g/",
+    "https://www.camthink.ai/store/module-5g/",
+    "https://www.camthink.ai/store/ne101-mb01/",
+    "https://www.camthink.ai/store/sensor-imx219/",
+    "https://www.camthink.ai/store/module-wifi/",
+    "https://www.camthink.ai/store/ssd/",
+    "https://www.camthink.ai/store/sensor-imx477/",
+    "https://www.camthink.ai/store/wifi-halow-module/",
+    "https://www.camthink.ai/store/neoeyes-503/",
+    "https://www.camthink.ai/store/mounting-ne101/",
+    "https://www.camthink.ai/store/st-link-v2-emulator/",
+    "https://www.camthink.ai/store/m12-mount-lens/",
+    "https://www.camthink.ai/store/bevigor-aa-lithium-battery-4-pack/",
+    "https://www.camthink.ai/store/uart-adapter/",
+    "https://www.camthink.ai/cart/",
+    "https://www.camthink.ai/store/ne101/",
+    "https://www.camthink.ai/privacy-policy/",
+    "https://www.camthink.ai/store/neoedge-ai-box/",
+    "https://www.camthink.ai/store/neoedge-carrier-board/",
+    "https://www.camthink.ai/store/neoeyes-vision-ai-camera/",
+    "https://www.camthink.ai/store/ne101-cm00/",
+    "https://www.camthink.ai/wp-json/oembed/1.0/embed/",
+    "https://www.camthink.ai/wp-json/",
+    "https://www.camthink.ai/wp-json/wp/v2/pages/5865/",
+    "https://www.camthink.ai/my-account/",
+    "https://www.camthink.ai/wp-json/wslu-social-login/type/google/",
+    "https://www.camthink.ai/wp-json/wslu-social-login/type/linkedin/",
+    "https://www.camthink.ai/wp-json/wp/v2/pages/4661/",
+    "https://www.camthink.ai/store/ne301/feed/",
+    "https://www.camthink.ai/wp-json/wp/v2/product/2092/",
+    "https://www.camthink.ai/wp-json/wp/v2/pages/1491/"
+   ],
+   "robots": [],
+   "low_content": [
+    "https://www.camthink.ai/blog/all-in-one-anpr-camera/",
+    "https://www.camthink.ai/business-inquiry/",
+    "https://www.camthink.ai/campaign/developer-education-program/",
+    "https://www.camthink.ai/register/",
+    "https://www.camthink.ai/solutions/infrastructure-monitoring/",
+    "https://www.camthink.ai/solutions/remote-field-monitoring/",
+    "https://www.camthink.ai/solutions/security-monitoring/",
+    "https://www.camthink.ai/tools/",
+    "https://www.camthink.ai/product/ne301/",
+    "https://www.camthink.ai/blog/event-triggered-vs-continuous-wildlife-monitoring/",
+    "https://www.camthink.ai/blog/solar-powered-edge-ai-cameras-remote-iot-monitoring/",
+    "https://www.camthink.ai/blog/construction-site-security-camera-edge-ai/",
+    "https://www.camthink.ai/blog/ne101-fill-light-dark-meter-ocr/",
+    "https://www.camthink.ai/blog/wifi-halow-solution-guide/",
+    "https://www.camthink.ai/blog/ne503-container-app-tutorial/",
+    "https://www.camthink.ai/blog/existing-ip-camera-edge-ai-compatibility/",
+    "https://www.camthink.ai/blog/planogram-compliance-computer-vision-edge-ai/",
+    "https://www.camthink.ai/blog/ppe-detection-existing-cctv/",
+    "https://www.camthink.ai/blog/parking-occupancy-detection-existing-cctv/",
+    "https://www.camthink.ai/product/"
+   ]
+  }
+ },
+ "run2_documents": {
+  "index": [
+   "687eec8f9c6c",
+   3167,
+   "Build Vision AI Faster"
+  ],
+  "blog": [
+   "69010a3a0fe9",
+   1277,
+   "Blog · CamThink"
+  ],
+  "blog/5-things-the-neoeyes-ne301-can-help-you-do-today": [
+   "b95b6c64eba3",
+   6973,
+   "5 Things the NeoEyes NE301 Can Help You Do Today"
+  ],
+  "blog/a-comprehensive-product-overview-for-camthink-neoeyes-ne301": [
+   "d7409e6102e0",
+   5656,
+   "A Comprehensive Product Overview for CamThink NeoEyes NE301 "
+  ],
+  "blog/add-ai-to-existing-cctv-systems": [
+   "50800ed0eb73",
+   462,
+   "How to Add AI to Existing CCTV Camera Systems · Blog"
+  ],
+  "blog/ai-species-identification-camera-trap-images": [
+   "d861aaae33b3",
+   10259,
+   "AI Species Identification for Camera Trap Images: Edge AI Wo"
+  ],
+  "blog/build-loitering-detection-app-edge-ai-camera-ne503": [
+   "fe19c730c686",
+   568,
+   "Build a Loitering Detection App on an Edge AI Camera with NE"
+  ],
+  "blog/build-planogram-compliance-system-edge-ai": [
+   "af41b56c131d",
+   5616,
+   "Planogram Compliance with Edge AI: Camera &amp; Compute Guid"
+  ],
+  "blog/build-retail-shelf-monitoring-camera-system-edge-ai": [
+   "df4718194e12",
+   6687,
+   "How to Build a Shelf Gap Detection Prototype with NE301 · Bl"
+  ],
+  "blog/camthink-neoeyes-ne301-edge-ai-stm32n6-guide": [
+   "ff9ab77ca35e",
+   13098,
+   "Camthink NeoEyes NE301 Guide: Edge AI Camera with STM32N6"
+  ],
+  "blog/construction-site-security-camera-comparison": [
+   "54007e450112",
+   19010,
+   "Construction Site Security Camera Comparison: Edge AI vs Sta"
+  ],
+  "blog/deploy-custom-yolo-hailo15h-ne503": [
+   "af1a856fedd0",
+   485,
+   "Deploy Custom YOLO on Hailo-15H with NE503 · Blog"
+  ],
+  "blog/edge-ai-box-existing-ip-cameras": [
+   "1736136e0e94",
+   429,
+   "Edge AI Box for Existing IP Cameras · Blog"
+  ],
+  "blog/edge-ai-camera-outdoor-deployment-guide": [
+   "8e0dfd57bf15",
+   14137,
+   "NE301 Edge AI Camera Outdoor Deploying Guide:  Power, Connec"
+  ],
+  "blog/edge-ai-camera": [
+   "5ab7c51d5e0f",
+   503,
+   "What is an Edge AI Camera? Architecture and Product Fit · Bl"
+  ],
+  "blog/edge-ai-for-real-time-analytics": [
+   "0ec66d1f77f8",
+   21674,
+   "Edge AI for Real-Time Analytics: Architecture &amp; Deployme"
+  ],
+  "blog/edge-ai-vs-cloud-vision": [
+   "f1fe6bdcf9fb",
+   15808,
+   "Edge AI vs Cloud Vision: Architecture, TCO, and Deployment F"
+  ],
+  "blog/edge-ai-wildfire-monitoring": [
+   "64b969e02b12",
+   673,
+   "Where Edge AI Vision Hardware Fits in Remote Wildfire Monito"
+  ],
+  "blog/edge-camera-wifi-lte-halow-comparison": [
+   "1e54eeaa303d",
+   15804,
+   "WiFi vs LTE Cat.1 vs WiFi HaLow:"
+  ],
+  "blog/event-triggered-vs-continuous-video-monitoring": [
+   "124f6130106d",
+   13635,
+   "Event-Triggered vs Continuous Video Monitoring · Blog"
+  ],
+  "blog/external-trigger-low-power-camera": [
+   "ed59c70269e2",
+   24568,
+   "Low-Power Edge Camera External Trigger Guide :\r\nPIR, GPIO, M"
+  ],
+  "blog/how-does-the-esp32-camera-achieve-freer-expansion": [
+   "94246451d257",
+   5661,
+   "how Does the ESP32 Camera Achieve Free Eexpansion？ · Blog"
+  ],
+  "blog/inside-neoeyes-ne503-edge-ai-camera": [
+   "2e0918accc93",
+   19944,
+   "Inside NeoEyes NE503: Open Edge AI Camera Architecture · Blo"
+  ],
+  "blog/iot-camera-meter-reading-edge-ai": [
+   "96a114a84a6a",
+   24777,
+   "IoT Camera Meter Reading Without Replacement | CamThink · Bl"
+  ],
+  "blog/ip-camera-vs-edge-ai-ipc": [
+   "079338ac62da",
+   24017,
+   "Traditional IP Camera vs Edge AI IPC: When to Upgrade to Neo"
+  ],
+  "blog/large-language-model": [
+   "60fca75d811b",
+   5964,
+   "How to Deploy the DeepSeek-R1 Model Locally on AI Box · Blog"
+  ],
+  "blog/ne101-dark-meter-reading-ocr": [
+   "28fd76cc3332",
+   13652,
+   "Dark Meter Reading OCR:"
+  ],
+  "blog/ne101-lens-selection-guide-meter-reading": [
+   "42d68cd491e5",
+   13403,
+   "NE101 Lens Selection Guide for Meter Reading and Remote Visu"
+  ],
+  "blog/ne503-evaluation-guide": [
+   "0de2c9460ab2",
+   653,
+   "How to Evaluate NE503 for Your AI Camera Product or System ·"
+  ],
+  "blog/ne503-event-output-integration": [
+   "387d0be1a432",
+   8934,
+   "NE503 System Integration: Video, AI Events and Control · Blo"
+  ],
+  "blog/ne503-open-ai-camera-platform": [
+   "a0967edd035f",
+   11279,
+   "NE503 Open AI Camera: Custom Models &amp; Integration · Blog"
+  ],
+  "blog/non-contact-meter-reading-camera-ne101": [
+   "f169a602a6a1",
+   14107,
+   "Why NE101 Works as a Non-Contact Meter Reading Capture Node"
+  ],
+  "blog/out-of-stock-detection-edge-ai-camera": [
+   "c1234386d665",
+   4688,
+   "Out-of-Stock Detection with Edge AI Cameras: Shelf Gaps Expl"
+  ],
+  "blog/people-counting-occupancy-dwell-time": [
+   "dc1cc2e3eed2",
+   9728,
+   "People Counting, Occupancy, Dwell Time in Retail · Blog"
+  ],
+  "blog/remote-wildlife-monitoring-camera-system": [
+   "eac2d5eca607",
+   818,
+   "Remote Wildlife Monitoring Camera System: Solar, PIR, HaLow "
+  ],
+  "blog/restaurant-qsc-automation-edge-ai-monitoring": [
+   "b1a3a9b5ccff",
+   20981,
+   "Restaurant QSC Automation with Edge AI Camera NE301 + YOLOv8"
+  ],
+  "blog/retail-queue-wait-time-analytics": [
+   "d6c072c6654b",
+   9388,
+   "Retail Queue Analytics: Measure Queue Length and Wait Time ·"
+  ],
+  "blog/retail-shelf-monitoring-edge-ai-guide": [
+   "a7a6d86faef0",
+   6206,
+   "Hardware Architecture for Retail Shelf Monitoring · Blog"
+  ],
+  "blog/retail-video-analytics-integration": [
+   "7fa8de00e9f1",
+   10502,
+   "Retail Video Analytics Integration for POS, VMS, and IoT · B"
+  ],
+  "blog/scale-meter-digitization-edge-ai": [
+   "f2768179cc16",
+   20579,
+   "Scaling a Water Meter Monitoring System for 50+ Units:\n     "
+  ],
+  "blog/size-edge-ai-box-multiple-cctv-cameras": [
+   "aec1f816b2df",
+   464,
+   "How to Size an Edge AI Box for Multiple CCTV Cameras · Blog"
+  ],
+  "blog/small-animal-camera-trap-setup": [
+   "795a6bc4184f",
+   9442,
+   "Small Animal Camera Trap Setup: Height, Lens and Trigger Zon"
+  ],
+  "blog/smart-bin-overflow-detection-edge-ai": [
+   "5be780d354c5",
+   20403,
+   "Replace Ultrasonic Bin Sensors with On-Device Vision AI"
+  ],
+  "blog/smart-bin-waste-management-ne301-tutorial": [
+   "bd7ae3529370",
+   3890,
+   "Smart Waste Management with NeoEyes NE301: Edge AI Bin Overf"
+  ],
+  "blog/smart-refrigerator-cold-chain-retail-edge-ai": [
+   "5beb3d696465",
+   17262,
+   "Refrigerator Shelf Monitoring with Edge AI Cameras"
+  ],
+  "blog/smart-waste-management-edge-ai-ne301": [
+   "4432790adbd0",
+   6286,
+   "How NE301 Edge AI Redefines Smart Waste Management for Campu"
+  ],
+  "blog/smart-waste-monitoring-edge-ai": [
+   "99f8ec5c4245",
+   22148,
+   "Building a Vision AI Waste Bin Monitoring System — Architect"
+  ],
+  "blog/solar-powered-edge-ai-cameras-remote-monitoring": [
+   "a93130f75371",
+   23665,
+   "Solar-Powered Edge AI Cameras"
+  ],
+  "blog/the-best-mcu-based-edge-ai-camera-for-developers-in-2026": [
+   "611cbc967a1b",
+   5822,
+   "The Best MCU-Based Edge AI Camera for Students and Developer"
+  ],
+  "blog/ultra-low-power-smart-vision-camera-neoeyes-ne101-esp32%e2%80%91s3-based": [
+   "8b26efca8c4e",
+   6222,
+   "NeoEyes NE101-Ultra Low Power Smart Vision Camera — ESP32‑S3"
+  ],
+  "blog/underground-meter-reading-lte-vs-halow-ne101": [
+   "1bc8e6e0fb79",
+   19005,
+   "Underground Meter Reading:"
+  ],
+  "blog/validate-existing-cctv-footage-edge-ai-poc": [
+   "2da98f13a998",
+   480,
+   "Validate CCTV Footage Before an Edge AI PoC · Blog"
+  ],
+  "blog/when-to-add-edge-ai-camera-existing-cctv": [
+   "bdab19932d9b",
+   526,
+   "When to Add an Edge AI Camera Instead of Another IPC · Blog"
+  ],
+  "blog/why-edge-ai-struggles-toward-production": [
+   "1368e0bbd45d",
+   5680,
+   "From PoC to Production: Why Edge AI Projects Struggle to Sca"
+  ],
+  "blog/zone-intrusion-detection-camera-system-guide": [
+   "e880726bdc77",
+   849,
+   "Zone Intrusion Detection Guide: remote sites, fixed PoE zone"
+  ],
+  "campaign/student-activity": [
+   "4488ec4898bb",
+   1420,
+   "Design the Future"
+  ],
+  "campaign/welcome-offer": [
+   "fc43ff2c5897",
+   3498,
+   "Start Your FirstEdge AI Build –10% OFF"
+  ],
+  "case-studies/nexascent-water-meter-ocr-ne101": [
+   "bd5dd2bc7c67",
+   1013,
+   "Non-Contact Water Meter OCR:How NexAscent Uses NE101 as the "
+  ],
+  "company/about-us": [
+   "42218a4ea1d3",
+   2202,
+   "About Us - CamThink"
+  ],
+  "company/contact-us": [
+   "57695b36736d",
+   788,
+   "Let's Start the Conversation"
+  ],
+  "developer-center": [
+   "97e57cd3769c",
+   1457,
+   "Plan Your Edge Vision Integration"
+  ],
+  "developer-center/models": [
+   "fe86427a05b5",
+   1715,
+   "AI Model Zoo - Download Curated Detection Models | CamThink"
+  ],
+  "news/camthink-debuts-event-triggered-camera-and-edge-computing-applications-at-embedded-world-2025": [
+   "8885f9e3c784",
+   3583,
+   "CamThink Debuts Event-triggered Camera and Edge Computing Ap"
+  ],
+  "news/camthink-turns-one-open-edge-ai-deployment": [
+   "3482568207cd",
+   4034,
+   "CamThink Turns One: Open Edge AI Hardware for Real-World AI "
+  ],
+  "news/milesight-propels-vision-ai-transformation-by-announcing-a-new-brand-camthink-expanding-edge-ai-driven-innovations-to-industries-and-communities": [
+   "9b1aae94bf35",
+   4650,
+   "Milesight Propels Vision AI Transformation by Announcing a N"
+  ],
+  "news/neoeyes-ne503-launch": [
+   "71317bc00dfd",
+   6178,
+   "CamThink Launches NeoEyes NE503 Open Edge AI Camera Platform"
+  ],
+  "payment-methods": [
+   "74b78947d835",
+   538,
+   "Payment Methods"
+  ],
+  "product/neoedge-ai-box-ng4500": [
+   "fabfa7eb76a4",
+   3850,
+   "Industrial-Grade Edge AI Box"
+  ],
+  "product/neoeyes-301": [
+   "ae2ed06d92d7",
+   8761,
+   "NeoEyes NE301: Edge Vision AI Camera | CamThink"
+  ],
+  "product/neoeyes-503": [
+   "6ae344fb11ea",
+   6952,
+   "Edge AI Camera Platform"
+  ],
+  "product/neoeyes-ai-camera-ne101": [
+   "f39deeff0620",
+   2877,
+   "Low-Power Sensing Camera"
+  ],
+  "product/neomind": [
+   "016dcf0fbfc3",
+   15914,
+   "Edge AI that runsyour IoT"
+  ],
+  "shipping-policy": [
+   "287a0bd6ec07",
+   6329,
+   "Shipping Policy"
+  ],
+  "solutions": [
+   "b8b50ede96c4",
+   577,
+   "Open Vision HardwareFor Faster Edge AI Deployment"
+  ],
+  "tools/ai-tool-stack": [
+   "712803e4628b",
+   1892,
+   "AI Tool Stack — Edge AI Training &amp; Deployment Tool | Cam"
+  ],
+  "tools/battery-calculator": [
+   "b942e14b8054",
+   2052,
+   "Battery Life Calculator"
+  ],
+  "warranty-and-return-policy": [
+   "036dbe415492",
+   5617,
+   "Warranty &amp; Return Policy"
+  ],
+  "news": [
+   "a451f852c049",
+   470,
+   "News | CamThink"
+  ],
+  "company/about": [
+   "1cf8a181aff6",
+   2202,
+   "About Us - CamThink"
+  ],
+  "blog/scale-water-meter-deployment-edge-ai": [
+   "d255928da406",
+   20579,
+   "Scaling a Water Meter Monitoring System for 50+ Units:\n     "
+  ],
+  "company/news/camthink-neoeyes-ne301": [
+   "2fc53adc3437",
+   5656,
+   "A Comprehensive Product Overview for CamThink NeoEyes NE301 "
+  ],
+  "product/neoeyes-ne503": [
+   "fbc605390589",
+   6178,
+   "CamThink Launches NeoEyes NE503 Open Edge AI Camera Platform"
+  ],
+  "resource/blog": [
+   "4493a1ea6605",
+   1277,
+   "Blog · CamThink"
+  ],
+  "developer-center/models/face-detection-yolo11n": [
+   "15dfdda1baf6",
+   755,
+   "Face Detection (YOLO11n) · CamThink"
+  ],
+  "developer-center/models/face-person-detection-yolov8x": [
+   "ed1f69b18a1a",
+   710,
+   "Face + Person Detection (YOLOv8x) · CamThink"
+  ],
+  "developer-center/models/yolov8s-barcode-detection": [
+   "8eb57b8b20dc",
+   680,
+   "YOLOV8s-Barcode-Detection · CamThink"
+  ],
+  "developer-center/models/animal-detection-yolov11s": [
+   "cba404a56d44",
+   734,
+   "yolov11s-animal-detection · CamThink"
+  ],
+  "developer-center/models/face-detection-yolo11x": [
+   "19984a057722",
+   714,
+   "Face Detection (YOLO11x) · CamThink"
+  ],
+  "developer-center/models/forklift-detection-yolov8m": [
+   "10bef93dfe3a",
+   729,
+   "Forklift Detection (YOLOv8m) · CamThink"
+  ],
+  "developer-center/models/tennis-ball-detection-yolov8": [
+   "338ed5e0eb2a",
+   684,
+   "Tennis Ball Detection (YOLOv8) · CamThink"
+  ],
+  "developer-center/models/smoking-detection-yolov11": [
+   "a5d4b98b8aa7",
+   725,
+   "Smoking Detection (YOLOv11) · CamThink"
+  ],
+  "developer-center/models/shelf-product-detection-yolov8": [
+   "5906b5232dee",
+   667,
+   "Shelf Product Detection (YOLOv8) · CamThink"
+  ],
+  "developer-center/models/litter-detection-yolov8": [
+   "b64afca75b41",
+   679,
+   "Litter Detection (YOLOv8) · CamThink"
+  ],
+  "developer-center/models/fish-detection-yolo11s": [
+   "2c0dda6cc3c5",
+   736,
+   "Fish Detection (YOLOv11s) · CamThink"
+  ],
+  "developer-center/models/blood-cell-detector-yolo-ds1-640": [
+   "b488edc431e8",
+   662,
+   "blood-cell-detector-yolo-ds1-640 · CamThink"
+  ],
+  "developer-center/models/helmet-detection-yolo11": [
+   "8cc4d2e962d2",
+   731,
+   "helmet-detection-yolo11 · CamThink"
+  ],
+  "developer-center/models/nepal-vehicle-license-plates-detection-version2": [
+   "97655f781946",
+   742,
+   "Nepal_Vehicle_License_Plates_Detection_Version2 · CamThink"
+  ],
+  "developer-center/models/truck-wheel-detector-yolov8-model": [
+   "b890e6be7c91",
+   818,
+   "truck-wheel-detector-yolov8-model · CamThink"
+  ],
+  "developer-center/models/cs2-yolo12m-weapon-detection": [
+   "fba487ba0608",
+   799,
+   "cs2-yolo12m-weapon-detection · CamThink"
+  ],
+  "developer-center/models/yolo-receipt-det": [
+   "2727f213988a",
+   693,
+   "yolo-receipt-det · CamThink"
+  ],
+  "developer-center/models/dental-anomalies-yolov8": [
+   "d748a63ab528",
+   783,
+   "Dental-anomalies-yolov8 · CamThink"
+  ],
+  "developer-center/models/nepal-vehicle-license-plate-detection": [
+   "2ef38be90e87",
+   664,
+   "Nepal-Vehicle-License-Plate-Detection · CamThink"
+  ],
+  "developer-center/models/yolo-endoscopy": [
+   "5a44dc99ec36",
+   754,
+   "yolo-endoscopy · CamThink"
+  ],
+  "developer-center/models/hardhat-detection": [
+   "c5805ad0589f",
+   667,
+   "HARDHAT_DETECTION · CamThink"
+  ],
+  "developer-center/models/traffic-signals-detection-yolov8m": [
+   "ef59577f5ea0",
+   773,
+   "Traffic_signals_detection_YOLOv8m · CamThink"
+  ],
+  "developer-center/models/spendsense-receipt-yolo": [
+   "8e5c4d0efcba",
+   719,
+   "spendsense-receipt-yolo · CamThink"
+  ],
+  "developer-center/models/drone-detection": [
+   "143223f05102",
+   678,
+   "Drone_Detection · CamThink"
+  ],
+  "developer-center/models/fire-smoke-detection-box": [
+   "83571309d108",
+   702,
+   "fire_smoke_detection_box · CamThink"
+  ],
+  "developer-center/models/cell-yolov8": [
+   "95a02fb35b6c",
+   636,
+   "cell_yolov8 · CamThink"
+  ],
+  "developer-center/models/helmet-and-number-plate-detection": [
+   "a78db7d8a863",
+   819,
+   "Helmet_and_Number_plate_detection · CamThink"
+  ],
+  "developer-center/models/yolo-table-detection": [
+   "c3e9ddbdf4a6",
+   697,
+   "yolo_table_detection · CamThink"
+  ],
+  "developer-center/models/blood-cell-detector-yolo-ds1-320": [
+   "45d66ece1984",
+   694,
+   "blood-cell-detector-yolo-ds1-320 · CamThink"
+  ],
+  "developer-center/models/the-helmet-detection": [
+   "fb6eef5dd104",
+   928,
+   "the_helmet_detection · CamThink"
+  ]
+ },
+ "idempotency": {
+  "run1_doc_count": 113,
+  "run2_doc_count": 113,
+  "same_path_set": true,
+  "same_hash_count": 84,
+  "changed_paths": [
+   "developer-center/models/animal-detection-yolov11s",
+   "developer-center/models/blood-cell-detector-yolo-ds1-320",
+   "developer-center/models/blood-cell-detector-yolo-ds1-640",
+   "developer-center/models/cell-yolov8",
+   "developer-center/models/cs2-yolo12m-weapon-detection",
+   "developer-center/models/drone-detection",
+   "developer-center/models/face-detection-yolo11n",
+   "developer-center/models/face-detection-yolo11x",
+   "developer-center/models/face-person-detection-yolov8x",
+   "developer-center/models/fire-smoke-detection-box",
+   "developer-center/models/fish-detection-yolo11s",
+   "developer-center/models/forklift-detection-yolov8m",
+   "developer-center/models/hardhat-detection",
+   "developer-center/models/helmet-and-number-plate-detection",
+   "developer-center/models/helmet-detection-yolo11",
+   "developer-center/models/litter-detection-yolov8",
+   "developer-center/models/nepal-vehicle-license-plate-detection",
+   "developer-center/models/nepal-vehicle-license-plates-detection-version2",
+   "developer-center/models/shelf-product-detection-yolov8",
+   "developer-center/models/smoking-detection-yolov11",
+   "developer-center/models/spendsense-receipt-yolo",
+   "developer-center/models/tennis-ball-detection-yolov8",
+   "developer-center/models/the-helmet-detection",
+   "developer-center/models/traffic-signals-detection-yolov8m",
+   "developer-center/models/truck-wheel-detector-yolov8-model",
+   "developer-center/models/yolo-endoscopy",
+   "developer-center/models/yolo-receipt-det",
+   "developer-center/models/yolo-table-detection",
+   "developer-center/models/yolov8s-barcode-detection"
+  ],
+  "added_paths": [],
+  "removed_paths": [],
+  "multiplied": false,
+  "corpus_stable": false
+ }
+}
