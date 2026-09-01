@@ -1,0 +1,4 @@
+[      36ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://localhost:8081/favicon.ico:0
+[      38ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ http://localhost:8012/api/widget/site-config?site_id=camthink-store:0
+[    4919ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ http://localhost:8012/api/ask:0
+[    4920ms] [ERROR] SSE 请求失败: 403 @ http://localhost:8012/widget/widget.js:48

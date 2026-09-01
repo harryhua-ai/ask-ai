@@ -1,0 +1,4 @@
+- generic [active] [ref=e1]:
+  - 'heading "G005: unknown site_id (camthink-ghost)" [level=1] [ref=e2]'
+  - button [ref=e3] [cursor=pointer]:
+    - img "Ask AI" [ref=e4]

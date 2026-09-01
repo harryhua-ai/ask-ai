@@ -1,0 +1,5 @@
+- generic [active] [ref=e1]:
+  - 'heading "Host page: camthink-wiki (origin localhost:8082)" [level=1] [ref=e2]'
+  - paragraph [ref=e3]: "Embed: data-site-id=\"camthink-wiki\""
+  - button [ref=e4] [cursor=pointer]:
+    - img "Ask AI" [ref=e5]

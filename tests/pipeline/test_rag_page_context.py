@@ -44,7 +44,7 @@ async def test_stream_answer_applies_soft_boost_and_trace():
     """page_context product 线索 → rerank 后软加分:sources 顺序翻转 + trace 记录。"""
     a = _make_sr(product="ne301", score=0.9, title="DocA", url="https://x/a")
     b = _make_sr(product="ne503", score=0.8, title="DocB", url="https://x/b")
-    rag, searcher, _reranker, llm = _build_orchestrator(
+    rag, _searcher, _reranker, llm = _build_orchestrator(
         searcher_results=[a, b], reranked_results=[a, b]
     )
 
@@ -84,9 +84,7 @@ async def test_stream_answer_without_page_context_is_baseline():
     llm.stream = MagicMock()
     llm.stream.return_value = _ok_stream([], task="generation")
 
-    events = [
-        json.loads(evt) async for evt in rag.stream_answer("tell me about specs", "widget")
-    ]
+    events = [json.loads(evt) async for evt in rag.stream_answer("tell me about specs", "widget")]
     sources_evt = next(e for e in events if e["type"] == "sources")
     assert [s["title"] for s in sources_evt["sources"]] == ["DocA", "DocB"]
     complete = next(e for e in events if e["type"] == "complete")
@@ -98,7 +96,7 @@ async def test_site_context_cannot_change_retrieval_channel():
     """P0(G007 前置):传 page_context/site_name 不改变 channel —— 检索仍按
     请求渠道 widget 过滤,site_id 不进入可见性授权链。"""
     a = _make_sr(product="ne503", score=0.8, title="DocB", url="https://x/b")
-    rag, searcher, _reranker, llm = _build_orchestrator(searcher_results=[a])
+    rag, _searcher, _reranker, llm = _build_orchestrator(searcher_results=[a])
 
     async def _ok_stream(messages, task=None):
         yield "answer"
@@ -113,4 +111,4 @@ async def test_site_context_cannot_change_retrieval_channel():
         site_name="CamThink Store",
     ):
         pass
-    assert searcher.search.call_args.kwargs["channel"] == "widget"
+    assert _searcher.search.call_args.kwargs["channel"] == "widget"

@@ -63,10 +63,19 @@ def _capture_rag(events: list[dict], captured: dict):
 
 
 _EVENTS = [
-    {"type": "sources", "sources": [{"url": "https://x/b", "title": "B", "type": "github", "product": "ne503"}]},
+    {
+        "type": "sources",
+        "sources": [{"url": "https://x/b", "title": "B", "type": "github", "product": "ne503"}],
+    },
     {"type": "token", "content": "answer"},
-    {"type": "complete", "answer": "answer", "sources": [], "is_answered": True,
-     "language": "en", "response_time_ms": 5},
+    {
+        "type": "complete",
+        "answer": "answer",
+        "sources": [],
+        "is_answered": True,
+        "language": "en",
+        "response_time_ms": 5,
+    },
 ]
 
 
@@ -144,7 +153,7 @@ async def test_ask_spoofed_origin_denied_403_and_no_side_effects():
 @pytest.mark.unit
 async def test_ask_unknown_site_denied_403():
     captured: dict = {}
-    factory, session = _make_site_factory(None)
+    factory, _session = _make_site_factory(None)
     app.state.rag = _capture_rag(_EVENTS, captured)
     app.state.session_factory = factory
 
@@ -167,9 +176,7 @@ async def test_ask_site_without_origin_denied_403():
     app.state.session_factory = factory
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post(
-            "/api/ask", json={"message": "hi", "site_id": "camthink-store"}
-        )
+        resp = await client.post("/api/ask", json={"message": "hi", "site_id": "camthink-store"})
     assert resp.status_code == 403
     assert captured == {}
 

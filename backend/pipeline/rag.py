@@ -136,9 +136,7 @@ def apply_page_context_boost(
             return r.score * weight
         return r.score
 
-    return [
-        replace(r, score=_boosted(r)) for r in sorted(results, key=_boosted, reverse=True)
-    ]
+    return [replace(r, score=_boosted(r)) for r in sorted(results, key=_boosted, reverse=True)]
 
 
 def page_hint_text(page_context: dict | None, site_name: str | None) -> str:
@@ -154,9 +152,7 @@ def page_hint_text(page_context: dict | None, site_name: str | None) -> str:
         if page_context.get("page_type"):
             parts.append(f"页面类型: {page_context['page_type']}")
         product_bits = ", ".join(
-            str(page_context[k])
-            for k in ("product", "product_id", "sku")
-            if page_context.get(k)
+            str(page_context[k]) for k in ("product", "product_id", "sku") if page_context.get(k)
         )
         if product_bits:
             parts.append(f"产品线索: {product_bits}")

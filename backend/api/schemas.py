@@ -24,9 +24,7 @@ def _clean_hint_text(value: str | None, limit: int) -> str | None:
     """
     if value is None:
         return None
-    cleaned = "".join(
-        ch if unicodedata.category(ch) not in ("Cc", "Cf") else " " for ch in value
-    )
+    cleaned = "".join(ch if unicodedata.category(ch) not in ("Cc", "Cf") else " " for ch in value)
     cleaned = " ".join(cleaned.split())[:limit]
     return cleaned or None
 

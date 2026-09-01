@@ -138,7 +138,7 @@ def load_sites_config(path: Path | None = None) -> list[dict]:
         data = yaml.safe_load(f) or {}
     sites = data.get("sites") or []
     if not isinstance(sites, list):
-        raise ValueError(f"站点配置格式错误:sites 必须为列表({config_path})")
+        raise TypeError(f"站点配置格式错误:sites 必须为列表({config_path})")
     return sites
 
 
@@ -170,12 +170,20 @@ async def seed_default_sites(
     return len(sites)
 
 
-async def list_enabled_sites(session_factory: async_sessionmaker[AsyncSession]) -> list[SiteExperience]:
+async def list_enabled_sites(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> list[SiteExperience]:
     """列出启用站点(诊断/未来 Admin 复用;当前不对外暴露)。"""
     async with session_factory() as session:
         rows = (
-            await session.execute(
-                select(SiteExperience).where(SiteExperience.enabled.is_(True)).order_by(SiteExperience.site_id)
+            (
+                await session.execute(
+                    select(SiteExperience)
+                    .where(SiteExperience.enabled.is_(True))
+                    .order_by(SiteExperience.site_id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return list(rows)

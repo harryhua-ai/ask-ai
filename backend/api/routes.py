@@ -119,9 +119,7 @@ async def ask(
     site = None
     if req.site_id:
         try:
-            site = await resolve_site(
-                session_factory, req.site_id, extract_request_origin(request)
-            )
+            site = await resolve_site(session_factory, req.site_id, extract_request_origin(request))
         except SiteDenied:
             raise HTTPException(403, SITE_DENIED_MSG)
 
@@ -190,9 +188,7 @@ async def ask(
                 conversation_history=req.conversation_history,
                 attachments=attachment_objs or None,
                 page_context=(
-                    req.page_context.model_dump(exclude_none=True)
-                    if req.page_context
-                    else None
+                    req.page_context.model_dump(exclude_none=True) if req.page_context else None
                 ),
                 site_name=site.display_name if site else None,
             ):

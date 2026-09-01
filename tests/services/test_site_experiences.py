@@ -32,7 +32,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 class TestNormalizeOrigin:
     def test_strips_path_and_lowercases(self):
-        assert normalize_origin("https://www.camthink.ai/some/path?q=1") == "https://www.camthink.ai"
+        assert (
+            normalize_origin("https://www.camthink.ai/some/path?q=1") == "https://www.camthink.ai"
+        )
 
     def test_strips_default_port(self):
         assert normalize_origin("https://store.camthink.ai:443") == "https://store.camthink.ai"
@@ -113,7 +115,11 @@ class TestSeedDefaultSites:
         factory = get_session_factory(db_engine)
         assert await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml") == 3
         async with factory() as session:
-            rows = (await session.execute(__import__("sqlalchemy").select(SiteExperience))).scalars().all()
+            rows = (
+                (await session.execute(__import__("sqlalchemy").select(SiteExperience)))
+                .scalars()
+                .all()
+            )
             assert {r.site_id for r in rows} == {
                 "camthink-website",
                 "camthink-wiki",
@@ -132,7 +138,9 @@ class TestSeedDefaultSites:
         v2.write_text(yaml_text.replace("CamThink Store", "CamThink Store v2"), encoding="utf-8")
         await seed_default_sites(factory, v2)
         async with factory() as session:
-            count = (await session.execute(select(func.count()).select_from(SiteExperience))).scalar()
+            count = (
+                await session.execute(select(func.count()).select_from(SiteExperience))
+            ).scalar()
             row = await session.get(SiteExperience, "camthink-store")
         assert count == 3
         assert row.display_name == "CamThink Store v2"
