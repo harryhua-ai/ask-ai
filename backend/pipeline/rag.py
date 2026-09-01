@@ -25,6 +25,13 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
+from backend.pipeline.citation import (
+    PUBLIC_SOURCE_TYPES,
+    CitationStreamFilter,
+    build_citation_context,
+    normalize_source_path,
+    validate_citations,
+)
 from backend.pipeline.intent import classify_intent
 from backend.pipeline.query_rewrite import extract_query, rewrite_query
 from backend.retrieval.search import SearchResult
@@ -45,24 +52,6 @@ class EmptyGenerationError(RuntimeError):
     ``complete(answer="", is_answered=True)`` 伪装成功。
     """
 
-
-SOURCE_LABELS = {
-    "github": "[GitHub]",
-    "wiki": "[Wiki]",
-    "website": "[官网]",
-    "web_crawl": "[官网]",
-    "blog": "[博客]",
-    "filesystem": "[知识库]",
-}
-
-# 对外展示的 source 类型白名单(终端用户可见的 sources 列表)。
-# 注意(P0 PC-01):这只是**展示层**过滤,不是信任边界——生成前的授权由
-# chunk 级 channel_visibility 检索过滤(主防线)+ SourceVisibilityGuard
-# (backend/services/source_visibility.py,纵深)强制执行;内部源必须通过
-# 源配置标记受限(channel_visibility 不含访客渠道),而不是靠这里隐藏。
-PUBLIC_SOURCE_TYPES: frozenset[str] = frozenset(
-    {"local_git", "github", "woocommerce", "website", "web_crawl"}
-)
 
 # Per-intent boost 桶配置:与主 hybrid 结果 RRF 融合,让 intent 相关 source 获得加权。
 # - support:故障案例/排查文档多 ingest 为 source_type="filesystem",提升其召回权重。
@@ -100,24 +89,6 @@ class RAGAnswer:
     response_time_ms: int
     intent: str = "product"
     trace_payload: dict | None = None
-
-
-_I18N_PREFIXES = (
-    "/i18n/en/docusaurus-plugin-content-docs/current/",
-    "/i18n/zh-CN/docusaurus-plugin-content-docs/current/",
-)
-
-
-def _normalize_source_path(url: str) -> str:
-    """归一化来源 URL,使同一文档的翻译版本去重。
-
-    去除 Docusaurus i18n 路径前缀,使 ``docs/foo.md`` 与
-    ``i18n/en/.../foo.md`` 映射到同一 key。
-    """
-    for prefix in _I18N_PREFIXES:
-        if prefix in url:
-            return url.replace(prefix, "/docs/")
-    return url
 
 
 class RAGOrchestrator:
@@ -283,20 +254,21 @@ class RAGOrchestrator:
         if self._visibility_guard is None:
             return results
         try:
-            return [
-                r for r in results if await self._visibility_guard.allows(r.source_id, channel)
-            ]
+            return [r for r in results if await self._visibility_guard.allows(r.source_id, channel)]
         except Exception as exc:  # noqa: BLE001
             # P0-rework Case C:授权子系统故障不得变成授权旁路 → fail-closed:
             # 丢弃全部候选(下游拒答门兜底)——可用性损失,而非安全损失。
             logger.error(
                 "visibility guard 异常,fail-closed 丢弃全部 %d 候选:%s",
-                len(results), str(exc)[:200],
+                len(results),
+                str(exc)[:200],
             )
             return []
 
     @staticmethod
-    def _rerank_snippets(results: list[SearchResult], top: int = 5, text_preview: int = 300) -> list[dict]:
+    def _rerank_snippets(
+        results: list[SearchResult], top: int = 5, text_preview: int = 300
+    ) -> list[dict]:
         """提取 top N reranked 结果摘要(写入 trace),含正文预览供审查比对。"""
         return [
             {
@@ -309,22 +281,6 @@ class RAGOrchestrator:
             }
             for r in results[:top]
         ]
-
-    def _build_context(self, results: list[SearchResult]) -> str:
-        """把重排后的候选拼接成 LLM 上下文文本。
-
-        Args:
-            results: 重排后的 SearchResult 列表。
-
-        Returns:
-            Markdown 格式的上下文字符串,每条结果包含序号、来源标签、
-            标题、URL 与正文。
-        """
-        parts = []
-        for i, r in enumerate(results, 1):
-            label = SOURCE_LABELS.get(r.source_type, f"[{r.source_type}]")
-            parts.append(f"[{i}] {label} {r.title}\nURL: {r.url}\n\n{r.text}")
-        return "\n\n---\n\n".join(parts)
 
     def _build_messages(
         self,
@@ -377,6 +333,9 @@ class RAGOrchestrator:
 
 ## 要求
 - 只依据上面的资料回答,不编造
+- 引用标记 [N] 只能使用「可引用资料」的编号;「背景资料」仅供理解上下文,禁止引用
+- 精确数值(价格/电压/电流/温度/尺寸/版本号/协议等)必须与所引资料原文一致;
+  资料未载明时,明确说明"官方资料未载明该数值",严禁编造数值或以相近数值搭配 [N] 冒充有据
 - 资料中的客户案例/历史工单仅是第三方历史参考,**不是当前用户的事实**;
   严禁把案例中的设备标识(如 ICCID/IMSI/序列号)、客户身份或案例结论说成
   当前用户的情况;需要引用案例时必须明确表述为"一个历史案例"
@@ -412,7 +371,7 @@ class RAGOrchestrator:
         for r in results:
             if r.source_type not in PUBLIC_SOURCE_TYPES:
                 continue
-            norm = _normalize_source_path(r.url)
+            norm = normalize_source_path(r.url)
             if norm in seen:
                 continue
             seen.add(norm)
@@ -512,7 +471,9 @@ class RAGOrchestrator:
         # commercial/product/support 进入 RAG 管线
         # (commercial 原「过渡期拒答」已废:WooCommerce 产品已灌库,走 woocommerce boost 桶作答)
         # product/commercial/support 降低检索阈值(能力咨询/购买咨询容忍少结果)
-        effective_min = 1 if intent.category in ("product", "support", "commercial") else self._min_results
+        effective_min = (
+            1 if intent.category in ("product", "support", "commercial") else self._min_results
+        )
 
         t_rewrite = time.monotonic()
         extracted = await extract_query(query, self._llm)
@@ -590,9 +551,16 @@ class RAGOrchestrator:
                 len(fallback),
             )
 
-        context = self._build_context(reranked)
+        sources = self._extract_sources(reranked)
+        # 引用完整性:LLM 编号集 = 访客可见集合(权威编号上下文)
+        cite_ctx = build_citation_context(reranked, sources)
         messages = self._build_messages(
-            query, context, language, conversation_history, channel, intent=intent.category,
+            query,
+            cite_ctx.context,
+            language,
+            conversation_history,
+            channel,
+            intent=intent.category,
         )
 
         t_gen = time.monotonic()
@@ -602,12 +570,16 @@ class RAGOrchestrator:
             "latency_ms": getattr(llm_response, "latency_ms", None),
             "tokens_output": getattr(llm_response, "tokens_output", None),
         }
-        sources = self._extract_sources(reranked)
+        # 引用终验(幂等):剔除悬空/无据标记,不改正文
+        final_answer, cite_stats = validate_citations(
+            llm_response.content, len(sources), cite_ctx.source_texts
+        )
         stages["output"] = {"ms": 0, "sources_count": len(sources)}
+        stages["citation_integrity"] = {**cite_ctx.stats, **cite_stats}
 
         elapsed = int((time.monotonic() - start) * 1000)
         return RAGAnswer(
-            answer=llm_response.content,
+            answer=final_answer,
             sources=sources,
             is_answered=True,
             reranked_results=reranked,
@@ -664,23 +636,25 @@ class RAGOrchestrator:
                 yield json.dumps({"type": "sources", "sources": sources})
                 yield json.dumps({"type": "token", "content": override.override_answer})
                 elapsed = int((time.monotonic() - start) * 1000)
-                yield json.dumps({
-                    "type": "complete",
-                    "answer": override.override_answer,
-                    "sources": sources,
-                    "is_answered": True,
-                    "language": language,
-                    "response_time_ms": elapsed,
-                    "intent": "product",
-                    "trace_payload": {
-                        "type": "override",
-                        "stages": {},
-                        "total_ms": elapsed,
+                yield json.dumps(
+                    {
+                        "type": "complete",
+                        "answer": override.override_answer,
+                        "sources": sources,
+                        "is_answered": True,
+                        "language": language,
+                        "response_time_ms": elapsed,
                         "intent": "product",
-                        "confidence": None,
-                        "config_snapshot": self._config_snapshot(),
-                    },
-                })
+                        "trace_payload": {
+                            "type": "override",
+                            "stages": {},
+                            "total_ms": elapsed,
+                            "intent": "product",
+                            "confidence": None,
+                            "config_snapshot": self._config_snapshot(),
+                        },
+                    }
+                )
                 return
 
         # 意图识别(4 分类):off_topic 直接拒答;commercial/product/support 进入检索
@@ -725,7 +699,9 @@ class RAGOrchestrator:
         if has_attachments:
             effective_min = 0
         else:
-            effective_min = 1 if intent.category in ("product", "support", "commercial") else self._min_results
+            effective_min = (
+                1 if intent.category in ("product", "support", "commercial") else self._min_results
+            )
 
         t0 = time.monotonic()
         extracted = await extract_query(query, self._llm)
@@ -775,8 +751,17 @@ class RAGOrchestrator:
                                     "category": intent.category,
                                     "reason": intent.reason,
                                 },
-                                "rewrite": {"ms": rewrite_ms, "extracted": extracted, "rewritten": search_query},
-                                "retrieve": {"ms": search_ms, "hybrid_count": len(fused), "effective_min": effective_min, "path_counts": path_counts},
+                                "rewrite": {
+                                    "ms": rewrite_ms,
+                                    "extracted": extracted,
+                                    "rewritten": search_query,
+                                },
+                                "retrieve": {
+                                    "ms": search_ms,
+                                    "hybrid_count": len(fused),
+                                    "effective_min": effective_min,
+                                    "path_counts": path_counts,
+                                },
                                 "rerank": {
                                     "ms": rerank_ms,
                                     "top_score": reranked[0].score if reranked else None,
@@ -803,7 +788,6 @@ class RAGOrchestrator:
         else:
             rerank_fallback = False
 
-        context = self._build_context(reranked) if reranked else ""
         # 附件日志文本(Phase 1a:直接拼接,截断在 extract_log_text 入库时已做)
         log_text = ""
         attachment_summary: list[dict] = []
@@ -813,31 +797,51 @@ class RAGOrchestrator:
                 text = getattr(att, "extracted_text", None)
                 if kind == "log" and text:
                     log_text += text + "\n---\n"
-                attachment_summary.append({
-                    "kind": kind or "unknown",
-                    "text_length": len(text) if text else 0,
-                    "text_preview": text[:200] if text else "",
-                })
-        messages = self._build_messages(
-            query, context, language, conversation_history, channel, intent=intent.category,
-            log_text=log_text, image_context="",
-        )
+                attachment_summary.append(
+                    {
+                        "kind": kind or "unknown",
+                        "text_length": len(text) if text else 0,
+                        "text_preview": text[:200] if text else "",
+                    }
+                )
         sources = self._extract_sources(reranked)
+        # 引用完整性:LLM 编号集 = 访客可见集合(权威编号上下文)
+        cite_ctx = build_citation_context(reranked, sources)
+        messages = self._build_messages(
+            query,
+            cite_ctx.context,
+            language,
+            conversation_history,
+            channel,
+            intent=intent.category,
+            log_text=log_text,
+            image_context="",
+        )
 
         yield json.dumps({"type": "sources", "sources": sources})
 
+        # 流式确定性校验:悬空/无据标记在下行前剔除(跨 token 拆分安全)
+        citation_filter = CitationStreamFilter(
+            n_sources=len(sources), source_texts=cite_ctx.source_texts
+        )
         full_answer = ""
         t3 = time.monotonic()
         first_token_ms: int | None = None
         async for chunk in self._llm.stream(messages, task="generation"):
             if first_token_ms is None:
                 first_token_ms = int((time.monotonic() - t3) * 1000)
-            full_answer += chunk
-            yield json.dumps({"type": "token", "content": chunk})
+            out = citation_filter.feed(chunk)
+            if out:
+                full_answer += out
+                yield json.dumps({"type": "token", "content": out})
+        out = citation_filter.finish()
+        if out:
+            full_answer += out
+            yield json.dumps({"type": "token", "content": out})
 
-        # PC-01:零可用内容(空流 / 仅空白)= 异常完成,禁止以
-        # complete(is_answered=True) 伪装成功;抛给 SSE 层统一降级为
-        # 用户可见失败(与首 token 前异常共用同一条降级通道)。
+        # PC-01:零可用内容(空流 / 仅空白 / 唯一内容是被剔除的悬空引用)
+        # = 异常完成,禁止以 complete(is_answered=True) 伪装成功;抛给 SSE 层
+        # 统一降级为用户可见失败(与首 token 前异常共用同一条降级通道)。
         if not full_answer.strip():
             logger.error(
                 "LLM 流正常结束但零可用内容: query=%d chars, sources=%d, llm_ms=%d",
@@ -846,6 +850,16 @@ class RAGOrchestrator:
                 int((time.monotonic() - t3) * 1000),
             )
             raise EmptyGenerationError("LLM stream completed with empty content")
+
+        # 幂等终验(防御纵深):正常情况下与流式校验结果一致
+        final_answer, residual_stats = validate_citations(
+            full_answer, len(sources), cite_ctx.source_texts
+        )
+        if residual_stats["dangling_dropped"] or residual_stats["unsupported_dropped"]:
+            logger.warning(
+                "终验发现流式校验残余剔除: %s",
+                residual_stats,
+            )
 
         llm_ms = int((time.monotonic() - t3) * 1000)
         elapsed = int((time.monotonic() - start) * 1000)
@@ -867,7 +881,7 @@ class RAGOrchestrator:
         yield json.dumps(
             {
                 "type": "complete",
-                "answer": full_answer,
+                "answer": final_answer,
                 "sources": sources,
                 "is_answered": True,
                 "language": language,
@@ -888,8 +902,17 @@ class RAGOrchestrator:
                             "category": intent.category,
                             "reason": intent.reason,
                         },
-                        "rewrite": {"ms": rewrite_ms, "extracted": extracted, "rewritten": search_query},
-                        "retrieve": {"ms": search_ms, "hybrid_count": len(fused), "effective_min": effective_min, "path_counts": path_counts},
+                        "rewrite": {
+                            "ms": rewrite_ms,
+                            "extracted": extracted,
+                            "rewritten": search_query,
+                        },
+                        "retrieve": {
+                            "ms": search_ms,
+                            "hybrid_count": len(fused),
+                            "effective_min": effective_min,
+                            "path_counts": path_counts,
+                        },
                         "rerank": {
                             "ms": rerank_ms,
                             "top_score": reranked[0].score if reranked else None,
@@ -897,8 +920,16 @@ class RAGOrchestrator:
                             "pruned": pruned_count,
                             "results": self._rerank_snippets(reranked),
                         },
-                        "generate": {"ms": llm_ms, "ttft_ms": first_token_ms, "tokens_output": len(full_answer)},
+                        "generate": {
+                            "ms": llm_ms,
+                            "ttft_ms": first_token_ms,
+                            "tokens_output": len(full_answer),
+                        },
                         "output": {"ms": 0, "sources_count": len(sources)},
+                        "citation_integrity": {
+                            **cite_ctx.stats,
+                            **citation_filter.stats,
+                        },
                     },
                     "total_ms": elapsed,
                     "intent": intent.category,
