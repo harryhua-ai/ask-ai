@@ -1,0 +1,17 @@
+{
+ "SEC-CASE-B-ghost-sim": {
+  "src": 0,
+  "answer": "暂未在官方资料中找到相关信息。",
+  "error": null
+ },
+ "PUB-temp": {
+  "src": 5,
+  "answer": "**Operating Temperature Range**\n\nThe NE301 operates from **−20°C to +50°C**, a range rated for extreme outdoor environments and covered by the IP67-rated enclosure. [1]\n\nThis range also covers refrigerated deployments, including standard refrigerated cabinets (2°C–8°C), dairy cases, and freezers (−18°C). For ultra-low cold storage conditions, environmental monitoring via the sensor expansion board can validate deployment feasibility. [2]\n\n**Low-Temperature Battery Note**\n\nAt −20°C, effective alkaline AA battery capacity drops approximately 25–35% versus room temperature. For cold-climate deployments, CamThink recommends lithium AA cells, which retain roughly 85–90% capacity at −20°C. [3]",
+  "error": null
+ },
+ "PUB-offtopic": {
+  "src": 0,
+  "answer": "我只能回答与 CamThink 产品相关的问题。",
+  "error": null
+ }
+}
