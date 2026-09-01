@@ -127,3 +127,31 @@ export PYTHONPATH=$PWD
 .venv 主仓共享: /Users/harryhua/Documents/GitHub/ask-ai/.venv/bin/python -m pytest tests/api tests/test_main.py tests/llm tests/test_lifespan_smoke.py tests/test_models_trace.py -q   # 178 passed
 cd admin && npx vitest run   # 136 passed; npx tsc -b; npx vite build
 ```
+
+---
+
+## 11. 追加修复(用户实测反馈,09-01)
+
+### 11.1 现象与定性
+
+用户报告「新增供应商 + http://100.124.85.19:13000/v1 → 从 API 拉取」提示 "api_base 校验失败"。取证:
+- 该文案**只存在于旧代码**(主仓 :8000/:5174);新栈(4544a42)对同一操作返回产品级文案
+  「内网/私有地址 100.124.85.19 默认拒绝:请由管理员在「模型配置 → 端点授权」中显式授权后使用」(活体复现)。
+  → 用户测试的是旧栈;新栈行为符合契约。
+- 但顺着复现发现**新栈真 bug**:授权后拉取仍失败,服务端日志为
+  `httpcore.LocalProtocolError: Illegal header value b'Bearer '`。
+
+### 11.2 根因与修复(9ff68d5)
+
+deepseek.py 三处(generate/stream/list_models)无条件构造 `Authorization: Bearer {key}`,
+key 为空时 httpx 拒绝空值头 → 协议层崩溃。修复:`_auth_headers()` 助手,空 key 返回 `{}`。
+TDD RED(2 断言)→ GREEN;llm 19/19,providers+allowed-hosts 64 passed。活体:授权后未填
+token 拉取 → 请求真实到达网关(401 Unauthorized),Illegal header 0 次。
+
+语义收益:generate 对空 key 从「协议层崩溃」变为「发出无鉴权请求」,免鉴权自建网关
+(本地 vLLM/ollama 类)成为一等公民。
+
+### 11.3 测试环境事故记录
+
+ask_ai_test 库 users 表被并行测试进程清空(:8023 登录 500,UndefinedTableError),
+重启 worktree 后端由 lifespan 重建+seed 恢复。共享测试库的并行任务需协调(与 §9.4 端口冲突同源)。
