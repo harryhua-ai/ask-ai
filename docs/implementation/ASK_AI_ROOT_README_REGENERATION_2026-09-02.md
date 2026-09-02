@@ -127,3 +127,47 @@ AC-01~AC-24 全部 PASS:基于当前权威 main(B)、旧 README 仅作参考(C)�
 ## O. PRODUCTION BOUNDARY
 
 PRODUCTION_ACCESS = NO / PRODUCTION_MUTATION = NO / PRODUCTION_DB_MUTATION = NO / PUBLIC_TRAFFIC_CHANGE = NO
+
+---
+
+## Public-Facing Simplification Revision
+
+- 日期:2026-09-02(后续指令:公开 README 简化 + 直接集成 main)
+- 基线:`a8eaef3e90df9270a134abd34057545b2308cae6`(实测 fetch 后 origin/main = 本地 main = 期望值;热重载合并 a8eaef3 已在主干,本次全程保留)
+
+### P1. 简化原因
+
+首轮重生成版(243 行,72187fc)技术准确,但信息密度面向**内部工程验收**:公开项目主页访客应在 2–3 分钟内理解「是什么/能做什么/怎么架构/什么技术栈/怎么跑起来」。原版暴露了内部实现控制流、生产/部署状态、CamThink 部署语境、工程运营信息与实现限制说明——这些属于 `docs/`,不属于公开 README。
+
+### P2. 移除的信息类别
+
+- **整节移除**:Request Flow(7 步控制流)、Knowledge Sources(连接器表+删除生命周期)、Retrieval & Answer Generation(RRF/bucket/模型参数)、Interfaces(含通道 gap 声明)、Admin Console(逐页说明)、Configuration(逐面表)、Environment Variables(逐项组)、Database & Migrations(策略)、Deployment(CI/镜像发布细节)、Current Deployment: CamThink(专节)、Security & Trust Principles(逐条机制)、Direction(路线图)。
+- **CamThink 提及 4 → 0**(AC-02 达成;§6 规则,不以其他部署示例替代)。
+- **能力降为 CAPABILITY-LEVEL**:连接器不再逐一点名(仅「repositories, websites, files, and supported data sources」)、检索内部(RRF/boost 桶/分词)、引用校验算法、PII/Sales-Lead 机制、热重载/快照语义、信任边界机制全部 OMIT(§7/§10/§11/§12/§13)。
+- 禁词扫描(CamThink/production/migration/Planner/Executor/Gate/worktree/FINAL REVIEW/NOT IMPLEMENTED/deployment dependent/hot reload):**零命中**。
+
+### P3. 最终公开 README 结构
+
+`# ASK-AI` 定位段 + tagline → **Overview**(3 段:知识接入与有据回答 / 咨询管线与意图自适应 / 可复用平台而非单一聊天机器人) → **Key Features**(9 项:Knowledge Ingestion / Intelligent Retrieval / Grounded AI Responses / Intent-Aware Assistance / Professional Consultation Flows / Multilingual Experience / Flexible LLM Integration / Widget & API / Admin Console) → **Architecture**(单 mermaid 概念图,12 节点:Users→Widget/API→Experience→Intent+RAG→Retrieval→(Knowledge Sources)→LLM Generation→Grounded Response,辅以 Admin/Sync/PG/Weaviate) → **Technology Stack**(9 行表,逐项对源核验) → **Quick Start**(clone + 6 步命令 + 前端两条) → **Project Structure**(8 目录一行一述) → **Development**(pytest/admin/widget 测试构建)。
+
+### P4. 行数与验证
+
+- **行数:243 → 150 行**(目标约 100–150 达成)。
+- `git diff --check`:干净。
+- Mermaid:单块 `flowchart TD`,节点 id 唯一(U/W/E/P/R/K/G/O/A/S/D/V),标签全引号、无裸括号/\n 陷阱。
+- 命令核验(在 a8eaef3 树上复验):`.env.example`、`deploy/dev/docker-compose.yml`(postgres+weaviate 服务名一致)、`scripts/sync.py`、`scripts/create_admin_user.py`、`backend/main.py`、`uv.lock`(requires-python≥3.12)、admin/widget `package.json` scripts(dev/build/preview/test)全部存在;命令集沿用首轮 §H 已逐字核验版本。
+- 相对链接:零(唯一链接为 uv 官方文档外链);禁词扫描含「Deployment」亦零命中。
+- 保留性核验(未触碰):`backend/pipeline/rag.py` 含 `set_customization_snapshot`(1 处)、`backend/services/config_loader.py` 含 `refresh_runtime_customizations`(1 处)——热重载闭环完好。
+- 主张真实性:9 项特性均有首轮 §F 真值矩阵 IMPLEMENTED 证据背书;无新增未证主张(未发明连接器/SaaS/多租户/认证/基准)。
+
+### P5. 集成与治理
+
+- SINGLE CODEX 模式,直接在 main 根工作树编辑(§2 允许复用干净工作树;根树 clean,其余 5 棵 worktree 属其他任务未触碰)。
+- 提交 = README.md + 本报告追加节(单提交);fetch 复核 origin/main 未前进后直接 push(无 force);push 后复核 origin/main 一致、origin 树上 README 与热重载锚点在位。
+- PRODUCT_CODE_CHANGED = NO;PRODUCTION_ACCESS/MUTATION = NO;CI 随 push 自然触发(未手动触发、未部署)。
+
+### P6. 残余说明
+
+1. 首轮 §N 各残余项(中文版/LICENSE/根目录遗留物)继续适用。
+2. 公开版省略「如需部署/机制细节见 docs/」指引 —— docs/ 当前不公开,指引无意义;如未来开放文档再补。
+3. 本节为对既有报告的追加,未新建报告文件(§15)。
