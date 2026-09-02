@@ -25,16 +25,35 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
+from backend.pipeline.canonical_url import wiki_canonical_url
 from backend.pipeline.intent import classify_intent
 from backend.pipeline.query_rewrite import extract_query, rewrite_query
+from backend.pipeline.social import match_social
 from backend.retrieval.search import SearchResult
 from backend.utils.language import detect_language
 
 logger = logging.getLogger(__name__)
 
 REJECT_ANSWER = "暂未在官方资料中找到相关信息。"
-REJECT_OFF_TOPIC = "我只能回答与 CamThink 产品相关的问题。"
+# off-topic 友好边界(产品语义示例):轻量回应 + 能力说明 + 引导,
+# 替代旧生硬话术「我只能回答与 CamThink 产品相关的问题。」。
+# 保留 short-circuit / domain boundary:off_topic 依旧不进 RAG。
+OFF_TOPIC_REPLY_ZH = (
+    "这个问题不在我的主要服务范围内。我主要帮助你解决 CamThink 相关的问题,"
+    "包括产品选型、产品功能、解决方案、使用配置和技术支持等。"
+    "你可以告诉我想了解哪方面,我来帮你。"
+)
+OFF_TOPIC_REPLY_EN = (
+    "This is outside my main scope. I focus on CamThink topics — product "
+    "selection, features, solutions, configuration, and technical support. "
+    "Tell me which area you're interested in, and I'll help."
+)
 REJECT_BUSINESS = "关于商务合作或价格咨询,请联系我们的销售团队。"
+
+
+def _off_topic_reply(language: str) -> str:
+    """按检测语言返回友好边界话术(中文为主,非中文回退英文)。"""
+    return OFF_TOPIC_REPLY_ZH if language.startswith("zh") else OFF_TOPIC_REPLY_EN
 
 SOURCE_LABELS = {
     "github": "[GitHub]",
@@ -187,6 +206,35 @@ class RAGOrchestrator:
             "has_pruner": self._pruner is not None,
         }
 
+    def _social_answer(self, query: str, language: str, elapsed: int) -> RAGAnswer | None:
+        """社交对话(寒暄/致谢/身份/能力/告别)确定性短路。
+
+        命中 → 自然回应,不进 RAG、不调 LLM(省一次意图分类);
+        intent 记 ``smalltalk``(与 off_topic 区分,产品契约 §6)。
+        未命中返回 ``None``,交回意图分类主流程。
+        """
+        social = match_social(query)
+        if social is None:
+            return None
+        return RAGAnswer(
+            answer=social.reply,
+            sources=[],
+            is_answered=True,
+            reranked_results=[],
+            language=language,
+            response_time_ms=elapsed,
+            intent="smalltalk",
+            trace_payload={
+                "type": "social_reply",
+                "stages": {},
+                "total_ms": elapsed,
+                "intent": "smalltalk",
+                "confidence": None,
+                "social_kind": social.kind.value,
+                "config_snapshot": self._config_snapshot(),
+            },
+        )
+
     async def _retrieve_and_fuse(
         self,
         extracted: str,
@@ -279,7 +327,10 @@ class RAGOrchestrator:
         parts = []
         for i, r in enumerate(results, 1):
             label = SOURCE_LABELS.get(r.source_type, f"[{r.source_type}]")
-            parts.append(f"[{i}] {label} {r.title}\nURL: {r.url}\n\n{r.text}")
+            # 上下文呈现 canonical citation URL,避免模型把 GitHub blob
+            # URL 抄进答案文本(CIT-URL Contract)
+            citation_url = wiki_canonical_url(r.url)
+            parts.append(f"[{i}] {label} {r.title}\nURL: {citation_url}\n\n{r.text}")
         return "\n\n---\n\n".join(parts)
 
     def _build_messages(
@@ -354,29 +405,38 @@ class RAGOrchestrator:
         对外展示的 source(避免内部客户工单路径外泄)。过滤不补足——若某问题召回
         的公开源不足 5 条,sources 列表就短,不强行用内部源填充。
 
+        **Citation canonical URL**(CIT-URL Contract):wiki-documents 的
+        GitHub blob URL 映射为 wiki.camthink.ai canonical 页面 URL;映射
+        成功时原 GitHub URL 保留在 ``provenance_url`` 字段(G006),映射
+        不适用时 ``url`` 原样保留且无 ``provenance_url`` 键——普通
+        GitHub / Website / WooCommerce 来源 payload 零变化(G002/G005)。
+
         Args:
             results: 重排后的 SearchResult 列表(rerank 降序)。
 
         Returns:
-            去重 + 过滤后的来源字典列表,字段:``url`` / ``title`` / ``type`` / ``product``。
+            去重 + 过滤后的来源字典列表,字段:``url`` / ``title`` / ``type`` /
+            ``product``(映射发生时附加 ``provenance_url``)。
         """
         seen: set[str] = set()
         sources: list[dict] = []
         for r in results:
             if r.source_type not in PUBLIC_SOURCE_TYPES:
                 continue
-            norm = _normalize_source_path(r.url)
+            citation_url = wiki_canonical_url(r.url)
+            norm = _normalize_source_path(citation_url)
             if norm in seen:
                 continue
             seen.add(norm)
-            sources.append(
-                {
-                    "url": r.url,
-                    "title": r.title,
-                    "type": r.source_type,
-                    "product": r.product,
-                }
-            )
+            source = {
+                "url": citation_url,
+                "title": r.title,
+                "type": r.source_type,
+                "product": r.product,
+            }
+            if citation_url != r.url:
+                source["provenance_url"] = r.url
+            sources.append(source)
         return sources[:5]
 
     async def answer(
@@ -436,6 +496,12 @@ class RAGOrchestrator:
                     },
                 )
 
+        # 社交对话短路(在意图分类之前,确定性,零 LLM 调用)
+        elapsed = int((time.monotonic() - start) * 1000)
+        social = self._social_answer(query, language, elapsed)
+        if social is not None:
+            return social
+
         t_intent = time.monotonic()
         intent = await classify_intent(query, self._llm)
         stages["intent"] = {
@@ -446,7 +512,7 @@ class RAGOrchestrator:
         if intent.category == "off_topic":
             elapsed = int((time.monotonic() - start) * 1000)
             return RAGAnswer(
-                answer=REJECT_OFF_TOPIC,
+                answer=_off_topic_reply(language),
                 sources=[],
                 is_answered=False,
                 reranked_results=[],
@@ -636,8 +702,26 @@ class RAGOrchestrator:
                 })
                 return
 
+        # 社交对话短路(与 answer 路径一致,确定性,零 LLM 调用)
+        elapsed = int((time.monotonic() - start) * 1000)
+        social = self._social_answer(query, language, elapsed)
+        if social is not None:
+            yield json.dumps(
+                {
+                    "type": "complete",
+                    "answer": social.answer,
+                    "sources": [],
+                    "is_answered": social.is_answered,
+                    "language": language,
+                    "response_time_ms": elapsed,
+                    "intent": social.intent,
+                    "trace_payload": social.trace_payload,
+                }
+            )
+            return
+
         # 意图识别(4 分类):off_topic 直接拒答;commercial/product/support 进入检索
-        # (commercial 原「过渡期拒答」策略已废:WooCommerce 产品数据已灌库,commercial
+        # (commercial 原「过渡期拒答」已废:WooCommerce 产品数据已灌库,commercial
         #  意图走 woocommerce boost 桶召回产品信息作答,不再拒答。intent.py 注释同步)
         # 评审 C1:有附件时跳过 off_topic 拒答——「分析这个日志」这类泛化
         # 日志排查语会被判 off_topic,但附件就是 context,必须放行。
@@ -650,7 +734,7 @@ class RAGOrchestrator:
                 yield json.dumps(
                     {
                         "type": "complete",
-                        "answer": REJECT_OFF_TOPIC,
+                        "answer": _off_topic_reply(language),
                         "sources": [],
                         "is_answered": False,
                         "language": language,
