@@ -168,8 +168,22 @@ rag.py 集成(最小侵入,8 个 hunk):
    替代;widget/admin 前端零改动(provenance_url 为加法字段,前端 types 未声明
    不受影响)。
 
-## 10. Final Commit
+## 10. Final Commit 与交付状态
 
 - 主仓:`0420703` `feat(ux): Wiki citation canonical URL + 社交对话/off-topic 友好边界`
   @ `origin/worktree-exec/product-ux-closure-b`(parent cd12687)
-- PRODUCTION_ACCESS = NO(全程未 SSH 生产、未触碰生产 DB/Weaviate/corpus)
+- 本报告持久化:①docs 本地仓 commit(见下 REPORT_COMMIT);②force-add 入主仓分支
+  随 0420703 之后的报告 commit 推 origin(证据交接,Planner 独立审查可读;
+  `docs/` 在主仓 .gitignore 内,与 PA-0F 报告 1ff2936「入主仓」同一模式)
+
+| 字段 | 值 |
+|---|---|
+| STATUS | PASS(自评,待 Planner FINAL REVIEW) |
+| BASELINE_COMMIT | cd12687 |
+| FINAL_COMMIT | 0420703 |
+| BRANCH | worktree-exec/product-ux-closure-b |
+| WORKTREE | /Users/harryhua/Documents/GitHub/ask-ai/.worktrees/product-ux-closure-b |
+| PRODUCTION_ACCESS | NO(全程未 SSH 生产、未触碰生产 DB/Weaviate/corpus) |
+| PRODUCTION_MUTATION | NO(零生产写操作:无部署、无迁移、无回灌、无同步触发) |
+| PUSHED | YES |
+
