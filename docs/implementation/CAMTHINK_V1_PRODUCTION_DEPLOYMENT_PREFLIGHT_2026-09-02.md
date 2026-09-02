@@ -9,7 +9,7 @@
 
 - `origin/main = 193f206a3d0e8695f1c40766a1ba54667fcba2fb`,与 **SOURCE_FREEZE 完全一致**(零推进,未触发 BLOCKED)。
 - 生产更新机制为 **镜像制**:CI(push main / tag / dispatch)→ GHCR → `deploy/prod/update.sh <tag>`(导出 `ASKAI_IMAGE_TAG` → `up -d backend` → 120s 健康轮询 → `up -d sync-cron`)。**update.sh 不执行任何数据库迁移** —— 迁移是独立手动步骤。
-- 迁移清单核实:**M01/M02/M03/M04 均真实存在且幂等**;其中 **M03/M04 为硬前置**(新应用 ORM 映射了旧表缺失的列,`init_db=create_all` 只建表不加列,且 conversations 上的新索引会使旧表启动即失败);**M02**(新表)可由启动期 `create_all` 隐式创建,但建议显式脚本化执行;**M05 降级为 PRECHECK**(运行时对旧字符串 chain 有归一化兼容,是否迁移由生产数据裁决)。
+- 迁移清单核实:**M01/M02/M03/M04 均真实存在且幂等**;其中 **M03/M04 为硬前置**(新应用 ORM 映射了旧表缺失的列,`init_db=create_all` 只建表不加列,且 conversations 上的新索引会使旧表启动即失败);**M02**(新表)可由启动期 `create_all` 隐式创建,但建议显式脚本化执行;**M05 降级为 CONDITIONAL / PRECHECK / HIGHER-CAUTION**(运行时兼容旧字符串 chain;但脚本含 query_decomposition 路由删除等副作用,其中自定义 chain 会被丢弃 —— 是否执行须由扩展预检逐项裁决,见 §Planner Review Correction)。
 - 关键兼容结论:**旧镜像 + 新 schema = 安全**(全部迁移为加性;旧 ORM 不映射新列/新表)→ 允许「旧应用继续服务时执行迁移」,最小化停机;**新应用 + 旧 schema = 禁止**(启动失败/对话持久化丢失/站点体验 500)。
 - 部署后运维基线:Prompt 热重载已含于 freeze,普通替换/重启即完整生效,无需额外基础设施;单进程假设维持(多 worker 为显式部署约束,非本 Gate 重设计项)。
 
@@ -64,11 +64,20 @@
 - **为何硬前置**:ORM 已映射两列(models.py:313-314)—— 新应用对旧表任何 `site_experiences` 读取/启动期 upsert 都会 UndefinedColumn(widget site-config 500、lifespan 报错)。
 - **「无迁移可安全回退」核实**:源码中的回退(`site_experiences.py:48-73`,按语言键取 i18n、缺失回退默认语言字段)是**列存在之后的键级回退**;列缺失时 ORM 直接失败 —— **合同预期的「安全回退」仅在迁移完成后成立**,故 M04 仍为硬前置。
 
-## M05 — `scripts/migrate_llm_chain_format.py` → **PRECHECK / 按生产数据裁决**(默认不判 REQUIRED)
+## M05 — `scripts/migrate_llm_chain_format.py` → **CONDITIONAL / PRECHECK / HIGHER-CAUTION**
 
-- **内容**:①`llm_routing.chain` 旧字符串格式 → `{provider, model}` 对象格式;②`llm_providers.available_models` 空时从 config.model 初始化。幂等、无损(表示形式归一化,不删数据)。
-- **运行时兼容(关键)**:`config_loader._normalize_chain_item`(config_loader.py:40)在读取路径对旧字符串**即时归一化** → 新应用对旧格式**可正常运行**。
-- **生产裁决标准**(未来只读核查 P6):若生产 `llm_routing.chain` 已是对象格式 → M05 **不执行**;若存在旧字符串且团队要求存储口径统一 → 执行(幂等无损)。**不得凭空判定 REQUIRED**。
+> ⚠️ 本节经 Planner FINAL REVIEW 修正(原报告误标「幂等、无损」——不成立,见文末 §Planner Review Correction)。
+
+**全部副作用(源码逐行核实,scripts/migrate_llm_chain_format.py)**:
+1. `migrate_providers_available_models`:改写 `llm_providers.config.available_models`(空则从 `config.model` 初始化;并把默认 model **强制置首**重排)—— 供应商 config 为含凭证的 JSON,脚本整体改写该 dict;
+2. `migrate_routing_chain_format`:`llm_routing.chain` 字符串 → `{provider, model}` 对象(无损表示转换);
+3. **`cleanup_query_decomposition`:删除 `query_decomposition` 路由行** —— 若其归一化 chain ≠ generation,execute 模式仅打 WARNING 后**仍然删除**,即**丢弃一份自定义路由配置(有损)**;
+4. `ensure_routing_exists("intent")`:缺失则从 generation **复制**创建;
+5. `ensure_routing_exists("query_rewrite")`:缺失则从 generation 复制创建。
+
+**运行时兼容**:`_normalize_chain_item`(config_loader.py:40,读取路径)对旧字符串即时归一化 → **旧字符串表示本身不构成执行 M05 的必要条件**。
+**幂等性**:重复执行安全(存在即 skip);但「幂等」≠「无损」—— 第 3 项首次执行即不可逆丢弃自定义 chain。
+**生产裁决标准**:见 §Required Read-Only Production Precheck P6(扩展版:成员/格式/语义三查 + CASE 1-5 决策)。**默认裁决 = 不执行,除非扩展预检证明全部副作用可接受**。
 
 ## SUPERSEDED / HISTORICAL(逐项核实)
 
@@ -93,7 +102,7 @@ M03(conversations.session_id+索引)  ─┐
 M02(sales_leads 建表)               ─┘   推荐次序 M03 → M02(会话线程基座先行)
 M04(site_experiences i18n 列+回填)  ── 「新应用启动前」硬前置(与 M02/M03 无相互依赖)
 M01(channel_visibility 回填)        ── 任意时刻;建议在镜像切换前完成(隔离承诺前置)
-M05(llm chain 归一化)               ── 仅当 P6 预检显示旧格式;否则跳过
+M05(llm chain 归一化+qd 删除等)     ── CONDITIONAL/HIGHER-CAUTION:仅当扩展预检 P6 证明全部副作用可接受(CASE 1/2);CASE 3 自定义 chain → 停,人工决策
 ```
 
 **四态兼容矩阵**:
@@ -137,7 +146,7 @@ M05(llm chain 归一化)               ── 仅当 P6 预检显示旧格式;�
 
 1. 只读预检(见下节)全绿;
 2. (可选维护窗)备份:`pg_dump ask_ai` + Weaviate 快照(或至少记录 counts/来源分布基线);
-3. 迁移(旧应用运行中,逐脚本 dry-run → 执行):**M03 → M02 → M04**;P7 显示未跑则 **M01**;P6 显示旧格式则 **M05**;
+3. 迁移(旧应用运行中,逐脚本 dry-run → 执行):**M03 → M02 → M04**;P7 显示未跑则 **M01**;**M05 不随批执行** —— 仅当 P6 扩展预检进入 CASE 1(无需变更→跳过)或 CASE 2(全部副作用书面确认安全→单独授权执行);CASE 3/4/5 → STOP,人工发布决策;
 4. schema 复核(只读查询:列/表/索引在位);
 5. `./update.sh sha-193f206`(后端替换 → 健康门 → sync-cron 替换);
 6. 启动健康:容器 healthy、`/app/.git-sha=193f206…`、日志无 Traceback、模型加载完成;
@@ -164,7 +173,7 @@ M05(llm chain 归一化)               ── 仅当 P6 预检显示旧格式;�
 | P3 | PG:conversations 是否已有 `session_id` 列/索引 | M03 必要性 | information_schema 查询 | 缺失→需 M03 | 已存在→跳过 |
 | P4 | PG:`sales_leads` 表是否存在 | M02 必要性 | information_schema | 缺失→需 M02 | 已存在→跳过 |
 | P5 | PG:`site_experiences` 是否已有 i18n 两列 | M04 必要性 | information_schema | 缺失→需 M04 | 已存在→跳过 |
-| P6 | PG:`llm_routing.chain` 表示(字符串 vs 对象)+ `available_models` 空否 | M05 裁决 | `SELECT chain FROM llm_routing` / `SELECT id, available_models IS NULL` | 对象格式→跳过 M05 | 旧字符串→按需 M05 |
+| P6 | **M05 扩展预检**:A. `llm_providers`:id、`config.available_models` 缺失/空否、`config.model` 在否(**不输出凭证**);B. `llm_routing`:task 名单(generation/query_decomposition/intent/query_rewrite 是否存在)+ chain 结构格式(字符串 vs 对象);C. 若 query_decomposition 存在:归一化 chain 与 generation **语义比较** | M05 全副作用裁决 | `SELECT id, (config::json->>'available_models') IS NULL, (config::json->>'model') IS NULL FROM llm_providers`;`SELECT task, chain FROM llm_routing` | CASE 1(qd 缺席+intent/qr 合法+格式兼容)→ 跳过 M05;CASE 2(qd.chain==generation.chain)→ 仍须书面确认全部副作用后方可授权 | CASE 3/4/5(下节)→ 停,人工决策 |
 | P7 | Weaviate:`channel_visibility` 属性覆盖率 + 按 data_sources 的分布 | M01 必要性/隔离基线 | aggregate/迭代抽样 | 缺失/全默认→需 M01 | 已回填→跳过 |
 | P8 | Weaviate schema:symbol_* 属性在位否 | 历史迁移核对 | `/v1/schema` | 在位 | 缺失→人工裁决 |
 | P9 | 旧镜像 × 新 schema staging 实证(可选) | 回滚可信度 | 预检外staging | 可启动 | — |
@@ -213,7 +222,8 @@ M05(llm chain 归一化)               ── 仅当 P6 预检显示旧格式;�
 2. NEW APP + OLD SCHEMA 的启动失败风险基于 create_all 语义推断(高置信),可在预检后用 staging 实证;
 3. GPU 显存常驻约束(PA-0F P1)是运行期风险,与本 Gate 正交;
 4. M01 在生产若从未运行,channel_visibility 隔离承诺在执行前不得开启;
-5. 多 worker 热重载约束(当前单容器,满足)。
+5. 多 worker 热重载约束(当前单容器,满足);
+6. **M05 有损路径**:query_decomposition 存在自定义 chain(≠generation)时执行 M05 将不可逆丢弃该路由配置 —— 已列入预检 CASE 3 = MANUAL MIGRATION DECISION REQUIRED。
 
 # Acceptance Criteria Results
 
@@ -226,3 +236,29 @@ PRODUCTION_ACCESS = NO;PRODUCTION_MUTATION = NO。全程仅本地仓库/一次�
 # Final Status
 
 **PASS** —— 仓库侧 Production Preflight 已完整,可支持 Planner 申请「READ-ONLY PROD ACCESS」下一 Gate。
+
+---
+
+## Planner Review Correction — M05 Safety
+
+**前版报告错误**:将 M05 描述为「幂等、无损(表示形式归一化,不删数据)」。经 Planner FINAL REVIEW 指出并经本次源码重读确认,**该描述不成立**:脚本第 3 步 `cleanup_query_decomposition()` 在 execute 模式下**无条件删除** `query_decomposition` 路由行;当其 chain 与 generation 语义不同时,删除即**不可逆丢弃一份自定义路由配置**(dry-run 有 WARNING 提示,execute 无阻断)。此外脚本还会改写 `llm_providers.config.available_models`(含默认 model 重排)并按 generation 复制补建 intent/query_rewrite 路由 —— 均为必须显式核实的副作用。
+
+**修正后的 M05 分类**:`CONDITIONAL / PRECHECK / HIGHER-CAUTION`。运行时 `_normalize_chain_item` 对旧字符串 chain 的读取期归一化仍然成立 → **旧字符串表示本身不使 M05 成为必需**;执行与否取决于扩展预检对全部副作用的逐项裁决。
+
+**修正后的只读生产预检(P6 扩展)**:
+- A. `llm_providers`:id、`available_models` 缺失/空、`config.model` 在否(不回显凭证);
+- B. `llm_routing`:task 集合(generation / query_decomposition / intent / query_rewrite 在位情况)+ chain 结构格式;
+- C. query_decomposition 存在时:归一化后与 generation.chain 语义比较。
+
+**修正后的执行决策规则**(替换「旧字符串 → 跑 M05」):
+```
+READ-ONLY M05 STATE INSPECTION
+  ├─ CASE 1:qd 不存在 + intent/query_rewrite 合法 + chain 格式运行时兼容 → NO CHANGE REQUIRED → SKIP M05
+  ├─ CASE 2:qd 存在且归一化 chain == generation.chain → 删除大概率语义安全,但仍须书面确认
+  │         available_models 重排与 intent/qr 补建副作用后 → M05 MAY BE AUTHORIZED(单独授权)
+  └─ CASE 3:qd 存在且归一化 chain != generation.chain → STOP → MANUAL RELEASE DECISION → DO NOT RUN M05
+      (CASE 4:intent/qr 缺失是否需 M05 补建 / CASE 5:available_models 需归一化 → 均须逐项书面确认)
+```
+本任务不授权上述任何动作。
+
+**本修正仅改动本报告;产品代码零变更;生产零访问。**
