@@ -387,26 +387,46 @@ async def update_data_source(
 def _purge_source_corpus_sync(
     weaviate_url: str, class_name: str, prefix: str, ledger: list[tuple[str, int]]
 ) -> dict:
-    """AFP-001:清除某数据源名下的全部向量语料(同步阻塞,调用方放线程池)。
+    """清除某数据源名下的全部向量语料(G2 重写:PRUNE IS DOCUMENT-LOCAL)。
 
-    两段式,前缀边界严格为 ``prefix + "/"``:
-        1. 账本段:对 PG documents 已知的每个 source_id 做 Equal 精确删除
-           (与 ingest.delete_document 同款安全模式);
-        2. 兜底段:迭代器全扫收集前缀边界内的孤儿 chunk(账本外残留),
-           逐 UUID 删除。
+    三段式,前缀边界严格为 ``prefix + "/"``,**全路径无任何 TEXT 属性过滤
+    删除原语**(P0-A/G2 冻结禁令:Weaviate 对 TEXT 的 equal/like 是分词
+    语义,``equal("a/b")`` 会命中共享 token 的兄弟文档,生产实证可跨源
+    误删):
+
+        1. 账本段:对 PG documents 已知的每个 source_id,按该文档自己的
+           确定性 UUID(uuid5(source_id, 0..chunk_count-1))批量点删——
+           与 ingest._prune_stale_chunks/delete_document 同一文档局部保证;
+        2. 孤儿段:迭代器全扫 + 客户端前缀边界过滤,收集**实际存量对象
+           UUID** 后逐个删除(读侧允许 TEXT 前缀判断,删侧只点名对象 UUID);
+        3. 验证段:再次边界扫描,残留 > 0 则 raise——调用方转 502,配置与
+           账本原样保留可重试(不假报成功)。
 
     Returns:
-        ``{"ledger_docs": N, "orphans": M}`` 供日志观察。
+        ``{"ledger_docs": N, "orphans": M, "residue": 0}`` 供日志观察。
+
+    Raises:
+        RuntimeError: 验证段发现残留(删除未收敛)。
     """
+    from backend.pipeline.ingest import _deterministic_uuid
+
     parsed = urlparse(weaviate_url)
     host = parsed.hostname or "localhost"
     port = parsed.port or 8080
     client = weaviate.connect_to_local(host=host, port=port)
     try:
         collection = client.collections.get(class_name)
-        for sid, _cc in ledger:
-            collection.data.delete_many(where=Filter.by_property("source_id").equal(sid))
-        orphans = 0
+
+        # 1) 账本段:文档局部确定性 UUID 点删
+        purge_uuids: list[str] = []
+        for sid, cc in ledger:
+            purge_uuids.extend(_deterministic_uuid(sid, i) for i in range(int(cc or 0)))
+        for start in range(0, len(purge_uuids), 500):
+            collection.data.delete_many(
+                where=Filter.by_id().contains_any(purge_uuids[start : start + 500])
+            )
+
+        # 2) 孤儿段:实际存量扫描 → 对象 UUID 点删
         stale_uuids: list[str] = []
         for item in collection.iterator(return_properties=["source_id"]):
             sid = item.properties.get("source_id")
@@ -414,8 +434,25 @@ def _purge_source_corpus_sync(
                 stale_uuids.append(str(item.uuid))
         for u in stale_uuids:
             collection.data.delete_by_id(u)
-            orphans += 1
-        return {"ledger_docs": len(ledger), "orphans": orphans}
+
+        # 3) 验证段:残留必须为 0
+        residue = 0
+        for item in collection.iterator(return_properties=["source_id"]):
+            sid = item.properties.get("source_id")
+            if isinstance(sid, str) and sid.startswith(prefix + "/"):
+                residue += 1
+        if residue:
+            raise RuntimeError(
+                f"purge 后仍有 {residue} 个残留向量对象(source={prefix}),保留状态可重试"
+            )
+
+        logger.info(
+            "语料清理完成: 账本 %d 篇(UUID 点删 %d), 孤儿 %d chunks, 残留 0",
+            len(ledger),
+            len(purge_uuids),
+            len(stale_uuids),
+        )
+        return {"ledger_docs": len(ledger), "orphans": len(stale_uuids), "residue": 0}
     finally:
         client.close()
 

@@ -30,14 +30,10 @@ async def del_seed():
     async with factory() as session:
         await session.execute(User.__table__.delete().where(User.email == _USER_EMAIL))
         await session.execute(
-            DataSource.__table__.delete().where(
-                DataSource.id.in_(["afp001-a", "afp001-b"])
-            )
+            DataSource.__table__.delete().where(DataSource.id.in_(["afp001-a", "afp001-b"]))
         )
         await session.execute(
-            Document.__table__.delete().where(
-                Document.source_id.like("afp001-%")
-            )
+            Document.__table__.delete().where(Document.source_id.like("afp001-%"))
         )
         await session.commit()
 
@@ -93,9 +89,7 @@ async def del_seed():
     async with factory() as session:
         await session.execute(User.__table__.delete().where(User.email == _USER_EMAIL))
         await session.execute(
-            DataSource.__table__.delete().where(
-                DataSource.id.in_(["afp001-a", "afp001-b"])
-            )
+            DataSource.__table__.delete().where(DataSource.id.in_(["afp001-a", "afp001-b"]))
         )
         await session.execute(
             Document.__table__.delete().where(Document.source_id.like("afp001-%"))
@@ -125,23 +119,23 @@ def fake_purge(monkeypatch):
 
     def _fake(weaviate_url, class_name, prefix, ledger):
         calls.append(
-            {"weaviate_url": weaviate_url, "class_name": class_name,
-             "prefix": prefix, "ledger": list(ledger)}
+            {
+                "weaviate_url": weaviate_url,
+                "class_name": class_name,
+                "prefix": prefix,
+                "ledger": list(ledger),
+            }
         )
         return {"ledger_chunks": sum(cc for _, cc in calls[-1]["ledger"]), "orphans": 0}
 
-    monkeypatch.setattr(
-        "backend.api.admin.data_sources._purge_source_corpus_sync", _fake
-    )
+    monkeypatch.setattr("backend.api.admin.data_sources._purge_source_corpus_sync", _fake)
     return calls
 
 
 async def test_delete_source_purges_corpus_and_rows(del_seed, fake_purge):
     """G001/G002:删除成功 → 配置行+账本行按前缀清理;purge 收到正确前缀与账本。"""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.delete(
-            "/api/admin/data-sources/afp001-a", headers=del_seed
-        )
+        resp = await client.delete("/api/admin/data-sources/afp001-a", headers=del_seed)
     assert resp.status_code == 204
     factory = app.state.session_factory
     async with factory() as session:
@@ -173,16 +167,13 @@ async def test_delete_source_keeps_unrelated_source(del_seed, fake_purge):
 
 async def test_delete_failure_is_observable_and_preserves_state(del_seed, monkeypatch):
     """G006:向量清理失败 → 错误可观察(非 2xx),配置与账本原样保留可重试。"""
+
     def _boom(*a, **k):
         raise RuntimeError("weaviate down")
 
-    monkeypatch.setattr(
-        "backend.api.admin.data_sources._purge_source_corpus_sync", _boom
-    )
+    monkeypatch.setattr("backend.api.admin.data_sources._purge_source_corpus_sync", _boom)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.delete(
-            "/api/admin/data-sources/afp001-a", headers=del_seed
-        )
+        resp = await client.delete("/api/admin/data-sources/afp001-a", headers=del_seed)
     assert resp.status_code >= 500
     assert "weaviate down" in resp.text
     factory = app.state.session_factory
@@ -197,48 +188,61 @@ async def test_delete_failure_is_observable_and_preserves_state(del_seed, monkey
 async def test_delete_missing_source_404(del_seed, fake_purge):
     """G007:重复删除 → 第二次 404(第一次已删干净);purge 幂等由实现保证。"""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        first = await client.delete(
-            "/api/admin/data-sources/afp001-a", headers=del_seed
-        )
-        second = await client.delete(
-            "/api/admin/data-sources/afp001-a", headers=del_seed
-        )
+        first = await client.delete("/api/admin/data-sources/afp001-a", headers=del_seed)
+        second = await client.delete("/api/admin/data-sources/afp001-a", headers=del_seed)
     assert first.status_code == 204
     assert second.status_code == 404
 
 
 def test_purge_prefix_boundary_safe(monkeypatch):
-    """G005(向量面):purge 只清 `prefix/` 边界内对象;afp001-ab 不受波及。"""
+    """G005/G2(向量面):purge 只按确定性 UUID 点删 + 边界内对象 UUID 兜底;
+    afp001-ab / 相似前缀源对象必须幸存;删除原语不得是 TEXT 属性过滤。"""
+    import re as _re
+
     import backend.api.admin.data_sources as ds_mod
+    from backend.pipeline.ingest import _deterministic_uuid
 
-    equal_calls: list = []
-    deleted_by_id: list[str] = []
-
-    class _FakeData:
-        def delete_many(self, where):
-            equal_calls.append(where)
-            return None
-
-        def delete_by_id(self, uuid):
-            deleted_by_id.append(str(uuid))
-            return None
+    ledger = [("afp001-a/doc1", 2), ("afp001-a/doc2", 2)]
+    sibling_uuids = [_deterministic_uuid(f"afp001-ab/doc1", i) for i in range(2)]
+    orphan_u = str(uuid.uuid4())
 
     class _FakeItem:
         def __init__(self, uuid, sid):
             self.uuid = uuid
             self.properties = {"source_id": sid}
 
-    class _FakeCollection:
-        def iterator(self, return_properties=None):
-            return iter(
-                [
-                    _FakeItem("u-own-1", "afp001-a/doc1"),
-                    _FakeItem("u-own-2", "afp001-a/doc2"),
-                    _FakeItem("u-other", "afp001-ab/doc1"),  # 相似前缀,必须幸存
-                ]
-            )
+    OBJECTS: dict[str, object] = {}
+    for sid, cc in ledger:
+        for i in range(cc):
+            u = _deterministic_uuid(sid, i)
+            OBJECTS[u] = _FakeItem(u, sid)
+    for u in sibling_uuids:
+        OBJECTS[u] = _FakeItem(u, "afp001-ab/doc1")
+    OBJECTS[orphan_u] = _FakeItem(orphan_u, "afp001-a/ghost")
 
+    delete_many_filters: list = []
+    deleted_by_id: list[str] = []
+
+    class _FakeData:
+        def delete_many(self, where):
+            # 模拟真实删除:从过滤对象中解析 UUID(repr 含值),逐个移除
+            delete_many_filters.append(where)
+            for u in _re.findall(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", str(where)
+            ):
+                OBJECTS.pop(u, None)
+            return None
+
+        def delete_by_id(self, uuid):
+            deleted_by_id.append(str(uuid))
+            OBJECTS.pop(str(uuid), None)
+            return None
+
+    class _FakeCollection:
         data = _FakeData()
+
+        def iterator(self, return_properties=None):
+            return iter(list(OBJECTS.values()))
 
     class _FakeCollections:
         def __init__(self, coll):
@@ -255,17 +259,22 @@ def test_purge_prefix_boundary_safe(monkeypatch):
         def close(self):
             return None
 
-    monkeypatch.setattr(
-        ds_mod.weaviate, "connect_to_local",
-        lambda host, port, **k: _FakeClient(),
-    )
-    ledger = [("afp001-a/doc1", 2), ("afp001-a/doc2", 2)]
+    monkeypatch.setattr(ds_mod.weaviate, "connect_to_local", lambda host, port, **k: _FakeClient())
     stats = ds_mod._purge_source_corpus_sync(
         "http://localhost:8080", "Document", "afp001-a", ledger
     )
-    # 账本阶段:每个 doc source_id 一次 Equal 精确删除
-    assert len(equal_calls) == len(ledger)
+
+    # Phase 1 确实发生(by_id 过滤,而非 TEXT 属性过滤)
+    assert len(delete_many_filters) >= 1
+    # 过滤器中出现的任何 UUID 都必须属于 A 源(不得夹带兄弟源)
+    for f in delete_many_filters:
+        for u in _re.findall(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", str(f)
+        ):
+            assert u in {(_deterministic_uuid(sid, i)) for sid, cc in ledger for i in range(cc)}, u
     # 边界:孤儿兜底只清边界内 UUID,afp001-ab 幸存
-    assert "u-other" not in deleted_by_id
-    assert sorted(deleted_by_id) == ["u-own-1", "u-own-2"]
-    assert stats["orphans"] == 2
+    assert orphan_u in deleted_by_id
+    for u in sibling_uuids:
+        assert u in OBJECTS, "兄弟源对象被误删"
+    # 验证段通过:残留 0
+    assert stats["orphans"] >= 1 and stats["residue"] == 0

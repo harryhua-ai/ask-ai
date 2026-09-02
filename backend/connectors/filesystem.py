@@ -20,6 +20,11 @@ from pathlib import Path
 from backend.connectors.base import DataSourceConnector, RawDocument
 from backend.connectors.exclusion import ExclusionPolicy
 from backend.connectors.registry import ConnectorRegistry, SourceConfig
+from backend.connectors.safety import (
+    TechnicalSafetyPolicy,
+    new_safety_stats,
+    record_safety_exclusion,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +61,9 @@ class FilesystemConnector(DataSourceConnector):
         )
         # P8:接入通用排除策略(构建目录 / 二进制 / 测试数据 / 非源码超大文件)
         self._policy = ExclusionPolicy(config.config)
+        # 技术安全边界(Layer 1):独立于 file_types/include_dirs,管理员配置不可绕过(G1)
+        self._safety = TechnicalSafetyPolicy(config.config)
+        self.safety_stats = new_safety_stats()
 
     @property
     def source_id(self) -> str:
@@ -136,6 +144,24 @@ class FilesystemConnector(DataSourceConnector):
             return False
         return self._policy.should_exclude(rel, size)
 
+    def _is_technically_safe(self, path: Path) -> bool:
+        """技术安全边界(Layer 1):模型工件类扩展名 + 硬尺寸上限,读内容**前**拦截(G1)。
+
+        与 file_types/include_dirs(管理员策略)正交:即使管理员把 .hef 加入
+        白名单,本检查仍会拒绝——产品合同「管理员配置不得绕过 Technical Safety」。
+        """
+        rel = str(path.relative_to(self._root))
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            logger.warning("无法 stat 文件 %s: %s", path, exc)
+            return False
+        verdict = self._safety.check_path(rel, size)
+        if not verdict.safe:
+            record_safety_exclusion(self.safety_stats, rel, verdict.reason, verdict.detail)
+            return False
+        return True
+
     def fetch_all(self) -> Iterator[RawDocument]:
         """全量抓取:递归遍历根目录,yield 所有符合过滤条件的文件。
 
@@ -147,6 +173,8 @@ class FilesystemConnector(DataSourceConnector):
         """
         for path in sorted(self._root.rglob("*")):
             if not (path.is_file() and self._should_include(path)):
+                continue
+            if not self._is_technically_safe(path):
                 continue
             if self._is_excluded(path):
                 continue
@@ -168,6 +196,8 @@ class FilesystemConnector(DataSourceConnector):
         """
         for path in sorted(self._root.rglob("*")):
             if not (path.is_file() and self._should_include(path)):
+                continue
+            if not self._is_technically_safe(path):
                 continue
             if self._is_excluded(path):
                 continue

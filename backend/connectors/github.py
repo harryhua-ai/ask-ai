@@ -33,6 +33,11 @@ import httpx
 from backend.connectors.base import DataSourceConnector, RawDocument
 from backend.connectors.exclusion import ExclusionPolicy
 from backend.connectors.registry import ConnectorRegistry, SourceConfig
+from backend.connectors.safety import (
+    TechnicalSafetyPolicy,
+    new_safety_stats,
+    record_safety_exclusion,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +71,9 @@ class GitHubConnector(DataSourceConnector):
         ).expanduser()
         self._channel_visibility: tuple[str, ...] = config.channel_visibility
         self._policy = ExclusionPolicy(config.config)
+        # 技术安全边界(Layer 1):独立于 file_types,管理员白名单不可绕过(G1)
+        self._safety = TechnicalSafetyPolicy(config.config)
+        self.safety_stats = new_safety_stats()
         self._token: str = os.environ.get("GITHUB_TOKEN", "")
 
     @staticmethod
@@ -208,6 +216,11 @@ class GitHubConnector(DataSourceConnector):
             size = p.stat().st_size
         except OSError as exc:
             logger.warning("无法 stat 文件 %s: %s", p, exc)
+            return False
+        # 技术安全判定在 read_text 之前:模型工件类/硬尺寸上限(廉价检查先行,G1)
+        verdict = self._safety.check_path(rel, size)
+        if not verdict.safe:
+            record_safety_exclusion(self.safety_stats, rel, verdict.reason, verdict.detail)
             return False
         return not self._policy.should_exclude(rel, size)
 

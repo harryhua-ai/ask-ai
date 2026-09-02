@@ -49,7 +49,10 @@ def _get_encoding(encoding_name: str = _DEFAULT_ENCODING) -> tiktoken.Encoding:
 
 def _estimate_tokens(text: str) -> int:
     """估算文本 token 数(使用缓存的 cl100k_base 编码器)。"""
-    return len(_get_encoding().encode(text))
+    # disallowed_special=():源码/文档中的字面 <|...|> 序列按普通文本计 token,
+    # 而不是抛异常(2026-09-02 neoruntime-apps 实证:单文档特殊 token 异常会
+    # 使整轮灌入 failed——产品合同 §10.2 文档级失败隔离)。
+    return len(_get_encoding().encode(text, disallowed_special=()))
 
 
 @dataclass(frozen=True)
@@ -482,7 +485,8 @@ def _hard_split_section(
     step = max(1, max_tokens - safe_overlap)
 
     enc = _get_encoding()
-    token_ids = enc.encode(section)
+    # disallowed_special=():同 _estimate_tokens,特殊 token 字面量按普通文本处理
+    token_ids = enc.encode(section, disallowed_special=())
     encoded = section.encode("utf-8")
     n_bytes = len(encoded)
     byte_to_char = _build_byte_to_char_map(encoded)

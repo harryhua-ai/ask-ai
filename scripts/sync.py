@@ -372,9 +372,26 @@ def _discover_source_docs(connector: Any) -> tuple[list[Any], bool, set[str] | N
     complete = True
     stats = getattr(connector, "run_stats", None)
     if isinstance(stats, dict) and stats.get("full"):
-        accepted = int(stats.get("accepted", 0))
         extracted = int(stats.get("extracted", 0))
-        if accepted > 0 and extracted < accepted and extracted / accepted < COVERAGE_PARTIAL_RATIO:
+        # G3 发现完整性守卫:「discovered = 0」本身不能证明「源权威成员集
+        # 为空」——合法空源与畸形 sitemap(200 + 坏 XML,解析静默返回空)
+        # 在此不可区分。仅当 connector **显式报告** discovered == 0(run_stats
+        # 含该键;真实 web_crawl 全量轮恒写入)时视为不完整发现,禁止破坏性
+        # 退休(UNKNOWN/INCOMPLETE DISCOVERY ≠ AUTHORITATIVE EMPTY SOURCE),
+        # 孤儿一律保留并上报。键缺失的 primitive connector(git/fs/woo:抽取
+        # 即权威枚举)语义不变。
+        accepted = int(stats.get("accepted", 0))
+        if stats.get("discovered") == 0:
+            logger.warning(
+                "源发现完整性无法证明(discovered=0 accepted=%s extracted=%d)"
+                "→ 视为不完整发现,孤儿一律保留不删除",
+                stats.get("accepted"),
+                extracted,
+            )
+            complete = False
+        elif (
+            accepted > 0 and extracted < accepted and extracted / accepted < COVERAGE_PARTIAL_RATIO
+        ):
             logger.warning(
                 "源发现覆盖率不足(%d/%d < %.0f%%)→ 视为不完整发现,孤儿一律保留",
                 extracted,

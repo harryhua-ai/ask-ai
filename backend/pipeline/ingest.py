@@ -23,6 +23,11 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.connectors.base import RawDocument
+from backend.connectors.safety import (
+    TechnicalSafetyPolicy,
+    new_safety_stats,
+    record_safety_exclusion,
+)
 from backend.db.models import Document
 from backend.embedder.base import Embedder
 from backend.pipeline.chunk import chunk_document_semantic
@@ -137,6 +142,10 @@ class IngestionPipeline:
         self._overlap = overlap
         self._session_factory: sessionmaker[Session] | None = session_factory
         self._collection: Any = None
+        # 技术安全第二道防线(Layer 1 内容嗅探):拦截扩展名伪装/无扩展名的
+        # 二进制内容,防止其进入 chunk/tokenize/embed(G1 事故纵深防御)。
+        self._safety = TechnicalSafetyPolicy()
+        self.safety_stats = new_safety_stats()
 
     # ------------------------------------------------------------------ #
     # Weaviate collection 初始化(惰性)
@@ -211,6 +220,14 @@ class IngestionPipeline:
         Returns:
             成功写入 Weaviate 的 chunk 数(0 表示空文档或全部失败)。
         """
+        verdict = self._safety.check_content(doc.content)
+        if not verdict.safe:
+            # 文档级隔离:排除该文档,不影响同批其他文档,不计入 failed
+            # (产品合同 §10.2:bad document ≠ source-wide consequence)
+            record_safety_exclusion(
+                self.safety_stats, doc.source_id, verdict.reason, verdict.detail
+            )
+            return 0
         if _is_code(doc):
             chunks = chunk_code(doc, self._max_tokens, self._overlap)
         else:
@@ -448,6 +465,13 @@ class IngestionPipeline:
         doc_chunks: list[tuple[RawDocument, list]] = []
         for doc in docs:
             try:
+                verdict = self._safety.check_content(doc.content)
+                if not verdict.safe:
+                    record_safety_exclusion(
+                        self.safety_stats, doc.source_id, verdict.reason, verdict.detail
+                    )
+                    results[doc.source_id] = 0
+                    continue
                 if _is_code(doc):
                     chunks = chunk_code(doc, self._max_tokens, self._overlap)
                 else:
