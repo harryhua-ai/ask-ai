@@ -74,8 +74,8 @@
 | AC-01 根因自源码 | PASS | §2(else 分支全量重灌 + is_healthy orphan==0) |
 | AC-02 无 token/宽泛删除 | PASS | 删除仅 `by_id contains_any(自己 uuid)`;仓库中已无 source_id 过滤删除路径 |
 | AC-03 PRUNE DOCUMENT-LOCAL | PASS | P0-A 机制未动;retirement 同构(uuid 点删) |
-| AC-04 SOURCE-CONFIRMED | PASS | `_discover_source_docs` 完整发现门 |
-| AC-05 部分发现不退休 | PASS | G004a/G004b |
+| AC-04 SOURCE-CONFIRMED(修订) | PASS | 退休证据=权威成员集 `authoritative_source_ids`,非抽取集合(§10);完整发现门保留 |
+| AC-05 部分发现/瞬时失败不退休(修订) | PASS | G004a/G004b + 新增 G004-C/D(任意聚合覆盖率下单页瞬时失败不退休) |
 | AC-06 ghost 不触发全量 refill | PASS | G006 + 覆盖率守卫 |
 | AC-07 真实缺失仍检出修复 | PASS | G007(refill 路径原样保留) |
 | AC-08 健康源稳定 success/no-op | PASS | G001/G003/G006/G008(处置后复验收敛 → success,窗口推进) |
@@ -108,4 +108,68 @@
 - **GPU_SYNC_RUNTIME_POLICY_STATUS = PARTIALLY_RESOLVED**:
   「ghost 触发无谓全量重灌/embed」这一成因已消除(稳态零 embed);但真实新内容仍需 GPU/CPU embed 通道的容量决策(PA-0F P1 独立残留),故不算 RESOLVED。
 
-**FINAL STATUS = PASS**
+---
+
+## 10. Planner FINAL REVIEW Correction:Retirement Safety(2026-09-02 追加)
+
+**Planner 对 `7599e8a` 的 FINAL REVIEW = PARTIAL**,发现一个安全缺陷(已确认成立并修正):
+
+### 10.1 缺陷(Planner 发现,本次实现自证)
+
+旧 `_discover_source_docs` 以「抽取覆盖率 ≥80%」判定发现完整,而
+`_reconcile_orphan_vectors` 以「不在 fetch_all 产出的 source_id 集合」为退休证据。
+`WebCrawlConnector.fetch_all()` 的 `accepted` **先于单页抓取记账**:一个仍在
+sitemap/权威源中的页面可能因 HTTP 失败/超时/抽取失败/薄内容被拒而产不出
+RawDocument;只要整体覆盖 ≥80%,该页即被误判「源确认退休」→ 精确但**错误**的删除
+(例:100 accepted / 90 extracted,失败的 10 页中含现存文档 A → A 被误删)。
+精确 UUID 范围不改变「删除对象本身不该删」的性质。
+
+### 10.2 修正(最小实现,基于真实 connector 架构)
+
+**权威源成员资格 ≠ 抽取成功**:
+- `WebCrawlConnector`:新增 `_accepted_urls` 记账(robots 通过即记,先于抓取)+
+  `authoritative_source_ids()`(全量轮返回 accepted URL 的 source_id 集合 ——
+  与 `fetch_deleted` 同一 URL→source_id 推导;增量轮返回 None);
+- `_discover_source_docs` → 返回 `(docs, complete, membership)`;coverage<80% 的
+  完整性门保持不变(不完整 → 一律不退休);
+- `_reconcile_orphan_vectors` 退休判定改用**成员集**:
+  - 孤儿 ∈ 成员集:仍在权威源 → **绝不退休**;若本轮抽取成功 → 账本重建分支
+    (原样);若仅成员(临时失败,G004-C/D)→ `EXTRA_UNRESOLVED_ORPHAN` 保留;
+  - 孤儿 ∉ 成员集且 complete → `EXTRA_CONFIRMED_RETIRED`(proven absent from
+    the successfully enumerated authoritative source set);
+  - 无该原语的连接器(git/fs/woo:抽取即枚举)回退抽取集合,语义不变。
+
+### 10.3 新增负测试(RED→GREEN)
+
+| 用例 | 场景 | 断言 |
+|---|---|---|
+| `test_g004c_member_page_fetch_failure_never_retires` | A 在成员集,页面抓取失败,覆盖 90% | A 不被删除,partial + UNRESOLVED |
+| `test_g004d_member_page_low_content_rejection_never_retires` | A 被薄内容拒绝,覆盖 90% | 同上 |
+| `test_g004e_incomplete_enumeration_never_retires_even_with_membership` | 枚举覆盖率 50% | 任何缺席文档不退休 |
+| `test_g003b_membership_confirmed_absence_still_retires_exactly` | 成员集确认缺席 | 仍按精确 UUID 退休 |
+| `test_authoritative_source_ids_include_failed_and_rejected_pages`(connector 级) | 失败/被拒页 ∈ 成员集 | 原语语义锁定 |
+| `test_authoritative_source_ids_none_on_incremental_round`(connector 级) | 增量轮 | 返回 None |
+
+RED 实证:G004-C/D 在修正前代码上失败(delete_many 被调用 = 误删路径真实存在)。
+
+### 10.4 修订验收证据
+
+- **AC-04(修订)= PASS**:退休证据 = `authoritative_source_ids()` 权威成员集
+  (枚举成员),非抽取成功集合;G003/G003b 正向 + G004-C/D 反向。
+- **AC-05(修订)= PASS**:G004-C/D 证明单页瞬时失败在任意聚合覆盖率(90%)
+  下均不触发退休;G004-E + 既有 G004a/G004b 覆盖枚举失败/低覆盖。
+
+### 10.5 修正后回归(真实执行)
+
+| 命令 | 结果 |
+|---|---|
+| `pytest tests/pipeline/test_sync_lifecycle.py tests/scripts/test_sync_coverage.py tests/services/test_vector_consistency.py` | 27 passed |
+| `pytest tests/connectors/test_web_crawl.py` | 18 passed(含 2 例新原语测试) |
+| `pytest tests/pipeline tests/scripts tests/services tests/db tests/connectors tests/retrieval tests/utils tests/auth` | **532 passed / 3 skipped** |
+| black(sync.py / web_crawl.py / vector_consistency.py / 2 测试文件) | 通过 |
+
+修正涉及文件:`backend/connectors/web_crawl.py`、`scripts/sync.py`、
+`tests/pipeline/test_sync_lifecycle.py`、`tests/connectors/test_web_crawl.py`。
+CORRECTION_COMMIT 见交付。
+
+**FINAL STATUS = PASS(含 Planner 修正)**
