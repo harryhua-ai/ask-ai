@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import KpiCard from "@/components/observability/KpiCard";
+import LoadError from "@/components/LoadError";
 import TimeFilter from "@/components/observability/TimeFilter";
 import StackedBar from "@/components/observability/StackedBar";
 import IntentColumn from "@/components/observability/IntentColumn";
@@ -20,7 +21,7 @@ export default function BusinessOverview() {
   const [timeRange, setTimeRange] = useState<TimeRange>({ range: "7d" });
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["business-overview", timeRange],
     queryFn: () => {
       if (timeRange.from && timeRange.to) {
@@ -81,9 +82,11 @@ export default function BusinessOverview() {
         </div>
       </div>
 
-      {isLoading && <div className="text-[var(--t2)]">加载中...</div>}
+      {isError && !data && <LoadError error={error} onRetry={refetch} />}
+      {isError && data && <LoadError error={error} onRetry={refetch} compact />}
+      {isLoading && !isError && <div className="text-[var(--t2)]">加载中...</div>}
 
-      {data && (
+      {data && !isError && (
         <>
           {/* 服务总览 KPI 行 */}
           <div className="grid grid-cols-4 gap-4">

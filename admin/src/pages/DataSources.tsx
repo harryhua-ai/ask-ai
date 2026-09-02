@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import LoadError from "@/components/LoadError";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -343,7 +344,7 @@ function dsToForm(ds: DataSource): FormValues {
 export default function DataSources() {
   const [syncingIds, setSyncingIds] = useState<Set<string>>(() => new Set());
   const [triggeredAt, setTriggeredAt] = useState<Record<string, number>>(() => ({}));
-  const { data: sources, isLoading } = useDataSources({
+  const { data: sources, isLoading, isError, error, refetch } = useDataSources({
     refetchInterval: syncingIds.size > 0 ? 5000 : false,
   });
   // DSH-02:数据源健康的主展示位。窗口 30 天历史可靠性按 source_id join 当前列表;
@@ -1045,7 +1046,13 @@ export default function DataSources() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {isLoading ? (
+          {isError && !sources ? (
+            <TableRow>
+              <TableCell colSpan={8} className="text-center">
+                <LoadError error={error} onRetry={refetch} />
+              </TableCell>
+            </TableRow>
+          ) : isLoading ? (
             <TableRow>
               <TableCell colSpan={8} className="text-center">加载中...</TableCell>
             </TableRow>

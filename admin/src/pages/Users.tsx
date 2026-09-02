@@ -8,6 +8,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@
 import { Pagination } from "@/components/Pagination";
 import { useAuth } from "@/hooks/useAuth";
 import NoPermission from "@/components/NoPermission";
+import LoadError from "@/components/LoadError";
 
 const PAGE_SIZE = 20;
 
@@ -18,7 +19,7 @@ export default function Users() {
     return <NoPermission />;
   }
   const [page, setPage] = useState(1);
-  const { data: users, isLoading } = useUsers(page, PAGE_SIZE);
+  const { data: users, isLoading, isError, error, refetch } = useUsers(page, PAGE_SIZE);
   const createUser = useCreateUser();
   const deleteUser = useDeleteUser();
   const [showCreate, setShowCreate] = useState(false);
@@ -74,7 +75,13 @@ export default function Users() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {isLoading ? (
+          {isError ? (
+            <TableRow>
+              <TableCell colSpan={5}>
+                <LoadError error={error} onRetry={refetch} />
+              </TableCell>
+            </TableRow>
+          ) : isLoading ? (
             <TableRow><TableCell colSpan={5} className="text-center">加载中...</TableCell></TableRow>
           ) : users?.map((u) => (
             <TableRow key={u.id}>

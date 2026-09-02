@@ -10,12 +10,17 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import type { Customization } from "@/types/api";
+import { useAuth } from "@/hooks/useAuth";
+import LoadError from "@/components/LoadError";
 
 /** 与后端 VALID_CHANNELS 对齐。 */
 const CHANNELS = ["widget", "discord", "whatsapp", "mcp"] as const;
 
 export default function Customizations() {
-  const { data: customizations, isLoading } = useCustomizations();
+  const { user } = useAuth();
+  // AFP-CLOSURE-01 §6.5:viewer 只读——编辑/保存/绑定控件不可操作
+  const canWrite = user?.role === "admin" || user?.role === "editor";
+  const { data: customizations, isLoading, isError, error, refetch } = useCustomizations();
   const { data: bindings } = useBindings();
   const updateCust = useUpdateCustomization();
   const updateBinding = useUpdateBinding();
@@ -56,8 +61,10 @@ export default function Customizations() {
                 {ch}
               </Label>
               <select
-                className="h-9 w-full rounded-md border px-2 text-sm"
+                className="h-9 w-full rounded-md border px-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                 value={bindingMap.get(ch) || ""}
+                disabled={!canWrite}
+                title={canWrite ? undefined : "只读账号(viewer)不可修改渠道绑定"}
                 onChange={(e) =>
                   updateBinding.mutate({
                     channel: ch,
@@ -79,10 +86,13 @@ export default function Customizations() {
 
       {/* 对话接入 列表 */}
       <div className="space-y-3">
-        {isLoading ? (
+        {isError && !customizations && (
+          <LoadError error={error} onRetry={refetch} />
+        )}
+        {isLoading && !isError ? (
           <div className="text-center">加载中...</div>
         ) : (
-          customizations?.map((cust) => (
+          customizations && !isError && customizations.map((cust) => (
             <div key={cust.id} className="rounded-lg border bg-card p-4">
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -92,17 +102,19 @@ export default function Customizations() {
                     {cust.is_active ? "启用" : "停用"}
                   </Badge>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    editingId === cust.id
-                      ? setEditingId(null)
-                      : startEdit(cust)
-                  }
-                >
-                  {editingId === cust.id ? "取消" : "编辑"}
-                </Button>
+                {canWrite && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      editingId === cust.id
+                        ? setEditingId(null)
+                        : startEdit(cust)
+                    }
+                  >
+                    {editingId === cust.id ? "取消" : "编辑"}
+                  </Button>
+                )}
               </div>
               {editingId === cust.id ? (
                 <div className="space-y-3">

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import LoadError from "@/components/LoadError";
 import KpiCard from "@/components/observability/KpiCard";
 import DualTrendBar from "@/components/observability/DualTrendBar";
 import DualStageBar from "@/components/observability/DualStageBar";
@@ -91,7 +92,7 @@ export default function Analytics() {
 }
 
 function TechPerfTab({ range }: { range: string }) {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["tech-performance", range],
     queryFn: () => fetchTechPerformance(range),
   });
@@ -101,6 +102,7 @@ function TechPerfTab({ range }: { range: string }) {
     queryFn: () => fetchSourceHealth(30),
   });
 
+  if (isError && !data) return <LoadError error={error} onRetry={refetch} />;
   if (isLoading) return <div className="text-[var(--t2)]">加载中...</div>;
   if (!data) return null;
 
@@ -392,7 +394,7 @@ function SourceHealthSummary({
 
 function KnowledgeGapsTab() {
   const [status, setStatus] = useState<string | undefined>();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["coverage-gaps", status],
     queryFn: () => fetchCoverageGaps(status),
   });
@@ -492,7 +494,9 @@ function KnowledgeGapsTab() {
             <option value="resolved">已解决</option>
           </select>
         </div>
-        {isLoading ? (
+        {isError && !data ? (
+          <LoadError error={error} onRetry={refetch} />
+        ) : isLoading ? (
           <div className="text-[var(--t2)]">加载中...</div>
         ) : data && data.items.length > 0 ? (
           <Table>

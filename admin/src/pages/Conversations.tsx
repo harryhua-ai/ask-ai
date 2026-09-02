@@ -12,6 +12,7 @@ import {
   type ConversationFilters,
 } from "@/hooks/useConversations";
 import { useAuth } from "@/hooks/useAuth";
+import LoadError from "@/components/LoadError";
 import { fetchTraces, type TraceData } from "@/lib/api/traces";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -117,7 +118,7 @@ export default function Conversations() {
       page: 1,
     }));
   }, [toggles.retry, toggles.failure, toggles.feedback, toggles.clarify]);
-  const { data, isLoading } = useConversations(filters);
+  const { data, isLoading, isError, error, refetch } = useConversations(filters);
   const { data: detail } = useConversationDetail(selectedId);
   const tagMutation = useTagConversation();
   const batchTag = useBatchTag();
@@ -264,7 +265,9 @@ export default function Conversations() {
         </div>
 
         <div className="space-y-2">
-          {isLoading ? (
+          {isError && !data ? (
+            <LoadError error={error} onRetry={refetch} />
+          ) : isLoading ? (
             <div className="text-center py-8 text-muted-foreground">加载中...</div>
           ) : visibleItems.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground" data-empty-state>

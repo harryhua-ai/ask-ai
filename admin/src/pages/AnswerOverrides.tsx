@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import LoadError from "@/components/LoadError";
 import { useLocation } from "react-router-dom";
 import {
   useAnswerOverrides,
@@ -38,7 +39,7 @@ const EMPTY_FORM: OverrideForm = {
 };
 
 export default function AnswerOverrides() {
-  const { data, isLoading } = useAnswerOverrides();
+  const { data, isLoading, isError, error, refetch } = useAnswerOverrides();
   const createOverride = useCreateOverride();
   const updateOverride = useUpdateOverride();
   const deleteOverride = useDeleteOverride();
@@ -157,7 +158,13 @@ export default function AnswerOverrides() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {isLoading ? (
+          {isError && !data ? (
+            <TableRow>
+              <TableCell colSpan={6} className="text-center">
+                <LoadError error={error} onRetry={refetch} />
+              </TableCell>
+            </TableRow>
+          ) : isLoading ? (
             <TableRow>
               <TableCell colSpan={6} className="text-center">加载中...</TableCell>
             </TableRow>

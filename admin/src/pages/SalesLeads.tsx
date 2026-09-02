@@ -24,6 +24,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useAuth } from "@/hooks/useAuth";
+import LoadError from "@/components/LoadError";
 import {
   fetchSalesLead,
   fetchSalesLeadThread,
@@ -241,7 +242,7 @@ export default function SalesLeads() {
   const [searchText, setSearchText] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["sales-leads", status, contactOnly, searchText],
     queryFn: () =>
       fetchSalesLeads({
@@ -319,7 +320,13 @@ export default function SalesLeads() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading ? (
+            {isError && !data ? (
+              <TableRow>
+                <TableCell colSpan={8} className="h-24 text-center">
+                  <LoadError error={error} onRetry={refetch} />
+                </TableCell>
+              </TableRow>
+            ) : isLoading ? (
               <TableRow>
                 <TableCell colSpan={8} className="h-24 text-center">
                   <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
