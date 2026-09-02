@@ -133,6 +133,44 @@ describe("renderMarkdownSafe", () => {
   });
 });
 
+// CIT-01 引用索引完整性 —— Widget 展示层回归钉:
+// 后端已保证编号对齐 + 悬空标记下行前剔除;此处钉住展示层最后防线行为,
+// 防止未来渲染回归重新引入错位归因 / 悬空标记可见。
+describe("citation integrity (CIT-01) display layer", () => {
+  const sources: SourceLink[] = [
+    { url: "https://github.com/camthink-ai/wiki/blob/main/a.md", title: "a", type: "github" },
+    { url: "https://github.com/camthink-ai/wiki/blob/main/b.md", title: "b", type: "github" },
+  ];
+
+  it("swallows [0] (never rendered as text or badge)", () => {
+    const out = renderMarkdownSafe("text [0] here", sources);
+    expect(out).not.toContain("[0]");
+    expect(out).not.toContain("ask-ai-ref");
+  });
+
+  it("maps marker [N] to the Nth visible source href (aligned numbering)", () => {
+    document.body.innerHTML = renderMarkdownSafe("claim A [1] and claim B [2]", sources);
+    const badges = Array.from(document.querySelectorAll("a.ask-ai-ref"));
+    expect(badges).toHaveLength(2);
+    expect(badges[0]!.getAttribute("href")).toBe(sources[0]!.url);
+    expect(badges[1]!.getAttribute("href")).toBe(sources[1]!.url);
+    expect(badges[0]!.textContent).toBe("1");
+    expect(badges[1]!.textContent).toBe("2");
+  });
+
+  it("leaves [N] inside code blocks untouched (not citations)", () => {
+    const out = renderMarkdownSafe("```\narr[9] = 1\n```", sources);
+    expect(out).toContain("<pre>");
+    expect(out).toContain("arr[9]");
+    expect(out).not.toContain("ask-ai-ref");
+  });
+
+  it("renders no badge when answer cites but no sources exist", () => {
+    const out = renderMarkdownSafe("text [1] here", []);
+    expect(out).not.toContain("ask-ai-ref");
+  });
+});
+
 describe("isAllowedUrl", () => {
   it("rejects javascript: protocol", () => {
     expect(isAllowedUrl("javascript:alert(1)")).toBe(false);

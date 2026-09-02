@@ -102,8 +102,7 @@ export function ProviderEditDialog({ provider, onSave, onClose }: Props) {
               onChange={(e) => setApiBase(e.target.value)}
             />
             <p className="text-xs text-muted-foreground">
-              默认仅支持 deepseek / openai / anthropic 三家直连;其他供应商需在服务端
-              .env 配置 LLM_ALLOWED_HOSTS 放行后才能保存与拉取
+              自定义 API 地址(含内网/自建网关)需管理员在「端点授权」中显式授权后才能保存与拉取
             </p>
           </div>
 

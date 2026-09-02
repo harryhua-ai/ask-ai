@@ -17,24 +17,36 @@ EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
 
 
 def _infer_markers(trace_type: str, stages: dict) -> dict:
-    """从 trace type + stages 推断标记(retry/clarify/reject_short/degraded)。
+    """从 trace type + stages 推断标记(failure/retry/clarify/reject_short/degraded)。
 
-    Phase 2 推断版(spec §2.4):Phase 3 升级为真实事件字段时 API 契约不变。
-    - retry: stages 任一段含 error/retry_count(与 tech.py _count_flags 同源)
-    - degraded: retrieve.path_counts symbol/boost 全 0(单路检索,与 tech.py 降级检测同源)
+    语义与 tech.py _classify_trace 同源(OBS-03 调查定案):
+    - retry: 仅显式 retry_count 字段算 literal retry(生产 trace 无此字段;
+      error 单独存在是错误证据,不是重试证据,不得虚标重试)
+    - failure: trace type=generation_error(routes.py PC-06 唯一失败持久化
+      路径)或 stage error 且未 recovered
+    - degraded: retrieve.path_counts symbol/boost 全 0(单路检索)
     - clarify/reject_short: 直接看 trace type
     """
     retry = any(
-        isinstance(sd, dict) and (sd.get("error") or sd.get("retry_count"))
+        isinstance(sd, dict) and sd.get("retry_count") for sd in stages.values()
+    )
+    failure = trace_type == "generation_error" or any(
+        isinstance(sd, dict) and sd.get("error") and not sd.get("recovered")
         for sd in stages.values()
     )
-    retrieve_sd = stages.get("retrieve", {})
-    path_counts = retrieve_sd.get("path_counts", {}) if isinstance(retrieve_sd, dict) else {}
-    symbol_count = path_counts.get("symbol", 0) if isinstance(path_counts, dict) else 0
-    boost_count = path_counts.get("boost", 0) if isinstance(path_counts, dict) else 0
-    degraded = symbol_count == 0 and boost_count == 0
+    # 降级判定同 tech.py:仅当 retrieve 阶段真实存在且带 path_counts 证据;
+    # 失败/拒答 trace 无 retrieve 阶段,缺失证据≠降级证据
+    retrieve_sd = stages.get("retrieve")
+    degraded = False
+    if isinstance(retrieve_sd, dict):
+        path_counts = retrieve_sd.get("path_counts")
+        if isinstance(path_counts, dict) and path_counts:
+            degraded = (
+                path_counts.get("symbol", 0) == 0 and path_counts.get("boost", 0) == 0
+            )
     return {
         "retry": retry,
+        "failure": failure,
         "clarify": trace_type == "clarify",
         "reject_short": trace_type == "reject_short",
         "degraded": degraded,
@@ -53,7 +65,12 @@ async def list_conversations(
     date_from: str | None = Query(default=None, description="ISO 日期，如 2026-01-01"),
     date_to: str | None = Query(default=None),
     has_retry: bool | None = Query(
-        default=None, description="Phase 2:异常重试(stages 含 retry_count)"
+        default=None,
+        description="literal 重试(stages 含显式 retry_count 字段;生产路径暂不写入)",
+    ),
+    has_failure: bool | None = Query(
+        default=None,
+        description="真实失败(存在 trace type=generation_error;与 tech.py 失败语义同源)",
     ),
     has_feedback: bool | None = Query(default=None, description="Phase 2:有反馈"),
     has_clarify: bool | None = Query(
@@ -117,7 +134,7 @@ async def list_conversations(
                 )
             )
 
-        # Phase 2:has_retry(stages JSONB 文本含 retry_count,与 _infer_markers 同源)
+        # literal retry(stages JSONB 文本含显式 retry_count 字段)
         if has_retry is True:
             stmt = stmt.where(
                 exists().where(
@@ -129,6 +146,21 @@ async def list_conversations(
                 exists().where(
                     Trace.conversation_id == Conversation.id,
                     Trace.stages.cast(Text).like('%"retry_count":%'),
+                )
+            )
+
+        # 真实失败:存在 generation_error trace(与 tech.py 失败语义同源)
+        if has_failure is True:
+            stmt = stmt.where(
+                exists().where(
+                    Trace.conversation_id == Conversation.id,
+                    Trace.type == "generation_error",
+                )
+            )
+            count_q = count_q.where(
+                exists().where(
+                    Trace.conversation_id == Conversation.id,
+                    Trace.type == "generation_error",
                 )
             )
 

@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 interface ChainChipProps {
+  /** AFP-002:viewer 只读,隐藏编辑弹层与移除/排序入口。 */
+  editable?: boolean;
   order: number;
   providerId: string;
   model: string | null;
@@ -17,12 +19,13 @@ interface ChainChipProps {
 }
 
 export function ChainChip(props: ChainChipProps) {
+  const editable = props.editable !== false;
   const [open, setOpen] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !editable) return;
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
@@ -36,7 +39,7 @@ export function ChainChip(props: ChainChipProps) {
   return (
     <div ref={ref} className="relative inline-block">
       <button
-        onClick={() => setOpen(!open)}
+        onClick={() => (editable ? setOpen(!open) : undefined)}
         className={cn(
           "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors",
           open

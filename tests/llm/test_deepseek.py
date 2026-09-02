@@ -48,9 +48,7 @@ def test_deepseek_generate_returns_llm_response(monkeypatch):
         return FakeResponse()
 
     monkeypatch.setattr("httpx.AsyncClient.post", fake_post)
-    result = asyncio.run(
-        provider.generate(messages=[{"role": "user", "content": "test"}])
-    )
+    result = asyncio.run(provider.generate(messages=[{"role": "user", "content": "test"}]))
     assert isinstance(result, LLMResponse)
     assert "2.5W" in result.content
 
@@ -74,7 +72,9 @@ def _make_provider() -> DeepseekProvider:
 async def test_list_models_returns_ids():
     """/models 返回的 data[].id 被提取为列表。"""
     payload = {"data": [{"id": "m1"}, {"id": "m2"}, {"id": "m3"}]}
-    resp = httpx.Response(200, json=payload, request=httpx.Request("GET", "https://api.test.com/v1/models"))
+    resp = httpx.Response(
+        200, json=payload, request=httpx.Request("GET", "https://api.test.com/v1/models")
+    )
     with patch("backend.llm.deepseek.httpx.AsyncClient") as mock_client_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=resp)
@@ -90,7 +90,9 @@ async def test_list_models_strips_api_base_trailing_slash():
     """api_base 末尾斜杠被 rstrip，不会变成 //models。"""
     prov = DeepseekProvider("t", api_base="https://api.test.com/v1/", api_key="k", model="m")
     payload = {"data": []}
-    resp = httpx.Response(200, json=payload, request=httpx.Request("GET", "https://api.test.com/v1/models"))
+    resp = httpx.Response(
+        200, json=payload, request=httpx.Request("GET", "https://api.test.com/v1/models")
+    )
     with patch("backend.llm.deepseek.httpx.AsyncClient") as mock_client_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=resp)
@@ -122,6 +124,7 @@ async def test_list_models_raises_on_http_error():
 
 
 # ---- generate 重试测试(B1: ReadTimeout 重试一次)----
+
 
 @pytest.mark.asyncio
 async def test_generate_retries_once_on_read_timeout():
@@ -282,9 +285,7 @@ async def test_generate_retries_on_connect_error():
     async def fake_post(url, **kwargs):
         call_count["n"] += 1
         if call_count["n"] == 1:
-            raise httpx.ConnectError(
-                "simulated connect error", request=httpx.Request("POST", url)
-            )
+            raise httpx.ConnectError("simulated connect error", request=httpx.Request("POST", url))
         return FakeResponse()
 
     with patch("backend.llm.deepseek.httpx.AsyncClient") as mock_client_cls:
@@ -353,9 +354,7 @@ async def test_stream_retries_on_read_timeout():
         # 返回值包成 coroutine。
         call_count["n"] += 1
         if call_count["n"] == 1:
-            raise httpx.ReadTimeout(
-                "simulated stream timeout", request=httpx.Request("POST", url)
-            )
+            raise httpx.ReadTimeout("simulated stream timeout", request=httpx.Request("POST", url))
         return FakeStreamCM(FakeStreamResp())
 
     with patch("backend.llm.deepseek.httpx.AsyncClient") as mock_client_cls:
@@ -435,3 +434,154 @@ async def test_stream_no_retry_after_first_chunk():
     assert call_count["n"] == 1, f"已产出后不应重试,实际调用 {call_count['n']} 次"
     # 已产出的 token 仍应被调用方收到
     assert chunks == ["hello"]
+
+
+# ===== Admin P1:空 api_key 不得发 Authorization 头(Illegal header value b'Bearer ') =====
+
+
+@pytest.mark.asyncio
+async def test_list_models_empty_api_key_omits_authorization_header():
+    """api_key 为空(自建无鉴权网关/用户尚未填 token)时不发 Authorization 头。
+
+    根因回归:无条件 `Bearer ` 空头会让 httpx 抛
+    LocalProtocolError: Illegal header value,fetch-models 对免鉴权端点永远失败。
+    """
+    prov = DeepseekProvider("t", api_base="http://100.124.85.19:13000/v1", api_key="", model="m")
+    resp = httpx.Response(200, json={"data": []}, request=httpx.Request("GET", "http://x/models"))
+    with patch("backend.llm.deepseek.httpx.AsyncClient") as mock_client_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=resp)
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = client
+        await prov.list_models()
+        sent_headers = client.get.call_args.kwargs["headers"]
+    assert "Authorization" not in sent_headers
+
+
+@pytest.mark.asyncio
+async def test_list_models_with_api_key_sends_bearer_header():
+    """有 key 时维持 Bearer 头(既有行为锁定)。"""
+    prov = DeepseekProvider("t", api_base="https://api.test.com/v1", api_key="sk-x", model="m")
+    resp = httpx.Response(200, json={"data": []}, request=httpx.Request("GET", "http://x/models"))
+    with patch("backend.llm.deepseek.httpx.AsyncClient") as mock_client_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=resp)
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = client
+        await prov.list_models()
+        sent_headers = client.get.call_args.kwargs["headers"]
+    assert sent_headers == {"Authorization": "Bearer sk-x"}
+
+
+@pytest.mark.asyncio
+async def test_generate_empty_api_key_omits_authorization_header():
+    """generate 同样在空 key 时省略 Authorization 头(与 list_models 一致)。"""
+    prov = DeepseekProvider("t", api_base="https://api.test.com/v1", api_key="", model="m")
+    captured: dict = {}
+
+    async def fake_post(url, headers=None, json=None):
+        captured["headers"] = headers or {}
+
+        class _Resp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "choices": [{"message": {"content": "ok"}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                }
+
+        return _Resp()
+
+    with patch("httpx.AsyncClient.post", side_effect=fake_post):
+        await prov.generate([{"role": "user", "content": "hi"}])
+    assert "Authorization" not in captured["headers"]
+
+
+@pytest.mark.asyncio
+async def test_stream_empty_api_key_omits_authorization_header():
+    """FOLLOW-G005:stream 空.key 不发 Authorization 头(与 generate/list_models 同一助手)。
+
+    回归锁:无条件 'Bearer ' 空值头会让 httpx 在本地抛
+    LocalProtocolError: Illegal header value,widget SSE 与连通性路径
+    对免鉴权网关/未填 token 场景必崩。
+    """
+
+    import httpx
+
+    provider = DeepseekProvider(
+        provider_id="deepseek",
+        api_base="https://api.test.com/v1",
+        api_key="",
+        model="m",
+    )
+
+    class FakeStreamResp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        async def aiter_lines(self):
+            yield "data: [DONE]"
+
+    class FakeStreamCM:
+        def __init__(self, kwargs):
+            self._kwargs = kwargs
+
+        async def __aenter__(self):
+            captured["stream_kwargs"] = self._kwargs
+            return FakeStreamResp()
+
+        async def __aexit__(self, *exc):
+            return False
+
+    captured: dict = {}
+
+    class FakeClient:
+        def stream(self, method, url, **kwargs):
+            captured["method_url"] = (method, url)
+            return FakeStreamCM(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    with patch("backend.llm.deepseek.httpx.AsyncClient", return_value=FakeClient()):
+        chunks = [tok async for tok in provider.stream([{"role": "user", "content": "hi"}])]
+
+    assert chunks == []  # 只有 [DONE],无内容 token
+    method, url = captured["method_url"]
+    assert (method, url) == ("POST", "https://api.test.com/v1/chat/completions")
+    assert "Authorization" not in captured["stream_kwargs"]["headers"]
+
+
+@pytest.mark.asyncio
+async def test_generate_with_api_key_sends_bearer_header():
+    """FOLLOW-G004:generate 有 key 时维持 Authorization: Bearer(既有行为锁定)。"""
+    prov = DeepseekProvider("t", api_base="https://api.test.com/v1", api_key="sk-live", model="m")
+    captured: dict = {}
+
+    async def fake_post(url, headers=None, json=None):
+        captured["headers"] = headers or {}
+
+        class _Resp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "choices": [{"message": {"content": "ok"}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                }
+
+        return _Resp()
+
+    with patch("httpx.AsyncClient.post", side_effect=fake_post):
+        await prov.generate([{"role": "user", "content": "hi"}])
+    assert captured["headers"] == {"Authorization": "Bearer sk-live"}

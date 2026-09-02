@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import KpiCard from "@/components/observability/KpiCard";
+import LoadError from "@/components/LoadError";
 import TimeFilter from "@/components/observability/TimeFilter";
 import StackedBar from "@/components/observability/StackedBar";
 import IntentColumn from "@/components/observability/IntentColumn";
@@ -20,7 +21,7 @@ export default function BusinessOverview() {
   const [timeRange, setTimeRange] = useState<TimeRange>({ range: "7d" });
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["business-overview", timeRange],
     queryFn: () => {
       if (timeRange.from && timeRange.to) {
@@ -81,14 +82,16 @@ export default function BusinessOverview() {
         </div>
       </div>
 
-      {isLoading && <div className="text-[var(--t2)]">加载中...</div>}
+      {isError && !data && <LoadError error={error} onRetry={refetch} />}
+      {isError && data && <LoadError error={error} onRetry={refetch} compact />}
+      {isLoading && !isError && <div className="text-[var(--t2)]">加载中...</div>}
 
-      {data && (
+      {data && !isError && (
         <>
           {/* 服务总览 KPI 行 */}
           <div className="grid grid-cols-4 gap-4">
             <KpiCard
-              label="总服务客户"
+              label="服务对话数"
               value={data.service.total}
               delta={
                 data.service.prev_total != null && data.service.prev_total > 0
@@ -101,9 +104,9 @@ export default function BusinessOverview() {
             />
             <KpiCard label="销售咨询" value={data.service.intent_dist.commercial} />
             <KpiCard
-              label="有效线索"
-              value={data.leads.valid}
-              baseline={`潜在 ${data.leads.potential}`}
+              label="销售线索"
+              value={data.leads.potential}
+              baseline={`合格 ${data.leads.qualified} · 可联系 ${data.leads.contactable}`}
             />
             <KpiCard
               label="满意度"
@@ -215,23 +218,41 @@ export default function BusinessOverview() {
                   销售线索
                 </h2>
                 <Link
-                  to="/conversations?intent=commercial"
+                  to="/leads"
                   className="text-[12px] text-[var(--acc)] hover:underline"
                 >
-                  查看销售对话
+                  查看线索列表
                 </Link>
               </div>
               <div className="space-y-2">
                 <div className="flex justify-between text-[13px]">
-                  <span className="text-[var(--t2)]">有效线索</span>
+                  <span className="text-[var(--t2)]">商业对话</span>
                   <span className="font-medium text-[var(--t1)]">
-                    {data.leads.valid}
+                    {data.leads.commercial_conversations}
                   </span>
                 </div>
                 <div className="flex justify-between text-[13px]">
-                  <span className="text-[var(--t2)]">潜在客户</span>
+                  <span className="text-[var(--t2)]">潜在线索</span>
                   <span className="font-medium text-[var(--t1)]">
                     {data.leads.potential}
+                  </span>
+                </div>
+                <div className="flex justify-between text-[13px]">
+                  <span className="text-[var(--t2)]">合格线索</span>
+                  <span className="font-medium text-[var(--t1)]">
+                    {data.leads.qualified}
+                  </span>
+                </div>
+                <div className="flex justify-between text-[13px]">
+                  <span className="text-[var(--t2)]">可联系线索</span>
+                  <span className="font-medium text-[var(--t1)]">
+                    {data.leads.contactable}
+                  </span>
+                </div>
+                <div className="flex justify-between text-[13px]">
+                  <span className="text-[var(--t2)]">已移交销售</span>
+                  <span className="font-medium text-[var(--t1)]">
+                    {data.leads.handed_off}
                   </span>
                 </div>
                 {data.leads.hot_products.length > 0 && (

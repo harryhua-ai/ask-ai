@@ -89,20 +89,29 @@ class LLMRouter:
         raise RuntimeError(f"All LLM providers unavailable for task={task}: {last_error}")
 
     async def stream(self, messages: list[dict], task: str = "generation", **kwargs):
-        """按链路顺序尝试各供应商的流式生成。"""
+        """按链路顺序尝试各供应商的流式生成。
+
+        与供应商层的 produced 守卫语义一致:仅允许在**首个 chunk 产出前**
+        切换下一供应商;已向调用方产出 token 后再失败必须立即抛出 ——
+        此时切换供应商会从头重放整段答案,导致 SSE 已发出内容重复。
+        """
         last_error = None
         for item in self._get_chain(task):
             pid, model = item["provider"], item.get("model")
             provider = self._providers.get(pid)
             if provider is None:
                 continue
+            produced = False  # 本次尝试是否已向调用方 yield 过 chunk
             try:
                 if await provider.health_check():
                     call_kwargs = {**kwargs, "model": model} if model else kwargs
                     async for chunk in provider.stream(messages, **call_kwargs):
+                        produced = True
                         yield chunk
                     return
             except Exception as e:  # noqa: BLE001, S112 - 故障切换需捕获所有异常
+                if produced:
+                    raise
                 last_error = e
                 continue
         raise RuntimeError(f"All LLM providers unavailable for task={task}: {last_error}")

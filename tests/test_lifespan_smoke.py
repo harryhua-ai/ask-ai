@@ -43,7 +43,7 @@ def test_api_base_rejects_private_literal_addresses_in_dev(url, monkeypatch):
     monkeypatch.delenv("APP_MODE", raising=False)
     monkeypatch.delenv("LLM_ALLOWED_HOSTS", raising=False)
 
-    with pytest.raises(ValueError, match="禁止 api_base 指向内网地址"):
+    with pytest.raises(ValueError, match="默认拒绝"):
         validate_llm_api_base(url)
 
 
@@ -83,13 +83,20 @@ async def test_build_llm_state_rejects_untrusted_runtime_api_base():
             "backend.main.validate_llm_api_base",
             side_effect=ValueError("private address"),
         ) as validate_api_base,
+        patch(
+            "backend.api.admin.llm_providers.load_endpoint_authorization",
+            new=AsyncMock(return_value=(frozenset(), frozenset())),
+        ),
         patch("backend.main.LLMRegistry.create") as create_provider,
     ):
         providers, routing, skipped, db_has_providers = await _build_llm_state(
             settings, MagicMock()
         )
 
-    validate_api_base.assert_called_once_with(config["api_base"])
+    # P1:校验必须携带 DB 显式授权集合(运行时与保存路径同一信任存储)
+    validate_api_base.assert_called_once_with(
+        config["api_base"], authorized_public=frozenset(), authorized_private=frozenset()
+    )
     create_provider.assert_not_called()
     assert providers == {}
     assert routing == {}
@@ -103,9 +110,15 @@ async def test_build_llm_state_distinguishes_all_disabled_db_providers():
     from backend.main import _build_llm_state
 
     settings = SimpleNamespace(encryption_key="test-encryption-key")
-    with patch(
-        "backend.main.load_llm_config_from_db",
-        new=AsyncMock(return_value=([], {"generation": []})),
+    with (
+        patch(
+            "backend.main.load_llm_config_from_db",
+            new=AsyncMock(return_value=([], {"generation": []})),
+        ),
+        patch(
+            "backend.api.admin.llm_providers.load_endpoint_authorization",
+            new=AsyncMock(return_value=(frozenset(), frozenset())),
+        ),
     ):
         providers, routing, skipped, db_has_providers = await _build_llm_state(
             settings, MagicMock()

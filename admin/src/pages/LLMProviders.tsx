@@ -15,7 +15,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ChainChip } from "@/components/ChainChip";
+import { useAuth } from "@/hooks/useAuth";
 import { ProviderCredentialDialog } from "@/components/ProviderCredentialDialog";
+import { EndpointAuthDialog } from "@/components/EndpointAuthDialog";
+import { ShieldCheck } from "lucide-react";
 import { ProviderEditDialog } from "@/components/ProviderEditDialog";
 import { AddToTaskDialog } from "@/components/AddToTaskDialog";
 import { cn } from "@/lib/utils";
@@ -45,6 +48,8 @@ function getChain(
 }
 
 export default function LLMProviders() {
+  const { user } = useAuth();
+  const canWrite = user?.role === "admin" || user?.role === "editor";
   const { data: providers } = useLLMProviders();
   const { data: routing } = useLLMRouting();
   const { data: localModels } = useLocalModels();
@@ -55,6 +60,7 @@ export default function LLMProviders() {
   const createProvider = useCreateProvider();
 
   const [credOpen, setCredOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [addTask, setAddTask] = useState<string | null>(null);
 
@@ -125,16 +131,22 @@ export default function LLMProviders() {
             按流水线环节配置各阶段模型 · 改完点应用变更生效
           </p>
         </div>
+        {canWrite && (
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => setCredOpen(true)}>
             <SlidersHorizontal className="mr-1.5 h-3.5 w-3.5" />
             供应商凭证
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setAuthOpen(true)}>
+            <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
+            端点授权
           </Button>
           <Button size="sm" onClick={() => reload.mutate()} disabled={reload.isPending}>
             <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", reload.isPending && "animate-spin")} />
             {reload.isPending ? "重载中..." : "应用变更"}
           </Button>
         </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -183,6 +195,7 @@ export default function LLMProviders() {
                       [];
                     return (
                       <ChainChip
+                        editable={canWrite}
                         key={item.provider + i}
                         order={i + 1}
                         providerId={item.provider}
@@ -197,6 +210,7 @@ export default function LLMProviders() {
                       />
                     );
                   })}
+                  {canWrite && (
                   <Button
                     variant="outline"
                     size="sm"
@@ -206,6 +220,7 @@ export default function LLMProviders() {
                     <Plus className="h-3 w-3" />
                     添加
                   </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -246,6 +261,7 @@ export default function LLMProviders() {
           onClose={() => setCredOpen(false)}
         />
       )}
+      {authOpen && <EndpointAuthDialog onClose={() => setAuthOpen(false)} />}
       {editProvider && (
         <ProviderEditDialog
           provider={editProvider}

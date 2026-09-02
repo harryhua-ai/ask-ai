@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
+import { useAuth } from "@/hooks/useAuth";
+import LoadError from "@/components/LoadError";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -10,6 +12,7 @@ import {
   useToggleDataSource,
   useTriggerSync,
   useTriggerSyncAll,
+  useSourceHealth,
   fetchPreviewBranches,
   fetchPreviewFileTypes,
   uploadSourceFiles,
@@ -21,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { DirPicker } from "@/components/DirPicker";
 import type { DataSource } from "@/types/api";
+import type { SourceHealthItem } from "@/lib/api/techInsight";
 import { toast } from "sonner";
 import { toUploadItems, filterByWhitelist, isJunkPath } from "@/utils/upload";
 import { apiFetch } from "@/lib/api";
@@ -128,6 +132,48 @@ function formatSyncTime(iso: string | null | undefined): string {
   if (Number.isNaN(d.getTime())) return "—";
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// ==================== DSH-01/02:数据源健康语义 ====================
+// 当前态(最近一次同步,来自 /data-sources 的 last_sync_*)与
+// 历史可靠性(窗口内成功率,来自 /analytics/source-health)分开呈现,
+// 两者可以合法共存(如"最新成功 + 近 30 天不稳定"),措辞不共用"健康"一词。
+
+/** 最新一次同步状态的展示元数据。 */
+const LATEST_STATUS_META: Record<string, { label: string; variant: "success" | "destructive" | "warning" } | undefined> = {
+  success: { label: "成功", variant: "success" },
+  failed: { label: "失败", variant: "destructive" },
+  partial: { label: "补齐", variant: "warning" },
+};
+
+/** 历史可靠性(health)结论的展示元数据,阈值语义由后端判定。 */
+const HEALTH_META: Record<
+  string,
+  { label: string; variant: "success" | "destructive" | "warning" | "secondary" | "outline" } | undefined
+> = {
+  healthy: { label: "正常", variant: "success" },
+  degraded: { label: "不稳定", variant: "warning" },
+  critical: { label: "严重", variant: "destructive" },
+  insufficient_data: { label: "样本不足", variant: "secondary" },
+  disabled: { label: "已禁用", variant: "outline" },
+};
+
+/** 历史可靠性明细(悬停 title):分子/分母/窗口全量可见,partial 单列。 */
+function healthTooltipTitle(h: SourceHealthItem): string {
+  return (
+    `近 ${h.window_days} 天 ${h.total_syncs} 次同步:` +
+    `${h.success_syncs} 次成功 / ${h.partial_syncs} 次补齐 / ${h.failed_syncs} 次失败` +
+    `(成功率按次数计,补齐不计入成功)`
+  );
+}
+
+/** 历史可靠性一行文案:带窗口与分母,样本不足时拒绝给出百分比。 */
+function healthHistoryLine(h: SourceHealthItem): string {
+  if (h.health === "insufficient_data") {
+    return h.total_syncs > 0 ? `仅 ${h.total_syncs} 次同步,暂不评估` : "暂无同步记录";
+  }
+  const pct = Math.round(h.sync_success_rate * 100);
+  return `${pct}% 成功 · 近${h.window_days}天 ${h.total_syncs} 次`;
 }
 
 /** config 取字符串字段(非字符串/缺失返回空串)。 */
@@ -298,9 +344,18 @@ function dsToForm(ds: DataSource): FormValues {
 export default function DataSources() {
   const [syncingIds, setSyncingIds] = useState<Set<string>>(() => new Set());
   const [triggeredAt, setTriggeredAt] = useState<Record<string, number>>(() => ({}));
-  const { data: sources, isLoading } = useDataSources({
+  const { data: sources, isLoading, isError, error, refetch } = useDataSources({
     refetchInterval: syncingIds.size > 0 ? 5000 : false,
   });
+  // DSH-02:数据源健康的主展示位。窗口 30 天历史可靠性按 source_id join 当前列表;
+  // 同步进行中与列表同节奏 5s 轮询,同步完成后健康态即时跟进。
+  const { data: healthData } = useSourceHealth({
+    refetchInterval: syncingIds.size > 0 ? 5000 : false,
+  });
+  const healthMap = useMemo(
+    () => new Map((healthData?.items ?? []).map((h) => [h.source_id, h])),
+    [healthData],
+  );
   const createDs = useCreateDataSource();
   const updateDs = useUpdateDataSource();
   const deleteDs = useDeleteDataSource();
@@ -543,6 +598,7 @@ export default function DataSources() {
     setValue("branches", next.join(", "), { shouldDirty: true });
   };
 
+  const { user } = useAuth();
   const handleDelete = async (id: string) => {
     if (!window.confirm(`确定删除数据源 ${id} 吗?`)) return;
     await deleteDs.mutateAsync(id);
@@ -554,6 +610,8 @@ export default function DataSources() {
     triggerSync.mutate(ds.id);
   };
 
+  const canWrite =
+    user?.role === "admin" || user?.role === "editor";
   const handleSyncAll = async () => {
     // 后端顺序同步所有启用源(一个后台任务,避免并发 GPU OOM);
     // 把返回的 source_ids 批量入 syncingIds + triggeredAt,复用现有轮询逐个检测完成。
@@ -640,6 +698,7 @@ export default function DataSources() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">数据源管理</h1>
+        {canWrite && (
         <div className="flex gap-2">
           <Button
             variant="outline"
@@ -650,6 +709,7 @@ export default function DataSources() {
           </Button>
           <Button onClick={openCreate}>新增数据源</Button>
         </div>
+        )}
       </div>
       {showForm && (
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-3 rounded-lg border bg-card p-4">
@@ -978,21 +1038,35 @@ export default function DataSources() {
             <TableHead>产品线</TableHead>
             <TableHead>类型</TableHead>
             <TableHead>状态</TableHead>
-            <TableHead>同步间隔</TableHead>
+            <TableHead>健康 (近30天)</TableHead>
             <TableHead>最新同步</TableHead>
+            <TableHead>内容</TableHead>
+            <TableHead>同步间隔</TableHead>
             <TableHead>操作</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {isLoading ? (
+          {isError && !sources ? (
             <TableRow>
-              <TableCell colSpan={6} className="text-center">加载中...</TableCell>
+              <TableCell colSpan={8} className="text-center">
+                <LoadError error={error} onRetry={refetch} />
+              </TableCell>
+            </TableRow>
+          ) : isLoading ? (
+            <TableRow>
+              <TableCell colSpan={8} className="text-center">加载中...</TableCell>
             </TableRow>
           ) : sources?.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="text-center text-muted-foreground">暂无数据源</TableCell>
+              <TableCell colSpan={8} className="text-center text-muted-foreground">暂无数据源</TableCell>
             </TableRow>
-          ) : sources?.map((ds) => (
+          ) : sources?.map((ds) => {
+            const health = healthMap.get(ds.id);
+            const healthMeta = health ? HEALTH_META[health.health] : undefined;
+            const latestMeta = ds.last_sync_status
+              ? LATEST_STATUS_META[ds.last_sync_status]
+              : undefined;
+            return (
             <TableRow key={ds.id}>
               <TableCell>
                 <div className="leading-tight">{ds.product}</div>
@@ -1008,16 +1082,62 @@ export default function DataSources() {
                   {ds.enabled ? "启用" : "禁用"}
                 </Badge>
               </TableCell>
-              <TableCell>{ds.sync_interval}</TableCell>
               <TableCell>
-                <span title={ds.last_sync ?? "暂无同步记录"}>{formatSyncTime(ds.last_sync)}</span>
-                {ds.last_sync_status === "partial" && (
-                  <Badge variant="warning" className="ml-2">
-                    {ds.last_sync_error ?? "已补齐缺口"}
-                  </Badge>
+                {healthMeta && health ? (
+                  <div className="leading-tight">
+                    <Badge variant={healthMeta.variant} title={healthTooltipTitle(health)}>
+                      {healthMeta.label}
+                    </Badge>
+                    {health.health !== "disabled" && (
+                      <div
+                        className="mt-0.5 text-xs text-muted-foreground"
+                        title={healthTooltipTitle(health)}
+                      >
+                        {healthHistoryLine(health)}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
                 )}
               </TableCell>
+              <TableCell>
+                <div className="leading-tight">
+                  {latestMeta ? (
+                    <Badge variant={latestMeta.variant}>{latestMeta.label}</Badge>
+                  ) : ds.last_sync ? (
+                    <Badge variant="secondary">未知</Badge>
+                  ) : (
+                    <Badge variant="outline">从未同步</Badge>
+                  )}
+                  <span
+                    className="ml-2 text-xs"
+                    title={ds.last_sync ? formatSyncTime(ds.last_sync) : "暂无同步记录"}
+                  >
+                    {formatSyncTime(ds.last_sync)}
+                  </span>
+                </div>
+                {(ds.last_sync_status === "failed" || ds.last_sync_status === "partial") &&
+                  ds.last_sync_error && (
+                    <div
+                      className="mt-0.5 max-w-[180px] truncate text-xs text-destructive"
+                      title={ds.last_sync_error}
+                    >
+                      {ds.last_sync_error}
+                    </div>
+                  )}
+              </TableCell>
+              <TableCell>
+                <span
+                  className="text-xs"
+                  title={health ? `${health.doc_count} 篇文档 / ${health.chunk_count} 个分块` : undefined}
+                >
+                  {health ? `${health.doc_count} 篇` : "—"}
+                </span>
+              </TableCell>
+              <TableCell>{ds.sync_interval}</TableCell>
               <TableCell className="space-x-2">
+                {canWrite && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -1026,6 +1146,9 @@ export default function DataSources() {
                 >
                   {syncingIds.has(ds.id) ? "同步中..." : "同步"}
                 </Button>
+                )}
+                {canWrite && (
+                <>
                 <Button size="sm" variant="outline" onClick={() => openEdit(ds)}>
                   编辑
                 </Button>
@@ -1037,9 +1160,12 @@ export default function DataSources() {
                 >
                   删除
                 </Button>
+                </>
+                )}
               </TableCell>
             </TableRow>
-          ))}
+            );
+          })}
         </TableBody>
       </Table>
       )}

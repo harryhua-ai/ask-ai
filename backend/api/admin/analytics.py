@@ -362,6 +362,11 @@ async def gap_trends(
 # Source Health — 数据源健康度
 # ----------------------------------------------------------------------- #
 
+# DSH-01:可靠性结论的最小样本数。窗口内同步次数低于该值时不给
+# healthy/degraded/critical 结论(health="insufficient_data"),避免
+# 用 1~2 次运行伪造 100% 或 0% 的可靠性印象。
+MIN_SYNC_RUNS = 3
+
 
 @router.get("/source-health")
 async def source_health(
@@ -369,24 +374,73 @@ async def source_health(
     request: Request,
     days: int = Query(default=30, ge=1, le=365),
 ) -> dict[str, Any]:
-    """数据源健康度:同步成功率 + 文档数 + 最近同步(viewer+ 可访问)。"""
+    """数据源健康度:当前态(最近一次同步)+ 历史可靠性(窗口内成功率)。
+
+    语义(DSH-01,产品契约"当前 vs 历史"显式化):
+    - 历史可靠性 = 窗口 ``days``(默认 30 天)内 ``sync_log`` 中
+      ``status=success`` 的占比。``partial``(一致性校验自愈)计入分母、
+      不计入成功数——与 T28 数学口径一致,但分子/分母/窗口全部显式返回
+      (window_days / success_syncs / partial_syncs / failed_syncs),
+      不再出现无法解释的裸百分比。
+    - ``health`` 是管理员可操作的结论:
+        disabled          数据源已禁用(禁用 ≠ 不健康,不作可靠性评价);
+        insufficient_data 启用但窗口内同步次数 < MIN_SYNC_RUNS,样本不足;
+        healthy / degraded / critical  既有阈值不变(≥0.9 / ≥0.5 / <0.5)。
+    - 当前态单独透出:last_sync / last_sync_status / last_sync_error
+      (全部时间范围内最近一次尝试,与 /data-sources 列表同口径),
+      供 UI 并排展示"现在有没有问题" vs "过去稳不稳定"。
+    - 列表以 data_sources 全表驱动(从未同步的源也出现,零历史不缺席),
+      sync_log 中有而 data_sources 无的幽灵行保持可见(product=unknown)。
+    """
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     cutoff = datetime.now(UTC) - timedelta(days=days)
 
     async with factory() as session:
+        # 窗口内同步聚合(口径与 T28 相同:次数、成功、失败)
         sync_q = (
             select(
                 SyncLog.source_id,
-                SyncLog.source_type,
                 func.count().label("total_syncs"),
                 func.count().filter(SyncLog.status == "success").label("success_syncs"),
                 func.count().filter(SyncLog.status == "failed").label("failed_syncs"),
-                func.max(SyncLog.started_at).label("last_sync"),
+                func.count().filter(SyncLog.status == "partial").label("partial_syncs"),
             )
             .where(SyncLog.started_at >= cutoff)
-            .group_by(SyncLog.source_id, SyncLog.source_type)
+            .group_by(SyncLog.source_id)
         )
         sync_rows = (await session.execute(sync_q)).all()
+
+        # 当前态:全部时间内最近一次同步尝试(无论成败),与 list_data_sources 同口径
+        latest_sub = (
+            select(
+                SyncLog.source_id,
+                func.max(SyncLog.started_at).label("max_started"),
+            )
+            .group_by(SyncLog.source_id)
+            .subquery()
+        )
+        latest_rows = (
+            await session.execute(
+                select(
+                    SyncLog.source_id,
+                    SyncLog.status,
+                    SyncLog.error_detail,
+                    SyncLog.started_at,
+                ).join(
+                    latest_sub,
+                    (SyncLog.source_id == latest_sub.c.source_id)
+                    & (SyncLog.started_at == latest_sub.c.max_started),
+                )
+            )
+        ).all()
+        latest_map = {
+            row.source_id: {
+                "status": row.status,
+                "error_detail": row.error_detail,
+                "started_at": row.started_at,
+            }
+            for row in latest_rows
+        }
 
         # documents.source_id 为复合键 "{数据源id}/{路径}"(五个 connector 一致),
         # 而 sync_log.source_id 是纯数据源 id → 按首段聚合对齐口径(无斜杠时整串即 id)。
@@ -399,31 +453,62 @@ async def source_health(
         doc_rows = (await session.execute(doc_q)).all()
         doc_map = {row.source_prefix: (row.doc_count, row.chunk_count) for row in doc_rows}
 
-        ds_q = select(DataSource.id, DataSource.product, DataSource.enabled)
+        ds_q = select(DataSource.id, DataSource.type, DataSource.product, DataSource.enabled)
         ds_rows = (await session.execute(ds_q)).all()
-        ds_map = {row.id: (row.product, row.enabled) for row in ds_rows}
+        ds_map = {row.id: row for row in ds_rows}
+
+    def _health(total_syncs: int, success_rate: float, enabled: bool) -> str:
+        if not enabled:
+            return "disabled"
+        if total_syncs < MIN_SYNC_RUNS:
+            return "insufficient_data"
+        if success_rate >= 0.9:
+            return "healthy"
+        if success_rate >= 0.5:
+            return "degraded"
+        return "critical"
 
     items = []
-    for row in sync_rows:
-        doc_count, chunk_count = doc_map.get(row.source_id, (0, 0))
-        product, enabled = ds_map.get(row.source_id, ("unknown", True))
-        success_rate = round(row.success_syncs / row.total_syncs, 4) if row.total_syncs else 0.0
-        health = (
-            "healthy" if success_rate >= 0.9 else "degraded" if success_rate >= 0.5 else "critical"
-        )
+    # 以 data_sources 全表驱动:零历史源也出现(不缺席、不伪造结论)
+    seen_ids: set[str] = set()
+    all_ids = list(ds_map.keys()) + [r.source_id for r in sync_rows if r.source_id not in ds_map]
+    for source_id in all_ids:
+        if source_id in seen_ids:
+            continue
+        seen_ids.add(source_id)
+        ds = ds_map.get(source_id)
+        agg = next((r for r in sync_rows if r.source_id == source_id), None)
+        total = agg.total_syncs if agg else 0
+        success = agg.success_syncs if agg else 0
+        failed = agg.failed_syncs if agg else 0
+        partial = agg.partial_syncs if agg else 0
+        success_rate = round(success / total, 4) if total else 0.0
+        latest = latest_map.get(source_id)
+        if ds is not None:
+            source_type, product, enabled = ds.type, ds.product, ds.enabled
+        else:
+            # 幽灵行:sync_log 有而 data_sources 无(保持 T28 可见性,不臆断配置)
+            source_type = "unknown"
+            product = "unknown"
+            enabled = True
         items.append(
             {
-                "source_id": row.source_id,
-                "source_type": row.source_type,
+                "source_id": source_id,
+                "source_type": source_type,
                 "product": product,
                 "enabled": enabled,
-                "doc_count": doc_count,
-                "chunk_count": chunk_count,
+                "doc_count": doc_map.get(source_id, (0, 0))[0],
+                "chunk_count": doc_map.get(source_id, (0, 0))[1],
+                "window_days": days,
+                "total_syncs": total,
+                "success_syncs": success,
+                "partial_syncs": partial,
+                "failed_syncs": failed,
                 "sync_success_rate": success_rate,
-                "total_syncs": row.total_syncs,
-                "failed_syncs": row.failed_syncs,
-                "health": health,
-                "last_sync": row.last_sync.isoformat() if row.last_sync else None,
+                "health": _health(total, success_rate, enabled),
+                "last_sync": latest["started_at"].isoformat() if latest else None,
+                "last_sync_status": latest["status"] if latest else None,
+                "last_sync_error": latest["error_detail"] if latest else None,
             }
         )
 

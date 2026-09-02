@@ -11,6 +11,9 @@ venv/
 
 # Node / Next
 node_modules/
+# AC-FIX-02:worktree 依赖复用软链是文件型 symlink,不受 node_modules/ 目录规则保护
+admin/node_modules
+widget/node_modules
 .next/
 
 # OS
@@ -30,6 +33,7 @@ logs/
 .claude/
 .coverage
 .playwright-mcp/
+.playwright-cli/
 .superpowers/
 
 # 调试截图(开发期临时 UI 截图,不入库)

@@ -5,6 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+/** AFP-003:登录失败文案映射 —— 不透出后端/Pydantic 原始校验 prose。 */
+export function formatLoginError(raw: string): string {
+  if (/not a valid email/i.test(raw)) return "邮箱格式不正确,请检查后重试";
+  if (!raw) return "登录失败,请稍后再试";
+  if (/[一-龥]/.test(raw)) return raw; // 后端已中文(如「邮箱或密码错误」)
+  return "登录失败,请稍后再试";
+}
+
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -21,7 +29,10 @@ export default function Login() {
       await login(email, password);
       navigate("/");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "登录失败");
+      // AFP-003:不向前端用户透出后端/Pydantic 原始校验文案;原细节仅 console 留查
+      const raw = err instanceof Error ? err.message : "";
+      console.warn("login failed:", raw);
+      setError(formatLoginError(raw));
     } finally {
       setLoading(false);
     }

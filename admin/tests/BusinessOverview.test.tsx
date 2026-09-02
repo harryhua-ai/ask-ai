@@ -17,8 +17,11 @@ vi.mock("@/lib/api/businessOverview", () => ({
       delta_pct: 20.0,
     },
     leads: {
-      valid: 12,
-      potential: 8,
+      commercial_conversations: 30,
+      potential: 12,
+      qualified: 8,
+      contactable: 5,
+      handed_off: 2,
       hot_products: [
         { name: "NE503", count: 10 },
         { name: "NE301", count: 6 },
@@ -80,12 +83,14 @@ describe("BusinessOverview", () => {
   it("渲染服务总览 + 意图堆叠条 + 三列意图卡", async () => {
     renderWithProviders(<BusinessOverview />);
     await waitFor(() => {
-      expect(screen.getByText(/总服务客户/)).toBeInTheDocument();
+      expect(screen.getByText(/服务对话数/)).toBeInTheDocument();
       // 销售咨询现多处出现(KPI 行的 intent_dist 已移除,但 StackedBar 图例 + IntentColumn)
       expect(screen.getAllByText(/销售咨询/).length).toBeGreaterThan(0);
       expect(screen.getAllByText(/产品方案/).length).toBeGreaterThan(0);
       expect(screen.getAllByText(/技术支持/).length).toBeGreaterThan(0);
-      expect(screen.getAllByText(/有效线索/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/销售线索/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/合格线索/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/可联系线索/).length).toBeGreaterThan(0);
     });
   });
 
@@ -108,16 +113,16 @@ describe("BusinessOverview", () => {
     });
   });
 
-  it("下钻链接到 /conversations?intent=commercial", async () => {
+  it("线索下钻链接到独立 /leads 页(LEAD-G008/G010)", async () => {
     renderWithProviders(<BusinessOverview />);
-    const link = await screen.findByText(/查看销售对话/);
+    const link = await screen.findByText(/查看线索列表/);
     expect(link.closest("a")).toHaveAttribute(
       "href",
-      expect.stringContaining("/conversations?intent=commercial"),
+      expect.stringContaining("/leads"),
     );
   });
 
-  it("总服务客户显示环比 delta", async () => {
+  it("服务对话数显示环比 delta", async () => {
     renderWithProviders(<BusinessOverview />);
     // KpiCard 渲染 +20%(delta_pct=20,dir=up)
     const delta = await screen.findByText("+20%");

@@ -141,6 +141,10 @@ async def _build_llm_state(
     if db_config is None:
         return {}, {}, [], False
     providers_list, routing_dict = db_config
+    # 端点显式授权(P1):运行时构建与保存路径同一信任存储,撤销授权即不再加载
+    from backend.api.admin.llm_providers import load_endpoint_authorization
+
+    authz_public, authz_private = await load_endpoint_authorization(factory)
     providers: dict[str, object] = {}
     skipped: list[str] = []
     for prov in providers_list:
@@ -156,7 +160,11 @@ async def _build_llm_state(
                     prov["id"],
                 )
         try:
-            validate_llm_api_base(cfg.get("api_base", ""))
+            validate_llm_api_base(
+                cfg.get("api_base", ""),
+                authorized_public=authz_public,
+                authorized_private=authz_private,
+            )
             provider = LLMRegistry.create(
                 prov["type"],
                 provider_id=prov["id"],
@@ -220,7 +228,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 )
                 logger.info("已创建官网爬取数据源: website-camthink")
 
-# Admin 用户
+            # Admin 用户
             admin_email = os.environ.get("ADMIN_EMAIL", "admin@camthink.ai")
             existing_admin = (
                 await session.execute(sa_select(User).where(User.email == admin_email))
@@ -254,6 +262,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 )
                 logger.info("已创建 default customization + widget 绑定")
             await session.commit()
+
+        # MSW:站点体验 seed(config/sites.yaml 为权威,幂等 upsert 进
+        # site_experiences;env SITES_CONFIG_PATH 可覆盖配置路径)
+        from backend.services.site_experiences import seed_default_sites
+
+        _sites_cfg = os.environ.get("SITES_CONFIG_PATH")
+        await seed_default_sites(
+            app.state.session_factory, Path(_sites_cfg) if _sites_cfg else None
+        )
 
         # Seed: 将 YAML 中的 LLM 供应商 + 路由迁移到 DB(首次启动时)
         llm_yaml = load_yaml_config(settings.config_dir / "llm_providers.yaml")
@@ -351,6 +368,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.override_matcher = override_matcher
         logger.info("OverrideMatcher 已加载(%d 条覆盖)", len(override_matcher._overrides))
 
+        # P0 PC-01:源可见性纵深守卫(chunk 级检索过滤之外的第二道防线)
+        from backend.services.source_visibility import SourceVisibilityGuard, make_db_loader
+
+        visibility_guard = SourceVisibilityGuard(
+            make_db_loader(app.state.session_factory),
+            ttl=float(os.environ.get("VISIBILITY_GUARD_TTL", "30")),
+        )
+        logger.info(
+            "SourceVisibilityGuard 已启用(纵深防线,ttl=%ss)",
+            os.environ.get("VISIBILITY_GUARD_TTL", "30"),
+        )
+
         app.state.rag = RAGOrchestrator(
             searcher=searcher,
             reranker=rerank_pipeline,
@@ -360,6 +389,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             intent_styles=prompt_config.get("intent_styles", {}),
             pruner=pruner,
             override_matcher=override_matcher,
+            visibility_guard=visibility_guard,
         )
         app.state.weaviate_client = weaviate_client
         app.state.engine = engine

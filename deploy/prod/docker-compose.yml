@@ -22,7 +22,10 @@ volumes:
 
 # 后端类服务公共配置(YAML anchor,backend / sync / sync-cron 共享,DRY)
 x-backend-base: &backend-base
-  image: ghcr.io/harryhua-ai/ask-ai:latest
+  # PA-0B 修复:镜像 tag 可选(此前硬编码 :latest —— update.sh <tag> 实际不生效,
+  # 拉取/运行永远是 latest,既无法部署指定 RC 镜像,文档化回滚也是空操作)。
+  # tag 经 update.sh 导出的 ASKAI_IMAGE_TAG 注入;不设置 = latest(旧行为不变)。
+  image: ghcr.io/harryhua-ai/ask-ai:${ASKAI_IMAGE_TAG:-latest}
   restart: unless-stopped
   env_file: ../../.env
   environment:

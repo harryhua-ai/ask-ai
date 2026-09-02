@@ -22,6 +22,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
 )
@@ -33,7 +34,8 @@ from sse_starlette.sse import EventSourceResponse
 
 from backend.api.schemas import AskRequest, ClickRequest, FeedbackRequest
 from backend.db.models import Attachment, Conversation, SourceClick, Trace
-from backend.pipeline.rag import RAGOrchestrator
+from backend.pipeline.lead_qualify import LeadTurnContext
+from backend.pipeline.rag import EmptyGenerationError, RAGOrchestrator
 from backend.services.attachments import (
     MAX_ATTACHMENTS_PER_MESSAGE,
     compute_storage_path,
@@ -41,12 +43,26 @@ from backend.services.attachments import (
     sanitize_filename,
     validate_upload_file,
 )
+from backend.services.lead_service import apply_lead_turn, load_lead_context
+from backend.services.site_experiences import (
+    SiteDenied,
+    extract_request_origin,
+    resolve_site,
+)
 from backend.utils.budget import BudgetLimiter, estimate_tokens
+from backend.utils.language import normalize_language
 from backend.utils.pii import mask_pii
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 limiter = Limiter(key_func=get_remote_address)
+
+# 生成失败兜底文案(PC-02):沿用既有产品文案;客户端旧版本收到的
+# 兜底 token 也用同一文案,保证升级前后用户可见行为一致。
+SERVICE_UNAVAILABLE_MSG = "服务暂时不可用,请稍后再试。"
+
+# MSW:站点授权失败的对外统一文案(不区分未知站/禁用站/来源不匹配,防枚举)
+SITE_DENIED_MSG = "站点未授权或来源不受信任"
 
 
 def get_rag(request: Request) -> RAGOrchestrator:
@@ -82,19 +98,47 @@ async def ask(
     """SSE 流式问答端点。
 
     流程:
-        1. PII 脱敏用户消息。
-        2. S2 预算熔断:估算 prompt token + max_tokens(4096)预扣;
+        1. 保留原始消息(lead 联系方式检测用),PII 脱敏用户消息后进入管线。
+        2. 构建 lead 上下文(会话既有线索 + 确定性联系方式检测,只读,fail-open)。
+        3. S2 预算熔断:估算 prompt token + max_tokens(4096)预扣;
            超限时返回 ``declined`` 事件,不再调用 LLM。
-        3. ``rag.stream_answer`` 产出 JSON 事件,逐条转为 SSE:
+        4. ``rag.stream_answer`` 产出 JSON 事件,逐条转为 SSE:
            - ``sources`` 事件 → 转发 ``sources`` SSE 事件。
            - ``token`` 事件 → 转发 ``token`` SSE 事件。
-           - ``complete`` 事件 → 提取最终元数据,不直接转发。
-        4. 空结果(拒答)时 ``stream_answer`` 仅产一条 ``complete`` 事件;
+           - ``complete`` 事件 → 提取最终元数据(含可选 lead payload),不直接转发。
+        5. 空结果(拒答)时 ``stream_answer`` 仅产一条 ``complete`` 事件;
            此处将拒答文本作为 ``token`` SSE 事件补发,保证客户端可见。
-        5. 写入 Postgres conversations 表。
-        6. 发送 ``done`` SSE 事件,携带 ``conversation_id``。
+        5. 生成可靠性(PC-01/02/03):零可用内容完成、首 token 前异常、
+           部分 token 后中断均视为异常完成 —— 补发失败文案 token(若无内容)
+           并在 ``done`` 之前发 ``error`` SSE 事件(``kind`` 标注失败类别),
+           持久化 ``is_answered=False`` + ``Trace(type=generation_error)``。
+        6. 写入 Postgres conversations 表;lead 判定结果落 sales_leads(fail-open)。
+        7. 发送 ``done`` SSE 事件,携带 ``conversation_id``。
     """
-    masked_message = mask_pii(req.message)
+    raw_message = req.message
+    masked_message = mask_pii(raw_message)
+
+    # Sales Lead:单轮上下文(只读;任何异常 fail-open,不影响问答)
+    lead_ctx: LeadTurnContext | None = None
+    try:
+        lead_ctx = await load_lead_context(
+            session_factory,
+            session_id=req.session_id,
+            raw_question=raw_message,
+            conversation_history=req.conversation_history,
+        )
+    except Exception:
+        logger.exception("lead 上下文构建失败,本轮跳过 lead 处理")
+
+    # MSW:站点门禁 —— 显式 site_id 必须通过「站点存在且 enabled + 请求 Origin
+    # 精确命中」授权(CORS 仅为浏览器执行层,此处为服务端权威校验),否则
+    # fail-safe 403,rag 不被调用、对话不落库。legacy(无 site_id)不校验。
+    site = None
+    if req.site_id:
+        try:
+            site = await resolve_site(session_factory, req.site_id, extract_request_origin(request))
+        except SiteDenied:
+            raise HTTPException(403, SITE_DENIED_MSG)
 
     # S2: 预算熔断 — 估算 prompt token + max_tokens 预扣
     est_input = estimate_tokens(masked_message) + sum(
@@ -148,6 +192,12 @@ async def ask(
         token_emitted = False
         intent: str | None = None
         trace_payload: dict | None = None
+        # 生成失败分类(PC-06,持久化与 error 事件共用):
+        # - empty_generation: 流正常结束但零可用内容(含仅空白);
+        # - provider_error: 首 token 前异常;
+        # - stream_interrupted: 已产出部分 token 后异常。
+        failure_kind: str | None = None
+        lead_payload: dict | None = None
 
         try:
             async for chunk in rag.stream_answer(
@@ -155,6 +205,14 @@ async def ask(
                 channel=req.channel,
                 conversation_history=req.conversation_history,
                 attachments=attachment_objs or None,
+                page_context=(
+                    req.page_context.model_dump(exclude_none=True) if req.page_context else None
+                ),
+                site_name=site.display_name if site else None,
+                lead_ctx=lead_ctx,
+                # ML 闭环:请求 language 提示被消费为默认答案语境(G-L1);
+                # 显式 site_id 未带提示时回落站点默认语言(宿主默认语境)
+                language_hint=req.language or (site.language if site else None),
             ):
                 data = json.loads(chunk)
                 evt_type = data["type"]
@@ -177,18 +235,55 @@ async def ask(
                     elapsed = data.get("response_time_ms", 0)
                     intent = data.get("intent")
                     trace_payload = data.get("trace_payload")
-        except Exception:
+                    lead_payload = data.get("lead")
+        except Exception as exc:
             # S5: LLM 流式生成中途异常(超时/网络错误)时,降级返回友好提示。
-            # 200 响应头已发送,无法改写状态码,但通过 SSE token 事件通知客户端。
+            # 200 响应头已发送,无法改写状态码,但通过 SSE token/error 事件通知客户端。
             logger.exception("SSE 流式生成异常, conversation_id=%s", conversation_id)
-            if not token_emitted:
-                full_answer = "服务暂时不可用,请稍后再试。"
-                yield {"event": "token", "data": json.dumps({"content": full_answer})}
+            if isinstance(exc, EmptyGenerationError):
+                failure_kind = "empty_generation"
+            else:
+                failure_kind = "stream_interrupted" if token_emitted else "provider_error"
 
-        # 空结果契约:stream_answer 仅产 complete(is_answered=False)时,
-        # 未发过 token 事件 —— 此处补发拒答文本,保证客户端可见
-        if not token_emitted and full_answer:
+        # 用户可见内容发射(恰好一次,三选一互斥):
+        # 1) 既有空结果契约:拒答文本(complete 且 is_answered=False)补发为 token;
+        # 2) PC-01 零内容守护:流结束仍无可用内容 → 补发失败文案 token + error 事件;
+        # 3) 正常回答/部分中断:token 已按原样转发,不重复发射(NA-04)。
+        if not token_emitted and failure_kind is None and full_answer:
             yield {"event": "token", "data": json.dumps({"content": full_answer})}
+        elif not full_answer.strip():
+            failure_kind = failure_kind or "empty_generation"
+            full_answer = SERVICE_UNAVAILABLE_MSG
+            yield {"event": "token", "data": json.dumps({"content": full_answer})}
+
+        # PC-02/PC-03:结构化失败信号,在 done 之前发出 —— 用户可见地
+        # 区分「回答完成」与「生成失败/中断」;旧客户端忽略未知事件类型,
+        # 行为退化为仅显示兜底 token 文本,仍满足可见失败要求。
+        if failure_kind is not None:
+            is_answered = False  # 失败绝不持久化为成功(NA-05)
+            yield {
+                "event": "error",
+                "data": json.dumps(
+                    {
+                        "conversation_id": conversation_id,
+                        "kind": failure_kind,
+                        "message": SERVICE_UNAVAILABLE_MSG,
+                    }
+                ),
+            }
+            # 持久化可观测性(PC-06):复用 Trace 行区分 生成失败 与 拒答/成功,
+            # 不扩表结构 —— type=generation_error,failure_kind 记入 config_snapshot。
+            base = trace_payload or {}
+            trace_payload = {
+                **base,
+                "type": "generation_error",
+                "stages": {**base.get("stages", {}), "error": {"kind": failure_kind}},
+                "total_ms": base.get("total_ms", elapsed),
+                "config_snapshot": {
+                    **base.get("config_snapshot", {}),
+                    "failure_kind": failure_kind,
+                },
+            }
 
         # 持久化到 Postgres
         try:
@@ -204,6 +299,10 @@ async def ask(
                     response_time_ms=elapsed,
                     intent_tag=intent,
                     country=country,
+                    # MSW:仅记录已通过授权校验的站点标识(channel 语义不变)
+                    site_id=req.site_id if site else None,
+                    # 会话线程聚合(Lead 契约):跨轮 lead 状态读取的键
+                    session_id=req.session_id,
                 )
                 session.add(conv)
                 if trace_payload:
@@ -223,9 +322,56 @@ async def ask(
         except Exception:
             logger.exception("写入 conversations 表失败, conversation_id=%s", conversation_id)
 
+        # Sales Lead:判定结果落 sales_leads(fail-open;联系方式原文只入该表)
+        if lead_payload is not None:
+            try:
+                await apply_lead_turn(
+                    session_factory,
+                    lead_ctx,
+                    lead_payload,
+                    conversation_id=uuid.UUID(conversation_id),
+                    session_id=req.session_id,
+                    channel=req.channel,
+                    language=language,
+                    country=country,
+                )
+            except Exception:
+                logger.exception("sales_leads 写入失败, conversation_id=%s", conversation_id)
+
         yield {"event": "done", "data": json.dumps({"conversation_id": conversation_id})}
 
     return EventSourceResponse(event_generator())
+
+
+@router.get("/widget/site-config")
+async def widget_site_config(
+    request: Request,
+    session_factory: SessionFactoryDep,
+    site_id: str = Query(min_length=1, max_length=100),
+    language: str | None = Query(default=None, max_length=20),
+) -> dict[str, Any]:
+    """公开站点体验配置(MSW;Widget 启动时按 data-site-id 拉取)。
+
+    与 /ask 同一套服务端 Origin 授权:站点存在且 enabled + 请求 Origin
+    精确命中 allowed_origins;否则 403 统一文案。响应仅含体验字段,
+    **不回** allowed_origins 等内部配置。
+
+    ML 闭环(G-L5):可选 ``language`` 查询参数(归一化)选择 welcome /
+    starters 的本地化变体;无该语言的变体时回落站点默认——站点身份
+    (site_id / display_name)与语言无关,响应形状不变。
+    """
+    try:
+        site = await resolve_site(session_factory, site_id, extract_request_origin(request))
+    except SiteDenied:
+        raise HTTPException(403, SITE_DENIED_MSG)
+    normalized_language = normalize_language(language)
+    return {
+        "site_id": site.site_id,
+        "display_name": site.display_name,
+        "welcome": site.localized_welcome(normalized_language),
+        "language": site.language,
+        "starters": list(site.localized_starters(normalized_language)),
+    }
 
 
 @router.post("/feedback")

@@ -56,6 +56,11 @@ export async function apiFetch<T>(
     window.location.href = "/admin/login";
     throw new ApiError(401, "未登录或登录已过期");
   }
+  // AFP-CLOSURE-01 §6.7:403 必须传达权限语义,不降级为泛化「请求失败」,
+  // 也不透出后端框架 prose(admin 面 403 = RBAC 角色不足)
+  if (resp.status === 403) {
+    throw new ApiError(403, "无权限执行此操作");
+  }
   if (!resp.ok) {
     let detail: unknown = "请求失败";
     try {

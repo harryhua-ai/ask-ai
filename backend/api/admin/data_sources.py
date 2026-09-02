@@ -1,23 +1,29 @@
 """数据源 CRUD + 手动同步端点。"""
 
 import asyncio
+import logging
 import os
 import re
+from urllib.parse import urlparse
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
 from uuid import uuid4
 
 import httpx
+import weaviate
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from sqlalchemy import func, select
+from fastapi.concurrency import run_in_threadpool
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from weaviate.classes.query import Filter
 
 from backend.api.admin.schemas import DataSourceCreate, DataSourceOut, DataSourceUpdate
 from backend.auth.dependencies import CurrentUser, require_role
 from backend.connectors.db_adapter import to_source_config
-from backend.db.models import DataSource, SyncLog
+from backend.db.models import DataSource, Document, SyncLog
 
 router = APIRouter(prefix="/data-sources", tags=["数据源管理"])
+logger = logging.getLogger(__name__)
 EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
 
 # C9 上传护栏:单文件大小上限(20MB)
@@ -378,16 +384,101 @@ async def update_data_source(
     return _to_out(ds)
 
 
+def _purge_source_corpus_sync(
+    weaviate_url: str, class_name: str, prefix: str, ledger: list[tuple[str, int]]
+) -> dict:
+    """AFP-001:清除某数据源名下的全部向量语料(同步阻塞,调用方放线程池)。
+
+    两段式,前缀边界严格为 ``prefix + "/"``:
+        1. 账本段:对 PG documents 已知的每个 source_id 做 Equal 精确删除
+           (与 ingest.delete_document 同款安全模式);
+        2. 兜底段:迭代器全扫收集前缀边界内的孤儿 chunk(账本外残留),
+           逐 UUID 删除。
+
+    Returns:
+        ``{"ledger_docs": N, "orphans": M}`` 供日志观察。
+    """
+    parsed = urlparse(weaviate_url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 8080
+    client = weaviate.connect_to_local(host=host, port=port)
+    try:
+        collection = client.collections.get(class_name)
+        for sid, _cc in ledger:
+            collection.data.delete_many(where=Filter.by_property("source_id").equal(sid))
+        orphans = 0
+        stale_uuids: list[str] = []
+        for item in collection.iterator(return_properties=["source_id"]):
+            sid = item.properties.get("source_id")
+            if isinstance(sid, str) and sid.startswith(prefix + "/"):
+                stale_uuids.append(str(item.uuid))
+        for u in stale_uuids:
+            collection.data.delete_by_id(u)
+            orphans += 1
+        return {"ledger_docs": len(ledger), "orphans": orphans}
+    finally:
+        client.close()
+
+
 @router.delete("/{source_id}", status_code=204)
 async def delete_data_source(source_id: str, _: EditorDep, request: Request) -> None:
-    """删除数据源（admin / editor）。"""
+    """删除数据源（admin / editor）。
+
+    AFP-001 生命周期契约:删除源 ⇒ 其独占知识退出访客检索。
+    顺序(失败安全,绝不假报成功):
+        1. 枚举账本内该源文档(source_id 前缀);
+        2. 清理 Weaviate 向量(账本 Equal 精确删 + 前缀边界孤儿兜底删);
+           失败 → 502,配置与账本原样保留(可重试);
+        3. 同一事务删除 documents 账本行 + 配置行。
+    """
+    settings = request.app.state.settings
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
         result = await session.execute(select(DataSource).where(DataSource.id == source_id))
         ds = result.scalar_one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="数据源不存在")
-        await session.delete(ds)
+        ledger = (
+            await session.execute(
+                select(Document.source_id, Document.chunk_count).where(
+                    # AC-FIX-01:源 ID 是字面标识符,不是 LIKE 模式 ——
+                    # autoescape 转义 %/_ ,杜绝通配符越界吸走他源账本
+                    Document.source_id.startswith(f"{source_id}/", autoescape=True)
+                )
+            )
+        ).all()
+
+    try:
+        stats = await run_in_threadpool(
+            _purge_source_corpus_sync,
+            settings.weaviate_url,
+            settings.weaviate_class_name,
+            source_id,
+            [(sid, int(cc or 0)) for sid, cc in ledger],
+        )
+    except Exception as exc:  # noqa: BLE001 - 清理失败必须可观察,保留全部状态可重试
+        logger.error("数据源 %s 向量语料清理失败: %s", source_id, exc)
+        raise HTTPException(
+            status_code=502,
+            detail=f"向量语料清理失败,已保留数据源与账本以便重试: {exc}",
+        ) from exc
+    logger.info(
+        "数据源 %s 语料清理完成: 账本 %d 篇, 孤儿 %d chunks",
+        source_id,
+        stats.get("ledger_docs", 0),
+        stats.get("orphans", 0),
+    )
+
+    async with factory() as session:
+        result = await session.execute(select(DataSource).where(DataSource.id == source_id))
+        ds = result.scalar_one_or_none()
+        if ds is not None:
+            await session.delete(ds)
+        await session.execute(
+            delete(Document).where(
+                Document.source_id.startswith(f"{source_id}/", autoescape=True)
+            )
+        )
         await session.commit()
 
 

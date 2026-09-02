@@ -134,3 +134,41 @@ export function useFetchModels() {
     },
   });
 }
+
+// ===== P1:端点显式授权(llm_allowed_hosts) =====
+
+export interface LLMAllowedHost {
+  host: string;
+  allow_private: boolean;
+  note: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export function useAllowedHosts() {
+  return useQuery({
+    queryKey: ["llm-allowed-hosts"],
+    queryFn: () => apiFetch<LLMAllowedHost[]>("/llm-allowed-hosts"),
+  });
+}
+
+export function useAuthorizeHost() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { host: string; note?: string }) =>
+      apiFetch<LLMAllowedHost>("/llm-allowed-hosts", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["llm-allowed-hosts"] }),
+  });
+}
+
+export function useRevokeHost() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (host: string) =>
+      apiFetch<void>(`/llm-allowed-hosts/${encodeURIComponent(host)}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["llm-allowed-hosts"] }),
+  });
+}

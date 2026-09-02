@@ -85,11 +85,17 @@ class Conversation(Base):
     custom_tags: Mapped[list[Any]] = mapped_column(JSONB, default=[])
     customization_id: Mapped[str | None] = mapped_column(String(50))
     country: Mapped[str | None] = mapped_column(String(10))
+    # Sales Lead(V1):widget 匿名会话 ID,会话线程聚合(sales_leads.thread 依赖)
+    session_id: Mapped[str | None] = mapped_column(String(64))
 
     # Phase 3 预留
     cluster_id: Mapped[str | None] = mapped_column(String(100))
     gap_status: Mapped[str | None] = mapped_column(String(20))
     override_answer: Mapped[str | None] = mapped_column(Text)
+
+    # 多站点 Widget(MSW):站点体验标识;channel 保持传输语义(widget),站点仅作
+    # 分析维度。nullable —— legacy 嵌入与无站点上下文的对话为 NULL。
+    site_id: Mapped[str | None] = mapped_column(String(100))
 
     clicks: Mapped[list["SourceClick"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan"
@@ -269,6 +275,50 @@ class LLMRouting(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class LLMAllowedHost(Base):
+    """LLM 自定义端点显式授权(管理员通过产品工作流维护,持久化可审查)。
+
+    host: 小写主机名或 IP 字面量(不含 scheme/port),精确匹配,无通配符。
+    allow_private: True = 私有/内网端点授权(允许私有 IP 字面量与内网 http),
+                   由授权时的主机形态自动判定,不可手工改。
+    """
+
+    __tablename__ = "llm_allowed_hosts"
+
+    host: Mapped[str] = mapped_column(String(255), primary_key=True)
+    allow_private: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SiteExperience(Base):
+    """站点体验身份(MSW:ONE Widget + 多站点体验)。
+
+    site_id 是**标识符**而非凭证:授权 = 站点存在且 enabled + 请求 Origin 归一化
+    后精确命中 ``allowed_origins``(服务端校验,CORS 仅为浏览器执行层)。
+    与 CustomizationBinding(channel 传输定制)语义分离,互相不重载。
+    """
+
+    __tablename__ = "site_experiences"
+
+    site_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    allowed_origins: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    starters: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    welcome: Mapped[str | None] = mapped_column(String(500))
+    language: Mapped[str | None] = mapped_column(String(10))
+    # ML 闭环(G-L5):按语言键的体验文案变体(如 {"zh": ...});站点身份与
+    # 默认字段语义不变,变体缺失时回落默认(站点身份独立于语言)
+    welcome_i18n: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    starters_i18n: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class QuestionCluster(Base):
     """问题聚类结果(Phase 3B Coverage Gaps + Top Questions)。"""
 
@@ -315,10 +365,80 @@ class Attachment(Base):
     conversation: Mapped["Conversation | None"] = relationship(back_populates="attachments")
 
 
+class SalesLead(Base):
+    """销售线索(Sales Lead)——独立于 Conversation 的一等业务对象。
+
+    产品契约(CAMTHINK V1 Sales Lead Capture & Handoff):
+    - Conversation 回答「AI 聊得怎么样」,SalesLead 回答「哪些客户值得跟进」;
+      线索必须能关联原会话(source_conversation_id / last_conversation_id / session_id)。
+    - 生命周期:potential → qualified → contact_captured → handed_off(管理员手动
+      移交为终态;自动流程只升不降,见 backend/pipeline/lead_qualify.compute_status)。
+
+    隐私边界(HARD):contact_value 等联系方式 PII 只落本表(PostgreSQL,
+    仅授权 Admin 经 /api/admin/leads 访问);绝不进入 Knowledge Corpus /
+    Weaviate / RAG。对外展示一律用 contact_masked。
+
+    不设到 conversations 的外键:线索生命周期独立于对话保留策略,
+    会话行被清理不应级联删除商业线索。
+    """
+
+    __tablename__ = "sales_leads"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # 线索线程键:widget 匿名会话 ID(一轮问不出联系方式、后续轮补充的场景靠它聚合)
+    session_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="potential", index=True)
+
+    # 联系方式(PII,仅此表持有原文;contact_value 最长 RFC 邮箱 320)
+    contact_type: Mapped[str | None] = mapped_column(
+        String(20)
+    )  # email|phone|whatsapp|wechat|other
+    contact_value: Mapped[str | None] = mapped_column(String(320))
+    contact_masked: Mapped[str | None] = mapped_column(String(80))
+    contact_captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # 商业画像(用户自愿提供,允许全空)
+    name: Mapped[str | None] = mapped_column(String(200))
+    company: Mapped[str | None] = mapped_column(String(200))
+    region: Mapped[str | None] = mapped_column(String(200))
+    product_interest: Mapped[str | None] = mapped_column(String(200))
+    quantity: Mapped[str | None] = mapped_column(String(100))
+    use_case: Mapped[str | None] = mapped_column(Text)
+    purchase_intent: Mapped[str | None] = mapped_column(String(50))
+    timeline: Mapped[str | None] = mapped_column(String(100))
+    ai_summary: Mapped[str | None] = mapped_column(Text)
+
+    # One-Proactive-Ask 记账:AI 已主动邀请次数与最近邀请时间(契约 §7)
+    prompt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_prompted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # 会话关联(无外键,见类注释)
+    source_conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    last_conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+
+    channel: Mapped[str | None] = mapped_column(String(20))
+    language: Mapped[str | None] = mapped_column(String(10))
+    country: Mapped[str | None] = mapped_column(String(10))
+
+    # 手动移交销售(admin/editor 触发)
+    handoff_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    handoff_by: Mapped[str | None] = mapped_column(String(100))
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 # 索引(对齐设计文档 §11 SQL DDL)
+Index("idx_sales_leads_status_created", SalesLead.status, SalesLead.created_at.desc())
 Index("idx_conversations_created_at", Conversation.created_at)
 Index("idx_conversations_is_answered", Conversation.is_answered)
 Index("idx_conversations_channel", Conversation.channel)
+Index("idx_conversations_site", Conversation.site_id)
+Index("idx_conversations_session_id", Conversation.session_id)
 Index(
     "idx_conversations_cluster_id",
     Conversation.cluster_id,

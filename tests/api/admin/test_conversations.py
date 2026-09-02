@@ -280,3 +280,106 @@ async def test_list_conversations_has_retry_filter(auth_headers):
             await session.execute(Conversation.__table__.delete().where(
                 Conversation.id.in_([str(cid_a), str(cid_b)])))
             await session.commit()
+
+
+async def test_list_conversations_has_failure_filter(auth_headers):
+    """has_failure=true 只返回 trace type=generation_error 的对话(OBS-G009 深链)。"""
+    factory = app.state.session_factory
+    cid_fail = uuid.uuid4()
+    cid_ok = uuid.uuid4()
+    async with factory() as session:
+        session.add(
+            Conversation(id=cid_fail, question="obs_fail_a", answer="a", is_answered=False)
+        )
+        session.add(
+            Conversation(id=cid_ok, question="obs_fail_b", answer="b", is_answered=True)
+        )
+        session.add(
+            Trace(
+                conversation_id=cid_fail,
+                turn_index=0,
+                type="generation_error",
+                stages={"error": {"kind": "provider_error"}},
+                total_ms=100,
+                config_snapshot={"failure_kind": "provider_error"},
+            )
+        )
+        session.add(
+            Trace(
+                conversation_id=cid_ok,
+                turn_index=0,
+                type="rag",
+                stages={"intent": {"ms": 5}},
+                total_ms=5,
+                config_snapshot={},
+            )
+        )
+        await session.commit()
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/api/admin/conversations?has_failure=true&q=obs_fail",
+                headers=auth_headers,
+            )
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        ids = [i["id"] for i in items]
+        assert str(cid_fail) in ids
+        assert str(cid_ok) not in ids
+        # 失败对话的 markers.failure = True(前端 chip 用)
+        target = [c for c in items if c["id"] == str(cid_fail)][0]
+        assert target["trace_summary"]["markers"]["failure"] is True
+    finally:
+        async with factory() as session:
+            await session.execute(
+                Trace.__table__.delete().where(
+                    Trace.conversation_id.in_([str(cid_fail), str(cid_ok)])
+                )
+            )
+            await session.execute(
+                Conversation.__table__.delete().where(
+                    Conversation.id.in_([str(cid_fail), str(cid_ok)])
+                )
+            )
+            await session.commit()
+
+
+async def test_infer_markers_error_alone_is_not_retry(auth_headers):
+    """重试标记语义收窄:stage error 字段单独存在不再算 retry;generation_error → failure。"""
+    from backend.api.admin.conversations import _infer_markers
+
+    # 仅 error 字段(生产从不写,容错路径):不是 literal retry
+    m = _infer_markers("rag", {"generate": {"ms": 10, "error": True}})
+    assert m["retry"] is False
+    assert m["failure"] is True  # error 且未 recovered → 真实失败证据
+
+    # 已恢复的 error:不是失败,也不是 retry
+    m = _infer_markers("rag", {"generate": {"ms": 10, "error": True, "recovered": True}})
+    assert m["retry"] is False
+    assert m["failure"] is False
+
+    # 显式 retry_count 才是 literal retry
+    m = _infer_markers("rag", {"rerank": {"ms": 10, "retry_count": 1}})
+    assert m["retry"] is True
+
+    # generation_error trace type → failure
+    m = _infer_markers("generation_error", {"error": {"kind": "provider_error"}})
+    assert m["failure"] is True
+    assert m["retry"] is False
+
+    # generation_error 但 stage error 已 recovered:仍属失败(type 是权威证据)
+    m = _infer_markers("generation_error", {"generate": {"ms": 1, "error": True, "recovered": True}})
+    assert m["failure"] is True
+
+    # 无 retrieve 阶段(失败/拒答 trace):缺失证据≠降级证据
+    m = _infer_markers("generation_error", {"error": {"kind": "provider_error"}})
+    assert m["degraded"] is False
+    m = _infer_markers("rag", {"generate": {"ms": 10}})
+    assert m["degraded"] is False
+
+    # retrieve 带 path_counts 且 symbol/boost 全 0 → 降级;有 symbol/boost → 非
+    m = _infer_markers("rag", {"retrieve": {"ms": 10, "path_counts": {"hybrid": 5}}})
+    assert m["degraded"] is True
+    m = _infer_markers("rag", {"retrieve": {"ms": 10, "path_counts": {"hybrid": 5, "symbol": 1}}})
+    assert m["degraded"] is False

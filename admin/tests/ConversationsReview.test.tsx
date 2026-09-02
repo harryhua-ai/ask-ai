@@ -3,6 +3,9 @@ import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/re
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+vi.mock("@/hooks/useAuth", () => ({
+  useAuth: () => ({ user: { role: "admin", email: "t@x.com" } }),
+}));
 vi.mock("@/hooks/useConversations", () => ({
   useConversations: () => ({
     data: {
@@ -25,7 +28,7 @@ vi.mock("@/hooks/useConversations", () => ({
               generate: { ms: 550 },
             },
             confidence: 0.45,
-            markers: { retry: true, clarify: false, reject_short: false, degraded: true },
+            markers: { retry: true, failure: false, clarify: false, reject_short: false, degraded: true },
           },
         },
       ],
@@ -198,11 +201,11 @@ describe("Conversations 审查页", () => {
   it("Phase 2:渲染快速筛选 toggle 栏 + markers 圆点", async () => {
     renderWithProviders(<Conversations />);
     await waitFor(() => {
-      // 4 个 toggle 按钮
+      // 5 个 toggle 按钮(置信/失败/重试/反馈/澄清)
       const bar = document.querySelector("[data-toggle-bar]");
       expect(bar).toBeTruthy();
       const toggles = bar?.querySelectorAll("button[data-toggle]");
-      expect(toggles?.length).toBe(4);
+      expect(toggles?.length).toBe(5);
       // markers 圆点(retry + degraded 为 true)
       const markersHost = document.querySelector("[data-markers]");
       expect(markersHost).toBeTruthy();
