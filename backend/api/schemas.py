@@ -8,6 +8,8 @@ import unicodedata
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from backend.utils.language import normalize_language
+
 # S3: conversation_history 后端强制边界
 MAX_HISTORY_ITEMS = 10
 MAX_HISTORY_CONTENT_CHARS = 8000
@@ -82,7 +84,8 @@ class AskRequest(BaseModel):
 
     Attributes:
         message: 用户问题文本(1~8000 字符)。
-        language: 可选语言提示(如 ``zh-cn`` / ``en``);为空时由管道自动检测。
+        language: 可选语言提示(如 ``zh-cn`` / ``en``);归一化为规范形(zh/en/其他
+            主子标签)后作为**默认答案语境**(ML 闭环);为空时由管道自动检测。
         channel: 渠道标识(仅允许 ``widget|discord|whatsapp|mcp|admin``),默认 ``widget``。
             ``admin`` 为管理后台内嵌聊天专用渠道,用于数据边界隔离:
             管理员测试对话不与真实访客(widget)对话混入同一统计池。
@@ -92,7 +95,15 @@ class AskRequest(BaseModel):
     """
 
     message: str = Field(..., min_length=1, max_length=8000)
+    # ML 闭环(G-L1):语言提示归一化(zh-CN→zh / en-US→en);无效值 fail-open 为
+    # None 交回文本检测,不因宿主误传改变基线行为
     language: str | None = None
+
+    @field_validator("language")
+    @classmethod
+    def _normalize_language(cls, v: str | None) -> str | None:
+        return normalize_language(v)
+
     channel: str = Field(default="widget", pattern="^(widget|discord|whatsapp|mcp|admin)$")
     conversation_history: list[dict] = Field(default_factory=list, max_length=MAX_HISTORY_ITEMS)
     # Phase 1a:widget 匿名会话标识(localStorage UUID),用于附件归属校验

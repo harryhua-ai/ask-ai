@@ -50,6 +50,7 @@ from backend.services.site_experiences import (
     resolve_site,
 )
 from backend.utils.budget import BudgetLimiter, estimate_tokens
+from backend.utils.language import normalize_language
 from backend.utils.pii import mask_pii
 
 logger = logging.getLogger(__name__)
@@ -209,6 +210,9 @@ async def ask(
                 ),
                 site_name=site.display_name if site else None,
                 lead_ctx=lead_ctx,
+                # ML 闭环:请求 language 提示被消费为默认答案语境(G-L1);
+                # 显式 site_id 未带提示时回落站点默认语言(宿主默认语境)
+                language_hint=req.language or (site.language if site else None),
             ):
                 data = json.loads(chunk)
                 evt_type = data["type"]
@@ -344,23 +348,29 @@ async def widget_site_config(
     request: Request,
     session_factory: SessionFactoryDep,
     site_id: str = Query(min_length=1, max_length=100),
+    language: str | None = Query(default=None, max_length=20),
 ) -> dict[str, Any]:
     """公开站点体验配置(MSW;Widget 启动时按 data-site-id 拉取)。
 
     与 /ask 同一套服务端 Origin 授权:站点存在且 enabled + 请求 Origin
     精确命中 allowed_origins;否则 403 统一文案。响应仅含体验字段,
     **不回** allowed_origins 等内部配置。
+
+    ML 闭环(G-L5):可选 ``language`` 查询参数(归一化)选择 welcome /
+    starters 的本地化变体;无该语言的变体时回落站点默认——站点身份
+    (site_id / display_name)与语言无关,响应形状不变。
     """
     try:
         site = await resolve_site(session_factory, site_id, extract_request_origin(request))
     except SiteDenied:
         raise HTTPException(403, SITE_DENIED_MSG)
+    normalized_language = normalize_language(language)
     return {
         "site_id": site.site_id,
         "display_name": site.display_name,
-        "welcome": site.welcome,
+        "welcome": site.localized_welcome(normalized_language),
         "language": site.language,
-        "starters": list(site.starters),
+        "starters": list(site.localized_starters(normalized_language)),
     }
 
 

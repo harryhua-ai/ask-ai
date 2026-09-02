@@ -43,13 +43,35 @@ class SiteDenied(Exception):
 
 @dataclass(frozen=True)
 class ResolvedSite:
-    """通过授权校验的站点体验快照(只读)。"""
+    """通过授权校验的站点体验快照(只读)。
+
+    ML 闭环(G-L5):``welcome_i18n`` / ``starters_i18n`` 为按语言键的可选
+    变体(如 ``{"zh": ...}``);默认 ``welcome`` / ``starters`` 语义不变。
+    """
 
     site_id: str
     display_name: str
     welcome: str | None
     language: str | None
     starters: tuple[str, ...]
+    welcome_i18n: dict | None = None
+    starters_i18n: dict | None = None
+
+    def localized_welcome(self, language: str | None) -> str | None:
+        """按请求语言取欢迎语;无变体或缺省回落站点默认(语言独立于站点身份)。"""
+        if language and self.welcome_i18n:
+            hit = self.welcome_i18n.get(language)
+            if hit:
+                return str(hit)
+        return self.welcome
+
+    def localized_starters(self, language: str | None) -> tuple[str, ...]:
+        """按请求语言取推荐问题;无变体或缺省回落站点默认。"""
+        if language and self.starters_i18n:
+            hit = self.starters_i18n.get(language)
+            if isinstance(hit, list) and hit:
+                return tuple(str(x) for x in hit)
+        return self.starters
 
 
 def normalize_origin(raw: str | None) -> str | None:
@@ -127,6 +149,8 @@ async def resolve_site(
         display_name=row.display_name,
         welcome=row.welcome,
         language=row.language,
+        welcome_i18n=dict(row.welcome_i18n) if row.welcome_i18n else None,
+        starters_i18n=dict(row.starters_i18n) if row.starters_i18n else None,
         starters=tuple(row.starters or []),
     )
 
@@ -164,6 +188,8 @@ async def seed_default_sites(
             row.starters = [str(s) for s in (item.get("starters") or [])]
             row.welcome = item.get("welcome") or None
             row.language = item.get("language") or None
+            row.welcome_i18n = dict(item["welcome_i18n"]) if item.get("welcome_i18n") else None
+            row.starters_i18n = dict(item["starters_i18n"]) if item.get("starters_i18n") else None
             row.enabled = bool(item.get("enabled", True))
         await session.commit()
     logger.info("站点体验配置已同步(%d 个站点)", len(sites))

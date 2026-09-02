@@ -1,10 +1,13 @@
 import { useState, useRef, useEffect } from "react";
 import type { WidgetConfig, ChatMessage, AttachmentRef } from "../types";
+import type { UiStrings } from "../i18n";
 import { MessageBubble } from "./MessageBubble";
 import { SuggestedQuestions } from "./SuggestedQuestions";
 
 interface Props {
   config: WidgetConfig;
+  /** ML 闭环(G-L4):界面文案按 UI 语言注入,与答案语言分离 */
+  strings: UiStrings;
   messages: ChatMessage[];
   isStreaming: boolean;
   conversationId: string | null;
@@ -17,7 +20,7 @@ interface Props {
   onUpload: (files: File[]) => Promise<AttachmentRef[]>;
 }
 
-export function ChatPanel({ config, messages, isStreaming, conversationId, suggestedQuestions, welcome, onSend, onClose, onFeedback, onUpload }: Props) {
+export function ChatPanel({ config, strings, messages, isStreaming, conversationId, suggestedQuestions, welcome, onSend, onClose, onFeedback, onUpload }: Props) {
   const [input, setInput] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentRef[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -49,7 +52,7 @@ export function ChatPanel({ config, messages, isStreaming, conversationId, sugge
       const uploaded = await onUpload(files);
       setPendingAttachments((prev) => [...prev, ...uploaded]);
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "Upload failed");
+      setUploadError(err instanceof Error ? err.message : strings.uploadFailed);
     }
   };
 
@@ -66,7 +69,7 @@ export function ChatPanel({ config, messages, isStreaming, conversationId, sugge
       <div className="ask-ai-messages">
         {messages.length === 0 && (
           <div style={{ color: "#6b7280", fontSize: "14px", textAlign: "center", marginTop: "20px" }}>
-            {welcome ?? "你好!我是 Ask Camthink.ai,有什么可以帮你?"}
+            {welcome ?? strings.defaultWelcome}
           </div>
         )}
         {messages.map((msg) => (
@@ -119,7 +122,7 @@ export function ChatPanel({ config, messages, isStreaming, conversationId, sugge
           onClick={handlePickFiles}
           disabled={isStreaming}
           aria-label="Attach log file"
-          title="Attach .txt or .log"
+          title={strings.attachTitle}
         >
           +
         </button>
@@ -127,11 +130,11 @@ export function ChatPanel({ config, messages, isStreaming, conversationId, sugge
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="输入你的问题..."
+          placeholder={strings.placeholder}
           disabled={isStreaming}
         />
         <button type="submit" style={{ backgroundColor: "#000000" }} disabled={isStreaming || (!input.trim() && pendingAttachments.length === 0)}>
-          发送
+          {strings.send}
         </button>
       </form>
     </div>

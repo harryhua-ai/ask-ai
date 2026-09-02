@@ -9,6 +9,9 @@
 # - origin 必须显式枚举(含 scheme;端口非 80/443 时必须带上),禁止通配符。
 # - starters 语义三站分离:website=发现/咨询,wiki=文档/实施/排障,store=购买决策。
 #   文案可在语义不变前提下继续打磨。
+# - 多语言闭环(ML Closure,G-L5):welcome/starters = 站点默认语言(= language 字段)
+#   文案;welcome_i18n/starters_i18n = 按语言键的变体(当前 zh);请求语言无变体时
+#   回落默认。站点身份(site_id/display_name/授权)与语言完全无关。
 
 sites:
   - site_id: camthink-website
@@ -23,21 +26,36 @@ sites:
       - "Compare NE503 and NE301"
       - "Recommend a solution for smart agriculture"
       - "What interfaces does NE503 support?"
+    welcome_i18n:
+      zh: "你好!我是 CamThink 助手,关于我们的 AIoT 产品都可以问我。"
+    starters_i18n:
+      zh:
+        - "哪个产品适合我的项目?"
+        - "对比一下 NE503 和 NE301"
+        - "推荐一个智慧农业方案"
+        - "NE503 支持哪些接口?"
 
   - site_id: camthink-wiki
     display_name: CamThink Wiki
     allowed_origins:
       - https://wiki.camthink.ai
-    welcome: "有问题就问我 —— 我熟悉 CamThink 设备的文档、配置与排障步骤。"
-    # 多语言契约(2026-09-02 冻结):三站默认语言 = English;language 字段 =
-    # 站点级兜底(宿主未提供页面语言时随 ask 发送的提示)。Wiki 页面为中文时
-    # 由宿主经 data-language/AskAIConfig.language 传 zh,页面语言优先于站点默认。
+    # G-L5 对齐:站点默认语言 = English,默认文案改英文;原中文文案保留为 zh 变体。
+    # Wiki 中文页面由宿主经 data-language/AskAIConfig.language 传 zh(页面语言优先)。
+    welcome: "Ask me anything about CamThink device docs, configuration, and troubleshooting."
     language: en
     starters:
-      - "这篇文档对应的设备如何开始配置?"
-      - "NE301 刷机失败怎么排查?"
-      - "设备 API 调用有示例吗?"
-      - "这个型号的固件在哪里下载?"
+      - "How do I get started with this device?"
+      - "How do I troubleshoot an NE301 flash failure?"
+      - "Are there API call examples for this device?"
+      - "Where can I download firmware for this model?"
+    welcome_i18n:
+      zh: "有问题就问我 —— 我熟悉 CamThink 设备的文档、配置与排障步骤。"
+    starters_i18n:
+      zh:
+        - "这篇文档对应的设备如何开始配置?"
+        - "NE301 刷机失败怎么排查?"
+        - "设备 API 调用有示例吗?"
+        - "这个型号的固件在哪里下载?"
 
   - site_id: camthink-store
     display_name: CamThink Store
@@ -50,3 +68,11 @@ sites:
       - "Compare NE503 with NE301"
       - "What is included in the box?"
       - "Do you ship internationally?"
+    welcome_i18n:
+      zh: "正在选购 CamThink 设备?下单前可以先问我。"
+    starters_i18n:
+      zh:
+        - "NE503 适合我的项目吗?"
+        - "NE503 和 NE301 有什么区别?"
+        - "包装内有哪些配件?"
+        - "支持国际配送吗?"

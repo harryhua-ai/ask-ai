@@ -3,18 +3,32 @@ import type { WidgetConfig, ChatMessage, SiteExperienceConfig } from "./types";
 import { useSSE } from "./hooks/useSSE";
 import { fetchSiteConfig, resolveStarters } from "./utils/siteConfig";
 import { collectPageContext } from "./utils/pageContext";
+import {
+  readBrowserLanguage,
+  readHtmlLang,
+  resolveAskLanguage,
+  resolveUiLanguage,
+  type LanguageResolutionInput,
+} from "./utils/language";
+import { uiStrings } from "./i18n";
 import { ChatPanel } from "./components/ChatPanel";
 import fabIcon from "./assets/CamThink.ai-black.png";
 
-const SUGGESTED_QUESTIONS = [
-  "NE503 支持哪些接口?",
-  "如何开始使用 NeoMind?",
-  "NE101 的功耗是多少?",
-  "AIToolStack 有哪些功能?",
-];
-
-// 与后端 SERVICE_UNAVAILABLE_MSG 保持一致的失败兜底文案
-const SERVICE_UNAVAILABLE = "服务暂时不可用,请稍后再试。";
+// legacy 兜底推荐问题按 UI 语言双变体(G-L4/G-L5:站点 starters 缺失时的回落)
+const DEFAULT_STARTERS: Record<"en" | "zh", string[]> = {
+  en: [
+    "Which product fits my project?",
+    "Compare NE503 and NE301",
+    "What interfaces does NE503 support?",
+    "How do I get started with NeoMind?",
+  ],
+  zh: [
+    "NE503 支持哪些接口?",
+    "如何开始使用 NeoMind?",
+    "NE101 的功耗是多少?",
+    "AIToolStack 有哪些功能?",
+  ],
+};
 
 export function App({ config }: { config: WidgetConfig }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -26,10 +40,34 @@ export function App({ config }: { config: WidgetConfig }) {
   const [siteConfig, setSiteConfig] = useState<SiteExperienceConfig | null>(null);
   const { ask, uploadFiles } = useSSE(config.apiUrl);
 
+  // ML 闭环:UI_LANGUAGE 与 ANSWER_LANGUAGE 分离。
+  // 解析链(冻结):宿主显式配置 → <html lang> → 站点默认语言 → 浏览器语言 → en。
+  // <html lang> 每次打开面板/发送时重读 → SPA 页内热切换生效(G-L2 闭环)。
+  const resolveInput = useCallback((): LanguageResolutionInput => {
+    return {
+      configLanguage: config.language,
+      htmlLang: typeof document !== "undefined" ? readHtmlLang(document) : null,
+      siteLanguage: siteConfig?.language,
+      browserLanguage:
+        typeof navigator !== "undefined" ? readBrowserLanguage(navigator) : null,
+    };
+  }, [config.language, siteConfig]);
+
+  const [uiLang, setUiLang] = useState<"en" | "zh">(() =>
+    resolveUiLanguage({
+      configLanguage: config.language,
+      htmlLang: typeof document !== "undefined" ? readHtmlLang(document) : null,
+      browserLanguage:
+        typeof navigator !== "undefined" ? readBrowserLanguage(navigator) : null,
+    }),
+  );
+
+  // 站点体验配置按当前 UI 语言拉取本地化 welcome/starters(G-L5);
+  // UI 语言变化(页内热切换)时重新拉取。
   useEffect(() => {
     if (!config.siteId) return;
     let cancelled = false;
-    fetchSiteConfig(config.apiUrl, config.siteId)
+    fetchSiteConfig(config.apiUrl, config.siteId, { language: uiLang })
       .then((cfg) => {
         if (!cancelled) setSiteConfig(cfg);
       })
@@ -39,13 +77,27 @@ export function App({ config }: { config: WidgetConfig }) {
     return () => {
       cancelled = true;
     };
-  }, [config.apiUrl, config.siteId]);
+  }, [config.apiUrl, config.siteId, uiLang]);
 
   const starters =
-    messages.length === 0 ? resolveStarters(siteConfig, SUGGESTED_QUESTIONS) : [];
+    messages.length === 0 ? resolveStarters(siteConfig, DEFAULT_STARTERS[uiLang]) : [];
   const welcome = messages.length === 0 ? siteConfig?.welcome : undefined;
+  const strings = uiStrings(uiLang);
+
+  const openPanel = useCallback(() => {
+    // 打开面板时重读页面语言(SPA 路由切换后 UI 跟随)
+    setUiLang(resolveUiLanguage(resolveInput()));
+    setIsOpen(true);
+  }, [resolveInput]);
 
   const handleSend = useCallback(async (text: string, attachmentIds: string[]) => {
+    // ML 闭环:发送时实时解析(G-L2 热切换 + G-L3 浏览器兜底);
+    // ANSWER_LANGUAGE 随 ask 发送,服务端作为默认答案语境消费(G-L1)。
+    const input = resolveInput();
+    const langNow = resolveUiLanguage(input);
+    const askLanguage = resolveAskLanguage(input);
+    setUiLang(langNow);
+
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
       type: "user",
@@ -82,7 +134,9 @@ export function App({ config }: { config: WidgetConfig }) {
           // → 显示失败文案,绝不留空白气泡伪装成功
           setMessages((prev) =>
             prev.map((m) =>
-              m.id === assistantId && !m.content ? { ...m, content: SERVICE_UNAVAILABLE } : m,
+              m.id === assistantId && !m.content
+                ? { ...m, content: uiStrings(langNow).serviceUnavailable }
+                : m,
             ),
           );
         },
@@ -101,12 +155,12 @@ export function App({ config }: { config: WidgetConfig }) {
       }, attachmentIds, {
         siteId: config.siteId,
         pageContext: collectPageContext(),
-        language: config.language ?? siteConfig?.language,
+        language: askLanguage,
       });
     } finally {
       setIsStreaming(false);
     }
-  }, [messages, ask, config.siteId, config.language, siteConfig]);
+  }, [messages, ask, config.siteId, config.channel, resolveInput]);
 
   const handleFeedback = useCallback(async (_msgId: string, feedback: "up" | "down") => {
     if (!conversationId) return;
@@ -122,7 +176,7 @@ export function App({ config }: { config: WidgetConfig }) {
       {!isOpen && (
         <button
           className="ask-ai-fab"
-          onClick={() => setIsOpen(true)}
+          onClick={openPanel}
         >
           <img className="ask-ai-fab-icon" src={fabIcon} alt="Ask AI" />
         </button>
@@ -130,6 +184,7 @@ export function App({ config }: { config: WidgetConfig }) {
       {isOpen && (
         <ChatPanel
           config={config}
+          strings={strings}
           messages={messages}
           isStreaming={isStreaming}
           conversationId={conversationId}

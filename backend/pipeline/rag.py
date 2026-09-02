@@ -47,7 +47,7 @@ from backend.pipeline.lead_qualify import (
 from backend.pipeline.query_rewrite import extract_query, rewrite_query
 from backend.pipeline.social import match_social
 from backend.retrieval.search import SearchResult
-from backend.utils.language import detect_language
+from backend.utils.language import detect_language, resolve_answer_language
 
 logger = logging.getLogger(__name__)
 
@@ -613,6 +613,7 @@ class RAGOrchestrator:
         page_context: dict | None = None,
         site_name: str | None = None,
         lead_ctx: LeadTurnContext | None = None,
+        language_hint: str | None = None,
     ) -> RAGAnswer:
         """同步生成 RAG 答案。
 
@@ -640,8 +641,11 @@ class RAGOrchestrator:
             Exception: searcher / llm 异常向上传播(由端点层处理)。
         """
         start = time.monotonic()
-        language = detect_language(query)
-        stages: dict[str, Any] = {}
+        detected_language = detect_language(query)
+        language = resolve_answer_language(query, language_hint)
+        stages: dict[str, Any] = {
+            "language": {"hint": language_hint, "detected": detected_language, "resolved": language}
+        }
 
         # Phase 3A: 人工答案覆盖前置检查
         if self._override_matcher:
@@ -856,6 +860,7 @@ class RAGOrchestrator:
         page_context: dict | None = None,
         site_name: str | None = None,
         lead_ctx: LeadTurnContext | None = None,
+        language_hint: str | None = None,
     ) -> AsyncIterator[str]:
         """流式生成 RAG 答案,Yield JSON 字符串事件。
 
@@ -883,7 +888,8 @@ class RAGOrchestrator:
             Exception: searcher / llm 异常向上传播。
         """
         start = time.monotonic()
-        language = detect_language(query)
+        detected_language = detect_language(query)
+        language = resolve_answer_language(query, language_hint)
 
         # Phase 3A: 人工答案覆盖前置检查
         if self._override_matcher:
@@ -957,11 +963,16 @@ class RAGOrchestrator:
                     "trace_payload": {
                         "type": "reject_short",
                         "stages": {
+                            "language": {
+                                "hint": language_hint,
+                                "detected": detected_language,
+                                "resolved": language,
+                            },
                             "intent": {
                                 "ms": intent_ms,
                                 "category": intent.category,
                                 "reason": intent.reason,
-                            }
+                            },
                         },
                         "total_ms": elapsed,
                         "intent": intent.category,
@@ -1245,6 +1256,11 @@ class RAGOrchestrator:
                 "trace_payload": {
                     "type": "rag",
                     "stages": {
+                        "language": {
+                            "hint": language_hint,
+                            "detected": detected_language,
+                            "resolved": language,
+                        },
                         "intent": {
                             "ms": intent_ms,
                             "category": intent.category,

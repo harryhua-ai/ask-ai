@@ -308,6 +308,10 @@ class SiteExperience(Base):
     starters: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     welcome: Mapped[str | None] = mapped_column(String(500))
     language: Mapped[str | None] = mapped_column(String(10))
+    # ML 闭环(G-L5):按语言键的体验文案变体(如 {"zh": ...});站点身份与
+    # 默认字段语义不变,变体缺失时回落默认(站点身份独立于语言)
+    welcome_i18n: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    starters_i18n: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
