@@ -1,28 +1,30 @@
 """504 黄金事故回归(2026-09-02 生产事故)。
 
 事故链(已实证):Admin 手动同步 → ``asyncio.create_task(_run())`` →
-同步 ingest_all(CPU/GPU 重活,同步 Weaviate SDK + BGE embed)直接占用
-uvicorn event loop → /health timeout → nginx upstream timeout → Admin/API 504。
+同步 ingest_all(CPU/GPU 重活)直接占用 uvicorn event loop → /health
+timeout → nginx upstream timeout → Admin/API 504。
 
-本文件以三组实验形成证据链:
+本文件两组实验形成证据链:
 
 A(事故类别可检测性,旧行为对照组)
-   同一 uvicorn 进程内 inline 阻塞 event loop 3s(事故同构),
-   /health 1s 预算内必然超时 —— 证明 harness 能捕获「event loop 饥饿」
-   这一 504 事故类别,而非只能测 trigger 端点快。
+   同一 uvicorn 进程内 inline 阻塞 event loop(事故同构),/health 1s
+   预算内必然超时 —— 证明 harness 能捕获「event loop 饥饿」这一 504
+   事故类别,而非只能测 trigger 端点快。
 
-B(新执行面)
-   同样的 CPU burn(真实单核打满 ~4s 子进程,非 sleep 桩)经
-   ``launch_sync`` 交给独立执行面后,在线面 /health × 15 与轻量
-   Admin 路由全部在 1s 预算内 200 —— NO TIMEOUT / NO EVENT LOOP
-   STARVATION / NO 504 CLASS BEHAVIOR。
+B(新执行面,真实链路)
+   真实 backend.main.app + 真实 ``sync_requests`` 交接(POST /sync)+
+   真实执行面循环(``scripts/sync_executor_loop.py`` 的 claim/drain/
+   落账,runner 子进程为受控 CPU burn ~4s)在独立**进程**运行期间:
+   - POST /sync 立即 202(accepted,无阻塞);
+   - 交接行被真实领用置 running;
+   - 真实 /health × 15 与真实 Admin API(GET /data-sources,DB 落地)
+     全部 200 且延迟有界 —— NO TIMEOUT / NO EVENT LOOP STARVATION /
+     NO 504 CLASS BEHAVIOR;
+   - burn 结束后交接行落账 done(退出码 0),在线面依旧健康。
+   容器级生命周期验收由真实 Docker compose 实验单独执行(见报告)。
 
-C(真实 backend app 面)
-   对真实 ``backend.main.app`` 的 /health,在真实 burn 子进程运行期间
-   反复探测,全部 200 且有界延迟。
-
-约束:CPU burn 用时间盒循环(hashlib 单核),不依赖外部服务,
-也不会把开发机打挂(单核、秒级)。
+约束:CPU burn 用时间盒循环(hashlib 单核),不依赖外部服务,不把
+开发机打挂(单核、秒级)。
 """
 
 import asyncio
@@ -33,16 +35,21 @@ import sys
 import textwrap
 import threading
 import time
-from pathlib import Path
+import uuid
 
 import httpx
 import pytest
+import pytest_asyncio
 import uvicorn
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
-from backend.services import sync_executor
-from backend.services.sync_executor import launch_sync
+from backend.auth.jwt import create_access_token, hash_password
+from backend.config import load_settings
+from backend.db.models import DataSource, SyncRequest, User
+from backend.db.session import get_engine, get_session_factory, init_db
+from backend.main import app
 
 # burn 子进程:单核 hash 循环 burn N 秒(真实 CPU 负载,可观察启动/结束)
 _BURN_CHILD = textwrap.dedent("""
@@ -64,19 +71,12 @@ _OLD_BLOCK_SECONDS = 3.0
 
 @pytest.fixture()
 def tiny_server(tmp_path):
-    """线程内 uvicorn 真实网络服务:/health + 旧行为路由 + 新执行面路由。"""
-    burn_script = tmp_path / "burn_child.py"
-    burn_script.write_text(_BURN_CHILD)
-
+    """线程内 uvicorn 真实网络服务:/health + 旧行为路由(实验 A 专用)。"""
     app = FastAPI()
 
     @app.get("/health")
     async def health():
         return {"status": "ok"}
-
-    @app.get("/api/admin/lightweight")
-    async def lightweight():
-        return {"items": []}  # 轻量 Admin API 代表路由(不触 DB/LLM)
 
     @app.post("/old-sync")
     async def old_sync():
@@ -91,13 +91,6 @@ def tiny_server(tmp_path):
 
         asyncio.get_running_loop().call_soon(_block)
         return {"status": "syncing"}
-
-    @app.post("/new-sync")
-    async def new_sync():
-        result = await launch_sync(
-            None, argv=[sys.executable, str(burn_script), str(_BURN_SECONDS), str(tmp_path / "b")]
-        )
-        return {"status": result.state, "pid": result.pid}
 
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -122,16 +115,6 @@ def tiny_server(tmp_path):
     thread.join(timeout=5)
 
 
-def _wait_marker(marker: Path, want_done: bool, timeout: float) -> bool:
-    target = Path(str(marker) + ".done") if want_done else marker
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if target.exists():
-            return True
-        time.sleep(0.05)
-    return False
-
-
 def test_old_inline_pattern_starves_event_loop(tiny_server):
     """实验 A:旧行为(inline 阻塞 loop)下 /health 1s 预算内必超时
     —— harness 对 504 事故类别具备检测能力(对照组)。"""
@@ -152,89 +135,140 @@ def test_old_inline_pattern_starves_event_loop(tiny_server):
     pytest.fail("阻塞结束后 /health 未恢复")
 
 
-def test_new_executor_plane_keeps_online_plane_responsive(tiny_server, tmp_path):
-    """实验 B:同样的 CPU burn 在独立执行面子进程运行时,
-    在线面 /health × 15 与轻量 Admin 路由全部 200 且延迟有界。"""
-    base = tiny_server
-    marker = tmp_path / "b"
+# --------------------------------------------------------------------------- #
+# 实验 B:真实交接队列 + 真实执行面循环 + 真实 backend app
+# --------------------------------------------------------------------------- #
 
-    # launch_sync 需要事件循环;asyncio.run 上下文内完成提交
-    async def _submit():
-        return await launch_sync(
-            None,
-            argv=[
-                sys.executable,
-                str(_burn_path(tmp_path)),
-                str(_BURN_SECONDS),
-                str(marker),
-            ],
+
+@pytest_asyncio.fixture()
+async def _real_app_state():
+    """ASGITransport 不触发 lifespan:手动初始化 /health 与 Admin 端点所需
+    的 app.state(测试库)。"""
+    app.state.settings = load_settings()
+    dsn = os.environ.get("TEST_DATABASE_URL", app.state.settings.postgres_dsn)
+    engine = get_engine(dsn)
+    await init_db(engine)
+    app.state.session_factory = get_session_factory(engine)
+    return app.state.session_factory
+
+
+async def _get_row(factory, request_id: int) -> SyncRequest:
+    async with factory() as session:
+        row = (
+            await session.execute(select(SyncRequest).where(SyncRequest.id == request_id))
+        ).scalar_one()
+        session.expunge(row)
+    return row
+
+
+async def test_new_execution_plane_keeps_real_backend_responsive(
+    _real_app_state, tmp_path, monkeypatch
+):
+    """实验 B:真实 POST /sync(交接)+ 真实执行面领用/落账 + 真实 CPU burn
+    子进程独立进程运行期间,真实 backend 的 /health 与真实 Admin API 全部
+    有界响应;交接行 running → done(退出码 0)。"""
+    import scripts.sync_executor_loop as loop_mod
+    from scripts.sync_executor_loop import drain_once
+
+    factory = _real_app_state
+    marker = tmp_path / "burn"
+
+    # 执行面的 runner argv 指向受控 burn 子进程(claim/drain/落账逻辑全真实)
+    def _fake_argv(source_id, triggered_by):
+        return [sys.executable, "-c", _BURN_CHILD, str(_BURN_SECONDS), str(marker)]
+
+    monkeypatch.setattr(loop_mod, "build_runner_argv", _fake_argv)
+
+    # 前置清理 + Admin 用户 + 数据源
+    user_id = uuid.uuid4()
+    async with factory() as session:
+        await session.execute(SyncRequest.__table__.delete())
+        await session.commit()
+    async with factory() as session:
+        session.add(
+            User(
+                id=user_id,
+                email="burn@test.com",
+                role="admin",
+                password_hash=hash_password("pass123"),
+            )
         )
+        session.add(
+            DataSource(
+                id="burn-src",
+                type="filesystem",
+                product="test",
+                enabled=True,
+                config={"root_path": "/tmp"},
+                sync_interval="24h",
+            )
+        )
+        await session.commit()
+    headers = {
+        "Authorization": "Bearer "
+        + create_access_token(str(user_id), "admin", app.state.settings.jwt_secret)
+    }
 
-    proc_info = asyncio.run(_submit())
-    assert proc_info.state == "accepted"
-    assert _wait_marker(marker, want_done=False, timeout=5), "burn 子进程未启动"
-    # 子进程仍在跑(独立执行面真实承载重活,而非瞬时退出)
-    os.kill(proc_info.pid, 0)  # 进程存活(不存在则 ProcessLookupError)
+    async def _drive_until_done(timeout: float = 20.0) -> SyncRequest:
+        """执行面驱动:领用并执行请求直到落账(真实 drain_once)。"""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            row = await _get_row(factory, request_id)
+            if row.status in ("done", "failed"):
+                return row
+            await drain_once(factory)
+            await asyncio.sleep(0.05)
+        pytest.fail("执行面未在时限内完成请求")
 
-    latencies: list[float] = []
-    with httpx.Client(timeout=2) as c:
-        for _ in range(15):
-            t0 = time.monotonic()
-            r = c.get(f"{base}/health", timeout=1.0)
-            latencies.append(time.monotonic() - t0)
-            assert r.status_code == 200
-        r = c.get(f"{base}/api/admin/lightweight", timeout=1.0)
-        assert r.status_code == 200
-    assert max(latencies) < 1.0  # NO TIMEOUT,有界延迟
+    transport = ASGITransport(app=app)
+    try:
+        # 1) 触发:立即 202(在线面无任何重活,只写交接行)
+        t0 = time.monotonic()
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/api/admin/data-sources/burn-src/sync", headers=headers, timeout=2.0
+            )
+        trigger_elapsed = time.monotonic() - t0
+        assert resp.status_code == 202
+        assert resp.json()["status"] == "accepted"
+        assert trigger_elapsed < 0.5, f"trigger 耗时 {trigger_elapsed:.3f}s,不满足快速返回"
+        request_id = resp.json()["request_id"]
 
-    # 子进程跑完退出后,在线面仍然健康(执行面退出不波及在线面)。
-    # 提交用的 asyncio.run 循环已关闭,Process 句柄的退出码不再更新,
-    # 完成证据用 done marker(burn 脚本最后一步写入),并清登记防串扰。
-    assert _wait_marker(marker, want_done=True, timeout=10)
-    sync_executor._inflight.pop("__all__", None)
-    assert httpx.get(f"{base}/health", timeout=2.0).status_code == 200
+        # 2) 启动执行面驱动任务;等 burn 子进程真正跑起来(burn 在独立进程)
+        driver = asyncio.create_task(_drive_until_done())
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not marker.exists():
+            await asyncio.sleep(0.05)
+        assert marker.exists(), "burn 子进程未启动"
+        row = await _get_row(factory, request_id)
+        assert row.status == "running"  # 真实领用语义(claim_next 置位)
 
+        # 3) burn 运行期间:真实 /health × 15 + 真实 Admin API × 5 全部有界
+        latencies: list[float] = []
+        admin_latencies: list[float] = []
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            for _ in range(15):
+                t0 = time.monotonic()
+                r = await client.get("/health", timeout=1.0)
+                latencies.append(time.monotonic() - t0)
+                assert r.status_code == 200
+            for _ in range(5):
+                t0 = time.monotonic()
+                r = await client.get("/api/admin/data-sources", headers=headers, timeout=1.0)
+                admin_latencies.append(time.monotonic() - t0)
+                assert r.status_code == 200
+        assert max(latencies) < 1.0, f"/health max={max(latencies):.3f}s(event loop 被占?)"
+        assert max(admin_latencies) < 1.0, f"Admin API max={max(admin_latencies):.3f}s"
 
-def _burn_path(tmp_path: Path) -> Path:
-    p = tmp_path / "burn_child2.py"
-    p.write_text(_BURN_CHILD)
-    return p
-
-
-@pytest.mark.asyncio
-async def test_real_backend_app_responsive_during_executor_burn(tmp_path):
-    """实验 C:真实 backend.main.app 的 /health 在真实 burn 子进程运行
-    期间(经 launch_sync 真实派生)全部 200 且延迟有界。"""
-    from backend.main import app as backend_app
-
-    marker = tmp_path / "rb"
-    burn = tmp_path / "burn_real.py"
-    burn.write_text(_BURN_CHILD)
-    proc_info = await launch_sync(
-        None, argv=[sys.executable, str(burn), str(_BURN_SECONDS), str(marker)]
-    )
-    assert proc_info.state == "accepted"
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline and not marker.exists():
-        await asyncio.sleep(0.05)
-    assert marker.exists()
-
-    transport = ASGITransport(app=backend_app)
-    latencies: list[float] = []
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        for _ in range(15):
-            t0 = time.monotonic()
-            resp = await client.get("/health", timeout=1.0)
-            latencies.append(time.monotonic() - t0)
-            assert resp.status_code == 200
-    assert max(latencies) < 1.0
-
-    # 收尾:等子进程退出,不留孤儿
-    entry = sync_executor._inflight.get("__all__")
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        if entry is not None and entry.returncode is not None:
-            break
-        await asyncio.sleep(0.1)
-    assert entry is not None and entry.returncode == 0
-    sync_executor._inflight.clear()
+        # 4) burn 结束 → 真实落账 done(退出码 0),在线面依旧健康
+        final_row = await driver
+        assert final_row.status == "done"
+        assert final_row.runner_exit_code == 0
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            assert (await client.get("/health", timeout=2.0)).status_code == 200
+    finally:
+        async with factory() as session:
+            await session.execute(SyncRequest.__table__.delete())
+            await session.execute(DataSource.__table__.delete().where(DataSource.id == "burn-src"))
+            await session.execute(User.__table__.delete().where(User.id == user_id))
+            await session.commit()

@@ -1,0 +1,30 @@
+# AC6 真实容器生命周期验收(阶段⑨ FINAL,Planner PARTIAL 修正)
+#
+# 目的:证明「backend 容器 restart / force-recreate 不终止独立执行面上
+# 进行中的同步」。用最小 stdlib 镜像(python:3.11-slim)复刻生产拓扑:
+#
+#   backend(触发面:POST /trigger 只写持久交接文件,立即 202)
+#        │  文件交接(生产对应 sync_requests 表)
+#        ▼
+#   sync-executor(执行面:领用 → 子进程 sync_runner 长跑 → 落结果)
+#
+# 用法:bash scripts/dev/syncexec_lifecycle/run_acceptance.sh
+# 前置:docker daemon 可用;python:3.11-slim 镜像可拉取/已存在。
+name: syncexec-lifecycle
+
+services:
+  backend:
+    image: python:3.11-slim
+    ports:
+      - "18001:8000"
+    volumes:
+      - ./plane:/plane
+    command: ["python", "/plane/backend_stub.py"]
+    restart: unless-stopped
+
+  sync-executor:
+    image: python:3.11-slim
+    volumes:
+      - ./plane:/plane
+    command: ["python", "/plane/executor_loop.py"]
+    restart: unless-stopped

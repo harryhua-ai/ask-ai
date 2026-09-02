@@ -609,13 +609,18 @@ async def preview_file_types(
 
 @router.post("/{source_id}/sync", status_code=202)
 async def trigger_sync(source_id: str, _: EditorDep, request: Request) -> dict[str, Any]:
-    """手动触发指定数据源同步 —— 提交给独立同步执行面,立即返回。
+    """手动触发指定数据源同步 —— 提交交接请求给独立同步执行面,立即返回。
 
     P4(阶段9 冻结,2026-09-02 生产 504 事故回归防线):本端点只做校验 +
-    派生 detached ``scripts/sync.py`` 子进程(``start_new_session`` 脱离
-    backend 进程组),绝不在 web 进程 event loop 内执行重型 ingest。
-    **accepted ≠ success**:同步结果以 sync_log 为准(前端 5s 轮询
-    last_sync 判定完成);执行面启动失败返回 502,不伪装成功。
+    向 ``sync_requests`` 交接表写入一行持久 pending 请求,**绝不**在本
+    进程/本容器内执行重型 ingest。执行由独立 ``sync-executor`` 容器领用
+    (``scripts/sync_executor_loop.py`` → 子进程 ``scripts/sync.py``),
+    backend 容器重启/重建/换镜像不影响交接队列与进行中的同步(AC6
+    容器级隔离)。
+
+    **accepted = 请求已持久进入执行面交接队列 ≠ sync success**:业务
+    结果以 sync_log 为准(前端 5s 轮询 last_sync 判定完成)。交接写库
+    失败返回 502,不伪装成功。
     """
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
@@ -628,25 +633,28 @@ async def trigger_sync(source_id: str, _: EditorDep, request: Request) -> dict[s
         if ds.type == "github":
             await _validate_github_branches(ds.config)
 
-    from backend.services.sync_executor import SyncExecutorLaunchError, launch_sync
+        from backend.services.sync_requests import SyncRequestSubmitError, submit_sync_request
 
-    try:
-        launch = await launch_sync(source_id, triggered_by="manual")
-    except SyncExecutorLaunchError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
-    return {"status": launch.state, "source_id": source_id, "pid": launch.pid}
+        try:
+            submit = await submit_sync_request(session, source_id, triggered_by="manual")
+        except SyncRequestSubmitError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+    return {
+        "status": submit.state,
+        "source_id": source_id,
+        "request_id": submit.request_id,
+    }
 
 
 @router.post("/sync-all", status_code=202)
 async def trigger_sync_all(_: EditorDep, request: Request) -> dict[str, Any]:
-    """一键同步所有启用的数据源 —— 提交给独立同步执行面,立即返回。
+    """一键同步所有启用的数据源 —— 提交交接请求给独立同步执行面,立即返回。
 
-    整批同步是**一个** detached ``scripts/sync.py`` 子进程(脚本内部顺序
-    跑各源,复用单个 pipeline,避免并发 BGE embed 导致 GPU OOM —— tesla-t4
-    共享 GPU、batch ≤16 约束),不在 web 进程内执行(P4,阶段9)。
-    返回保留 ``source_ids``/``count`` 键:前端据此批量种子轮询
-    (触发时点启用的源;子进程执行时以 DB 当时状态为准)。
-    **accepted ≠ success**:结果以各源 sync_log 为准。
+    整批是**一个**交接请求(``source_id IS NULL``),执行面以**单个**
+    ``scripts/sync.py`` 子进程顺序跑各源(单 pipeline,避免并发 BGE embed
+    导致 GPU OOM)。返回保留 ``source_ids``/``count`` 键:前端据此批量
+    种子轮询(触发时点启用的源;执行面领用时以 DB 当时状态为准)。
+    **accepted = 已持久进入交接队列 ≠ success**:结果以各源 sync_log 为准。
     """
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
@@ -657,15 +665,15 @@ async def trigger_sync_all(_: EditorDep, request: Request) -> dict[str, Any]:
         if not sources:
             return {"status": "noop", "source_ids": [], "count": 0}
 
-    from backend.services.sync_executor import SyncExecutorLaunchError, launch_sync
+        from backend.services.sync_requests import SyncRequestSubmitError, submit_sync_request
 
-    try:
-        launch = await launch_sync(None, triggered_by="manual")
-    except SyncExecutorLaunchError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        try:
+            submit = await submit_sync_request(session, None, triggered_by="manual")
+        except SyncRequestSubmitError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
     return {
-        "status": launch.state,
+        "status": submit.state,
         "source_ids": [s.id for s in sources],
         "count": len(sources),
-        "pid": launch.pid,
+        "request_id": submit.request_id,
     }

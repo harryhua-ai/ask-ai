@@ -204,6 +204,35 @@ class DataSource(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class SyncRequest(Base):
+    """同步执行交接请求(阶段⑨ AC6 容器级隔离)。
+
+    ONLINE PLANE(backend 容器)触发同步时只写一行 ``pending`` 请求;
+    独立 ``sync-executor`` 容器(部署级独立于 backend 生命周期)轮询领用
+    并以子进程运行 ``scripts/sync.py``。backend 容器重启/重建/换镜像
+    不影响交接队列与进行中的同步。
+
+    语义边界:
+    - ``status``(done/failed)是**交接/进程级**结果(runner 进程退出码),
+      业务成败以 ``sync_log`` 为准(JOB SUCCESS ≠ KNOWLEDGE HEALTH);
+    - ``source_id IS NULL`` 表示同步全部启用源(sync-all);
+    - 本表**不是** SyncRun 模型:无 stage 计数 / 心跳 / 进度统计,
+      中断恢复也属阶段⑩(执行面重启时遗留 ``running`` 行诚实标记 failed)。
+    """
+
+    __tablename__ = "sync_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    triggered_by: Mapped[str] = mapped_column(String(20), default="manual")
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    picked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    runner_exit_code: Mapped[int | None] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(Text)
+
+
 class Customization(Base):
     __tablename__ = "customizations"
 

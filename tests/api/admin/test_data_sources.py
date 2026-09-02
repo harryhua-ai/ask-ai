@@ -5,6 +5,7 @@ import uuid
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 from backend.auth.jwt import create_access_token, hash_password
 from backend.db.models import DataSource, SyncLog, User
@@ -175,29 +176,15 @@ async def test_preview_branches(auth_headers, monkeypatch):
 
 
 async def test_sync_all_returns_enabled_source_ids_skips_disabled(auth_headers, monkeypatch):
-    """sync-all 返回启用源 id+count、跳过禁用源;整批一次派生独立执行面子进程。
+    """sync-all 返回启用源 id+count、跳过禁用源;写入 NULL source 交接行。
 
-    P4(阶段9):端点只提交任务,绝不 in-process 执行 ingest —— 以
-    scripts.sync._sync_one 置雷(误入进程内执行即 AssertionError)防线证明。
+    P4(阶段9 FINAL):端点只写 sync_requests 交接行(由独立 sync-executor
+    容器领用),绝不 in-process 执行 ingest —— 以 scripts.sync._sync_one
+    置雷(误入进程内执行即 AssertionError)防线证明。
     """
-    import sys
-
     import scripts.sync as sync_mod
+    from backend.db.models import SyncRequest
     from backend.main import app
-    from backend.services import sync_executor
-
-    spawned: list[tuple[list[str], dict]] = []
-
-    class _FakeProc:
-        pid = 4242
-        returncode = None  # None = 存活
-
-    async def _fake_spawn(*argv, **kwargs):
-        spawned.append((list(argv), kwargs))
-        return _FakeProc()
-
-    monkeypatch.setattr(sync_executor, "_spawn", _fake_spawn)
-    monkeypatch.setattr(sync_executor, "_inflight", {})
 
     def _boom(*a, **k):
         raise AssertionError("sync-all 不得在 backend 进程内执行同步业务逻辑")
@@ -205,13 +192,14 @@ async def test_sync_all_returns_enabled_source_ids_skips_disabled(auth_headers, 
     monkeypatch.setattr(sync_mod, "_sync_one", _boom)
 
     factory = app.state.session_factory
-    # 前置清理:防历史失败残留(上次 finally 未跑导致主键冲突)
+    # 前置清理:防历史失败残留(上次 finally 未跑导致主键冲突/交接行串扰)
     async with factory() as session:
         await session.execute(
             DataSource.__table__.delete().where(
                 DataSource.id.in_(["test-sync-enabled", "test-sync-disabled"])
             )
         )
+        await session.execute(SyncRequest.__table__.delete())
         await session.commit()
     async with factory() as session:
         session.add(
@@ -247,14 +235,16 @@ async def test_sync_all_returns_enabled_source_ids_skips_disabled(auth_headers, 
         assert "test-sync-disabled" not in data["source_ids"]  # 跳过禁用
         assert data["count"] == len(data["source_ids"])
         assert data["count"] >= 1
-        # 整批一个子进程(脚本内顺序跑源,单 pipeline 防 GPU OOM),argv 逐元素无 shell
-        assert len(spawned) == 1
-        argv, kwargs = spawned[0]
-        assert argv[0] == sys.executable
-        assert argv[1].endswith("scripts/sync.py")
-        assert "--source" not in argv  # 不带 --source → 脚本内部遍历全部启用源
-        assert "--triggered-by" in argv and argv[argv.index("--triggered-by") + 1] == "manual"
-        assert kwargs.get("start_new_session") is True  # 脱离 backend 进程组(AC6)
+        # 交接行已持久写入:NULL source_id(=全部启用源),manual 标记
+        async with factory() as session:
+            row = (
+                await session.execute(
+                    select(SyncRequest).where(SyncRequest.id == data["request_id"])
+                )
+            ).scalar_one()
+        assert row.source_id is None
+        assert row.status == "pending"
+        assert row.triggered_by == "manual"
     finally:
         async with factory() as session:
             await session.execute(
@@ -262,4 +252,5 @@ async def test_sync_all_returns_enabled_source_ids_skips_disabled(auth_headers, 
                     DataSource.id.in_(["test-sync-enabled", "test-sync-disabled"])
                 )
             )
+            await session.execute(SyncRequest.__table__.delete())
             await session.commit()

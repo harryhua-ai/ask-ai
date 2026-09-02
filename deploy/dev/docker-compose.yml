@@ -88,6 +88,14 @@ services:
     ports:
       - "18000:8000"
 
+  sync-executor:
+    # 手动同步独立执行面(阶段⑨ AC6 容器级隔离):轮询 sync_requests 交接表,
+    # 领用后以子进程运行 scripts/sync.py。backend 重启/重建不终止在跑同步。
+    <<: *backend-base
+    healthcheck:
+      disable: true
+    command: ["python", "scripts/sync_executor_loop.py"]
+
   sync:
     # 手动同步 / reindex(dev 期间按需触发,不常驻)。
     # 用法:docker compose run --rm sync python scripts/sync.py [--reindex]
