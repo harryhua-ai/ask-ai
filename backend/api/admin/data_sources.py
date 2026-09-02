@@ -1,6 +1,5 @@
 """数据源 CRUD + 手动同步端点。"""
 
-import asyncio
 import logging
 import os
 import re
@@ -19,7 +18,6 @@ from weaviate.classes.query import Filter
 
 from backend.api.admin.schemas import DataSourceCreate, DataSourceOut, DataSourceUpdate
 from backend.auth.dependencies import CurrentUser, require_role
-from backend.connectors.db_adapter import to_source_config
 from backend.db.models import DataSource, Document, SyncLog
 
 router = APIRouter(prefix="/data-sources", tags=["数据源管理"])
@@ -609,9 +607,16 @@ async def preview_file_types(
     return {"extensions": sorted(extensions)}
 
 
-@router.post("/{source_id}/sync")
-async def trigger_sync(source_id: str, _: EditorDep, request: Request) -> dict[str, str]:
-    """手动触发指定数据源同步（后台异步执行，立即返回）。"""
+@router.post("/{source_id}/sync", status_code=202)
+async def trigger_sync(source_id: str, _: EditorDep, request: Request) -> dict[str, Any]:
+    """手动触发指定数据源同步 —— 提交给独立同步执行面,立即返回。
+
+    P4(阶段9 冻结,2026-09-02 生产 504 事故回归防线):本端点只做校验 +
+    派生 detached ``scripts/sync.py`` 子进程(``start_new_session`` 脱离
+    backend 进程组),绝不在 web 进程 event loop 内执行重型 ingest。
+    **accepted ≠ success**:同步结果以 sync_log 为准(前端 5s 轮询
+    last_sync 判定完成);执行面启动失败返回 502,不伪装成功。
+    """
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
         result = await session.execute(select(DataSource).where(DataSource.id == source_id))
@@ -622,41 +627,26 @@ async def trigger_sync(source_id: str, _: EditorDep, request: Request) -> dict[s
             raise HTTPException(status_code=400, detail="数据源已禁用")
         if ds.type == "github":
             await _validate_github_branches(ds.config)
-        cfg = to_source_config(ds)
 
-    # 捕获到闭包局部变量,避免后台任务引用已结束的 request 对象
-    settings = request.app.state.settings
-    embedder = request.app.state.embedder
-    weaviate_client = request.app.state.weaviate_client
-    weaviate_class_name = request.app.state.weaviate_class_name
+    from backend.services.sync_executor import SyncExecutorLaunchError, launch_sync
 
-    async def _run() -> None:
-        """后台任务：构造 pipeline 并调用 _sync_one(triggered_by="manual")。"""
-        from backend.db.session import get_sync_session_factory
-        from backend.pipeline.ingest import IngestionPipeline
-        from scripts.sync import _sync_one
-
-        pipeline = IngestionPipeline(
-            embedder,
-            weaviate_client,
-            class_name=weaviate_class_name,
-            session_factory=get_sync_session_factory(settings.postgres_dsn),
-        )
-        await _sync_one(cfg, pipeline, factory, triggered_by="manual")
-
-    # 后台任务不阻塞响应；异常在 _sync_one 内已被捕获并写入 SyncLog
-    asyncio.create_task(_run())
-    return {"status": "syncing", "source_id": source_id}
+    try:
+        launch = await launch_sync(source_id, triggered_by="manual")
+    except SyncExecutorLaunchError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"status": launch.state, "source_id": source_id, "pid": launch.pid}
 
 
-@router.post("/sync-all")
+@router.post("/sync-all", status_code=202)
 async def trigger_sync_all(_: EditorDep, request: Request) -> dict[str, Any]:
-    """一键同步所有启用的数据源(后台顺序执行,立即返回)。
+    """一键同步所有启用的数据源 —— 提交给独立同步执行面,立即返回。
 
-    一个后台任务**顺序**跑所有 enabled 源(复用单个 IngestionPipeline,
-    避免并发 BGE embed 导致 GPU OOM —— tesla-t4 共享 GPU、batch ≤16 约束)。
-    每源独立写 sync_log,前端按现有 5s 轮询逐个检测完成并 toast。
-    禁用源不参与(与单源 trigger_sync 的 enabled 校验一致)。
+    整批同步是**一个** detached ``scripts/sync.py`` 子进程(脚本内部顺序
+    跑各源,复用单个 pipeline,避免并发 BGE embed 导致 GPU OOM —— tesla-t4
+    共享 GPU、batch ≤16 约束),不在 web 进程内执行(P4,阶段9)。
+    返回保留 ``source_ids``/``count`` 键:前端据此批量种子轮询
+    (触发时点启用的源;子进程执行时以 DB 当时状态为准)。
+    **accepted ≠ success**:结果以各源 sync_log 为准。
     """
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
@@ -666,31 +656,16 @@ async def trigger_sync_all(_: EditorDep, request: Request) -> dict[str, Any]:
         sources = result.scalars().all()
         if not sources:
             return {"status": "noop", "source_ids": [], "count": 0}
-        cfgs = [to_source_config(s) for s in sources]
 
-    # 捕获到局部变量,避免后台任务引用已结束的 request 对象
-    settings = request.app.state.settings
-    embedder = request.app.state.embedder
-    weaviate_client = request.app.state.weaviate_client
-    weaviate_class_name = request.app.state.weaviate_class_name
+    from backend.services.sync_executor import SyncExecutorLaunchError, launch_sync
 
-    async def _run_all() -> None:
-        """后台任务:构造单个 pipeline,顺序 _sync_one 每个 enabled 源。
-
-        _sync_one 内部捕获异常并写 sync_log(不向上传播),单源失败不影响后续源。
-        """
-        from backend.db.session import get_sync_session_factory
-        from backend.pipeline.ingest import IngestionPipeline
-        from scripts.sync import _sync_one
-
-        pipeline = IngestionPipeline(
-            embedder,
-            weaviate_client,
-            class_name=weaviate_class_name,
-            session_factory=get_sync_session_factory(settings.postgres_dsn),
-        )
-        for cfg in cfgs:
-            await _sync_one(cfg, pipeline, factory, triggered_by="manual")
-
-    asyncio.create_task(_run_all())
-    return {"status": "syncing", "source_ids": [c.id for c in cfgs], "count": len(cfgs)}
+    try:
+        launch = await launch_sync(None, triggered_by="manual")
+    except SyncExecutorLaunchError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {
+        "status": launch.state,
+        "source_ids": [s.id for s in sources],
+        "count": len(sources),
+        "pid": launch.pid,
+    }

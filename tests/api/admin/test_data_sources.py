@@ -175,30 +175,34 @@ async def test_preview_branches(auth_headers, monkeypatch):
 
 
 async def test_sync_all_returns_enabled_source_ids_skips_disabled(auth_headers, monkeypatch):
-    """sync-all 返回启用源 id+count、跳过禁用源;后台任务不实际执行(防 weaviate/embedder)。"""
-    from unittest.mock import MagicMock
+    """sync-all 返回启用源 id+count、跳过禁用源;整批一次派生独立执行面子进程。
 
-    import backend.api.admin.data_sources as mod
+    P4(阶段9):端点只提交任务,绝不 in-process 执行 ingest —— 以
+    scripts.sync._sync_one 置雷(误入进程内执行即 AssertionError)防线证明。
+    """
+    import sys
+
+    import scripts.sync as sync_mod
     from backend.main import app
+    from backend.services import sync_executor
 
-    # 防后台任务真实执行(_run_all 需 weaviate_client+embedder,测试期未初始化):
-    # 把 data_sources 模块内的 asyncio 名重绑到假对象,create_task 只捕获并关闭
-    # 协程、不调度。不 patch 全局 asyncio,避免破坏 httpx/anyio 自身的任务调度。
-    class _FakeAsyncio:
-        @staticmethod
-        def create_task(coro):
-            coro.close()
-            return MagicMock()
+    spawned: list[tuple[list[str], dict]] = []
 
-    monkeypatch.setattr(mod, "asyncio", _FakeAsyncio)
+    class _FakeProc:
+        pid = 4242
+        returncode = None  # None = 存活
 
-    # ASGITransport 不跑 lifespan,app.state.embedder/weaviate_* 未初始化;
-    # 端点在 create_task 前会读这些属性,设占位避免 AttributeError
-    app.state.embedder = None
-    app.state.weaviate_client = None
-    app.state.weaviate_class_name = getattr(
-        app.state.settings, "weaviate_class_name", "AskAIChunk"
-    )
+    async def _fake_spawn(*argv, **kwargs):
+        spawned.append((list(argv), kwargs))
+        return _FakeProc()
+
+    monkeypatch.setattr(sync_executor, "_spawn", _fake_spawn)
+    monkeypatch.setattr(sync_executor, "_inflight", {})
+
+    def _boom(*a, **k):
+        raise AssertionError("sync-all 不得在 backend 进程内执行同步业务逻辑")
+
+    monkeypatch.setattr(sync_mod, "_sync_one", _boom)
 
     factory = app.state.session_factory
     # 前置清理:防历史失败残留(上次 finally 未跑导致主键冲突)
@@ -236,13 +240,21 @@ async def test_sync_all_returns_enabled_source_ids_skips_disabled(auth_headers, 
     try:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post("/api/admin/data-sources/sync-all", headers=auth_headers)
-        assert resp.status_code == 200
+        assert resp.status_code == 202
         data = resp.json()
-        assert data["status"] == "syncing"
+        assert data["status"] == "accepted"
         assert "test-sync-enabled" in data["source_ids"]
         assert "test-sync-disabled" not in data["source_ids"]  # 跳过禁用
         assert data["count"] == len(data["source_ids"])
         assert data["count"] >= 1
+        # 整批一个子进程(脚本内顺序跑源,单 pipeline 防 GPU OOM),argv 逐元素无 shell
+        assert len(spawned) == 1
+        argv, kwargs = spawned[0]
+        assert argv[0] == sys.executable
+        assert argv[1].endswith("scripts/sync.py")
+        assert "--source" not in argv  # 不带 --source → 脚本内部遍历全部启用源
+        assert "--triggered-by" in argv and argv[argv.index("--triggered-by") + 1] == "manual"
+        assert kwargs.get("start_new_session") is True  # 脱离 backend 进程组(AC6)
     finally:
         async with factory() as session:
             await session.execute(

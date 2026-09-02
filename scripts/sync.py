@@ -24,6 +24,9 @@
 - **CLI 参数**(argparse,比 ``sys.argv`` 更标准):
     --source SOURCE_ID  仅同步指定数据源(默认同步全部启用源)
     --dry-run           仅列举抓取的文档数,不写向量库 / 不写 SyncLog
+    --reindex           删除并重建 collection 后全量重灌
+    --triggered-by      sync_log 触发方标记(auto/manual/cron;
+                        独立执行面的 Admin 手动触发显式传 manual)
     --help              显示帮助
 
 - **URL 解析**:用 ``urllib.parse.urlparse`` 替代 brief 中 ``split("//")``
@@ -678,12 +681,25 @@ async def _sync_one(
                 logger.error("SyncLog 写入失败 %s: %s", cfg.id, exc)
 
 
+def _resolve_triggered_by(source_id: str | None, triggered_by: str | None) -> str:
+    """解析 sync_log.triggered_by 标记。
+
+    显式指定优先(独立执行面的 Admin 手动触发经 CLI 传入,见
+    backend/services/sync_executor.py);否则按旧规则 —— 显式 source_id
+    视为"手动触发",无参数 cron 调度为"自动"。
+    """
+    if triggered_by in ("manual", "cron"):
+        return triggered_by
+    return "manual" if source_id else "cron"
+
+
 async def run_sync(
     settings: Settings,
     source_id: str | None = None,
     *,
     dry_run: bool = False,
     reindex: bool = False,
+    triggered_by: str | None = None,
 ) -> None:
     """执行一次完整的同步流程。
 
@@ -702,6 +718,8 @@ async def run_sync(
     Args:
         settings: 全局配置实例(包含 postgres_dsn / weaviate_url 等)。
         source_id: 仅同步指定数据源 ID;``None`` 同步全部启用源。
+        triggered_by: 显式触发方标记("manual"/"cron");``None`` 按旧规则
+            由 source_id 推导(独立执行面的手动触发经 CLI 显式传 manual)。
         dry_run: 仅列举抓取的文档数,不灌入向量库 / 不写 SyncLog。
         reindex: 删除并重建 Weaviate collection 后全量同步所有数据源。
             Weaviate v4 不允许修改已有 collection 的 property 类型,故
@@ -748,8 +766,7 @@ async def run_sync(
             session_factory=sync_session_factory,
         )
 
-        # 显式指定 source_id 视为"手动触发";无参数 cron 调度为"自动"
-        triggered_by = "manual" if source_id else "cron"
+        marker = _resolve_triggered_by(source_id, triggered_by)
         for cfg in configs:
             if not cfg.enabled:
                 logger.info("跳过禁用的数据源 %s", cfg.id)
@@ -760,7 +777,7 @@ async def run_sync(
                 cfg,
                 pipeline,
                 session_factory,
-                triggered_by=triggered_by,
+                triggered_by=marker,
                 dry_run=dry_run,
                 reindex=reindex,
             )
@@ -799,6 +816,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="删除并重建 Weaviate collection 后全量同步所有数据源",
     )
+    parser.add_argument(
+        "--triggered-by",
+        choices=["auto", "manual", "cron"],
+        default="auto",
+        help="sync_log.triggered_by 标记;auto=按旧规则(带 --source 记 manual,"
+        "否则 cron)。独立执行面的 Admin 手动触发经此显式标记为 manual。",
+    )
     return parser.parse_args(argv)
 
 
@@ -816,6 +840,7 @@ def main(argv: list[str] | None = None) -> None:
             source_id=args.source,
             dry_run=args.dry_run,
             reindex=args.reindex,
+            triggered_by=None if args.triggered_by == "auto" else args.triggered_by,
         )
     )
 
