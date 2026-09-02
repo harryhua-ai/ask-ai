@@ -24,3 +24,7 @@ routing:
     chain:
       - provider: "deepseek"
         model: null
+  lead_qualification:
+    chain:
+      - provider: "deepseek"
+        model: null

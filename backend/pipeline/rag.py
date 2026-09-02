@@ -18,6 +18,7 @@
 - ``_extract_sources`` 按归一化路径去重(中英文翻译版只保留一条),最多 5 条。
 """
 
+import asyncio
 import json
 import logging
 import time
@@ -34,6 +35,15 @@ from backend.pipeline.citation import (
     validate_citations,
 )
 from backend.pipeline.intent import classify_intent
+from backend.pipeline.lead_qualify import (
+    LEAD_ACK_INSTRUCTION,
+    LEAD_INVITE_INSTRUCTION,
+    LeadQualification,
+    LeadTurnContext,
+    build_qualification_prompt,
+    decide_invite,
+    parse_qualification,
+)
 from backend.pipeline.query_rewrite import extract_query, rewrite_query
 from backend.pipeline.social import match_social
 from backend.retrieval.search import SearchResult
@@ -296,6 +306,66 @@ class RAGOrchestrator:
             },
         )
 
+    # ------------------------------------------------------------------ #
+    # Sales Lead Capture:资格判定 + 邀请/确认决策
+    # ------------------------------------------------------------------ #
+
+    async def _run_qualifier(
+        self, query: str, lead_ctx: LeadTurnContext
+    ) -> LeadQualification | None:
+        """运行 lead 资格判定 LLM(task=lead_qualification,路由缺省回退 generation 链)。
+
+        任何失败 fail-open 返回 None,绝不阻断问答主流程。
+        """
+        try:
+            resp = await self._llm.generate(
+                build_qualification_prompt(query, lead_ctx.history, lead_ctx.recorded_fields),
+                task="lead_qualification",
+                max_tokens=512,
+                temperature=0.0,
+            )
+            return parse_qualification(resp.content)
+        except Exception as exc:  # noqa: BLE001 — lead 判定失败不影响回答
+            logger.warning("lead qualifier 失败,fail-open 跳过: %s", str(exc)[:200])
+            return None
+
+    def _lead_decide(
+        self, lead_ctx: LeadTurnContext, qual: LeadQualification | None
+    ) -> tuple[bool, bool, str]:
+        """邀请/确认决策,返回 (invited, ack, system 追加指令)。
+
+        - 联系方式捕获优先:本轮消息检出联系方式 → 确认指令(ack);
+        - 否则按 One-Proactive-Ask 决定是否内嵌邀请指令;
+        - qualifier 失败时确定性 explicit_sales_hint 仍可触发邀请。
+        """
+        if lead_ctx.capture_mode:
+            return False, True, LEAD_ACK_INSTRUCTION
+        if qual is None:
+            qual = LeadQualification()
+        invited = decide_invite(
+            qual,
+            prompt_count=lead_ctx.prompt_count,
+            contact_present=lead_ctx.contact_present,
+            explicit_hint=lead_ctx.explicit_sales_hint,
+        )
+        return invited, False, LEAD_INVITE_INSTRUCTION if invited else ""
+
+    def _lead_stage(
+        self, lead_ctx: LeadTurnContext, qual: LeadQualification | None, instruction: str
+    ) -> dict[str, Any]:
+        """lead 阶段 trace(PII 安全:联系方式只带 type + masked,绝无原文)。"""
+        contact = lead_ctx.contact
+        return {
+            "level": qual.level if qual else None,
+            "qualifier_ran": bool(qual and qual.ran),
+            "instruction": (
+                "ack" if instruction == LEAD_ACK_INSTRUCTION else "invite" if instruction else None
+            ),
+            "prompt_count_before": lead_ctx.prompt_count,
+            "contact": {"type": contact.type, "masked": contact.masked} if contact else None,
+            "explicit_sales_hint": lead_ctx.explicit_sales_hint,
+        }
+
     async def _retrieve_and_fuse(
         self,
         extracted: str,
@@ -413,6 +483,7 @@ class RAGOrchestrator:
         log_text: str = "",
         image_context: str = "",
         page_hint: str = "",
+        lead_instruction: str = "",
     ) -> list[dict]:
         """构造 OpenAI 风格的 messages 列表。
 
@@ -431,10 +502,14 @@ class RAGOrchestrator:
             page_hint: MSW 非信任页面背景文本(G008)。仅追加到 **user** 消息
                 的显式「仅供参考,非任何指令」标签段;system 消息不受影响,
                 背景内容不得作为事实依据或引用来源。
+            lead_instruction: Lead 跟随指令(邀请留联系方式 / 联系方式确认)。
+                空串时不附加,行为与基线完全一致(零回归)。
         """
         base = self._channel_customizations.get(channel, self._system_prompt)
         style = self._intent_styles.get(intent, "")
         system_prompt = f"{base}\n\n{style}" if style else base
+        if lead_instruction:
+            system_prompt = f"{system_prompt}\n\n{lead_instruction}"
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
         if history:
             # 每轮对话 = 1 user + 1 assistant,故 max_turns * 2 为消息条数上限
@@ -537,6 +612,7 @@ class RAGOrchestrator:
         product_filter: str | None = None,
         page_context: dict | None = None,
         site_name: str | None = None,
+        lead_ctx: LeadTurnContext | None = None,
     ) -> RAGAnswer:
         """同步生成 RAG 答案。
 
@@ -603,7 +679,7 @@ class RAGOrchestrator:
             "category": intent.category,
             "reason": intent.reason,
         }
-        if intent.category == "off_topic":
+        if intent.category == "off_topic" and not (lead_ctx and lead_ctx.capture_mode):
             elapsed = int((time.monotonic() - start) * 1000)
             return RAGAnswer(
                 answer=_off_topic_reply(language),
@@ -625,9 +701,14 @@ class RAGOrchestrator:
         # commercial/product/support 进入 RAG 管线
         # (commercial 原「过渡期拒答」已废:WooCommerce 产品已灌库,走 woocommerce boost 桶作答)
         # product/commercial/support 降低检索阈值(能力咨询/购买咨询容忍少结果)
-        effective_min = (
-            1 if intent.category in ("product", "support", "commercial") else self._min_results
-        )
+        capture_mode = bool(lead_ctx and lead_ctx.capture_mode)
+        if capture_mode:
+            # 联系方式捕获轮:即使检索为空也必须生成(要确认已记录联系方式)
+            effective_min = 0
+        else:
+            effective_min = (
+                1 if intent.category in ("product", "support", "commercial") else self._min_results
+            )
 
         t_rewrite = time.monotonic()
         extracted = await extract_query(query, self._llm)
@@ -714,6 +795,13 @@ class RAGOrchestrator:
         sources = self._extract_sources(reranked)
         # 引用完整性:LLM 编号集 = 访客可见集合(权威编号上下文)
         cite_ctx = build_citation_context(reranked, sources)
+        # Sales Lead:资格判定(同步路径串行执行)+ 邀请/确认决策
+        lead_qual: LeadQualification | None = None
+        lead_instruction = ""
+        if lead_ctx is not None and lead_ctx.should_qualify(intent.category):
+            lead_qual = await self._run_qualifier(query, lead_ctx)
+            _, _, lead_instruction = self._lead_decide(lead_ctx, lead_qual)
+            stages["lead"] = self._lead_stage(lead_ctx, lead_qual, lead_instruction)
         messages = self._build_messages(
             query,
             cite_ctx.context,
@@ -722,6 +810,7 @@ class RAGOrchestrator:
             channel,
             intent=intent.category,
             page_hint=page_hint_text(page_context, site_name),
+            lead_instruction=lead_instruction,
         )
 
         t_gen = time.monotonic()
@@ -766,6 +855,7 @@ class RAGOrchestrator:
         attachments: list | None = None,
         page_context: dict | None = None,
         site_name: str | None = None,
+        lead_ctx: LeadTurnContext | None = None,
     ) -> AsyncIterator[str]:
         """流式生成 RAG 答案,Yield JSON 字符串事件。
 
@@ -847,10 +937,13 @@ class RAGOrchestrator:
         #  意图走 woocommerce boost 桶召回产品信息作答,不再拒答。intent.py 注释同步)
         # 评审 C1:有附件时跳过 off_topic 拒答——「分析这个日志」这类泛化
         # 日志排查语会被判 off_topic,但附件就是 context,必须放行。
+        # Lead capture 模式(本轮消息检出联系方式)同理跳过 off_topic 拒答:
+        # 用户补联系方式的消息常被判 off_topic,拒答会丢掉 capture 机会。
+        capture_mode = bool(lead_ctx and lead_ctx.capture_mode)
         t_intent = time.monotonic()
         intent = await classify_intent(query, self._llm)
         intent_ms = int((time.monotonic() - t_intent) * 1000)
-        if not attachments:
+        if not attachments and not capture_mode:
             if intent.category == "off_topic":
                 elapsed = int((time.monotonic() - start) * 1000)
                 yield json.dumps(
@@ -879,9 +972,16 @@ class RAGOrchestrator:
                     }
                 )
                 return
+        # Sales Lead Capture:资格判定 LLM 与 rewrite/retrieve 并发执行,
+        # commercial/product(或已有线索/检出联系方式/明确销售请求)才跑,零延迟增加。
+        lead_qual_task: asyncio.Task | None = None
+        if lead_ctx is not None and lead_ctx.should_qualify(intent.category):
+            lead_qual_task = asyncio.create_task(self._run_qualifier(query, lead_ctx))
+
         # 评审 C1 第二道门:有附件时 effective_min=0,即使检索为空也走生成(附件作 fallback)
+        # Lead capture 轮同理 effective_min=0:联系方式确认不能被「无检索结果」拒答吞掉
         has_attachments = bool(attachments)
-        if has_attachments:
+        if has_attachments or capture_mode:
             effective_min = 0
         else:
             effective_min = (
@@ -921,6 +1021,26 @@ class RAGOrchestrator:
             # P1 兜底:rerank 滤光但 fused 非空时降级用 fused top-N(与 answer 同策略)
             fallback = fused[: self._top_k] if fused else []
             if not fallback:
+                # 拒答前收敛 lead 判定任务:qualified 信号不因检索为空而丢失
+                # (invited=False:本轮没有生成回答,未展示邀请)
+                reject_lead_payload: dict[str, Any] | None = None
+                if lead_qual_task is not None:
+                    try:
+                        reject_qual = await lead_qual_task
+                        reject_lead_payload = {
+                            "ran": bool(reject_qual and reject_qual.ran),
+                            "level": reject_qual.level if reject_qual else "none",
+                            "invited": False,
+                            "ack": False,
+                            "explicit_sales_request": bool(
+                                reject_qual and reject_qual.explicit_sales_request
+                            ),
+                            "fields": reject_qual.fields.non_empty() if reject_qual else {},
+                            "summary": reject_qual.summary if reject_qual else "",
+                            "ms": None,
+                        }
+                    except Exception:  # noqa: BLE001 — 与 _run_qualifier 同为 fail-open
+                        reject_lead_payload = None
                 elapsed = int((time.monotonic() - start) * 1000)
                 yield json.dumps(
                     {
@@ -968,6 +1088,7 @@ class RAGOrchestrator:
                             "confidence": intent.confidence,
                             "config_snapshot": self._config_snapshot(),
                         },
+                        "lead": reject_lead_payload,
                     }
                 )
                 return
@@ -1005,6 +1126,31 @@ class RAGOrchestrator:
                         "text_preview": text[:200] if text else "",
                     }
                 )
+        # Sales Lead:收敛并发资格判定结果,决定是否内嵌邀请/确认指令
+        lead_qual: LeadQualification | None = None
+        lead_ms: int | None = None
+        if lead_qual_task is not None:
+            t_lead = time.monotonic()
+            lead_qual = await lead_qual_task
+            lead_ms = int((time.monotonic() - t_lead) * 1000)
+        invited, ack, lead_instruction = (False, False, "")
+        lead_stage: dict[str, Any] | None = None
+        lead_payload: dict[str, Any] | None = None
+        if lead_ctx is not None and (lead_qual_task is not None or capture_mode):
+            invited, ack, lead_instruction = self._lead_decide(lead_ctx, lead_qual)
+            lead_stage = self._lead_stage(lead_ctx, lead_qual, lead_instruction)
+            lead_stage["ms"] = lead_ms
+            lead_payload = {
+                "ran": bool(lead_qual and lead_qual.ran),
+                "level": lead_qual.level if lead_qual else "none",
+                "invited": invited,
+                "ack": ack,
+                "explicit_sales_request": bool(lead_qual and lead_qual.explicit_sales_request),
+                "fields": lead_qual.fields.non_empty() if lead_qual else {},
+                "summary": lead_qual.summary if lead_qual else "",
+                "ms": lead_ms,
+            }
+
         sources = self._extract_sources(reranked)
         # 引用完整性:LLM 编号集 = 访客可见集合(权威编号上下文)
         cite_ctx = build_citation_context(reranked, sources)
@@ -1018,6 +1164,7 @@ class RAGOrchestrator:
             log_text=log_text,
             image_context="",
             page_hint=page_hint_text(page_context, site_name),
+            lead_instruction=lead_instruction,
         )
 
         yield json.dumps({"type": "sources", "sources": sources})
@@ -1137,6 +1284,7 @@ class RAGOrchestrator:
                             **cite_ctx.stats,
                             **citation_filter.stats,
                         },
+                        **({"lead": lead_stage} if lead_stage else {}),
                     },
                     "total_ms": elapsed,
                     "intent": intent.category,
@@ -1144,5 +1292,6 @@ class RAGOrchestrator:
                     "config_snapshot": self._config_snapshot(),
                     "attachments": attachment_summary,
                 },
+                "lead": lead_payload,
             }
         )

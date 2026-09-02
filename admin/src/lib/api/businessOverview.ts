@@ -46,8 +46,16 @@ export interface BusinessOverviewData {
     delta_pct?: number; // Phase 2:环比百分比
   };
   leads: {
-    valid: number;
+    /** 商业对话量(意图口径,≠线索) */
+    commercial_conversations: number;
+    /** 窗口内新建线索(至少 potential 资格) */
     potential: number;
+    /** 达到 qualified 及以上(含已留联系方式/已移交) */
+    qualified: number;
+    /** 已获得至少一种有效联系方式 */
+    contactable: number;
+    /** 已人工移交销售 */
+    handed_off: number;
     hot_products: { name: string; count: number }[];
   };
   scenes: SceneItem[];

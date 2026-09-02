@@ -85,6 +85,8 @@ class Conversation(Base):
     custom_tags: Mapped[list[Any]] = mapped_column(JSONB, default=[])
     customization_id: Mapped[str | None] = mapped_column(String(50))
     country: Mapped[str | None] = mapped_column(String(10))
+    # Sales Lead(V1):widget 匿名会话 ID,会话线程聚合(sales_leads.thread 依赖)
+    session_id: Mapped[str | None] = mapped_column(String(64))
 
     # Phase 3 预留
     cluster_id: Mapped[str | None] = mapped_column(String(100))
@@ -359,11 +361,80 @@ class Attachment(Base):
     conversation: Mapped["Conversation | None"] = relationship(back_populates="attachments")
 
 
+class SalesLead(Base):
+    """销售线索(Sales Lead)——独立于 Conversation 的一等业务对象。
+
+    产品契约(CAMTHINK V1 Sales Lead Capture & Handoff):
+    - Conversation 回答「AI 聊得怎么样」,SalesLead 回答「哪些客户值得跟进」;
+      线索必须能关联原会话(source_conversation_id / last_conversation_id / session_id)。
+    - 生命周期:potential → qualified → contact_captured → handed_off(管理员手动
+      移交为终态;自动流程只升不降,见 backend/pipeline/lead_qualify.compute_status)。
+
+    隐私边界(HARD):contact_value 等联系方式 PII 只落本表(PostgreSQL,
+    仅授权 Admin 经 /api/admin/leads 访问);绝不进入 Knowledge Corpus /
+    Weaviate / RAG。对外展示一律用 contact_masked。
+
+    不设到 conversations 的外键:线索生命周期独立于对话保留策略,
+    会话行被清理不应级联删除商业线索。
+    """
+
+    __tablename__ = "sales_leads"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # 线索线程键:widget 匿名会话 ID(一轮问不出联系方式、后续轮补充的场景靠它聚合)
+    session_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="potential", index=True)
+
+    # 联系方式(PII,仅此表持有原文;contact_value 最长 RFC 邮箱 320)
+    contact_type: Mapped[str | None] = mapped_column(
+        String(20)
+    )  # email|phone|whatsapp|wechat|other
+    contact_value: Mapped[str | None] = mapped_column(String(320))
+    contact_masked: Mapped[str | None] = mapped_column(String(80))
+    contact_captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # 商业画像(用户自愿提供,允许全空)
+    name: Mapped[str | None] = mapped_column(String(200))
+    company: Mapped[str | None] = mapped_column(String(200))
+    region: Mapped[str | None] = mapped_column(String(200))
+    product_interest: Mapped[str | None] = mapped_column(String(200))
+    quantity: Mapped[str | None] = mapped_column(String(100))
+    use_case: Mapped[str | None] = mapped_column(Text)
+    purchase_intent: Mapped[str | None] = mapped_column(String(50))
+    timeline: Mapped[str | None] = mapped_column(String(100))
+    ai_summary: Mapped[str | None] = mapped_column(Text)
+
+    # One-Proactive-Ask 记账:AI 已主动邀请次数与最近邀请时间(契约 §7)
+    prompt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_prompted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # 会话关联(无外键,见类注释)
+    source_conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    last_conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+
+    channel: Mapped[str | None] = mapped_column(String(20))
+    language: Mapped[str | None] = mapped_column(String(10))
+    country: Mapped[str | None] = mapped_column(String(10))
+
+    # 手动移交销售(admin/editor 触发)
+    handoff_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    handoff_by: Mapped[str | None] = mapped_column(String(100))
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 # 索引(对齐设计文档 §11 SQL DDL)
+Index("idx_sales_leads_status_created", SalesLead.status, SalesLead.created_at.desc())
 Index("idx_conversations_created_at", Conversation.created_at)
 Index("idx_conversations_is_answered", Conversation.is_answered)
 Index("idx_conversations_channel", Conversation.channel)
 Index("idx_conversations_site", Conversation.site_id)
+Index("idx_conversations_session_id", Conversation.session_id)
 Index(
     "idx_conversations_cluster_id",
     Conversation.cluster_id,

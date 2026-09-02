@@ -101,9 +101,9 @@ export default function BusinessOverview() {
             />
             <KpiCard label="销售咨询" value={data.service.intent_dist.commercial} />
             <KpiCard
-              label="有效线索"
-              value={data.leads.valid}
-              baseline={`潜在 ${data.leads.potential}`}
+              label="销售线索"
+              value={data.leads.potential}
+              baseline={`合格 ${data.leads.qualified} · 可联系 ${data.leads.contactable}`}
             />
             <KpiCard
               label="满意度"
@@ -215,23 +215,41 @@ export default function BusinessOverview() {
                   销售线索
                 </h2>
                 <Link
-                  to="/conversations?intent=commercial"
+                  to="/leads"
                   className="text-[12px] text-[var(--acc)] hover:underline"
                 >
-                  查看销售对话
+                  查看线索列表
                 </Link>
               </div>
               <div className="space-y-2">
                 <div className="flex justify-between text-[13px]">
-                  <span className="text-[var(--t2)]">有效线索</span>
+                  <span className="text-[var(--t2)]">商业对话</span>
                   <span className="font-medium text-[var(--t1)]">
-                    {data.leads.valid}
+                    {data.leads.commercial_conversations}
                   </span>
                 </div>
                 <div className="flex justify-between text-[13px]">
-                  <span className="text-[var(--t2)]">潜在客户</span>
+                  <span className="text-[var(--t2)]">潜在线索</span>
                   <span className="font-medium text-[var(--t1)]">
                     {data.leads.potential}
+                  </span>
+                </div>
+                <div className="flex justify-between text-[13px]">
+                  <span className="text-[var(--t2)]">合格线索</span>
+                  <span className="font-medium text-[var(--t1)]">
+                    {data.leads.qualified}
+                  </span>
+                </div>
+                <div className="flex justify-between text-[13px]">
+                  <span className="text-[var(--t2)]">可联系线索</span>
+                  <span className="font-medium text-[var(--t1)]">
+                    {data.leads.contactable}
+                  </span>
+                </div>
+                <div className="flex justify-between text-[13px]">
+                  <span className="text-[var(--t2)]">已移交销售</span>
+                  <span className="font-medium text-[var(--t1)]">
+                    {data.leads.handed_off}
                   </span>
                 </div>
                 {data.leads.hot_products.length > 0 && (

@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   CheckSquare,
   BarChart3,
+  Target,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -21,6 +22,7 @@ interface NavItem {
 
 const OPS_ITEMS: NavItem[] = [
   { to: "/", icon: LayoutDashboard, label: "业务概览", roles: ["admin", "editor", "viewer"] },
+  { to: "/leads", icon: Target, label: "销售线索", roles: ["admin", "editor", "viewer"] },
   { to: "/conversations", icon: MessageSquare, label: "对话审查", roles: ["admin", "editor", "viewer"] },
   { to: "/analytics", icon: BarChart3, label: "技术洞察", roles: ["admin", "editor", "viewer"] },
 ];

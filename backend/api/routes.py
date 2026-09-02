@@ -34,6 +34,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from backend.api.schemas import AskRequest, ClickRequest, FeedbackRequest
 from backend.db.models import Attachment, Conversation, SourceClick, Trace
+from backend.pipeline.lead_qualify import LeadTurnContext
 from backend.pipeline.rag import EmptyGenerationError, RAGOrchestrator
 from backend.services.attachments import (
     MAX_ATTACHMENTS_PER_MESSAGE,
@@ -42,6 +43,7 @@ from backend.services.attachments import (
     sanitize_filename,
     validate_upload_file,
 )
+from backend.services.lead_service import apply_lead_turn, load_lead_context
 from backend.services.site_experiences import (
     SiteDenied,
     extract_request_origin,
@@ -95,23 +97,37 @@ async def ask(
     """SSE 流式问答端点。
 
     流程:
-        1. PII 脱敏用户消息。
-        2. S2 预算熔断:估算 prompt token + max_tokens(4096)预扣;
+        1. 保留原始消息(lead 联系方式检测用),PII 脱敏用户消息后进入管线。
+        2. 构建 lead 上下文(会话既有线索 + 确定性联系方式检测,只读,fail-open)。
+        3. S2 预算熔断:估算 prompt token + max_tokens(4096)预扣;
            超限时返回 ``declined`` 事件,不再调用 LLM。
-        3. ``rag.stream_answer`` 产出 JSON 事件,逐条转为 SSE:
+        4. ``rag.stream_answer`` 产出 JSON 事件,逐条转为 SSE:
            - ``sources`` 事件 → 转发 ``sources`` SSE 事件。
            - ``token`` 事件 → 转发 ``token`` SSE 事件。
-           - ``complete`` 事件 → 提取最终元数据,不直接转发。
-        4. 空结果(拒答)时 ``stream_answer`` 仅产一条 ``complete`` 事件;
+           - ``complete`` 事件 → 提取最终元数据(含可选 lead payload),不直接转发。
+        5. 空结果(拒答)时 ``stream_answer`` 仅产一条 ``complete`` 事件;
            此处将拒答文本作为 ``token`` SSE 事件补发,保证客户端可见。
         5. 生成可靠性(PC-01/02/03):零可用内容完成、首 token 前异常、
            部分 token 后中断均视为异常完成 —— 补发失败文案 token(若无内容)
            并在 ``done`` 之前发 ``error`` SSE 事件(``kind`` 标注失败类别),
            持久化 ``is_answered=False`` + ``Trace(type=generation_error)``。
-        6. 写入 Postgres conversations 表。
+        6. 写入 Postgres conversations 表;lead 判定结果落 sales_leads(fail-open)。
         7. 发送 ``done`` SSE 事件,携带 ``conversation_id``。
     """
-    masked_message = mask_pii(req.message)
+    raw_message = req.message
+    masked_message = mask_pii(raw_message)
+
+    # Sales Lead:单轮上下文(只读;任何异常 fail-open,不影响问答)
+    lead_ctx: LeadTurnContext | None = None
+    try:
+        lead_ctx = await load_lead_context(
+            session_factory,
+            session_id=req.session_id,
+            raw_question=raw_message,
+            conversation_history=req.conversation_history,
+        )
+    except Exception:
+        logger.exception("lead 上下文构建失败,本轮跳过 lead 处理")
 
     # MSW:站点门禁 —— 显式 site_id 必须通过「站点存在且 enabled + 请求 Origin
     # 精确命中」授权(CORS 仅为浏览器执行层,此处为服务端权威校验),否则
@@ -180,6 +196,7 @@ async def ask(
         # - provider_error: 首 token 前异常;
         # - stream_interrupted: 已产出部分 token 后异常。
         failure_kind: str | None = None
+        lead_payload: dict | None = None
 
         try:
             async for chunk in rag.stream_answer(
@@ -191,6 +208,7 @@ async def ask(
                     req.page_context.model_dump(exclude_none=True) if req.page_context else None
                 ),
                 site_name=site.display_name if site else None,
+                lead_ctx=lead_ctx,
             ):
                 data = json.loads(chunk)
                 evt_type = data["type"]
@@ -213,6 +231,7 @@ async def ask(
                     elapsed = data.get("response_time_ms", 0)
                     intent = data.get("intent")
                     trace_payload = data.get("trace_payload")
+                    lead_payload = data.get("lead")
         except Exception as exc:
             # S5: LLM 流式生成中途异常(超时/网络错误)时,降级返回友好提示。
             # 200 响应头已发送,无法改写状态码,但通过 SSE token/error 事件通知客户端。
@@ -278,6 +297,8 @@ async def ask(
                     country=country,
                     # MSW:仅记录已通过授权校验的站点标识(channel 语义不变)
                     site_id=req.site_id if site else None,
+                    # 会话线程聚合(Lead 契约):跨轮 lead 状态读取的键
+                    session_id=req.session_id,
                 )
                 session.add(conv)
                 if trace_payload:
@@ -296,6 +317,22 @@ async def ask(
                 await session.commit()
         except Exception:
             logger.exception("写入 conversations 表失败, conversation_id=%s", conversation_id)
+
+        # Sales Lead:判定结果落 sales_leads(fail-open;联系方式原文只入该表)
+        if lead_payload is not None:
+            try:
+                await apply_lead_turn(
+                    session_factory,
+                    lead_ctx,
+                    lead_payload,
+                    conversation_id=uuid.UUID(conversation_id),
+                    session_id=req.session_id,
+                    channel=req.channel,
+                    language=language,
+                    country=country,
+                )
+            except Exception:
+                logger.exception("sales_leads 写入失败, conversation_id=%s", conversation_id)
 
         yield {"event": "done", "data": json.dumps({"conversation_id": conversation_id})}
 
