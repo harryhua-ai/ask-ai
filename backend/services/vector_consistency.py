@@ -32,6 +32,10 @@ class VectorGapReport:
     # 多余 chunk 计数(实际 index 超出 0..chunk_count-1 的数量,仅统计供日志,不删除)
     stale_chunk_count: int = 0
     orphan_count: int = 0  # Weaviate 有、pg 无(仅 warning 不删)
+    # 孤儿明细:source_id → 该孤儿文档在 Weaviate 的实际 chunk_index 集合。
+    # 供 sync 生命周期 reconciliation 分类(MISSING_LEGITIMATE /
+    # EXTRA_CONFIRMED_RETIRED / EXTRA_UNRESOLVED_ORPHAN);本函数只读不删。
+    orphan_chunks: dict[str, set[int]] = field(default_factory=dict)
 
     @property
     def is_healthy(self) -> bool:
@@ -120,6 +124,9 @@ async def verify_source_vectors(
             # 仅统计"多余"部分(超出期望范围的 index);丢失不算多余
             stale_total += len(actual_indices - expected_indices)
     orphans = len(wv_chunks.keys() - pg_chunks.keys())
+    orphan_chunks = {
+        sid: set(wv_chunks[sid]) for sid in sorted(wv_chunks.keys() - pg_chunks.keys())
+    }
 
     if stale_total:
         logger.warning(
@@ -154,4 +161,5 @@ async def verify_source_vectors(
         refill_source_ids=sorted(refill),
         stale_chunk_count=stale_total,
         orphan_count=orphans,
+        orphan_chunks=orphan_chunks,
     )

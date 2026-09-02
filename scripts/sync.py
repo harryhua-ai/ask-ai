@@ -266,11 +266,14 @@ async def _handle_no_change(
         log_entry.items_updated = 0
         log_entry.items_unchanged = existing
     else:
-        # 有缺口:先按 refill(整篇缺失 ∪ chunk 集合不一致)定向补灌;
-        # refill 为空则缺口属孤儿/多余向量(Weaviate 有账、Postgres 无账,
-        # 典型:documents 表丢失/重置导致账本漂移)——修因而非仅告警(合同#7):
-        # 全量重灌幂等自愈,重建 Postgres 账本行并覆盖向量,恢复两侧一致。
-        # partial 使窗口不推进并暴露详情,绝不静默跳过。
+        # 有缺口:先按 refill(整篇缺失 ∪ chunk 集合不一致)定向补灌(embed 仅
+        # 缺口文档);孤儿向量走独立 reconciliation(§P1 生命周期):
+        #   EXTRA_CONFIRMED_RETIRED(完整发现中确认源已无此文档)→ 按确定性
+        #   UUID 精确删除残留;账本行丢失但源仍在 → 零 embedding 重建账本行;
+        #   发现失败/不完整 → EXTRA_UNRESOLVED_ORPHAN,一律保留并上报,绝不删除。
+        # 旧实现「refill 为空即 fetch_all+ingest_all 全量重灌自愈」已移除:
+        # 无害 ghost 会令该分支每轮全量重灌(embed)+永久 partial(P1 合同)。
+        # 处置后复验:收敛 → success(窗口推进);仍有缺口 → partial。
         missing_n = len(report.missing_source_ids)
         refill_n = len(report.refill_source_ids)
         mismatch_n = refill_n - missing_n  # chunk 集合不一致篇数(refill ⊇ missing)
@@ -287,32 +290,198 @@ async def _handle_no_change(
             report.stale_chunk_count,
             report.orphan_count,
         )
+        gap_parts: list[str] = []
+        items_updated = 0
         if report.refill_source_ids:
             refill_set = set(report.refill_source_ids)
             docs = [d for d in connector.fetch_all() if d.source_id in refill_set]
             results = pipeline.ingest_all(docs)  # 写失败仍 raise → 走外层 except 记 failed
-            log_entry.items_updated = sum(results.values())
-            gap_desc = (
+            items_updated = sum(results.values())
+            gap_parts.append(
                 f"需重灌 {refill_n} 篇(整篇缺失 {missing_n} + chunk 不一致 {mismatch_n});"
                 f"多余 chunk {report.stale_chunk_count} 个(已由 ingest 清理)"
             )
-        else:
-            docs = list(connector.fetch_all())
-            results = pipeline.ingest_all(docs)  # 幂等:content_hash 去重 + 确定性 UUID 覆盖
-            log_entry.items_updated = sum(results.values())
-            gap_desc = (
-                f"孤儿 {report.orphan_count} 篇/多余 chunk {report.stale_chunk_count} 个"
-                f"(账本漂移),已全量重灌自愈 {len(docs)} 篇恢复账本一致;"
-                f"若下一轮校验仍不一致需人工核查"
+        retired = repaired = unresolved = 0
+        if report.orphan_chunks:
+            try:
+                retired, repaired, unresolved = _reconcile_orphan_vectors(
+                    source_id, connector, pipeline, report
+                )
+            except Exception as exc:  # noqa: BLE001 - reconciliation 失败绝不删除
+                logger.error(
+                    "数据源 %s 孤儿 reconciliation 失败(全部保留): %s",
+                    source_id,
+                    str(exc)[:200],
+                )
+                unresolved = report.orphan_count
+        if report.orphan_chunks or retired or repaired or unresolved:
+            gap_parts.append(
+                f"孤儿处置:EXTRA_CONFIRMED_RETIRED={retired}(精确删除),"
+                f"账本重建={repaired}(零 embedding),"
+                f"EXTRA_UNRESOLVED_ORPHAN={unresolved}(保留待人工裁决)"
             )
-        log_entry.status = "partial"
-        log_entry.items_new = 0
+        # 处置后复验:以真实账本↔向量状态判定 success / partial
+        report2 = await verify_source_vectors(session_factory, pipeline, source_id)
+        if report2.is_healthy:
+            log_entry.status = "success"
+            log_entry.items_unchanged = existing
+        else:
+            log_entry.status = "partial"
+        log_entry.items_new = repaired
+        log_entry.items_deleted = retired
+        log_entry.items_updated = items_updated
+        gap_parts.append(
+            f"复验:{report2.actual_chunks}/{report2.expected_chunks} chunks,"
+            f"MISSING_LEGITIMATE={len(report2.refill_source_ids)},"
+            f"EXTRA_UNRESOLVED_ORPHAN={report2.orphan_count}"
+        )
         log_entry.error_detail = (
             f"一致性校验发现缺口 {report.actual_chunks}/{report.expected_chunks} chunks;"
-            f"{gap_desc};orphan={report.orphan_count}"
+            f"{';'.join(gap_parts)}"
         )
     log_entry.finished_at = datetime.now(UTC)
     log_entry.duration_ms = int((time.monotonic() - start) * 1000)
+
+
+def _discover_source_docs(connector: Any) -> tuple[list[Any], bool]:
+    """拉取当前权威全集,并评估「发现完整性」(RETIREMENT MUST BE SOURCE-CONFIRMED)。
+
+    完整 = fetch_all 成功,且(若 connector 暴露 run_stats.full,如 web_crawl)
+    覆盖率达到 COVERAGE_PARTIAL_RATIO。任何失败/不完整都使调用方不得执行
+    退休删除(瞬时爬取失败 ≠ 文档退休)。
+
+    Returns:
+        (docs, complete):complete=False 时调用方只允许保留 + 上报。
+    """
+    try:
+        docs = list(connector.fetch_all())
+    except Exception as exc:  # noqa: BLE001 - 发现失败 → 不完整
+        logger.warning(
+            "源发现失败(%s),孤儿向量一律保留不删除",
+            str(exc)[:160],
+        )
+        return [], False
+    stats = getattr(connector, "run_stats", None)
+    if isinstance(stats, dict) and stats.get("full"):
+        accepted = int(stats.get("accepted", 0))
+        extracted = int(stats.get("extracted", 0))
+        if accepted > 0 and extracted < accepted and extracted / accepted < COVERAGE_PARTIAL_RATIO:
+            logger.warning(
+                "源发现覆盖率不足(%d/%d < %.0f%%)→ 视为不完整发现,孤儿一律保留",
+                extracted,
+                accepted,
+                COVERAGE_PARTIAL_RATIO * 100,
+            )
+            return docs, False
+    return docs, True
+
+
+def _reconcile_orphan_vectors(
+    source_id: str,
+    connector: Any,
+    pipeline: IngestionPipeline,
+    report: Any,
+) -> tuple[int, int, int]:
+    """孤儿向量 reconciliation(零 embedding;分类见下,从不动兄弟文档)。
+
+    对账本无行的孤儿文档逐篇分类(P1 冻结语义):
+      - 完整发现中确认源已无此文档 → EXTRA_CONFIRMED_RETIRED:按该文档自己的
+        确定性 UUID(uuid5(source_id#i),来自校验器扫描的实际存量)精确删除;
+      - 源中仍存在(账本行丢失)→ 以存量对象属性零 embedding 重建账本行;
+      - 发现失败 / 不完整 / 属性缺失 → EXTRA_UNRESOLVED_ORPHAN:保留 + 上报。
+
+    删除/修复范围均由「本文档自己的 source_id + 实际 chunk_index」决定,
+    结构上不可能触及兄弟文档(PRUNE IS DOCUMENT-LOCAL 同源不变量)。
+
+    Returns:
+        (retired, repaired, unresolved) — 三分类篇数。
+    """
+    from backend.db.models import Document
+    from weaviate.classes.query import Filter
+
+    from backend.pipeline.ingest import _deterministic_uuid
+
+    docs, complete = _discover_source_docs(connector)
+    discovered = {d.source_id for d in docs}
+    pipeline._ensure_collection()
+    collection = pipeline._collection
+
+    retired = repaired = unresolved = 0
+    for sid, indices in sorted(report.orphan_chunks.items()):
+        uuids = [_deterministic_uuid(sid, i) for i in sorted(indices)]
+        try:
+            fetched = collection.query.fetch_objects(
+                filters=Filter.by_id().contains_any(uuids), limit=len(uuids)
+            )
+        except Exception as exc:  # noqa: BLE001 - 读失败 → 保留
+            logger.warning("孤儿 %s 对象读取失败,保留:%s", sid, str(exc)[:120])
+            unresolved += 1
+            continue
+        if len(fetched.objects) != len(indices):
+            logger.warning(
+                "孤儿 %s 存量与扫描不一致(%d/%d),保留待人工核查",
+                sid,
+                len(fetched.objects),
+                len(indices),
+            )
+            unresolved += 1
+            continue
+        if sid in discovered:
+            # EXTRA_UNRESOLVED?不:源确认存在 → 账本行丢失,零 embedding 重建
+            props = fetched.objects[0].properties
+            content_hash = props.get("content_hash")
+            if not content_hash:
+                logger.warning("孤儿 %s 缺 content_hash 属性,保留待人工核查", sid)
+                unresolved += 1
+                continue
+            session_factory = pipeline._session_factory
+            if session_factory is None:
+                logger.warning("孤儿 %s 无账本会话工厂,保留", sid)
+                unresolved += 1
+                continue
+            try:
+                with session_factory() as session:
+                    session.add(
+                        Document(
+                            content_hash=str(content_hash),
+                            source_id=sid,
+                            source_type=str(props.get("source_type") or ""),
+                            product=str(props.get("product") or ""),
+                            title=str(props.get("title") or ""),
+                            url=str(props.get("url") or ""),
+                            branch=str(props.get("branch") or ""),
+                            chunk_count=max(indices) + 1,
+                        )
+                    )
+                    session.commit()
+                repaired += 1
+                logger.info(
+                    "EXTRA_ORPHAN_LEDGER_REPAIRED: %s 账本行已按存量重建"
+                    "(chunk_count=%d,零 embedding)",
+                    sid,
+                    max(indices) + 1,
+                )
+            except Exception as exc:  # noqa: BLE001 - 修复失败 → 保留
+                logger.warning("孤儿 %s 账本重建失败,保留:%s", sid, str(exc)[:160])
+                unresolved += 1
+        elif complete:
+            # EXTRA_CONFIRMED_RETIRED:完整发现中源已无此文档 → 精确退休删除
+            for start in range(0, len(uuids), 500):
+                collection.data.delete_many(
+                    where=Filter.by_id().contains_any(uuids[start : start + 500])
+                )
+            retired += 1
+            logger.info(
+                "EXTRA_CONFIRMED_RETIRED: %s 已不在权威源(完整发现),"
+                "按确定性 UUID 精确删除 %d 个残留 chunk",
+                sid,
+                len(uuids),
+            )
+        else:
+            # 发现失败/不完整 → KEEP DATA + REPORT
+            unresolved += 1
+            logger.warning("EXTRA_UNRESOLVED_ORPHAN: %s 保留(发现不完整,不删除)", sid)
+    return retired, repaired, unresolved
 
 
 async def _sync_one(

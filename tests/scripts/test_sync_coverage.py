@@ -28,6 +28,21 @@ def _make_pipeline(chunks: int = 1) -> MagicMock:
     return pipeline
 
 
+def _make_doc(source_id: str):
+    from backend.connectors.base import RawDocument
+
+    return RawDocument(
+        source_id=source_id,
+        source_type="web_crawl",
+        product="website",
+        title=source_id,
+        content="x",
+        url=f"https://x/{source_id}",
+        metadata={},
+        content_hash=f"h-{source_id}",
+    )
+
+
 def _connector_with_stats(stats: dict | None) -> MagicMock:
     connector = MagicMock()
     connector.fetch_changes.return_value = iter([])
@@ -96,9 +111,11 @@ async def test_full_crawl_success_records_coverage_line():
 
 
 async def _run_sync_one(connector, pipeline, factory):
-    with patch("scripts.sync._count_documents", new_callable=AsyncMock) as mc, patch(
-        "scripts.sync._last_success_at", new_callable=AsyncMock
-    ) as ml, patch("scripts.sync.ConnectorRegistry.create") as mcr:
+    with (
+        patch("scripts.sync._count_documents", new_callable=AsyncMock) as mc,
+        patch("scripts.sync._last_success_at", new_callable=AsyncMock) as ml,
+        patch("scripts.sync.ConnectorRegistry.create") as mcr,
+    ):
         mc.return_value = 0  # 首次同步(existing=0)→ fetch_all 路径
         ml.return_value = None
         mcr.return_value = connector
@@ -188,35 +205,65 @@ async def test_connector_without_stats_keeps_legacy_semantics():
 
 @pytest.mark.asyncio
 @patch("scripts.sync.ConnectorRegistry.create")
-async def test_no_change_orphan_only_drift_self_heals_via_full_reingest(mock_create):
-    """孤儿漂移(refill 空、orphan>0)→ 全量重灌自愈恢复账本,记 partial+自愈描述。
+async def test_no_change_orphan_only_drift_reconciles_without_full_reingest(mock_create):
+    """孤儿漂移(refill 空、orphan>0)→ 精确 reconciliation,绝不全量重灌(P1 合同)。
 
-    修复前行为:「重灌清单为空,未自动补齐,需人工核查」永久循环——警告被
-    记录但成因永不修复;本用例锁定修因语义(WEB 合同#7)。
+    历史注记:本用例曾锁定「全量重灌自愈」语义(WEB 合同#7 时代)。该语义
+    被 P1 Website Sync Stability Closure 推翻:无害 ghost 令旧分支每轮全量
+    重灌(embed)+永久 partial。新契约:完整发现中确认源已无此文档 → 按确
+    定性 UUID 精确退休删除(零 embedding);处置后复验收敛 → success(窗口
+    推进)。修因精神不变,手段从「全量重灌」改为「精确 retirement」。
     """
     from backend.services.vector_consistency import VectorGapReport
 
+    ghosts = {f"website-x/old-{i}": {0} for i in range(76)}
     report = VectorGapReport(
         expected_chunks=2,
-        actual_chunks=821,
+        actual_chunks=78,
         missing_source_ids=[],
         refill_source_ids=[],
         orphan_count=76,
+        orphan_chunks=ghosts,
     )
+    report2 = VectorGapReport(expected_chunks=2, actual_chunks=2)
     connector = _connector_with_stats(None)
-    docs = [MagicMock() for _ in range(8)]
-    connector.fetch_all.return_value = iter(docs)
+    # 完整发现:当前源只剩 1 个合法文档,76 个旧页均不在源(确认退休)
+    connector.fetch_all.return_value = iter([_make_doc("website-x/alive")])
     connector.fetch_deleted.return_value = []
     mock_create.return_value = connector
     pipeline = _make_pipeline()
-    pipeline.ingest_all.return_value = {f"d{i}": 3 for i in range(8)}
+    from backend.pipeline.ingest import _deterministic_uuid
+
+    sid_by_uuid = {_deterministic_uuid(sid, 0): sid for sid in ghosts}
+
+    def _fake_fetch(*args, **kwargs):
+        uuids = list(kwargs["filters"].value)
+        objs = []
+        for u in uuids:
+            sid = sid_by_uuid[str(u)]
+            objs.append(
+                MagicMock(
+                    properties={
+                        "source_id": sid,
+                        "content_hash": f"h-{sid}",
+                        "source_type": "web_crawl",
+                        "product": "website",
+                        "title": sid,
+                        "url": f"https://x/{sid}",
+                        "branch": "",
+                    }
+                )
+            )
+        return MagicMock(objects=objs)
+
+    pipeline._collection.query.fetch_objects.side_effect = _fake_fetch
 
     saved, factory = _commit_capture()
     log_entry = SyncLog(source_id="website-x", source_type="web_crawl", status="success")
     started = datetime.now(UTC)
 
     with patch("scripts.sync.verify_source_vectors", new_callable=AsyncMock) as mv:
-        mv.return_value = report
+        mv.side_effect = [report, report2]
         await _handle_no_change(
             "website-x",
             2,
@@ -227,8 +274,11 @@ async def test_no_change_orphan_only_drift_self_heals_via_full_reingest(mock_cre
             start=0.0,
         )
 
-    assert log_entry.status == "partial"
-    assert pipeline.ingest_all.called
-    assert connector.fetch_all.called  # 自愈必须全量重灌
-    assert "自愈" in (log_entry.error_detail or "")
-    assert "76" in (log_entry.error_detail or "")
+    # 绝不全量重灌(embed 零调用);仅发现式 fetch_all
+    assert not pipeline.ingest_all.called
+    assert connector.fetch_all.called
+    # 处置后复验收敛 → success(旧语义永久 partial 已废除)
+    assert log_entry.status == "success"
+    detail = log_entry.error_detail or ""
+    assert "EXTRA_CONFIRMED_RETIRED=76" in detail
+    assert "复验" in detail
