@@ -228,6 +228,10 @@ class IngestionPipeline:
 
         self._ensure_collection()
 
+        # 旧 chunk 集合上界必须在账本被本次 upsert 覆盖**之前**读取,
+        # 否则 prune 会拿新计数当旧计数,漏删或多删。
+        previous_count = self._get_stored_chunk_count(doc.source_id)
+
         # 批量写入 Weaviate(insert_many),已存在 UUID 回退单条 replace(幂等覆盖)。
         # 远程 Weaviate 经 SSH tunnel 时,N chunk 逐条往返延迟极高;
         # 改为 1 次 batch 提交,已存在对象按 per-object 错误回退 replace。
@@ -305,7 +309,7 @@ class IngestionPipeline:
 
         # 全部 chunk 写成功后清理超出范围的陈旧对象(部分失败时留待下轮重试)
         if success_count == len(chunks):
-            self._prune_stale_chunks(doc.source_id, len(chunks))
+            self._prune_stale_chunks(doc.source_id, len(chunks), previous_count=previous_count)
 
         logger.info(
             "已索引 %s: %d/%d chunk 成功",
@@ -315,27 +319,65 @@ class IngestionPipeline:
         )
         return success_count
 
-    def _prune_stale_chunks(self, source_id: str, current_count: int) -> None:
-        """删除该 doc 在 Weaviate 中 chunk_index >= current_count 的陈旧对象。
+    def _get_stored_chunk_count(self, source_id: str) -> int | None:
+        """读 Postgres 账本中该文档已记录的 chunk 数(旧 chunk 集合上界)。
 
-        背景:写入用确定性 UUID(``uuid5(source_id, chunk_index)``),只有
-        insert_many + 已存在 UUID 的 replace 回退——文档内容缩短后,超出新
-        chunk 数的旧对象(索引 >= current_count)不在新批次中,永远不会被
-        触碰而残留,导致 Weaviate 侧实际 chunk 数 > Postgres 记录,一致性
-        校验永远报不一致。删除失败只 warning,不中断灌入。
+        取同 source_id 的 ``MAX(chunk_count)``(保守上界;同 source_id 多行在
+        ``_upsert_postgres`` 的旧版本清理后至多为 1,MAX 仅防御性)。无
+        session_factory / 无行 / 读数失败 → ``None``(调用方 fail-safe 不 prune)。
+        """
+        if self._session_factory is None:
+            return None
+        try:
+            from sqlalchemy import func, select
+
+            with self._session_factory() as session:
+                value = session.execute(
+                    select(func.max(Document.chunk_count)).where(Document.source_id == source_id)
+                ).scalar_one_or_none()
+                return int(value) if value is not None else None
+        except Exception as exc:  # noqa: BLE001 - 账本不可得 → 不 prune(fail-safe)
+            logger.warning(
+                "读取文档 %s 的账本 chunk_count 失败,本次跳过 prune: %s", source_id, str(exc)[:200]
+            )
+            return None
+
+    def _prune_stale_chunks(
+        self, source_id: str, current_count: int, previous_count: int | None = None
+    ) -> None:
+        """删除本文档收缩后超出新 chunk 数的陈旧对象(PRUNE IS DOCUMENT-LOCAL)。
+
+        不变量(P0-A 冻结):**prune 文档局部** —— 只能删除由本文档自己的
+        ``(source_id, chunk_index)`` 决定性 UUID 点名的对象,结构上不可能触及
+        任何其他文档(含同前缀 / 同 token / 相似路径)。
+
+        事故根因(2026-09-02 PA-0F):旧实现用 TEXT 属性 ``source_id`` 的
+        ``equal`` 过滤,而 Weaviate 对 TEXT 的过滤是**分词语义** ——
+        ``equal("site/blog")`` 会命中 ``site/blog/ai-species`` 等所有共享 token
+        的兄弟文档,收缩文档的 prune 连带删除兄弟文档 chunks(生产实证
+        web_crawl 359 → 163)。故禁止任何基于 TEXT 属性过滤的删除。
 
         Args:
             source_id: 文档唯一标识。
-            current_count: 本次写入的 chunk 数;仅清理索引 >= 该值的多余对象。
+            current_count: 本次成功写入的 chunk 数。
+            previous_count: 账本记录的旧 chunk 数(写前读取)。``None`` 表示
+                旧集合不可知 → **fail-safe 不删**(残留交由一致性校验披露),
+                绝不猜测删除范围。
         """
+        if previous_count is None or previous_count <= current_count:
+            return
+        stale_uuids = [
+            _deterministic_uuid(source_id, i) for i in range(current_count, previous_count)
+        ]
         self._ensure_collection()
         try:
             from weaviate.classes.query import Filter
 
-            self._collection.data.delete_many(
-                where=Filter.by_property("source_id").equal(source_id)
-                & Filter.by_property("chunk_index").greater_or_equal(current_count)
-            )
+            # 按 UUID 点删(document-local);分批防大 payload
+            for start in range(0, len(stale_uuids), 500):
+                self._collection.data.delete_many(
+                    where=Filter.by_id().contains_any(stale_uuids[start : start + 500])
+                )
         except Exception as exc:  # noqa: BLE001 - 清理失败不阻断灌入
             logger.warning("清理陈旧 chunk 失败 source_id=%s: %s", source_id, str(exc)[:120])
 
@@ -511,6 +553,8 @@ class IngestionPipeline:
             if failed is not None and n_failed_in_doc > 0:
                 # 写库彻底失败(insert 失败且 replace 也失败)→ 记入 failed,由 ingest_all raise
                 failed.append(doc.source_id)
+            # 旧 chunk 集合上界必须在账本被本次 upsert 覆盖之前读取(P0-A)
+            previous_count = self._get_stored_chunk_count(doc.source_id)
             if self._session_factory is not None:
                 try:
                     self._upsert_postgres(doc, success_count)
@@ -518,7 +562,7 @@ class IngestionPipeline:
                     logger.error("Postgres upsert 失败 doc=%s: %s", doc.source_id, exc)
             # 全部 chunk 写成功后清理超出范围的陈旧对象(部分失败时留待下轮重试)
             if success_count == total:
-                self._prune_stale_chunks(doc.source_id, total)
+                self._prune_stale_chunks(doc.source_id, total, previous_count=previous_count)
             logger.info(
                 "已索引 %s: %d/%d chunk 成功",
                 doc.source_id,
@@ -531,19 +575,37 @@ class IngestionPipeline:
     def delete_document(self, source_id: str) -> None:
         """按 source_id 删除文档:先删 Weaviate,再删 Postgres(若提供)。
 
+        P0-A 文档局部性:Weaviate 侧只按本文档自己的确定性 UUID 点删
+        (uuid5(source_id, 0..chunk_count-1)),绝不用 TEXT 属性过滤
+        (分词语义会误删同 token 兄弟文档)。账本无行(计数不可知)时
+        fail-safe 不删 Weaviate,残留交由一致性校验披露。
+
         Args:
             source_id: 文档在源系统内的唯一标识。
         """
-        # Weaviate:删除该 source_id 的全部 chunk
-        self._ensure_collection()
-        try:
-            from weaviate.classes.query import Filter
-
-            self._collection.data.delete_many(
-                where=Filter.by_property("source_id").equal(source_id)
+        stored_count = self._get_stored_chunk_count(source_id)
+        if stored_count is None:
+            logger.warning(
+                "delete_document: 文档 %s 无账本读数,跳过 Weaviate 删除(防跨文档误删);"
+                "残留 chunk 交由一致性校验披露",
+                source_id,
             )
-        except Exception as exc:  # noqa: BLE001 - Weaviate 删除失败不阻断 Postgres
-            logger.warning("Weaviate 删除失败 source_id=%s: %s", source_id, exc)
+        else:
+            self._ensure_collection()
+            try:
+                from weaviate.classes.query import Filter
+
+                for start in range(0, stored_count, 500):
+                    self._collection.data.delete_many(
+                        where=Filter.by_id().contains_any(
+                            [
+                                _deterministic_uuid(source_id, i)
+                                for i in range(start, min(start + 500, stored_count))
+                            ]
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001 - Weaviate 删除失败不阻断 Postgres
+                logger.warning("Weaviate 删除失败 source_id=%s: %s", source_id, exc)
 
         # Postgres:删除该 source_id 的 doc 行(content_hash 仍保留?不,
         # 用 source_id 而非 content_hash 删除,因为调用方只知 source_id)

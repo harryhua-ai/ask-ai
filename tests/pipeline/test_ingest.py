@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from backend.connectors.base import RawDocument
-from backend.pipeline.ingest import IngestionPipeline
+from backend.pipeline.ingest import IngestionPipeline, _deterministic_uuid
 from weaviate.classes.config import DataType
 
 
@@ -355,7 +355,9 @@ def test_delete_document_removes_from_weaviate_and_postgres():
 
 @pytest.mark.unit
 def test_delete_document_works_without_postgres():
-    """未提供 session_factory 时 delete_document 仍能仅删 Weaviate。"""
+    """P0-A:未提供 session_factory(账本不可得)时 delete_document fail-safe
+    不删 Weaviate —— 不能退回 TEXT 分词过滤(会误删同 token 兄弟文档)。
+    残留交由一致性校验披露。"""
     embedder = _make_embedder()
     client = _make_weaviate_client()
     collection = client.collections.get.return_value
@@ -363,7 +365,7 @@ def test_delete_document_works_without_postgres():
     pipeline = IngestionPipeline(embedder, client)
     pipeline.delete_document("test/1")
 
-    collection.data.delete_many.assert_called_once()
+    collection.data.delete_many.assert_not_called()
 
 
 # --------------------------------------------------------------------------- #
@@ -865,32 +867,83 @@ def test_ingest_all_idempotent_replace_success_does_not_raise():
 
 
 @pytest.mark.unit
-def test_prune_stale_chunks_calls_delete_many_with_chunk_filter():
-    """_prune_stale_chunks 应按 source_id 相等 + chunk_index >= N 组合过滤删除。"""
+def test_prune_stale_chunks_deletes_by_own_deterministic_uuids():
+    """P0-A:_prune_stale_chunks 只按本文档自己的确定性 UUID 点删(document-local)。
+
+    旧实现用 TEXT source_id 的 equal 过滤,Weaviate 分词语义会误删同 token
+    兄弟文档(生产事故 PA-0F:web_crawl 359→163),已禁止。
+    """
     embedder = _make_embedder()
     client = _make_weaviate_client()
     collection = client.collections.get.return_value
 
     pipeline = IngestionPipeline(embedder, client)
-    pipeline._prune_stale_chunks("r/main/f.py", 3)
+    pipeline._prune_stale_chunks("r/main/f.py", 3, previous_count=6)
 
     collection.data.delete_many.assert_called_once()
-    # where 条件是 source_id 相等 & chunk_index >= 3 的组合 Filter
     where_arg = collection.data.delete_many.call_args.kwargs["where"]
-    assert where_arg is not None
+    expected = [_deterministic_uuid("r/main/f.py", i) for i in range(3, 6)]
+    assert sorted(str(v) for v in where_arg.value) == sorted(expected)
+    assert getattr(where_arg.operator, "name", None) == "CONTAINS_ANY"
+    assert getattr(getattr(where_arg, "target", None), "property", None) != "source_id"
+
+
+@pytest.mark.unit
+def test_prune_stale_chunks_without_previous_count_is_fail_safe_noop():
+    """P0-A:旧 chunk 上界不可得(previous_count=None)→ 不删(fail-safe)。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+    collection = client.collections.get.return_value
+
+    pipeline = IngestionPipeline(embedder, client)
+    pipeline._prune_stale_chunks("r/main/f.py", 3, previous_count=None)
+
+    collection.data.delete_many.assert_not_called()
 
 
 @pytest.mark.unit
 def test_ingest_document_prunes_stale_chunks_when_fully_written():
-    """单篇全部写成功后应调用 _prune_stale_chunks 清理超出范围的旧 chunk。"""
+    """单篇全部写成功后,应按账本旧计数 prune 自己的陈旧 uuid(有账本时)。"""
+    from sqlalchemy import create_engine
+    from sqlalchemy.dialects.postgresql import JSONB
+    from sqlalchemy.ext.compiler import compiles
+    from sqlalchemy.orm import sessionmaker
+
+    def _jsonb_sqlite(type_, compiler, **kw):
+        return "JSON"
+
+    compiles(JSONB, "sqlite")(_jsonb_sqlite)
+    engine = create_engine("sqlite://")
+    from backend.db.models import Base, Document
+
+    Base.metadata.create_all(engine)
+    maker = sessionmaker(bind=engine)
+    with maker() as s:
+        s.add(
+            Document(
+                content_hash="old",
+                source_id="test/1",
+                source_type="github",
+                product="ne503",
+                title="Test",
+                url="https://github.com/test",
+                branch="",
+                chunk_count=5,
+            )
+        )
+        s.commit()
+
     embedder = _make_embedder()
     client = _make_weaviate_client()
     collection = client.collections.get.return_value
 
-    pipeline = IngestionPipeline(embedder, client)
+    pipeline = IngestionPipeline(embedder, client, session_factory=maker)
     pipeline.ingest_document(_make_doc())  # 短内容 1 chunk,全部成功
 
-    assert collection.data.delete_many.called
+    collection.data.delete_many.assert_called_once()
+    where_arg = collection.data.delete_many.call_args.kwargs["where"]
+    expected = [_deterministic_uuid("test/1", i) for i in range(1, 5)]
+    assert sorted(str(v) for v in where_arg.value) == sorted(expected)
 
 
 @pytest.mark.unit
