@@ -102,3 +102,31 @@ def load_data_sources_from_yaml(yaml_data: dict) -> list[dict]:
             }
         )
     return sources
+
+
+async def refresh_runtime_customizations(state: Any) -> None:
+    """DB 持久化成功后,原子刷新运行时定制快照(RAGOrchestrator)。
+
+    Admin 定制变更(CRUD/绑定)提交后调用:重新从 DB 加载绑定与定制,
+    以**整体引用替换**的方式更新 RAGOrchestrator 快照 —— 并发请求只会
+    观察到旧或新完整态,不存在半建状态。
+
+    - state 无 ``rag``(部分测试环境)→ no-op;
+    - state.settings 用于回退 yaml(全部绑定被删时)。
+    - 失败向上抛出:调用方必须显式上报(持久化已成功,运行时保持
+      上一份有效快照),不得静默吞掉造成「已保存」的假象。
+    """
+    rag = getattr(state, "rag", None)
+    if rag is None:
+        return
+    channel_custs = await load_customizations_from_db(state.session_factory)
+    from backend.config import load_yaml_config
+
+    prompt_config = load_yaml_config(state.settings.config_dir / "system_prompt.yaml")
+    if channel_custs:
+        mapping = {ch: c["system_prompt"] for ch, c in channel_custs.items()}
+        default = mapping.get("widget", prompt_config["system_prompt"])
+    else:
+        mapping = {}
+        default = prompt_config["system_prompt"]
+    rag.set_customization_snapshot(mapping, default)

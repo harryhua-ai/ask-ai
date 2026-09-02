@@ -20,12 +20,24 @@ from backend.api.admin.schemas import (
 )
 from backend.auth.dependencies import CurrentUser, require_role
 from backend.db.models import Customization, CustomizationBinding
+from backend.services.config_loader import refresh_runtime_customizations
 
 router = APIRouter(tags=["Customization 管理"])
 EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
 ViewerDep = Annotated[CurrentUser, Depends(require_role("admin", "editor", "viewer"))]
 
 VALID_CHANNELS = {"widget", "discord", "whatsapp", "mcp"}
+
+
+async def _refresh_or_500(request: Request) -> None:
+    """持久化成功后刷新运行时定制快照;刷新失败显式 500(不得伪装已生效)。"""
+    try:
+        await refresh_runtime_customizations(request.app.state)
+    except Exception as exc:  # noqa: BLE001 - 持久化已成功,激活失败须显式暴露
+        raise HTTPException(
+            status_code=500,
+            detail=f"配置已保存,但运行时刷新失败(新配置尚未生效,请重试保存或重启后端):{exc}",
+        ) from exc
 
 
 def _to_out(cust: Customization) -> CustomizationOut:
@@ -57,6 +69,7 @@ async def create_customization(
         session.add(cust)
         await session.commit()
         await session.refresh(cust)
+    await _refresh_or_500(request)
     return _to_out(cust)
 
 
@@ -76,6 +89,7 @@ async def update_customization(
             setattr(cust, key, value)
         await session.commit()
         await session.refresh(cust)
+    await _refresh_or_500(request)
     return _to_out(cust)
 
 
@@ -90,6 +104,7 @@ async def delete_customization(cust_id: str, _: EditorDep, request: Request) -> 
             raise HTTPException(status_code=404, detail="配置不存在")
         await session.delete(cust)
         await session.commit()
+    await _refresh_or_500(request)
 
 
 @router.get("/customization-bindings", response_model=list[BindingOut])
@@ -131,4 +146,5 @@ async def update_binding(
                 CustomizationBinding(channel=channel, customization_id=req.customization_id)
             )
         await session.commit()
+    await _refresh_or_500(request)
     return {"status": "ok"}
