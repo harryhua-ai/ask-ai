@@ -44,7 +44,8 @@ kapa-*.png
 # 临时进度快照(auto-dev CHECKPOINT,会话级临时文件)
 /CHECKPOINT.md
 .gstack/
-
+.playwright-cli/
+gui-test-screenshots/
 # 文档仅本地保留,GitHub 仓库只保留代码
 /docs/
 /CLAUDE.md
@@ -54,3 +55,6 @@ kapa-*.png
 
 # 本地视频 agent 工作目录
 /.video_agent/
+
+# git worktrees(主仓内多树,不入库)
+/.worktrees/
