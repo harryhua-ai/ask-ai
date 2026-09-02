@@ -262,3 +262,120 @@ skips 均为真实 Weaviate 门控用例(未设 `P0A_WEAVIATE_PORT`),仓库既�
 
 **STATUS: PASS(Executor 自评)。**
 等待 Planner 独立 FINAL REVIEW(真实 diff / 测试 / 架构边界 / 报告)后判定 FINAL PASS / PARTIAL / FAIL。本报告不进入代码仓;下一阶段(⑩ 同步中断后的自动恢复)须待 Planner PASS 后方可开始。
+
+---
+
+# REVISION 1 — FINAL ACCEPTANCE CORRECTION(2026-09-02)
+
+> 本节为 Planner「FINAL ACCEPTANCE CORRECTION」指令的执行记录,追加于原报告之后;
+> **原 §1-23 保留为历史事实,不覆盖**。本文件仍是阶段⑨的 authoritative final report。
+> CORRECTION_BASELINE = `8c27add`;FINAL_IMPLEMENTATION_COMMIT = `2933118`
+> (分支 `worktree-exec/sync-isolation-20260902`,修订历史 f481f94 → 8c27add → 2933118 不 squash,已推 origin)。
+
+## R1.1 PLANNER PARTIAL FINDING(原样记录)
+
+- 原 FINAL REVIEW 判定 **PARTIAL**,唯一阻塞项:AC6。
+- 认可项(全部保留,未推倒):scripts/sync.py shared runner、--triggered-by 语义、Admin 202 accepted 语义、accepted ≠ success、source_ids/count 兼容、shell-safe argv、阶段⑧安全防护、504 Golden Regression、既有失败语义。
+- 核心判定:`8c27add` 的 `start_new_session=True` 只是 **Unix 进程组/会话隔离**,挡不住 **Docker 容器生命周期**——`docker compose restart backend` / `up -d --force-recreate backend` / 生产镜像替换都会终止 backend 容器内全部进程(含 detached sync 子进程)。Backend lifecycle ≠ Sync lifecycle 在部署级不成立。
+- 边界澄清(Planner 明示):「backend 重启 → sync 应继续」属阶段⑨;「sync worker 自身 crash/kill → 中断检测/恢复」才属阶段⑩。本轮只修前者,不实现 interrupted recovery。
+
+## R1.2 TRUE CONTAINER-LIFECYCLE FIX(修正后架构)
+
+调查先于动手(§4):现有 prod compose 已有 backend / sync / sync-cron 三服务共用 anchor(同镜像/env/DB/Weaviate/卷/GPU)。选择 **database-backed minimal trigger handoff + 专用 sync-executor 服务**——零新中间件(明确不引入 Celery/Redis/RabbitMQ/Kafka/K8s),复用现有部署基础,且**不暴露 Docker socket**(backend 无任何 Docker 控制能力)。
+
+```
+BEFORE(8c27add,被否定的进程级隔离)
+Admin Request → backend 容器(uvicorn)
+    └─ asyncio.create_subprocess_exec(start_new_session=True)
+        └─ scripts/sync.py 子进程   ← 仍在 backend 容器内
+           docker restart backend ⇒ 子进程被连带终止 ✘
+
+AFTER(2933118,部署级隔离)
+ONLINE PLANE:backend 容器
+    │  POST /data-sources/{id}/sync、/sync-all
+    │  = 校验 + INSERT sync_requests(pending)→ 202 accepted(立即)
+    ▼
+sync_requests 表(Postgres;持久交接队列)
+    │  领用:FOR UPDATE SKIP LOCKED,最旧 pending → running
+    ▼
+SYNC EXECUTION PLANE:sync-executor 容器(独立服务,prod/dev compose 新增)
+    scripts/sync_executor_loop.py(常驻循环)
+    └─ 子进程:python scripts/sync.py --triggered-by manual [--source X]
+       (同一业务 runner;manual/scheduled/CLI 三方不变,AC7)
+    └─ 落账:done / failed + runner_exit_code + error
+
+Scheduled(sync-cron 容器)/ CLI:原样不变,与本执行面共享同一 runner。
+```
+
+实现要点:
+
+- **`sync_requests` 交接表**(新模型 + 幂等迁移 `scripts/migrate_add_sync_requests.py`,create_all 自愈):id / source_id(NULL=sync-all)/ triggered_by / status(pending/running/done/failed)/ created_at / picked_at / finished_at / runner_exit_code / error。**这不是 SyncRun 模型**:无 stage 计数、无心跳、无进度(冻结非目标),只是最小交接 handoff。
+- **backend 侧 `backend/services/sync_requests.py`**:`submit_sync_request()` 写 pending 行;同 key(source_id 或 NULL)已有 pending/running → `already-running` 不重复入队;commit 失败 → `SyncRequestSubmitError` → 端点 502 显式(**不假报 accepted**);source_id 是行字段数据,无命令构造面。
+- **执行面 `scripts/sync_executor_loop.py`**:领用(FOR UPDATE SKIP LOCKED,多副本安全)→ 子进程 `scripts/sync.py`(argv 数据参数,无 shell)→ `done`/`failed` + 退出码/error;**串行执行是特性**(单 GPU 不被并发 embed 打爆);spawn 失败 → 行记 failed 明确错误,循环继续服务;**启动清理**:上次进程中断遗留的 running 行诚实标记 failed(**不自动恢复**——中断恢复属阶段⑩);`POLL_INTERVAL_SECONDS=2`,手动同步启动延迟上界 ≈ 2s + 当前在跑行程。
+- **部署**:`deploy/prod` 与 `deploy/dev` 新增 `sync-executor` 服务(复用 `x-backend-base` anchor:同镜像/env/卷/GPU;healthcheck disable 与 sync/sync-cron 同理);prod compose 头部架构注释同步更新。**`deploy/local` 不改**——它是纯数据层 compose(仅 postgres+weaviate,无 backend 容器),本地 mac 直跑 backend 的开发形态下执行面 = 直接运行同一循环脚本。
+- **旧方案退场**:删除 `backend/services/sync_executor.py`(backend 进程内 spawn launcher)及其测试;git 历史保留完整审计轨迹(不 squash)。
+- 语义声明:202 `accepted` = 请求**已持久进入执行面交接队列**(DB commit 成功),非 sync success;执行面容器短暂不可用 ≠ 交接失败(请求滞留 pending,执行面恢复后照常领用——比子进程 spawn 更强的提交语义,§9 满足:不存在「accepted 但任务根本没进执行面」的窗口)。
+
+## R1.3 REAL BACKEND RESTART ACCEPTANCE(真实容器生命周期验收)
+
+Planner §7 要求不得只用 killpg 证明。本 Gate 以**真实 Docker 引擎(docker 29.4.0)+ 真实 compose**执行,验收 harness 入仓可复跑:`scripts/dev/syncexec_lifecycle/`(backend 替身=纯触发+持久交接、executor 替身=领用循环+子进程长跑,文件交接对应生产 DB 交接;容器拓扑与生命周期操作与生产同构)。
+
+实际命令与结果(`bash scripts/dev/syncexec_lifecycle/run_acceptance.sh`,完整输出留档 /tmp/ac6_acceptance_final.log):
+
+| 步骤 | 命令 | 结果 |
+| --- | --- | --- |
+| 起栈 | `docker compose up -d`(python:3.11-slim ×2) | health 200,executor "plane up" |
+| 触发 | `curl -XPOST :18001/trigger` | 202 `{"status":"accepted","id":...}` |
+| 领用 | executor 领用并 spawn 长跑 runner(~20s 心跳) | PASS:心跳文件出现 |
+| **restart** | `docker compose restart backend` | PASS:health 恢复 200;**runner 心跳 2→16 行继续推进**;executor StartedAt 不变 |
+| **force-recreate** | `docker compose up -d --force-recreate backend` | PASS:health 恢复 200;**心跳 16→20 行继续推进**;executor StartedAt 不变 |
+| 收尾 | 等自然结束 | PASS:`result {"exit_code":0}`;**结果仅 1 份(backend 两次重启零重复启动)**;最终 /health 200 |
+
+**ACCEPTANCE SUMMARY:PASS=9 FAIL=0 — AC6 CONTAINER-LIFECYCLE ACCEPTANCE: PASS。**
+
+取证纪律说明:macOS Docker Desktop 绑定挂载对容器新建文件存在宿主侧可见性滞后(首两轮误报即此因,容器内实际全部成功),故全部平面内断言经 `docker compose exec` 在容器内取证——这同时是更忠实的平面内证据。
+
+## R1.4 修正后验证(全部实际执行)
+
+| 项 | 结果 |
+| --- | --- |
+| 阶段⑨ FINAL 测试面(触发契约 10 + 执行面循环 9 + 504 回归 2 + triggered_by 7 + sync-all 重写) | **33 passed, 1 skipped**(skip=测试库存在启用源的 noop 用例让位,非缺陷) |
+| 504 Golden Regression(修正后) | 实验 A(旧模式 inline 阻塞→/health 1s 必超时,对照)+ 实验 B(真实 POST /sync 交接→真实领用→真实 CPU burn 独立进程期间,真实 /health×15 与真实 Admin API GET /data-sources 全 200 且 max<1s;交接行 running→done 退出码 0)——**NO TIMEOUT / NO EVENT LOOP STARVATION / NO 504 CLASS** |
+| AC6 容器生命周期验收 | **9/9 PASS**(§R1.3) |
+| 全仓完整套件 | **1022 passed / 6 skipped,0 失败**(36:19) |
+| compose config ×3 | PASS(prod/dev 含 sync-executor;local 数据层不适用) |
+| ruff / black | 本修正全部新文件 0 违规、格式 clean;基线既有 3 处 ruff 债务与 data_sources.py 既有区域格式债未动(只植增量) |
+
+## R1.5 修正后 AC 逐项(重点重证项加粗)
+
+| AC | 判定 | 修正后证据 |
+| --- | --- | --- |
+| **AC1** | **PASS** | 重型 ingest 在 sync-executor **容器**的子进程内;backend 端点唯一副作用 = INSERT 交接行(置雷防线测试) |
+| AC2 | PASS | 202 立即返回(trigger 实测 <0.5s 断言);校验+写行外无重活 |
+| AC3 | PASS | accepted/already-running/noop ≠ success;触发零 sync_log 写入 |
+| **AC4** | **PASS** | 实验 B:真实 burn 期间 /health×15 全 200 max<1s |
+| **AC5** | **PASS** | 同期真实 Admin API(DB 落地 GET /data-sources)×5 全 200 有界 |
+| **AC6** | **PASS(容器级)** | §R1.3 真实 Docker restart + force-recreate:同步继续推进、executor 容器零波及、无重复启动、自然结束 exit 0 |
+| **AC7** | **PASS** | manual(交接→子进程)/ scheduled(sync-cron)/ CLI 同一 `scripts/sync.py`;cron 命令一字未改;runner argv 测试 |
+| AC8 | PASS | 子进程运行同一分支同一脚本;阶段⑧ safety 回归含于全量绿 |
+| AC9 | PASS | Safe Delete / G3 守卫测试全量绿(1022 内) |
+| **AC10** | **PASS** | 交接写库失败→502(两面);执行面 spawn 失败→failed 显式落账;执行面不可用→pending 持久滞留(恢复后领用),无「假 accepted」窗口 |
+| AC11 | PASS | failed 行带退出码/error;sync_log 业务真相;backend 日志 request_id/来源 |
+| AC12 | PASS | EditorDep 未动;匿名 401/403 且零交接行 |
+| **AC13** | **PASS** | source_id 为行字段数据原样存储(含 shell 元字符用例);执行面 argv 数据参数;无 shell;backend 无 Docker socket |
+| **AC14** | **PASS** | prod/dev compose 新增服务 config 校验 PASS;anchor 同镜像/env/卷/GPU=执行环境完整;迁移脚本就绪 |
+| **AC15** | **PASS** | 无中断恢复/心跳/完整 SyncRun/进度/五维健康/调度器;遗留 running 行仅诚实标 failed |
+| **AC16** | **PASS** | PRODUCTION_ACCESS: NONE(全程本地) |
+
+## R1.6 修正后 Follow-ups
+
+1. 执行面当前**单副本串行**(单 GPU 约束下即正确形态);多副本去重由 `FOR UPDATE SKIP LOCKED` 保证领用安全,waiting 队列语义属阶段⑭;
+2. 执行面容器自身 crash:在跑请求由启动清理诚实标 failed,自动恢复/续跑属阶段⑩;
+3. sync-executor 与 sync-cron 的 GPU 时序协调(两者可能偶发重叠)属阶段⑭ B 类调度;
+4. prod 上线时需执行 `scripts/migrate_add_sync_requests.py`(幂等,纯加表)+ 部署含 sync-executor 的 compose——属未来 RC/发布窗,本 Gate 未触生产;
+5. Admin 端「排队中/执行中」可见性(交接行状态透出)属阶段⑫进度模型,本 Gate 未预建。
+
+## R1.7 Final Status(REVISION 1)
+
+**STATUS: PASS(Executor 自评,修正后)。**
+FINAL_IMPLEMENTATION_COMMIT = `2933118`。Planner 复验重点:真实 diff(2933118)、真实容器生命周期验收命令与输出、执行面与 backend 的容器边界(compose)、AC6-AC10/13-15 证据。Executor PASS 仍非最终验收,以 Planner 复审为准;阶段⑩(同步中断后的自动恢复)待 PASS 后方可开始。
