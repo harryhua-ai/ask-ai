@@ -29,7 +29,10 @@ sites:
     allowed_origins:
       - https://wiki.camthink.ai
     welcome: "有问题就问我 —— 我熟悉 CamThink 设备的文档、配置与排障步骤。"
-    language: zh
+    # 多语言契约(2026-09-02 冻结):三站默认语言 = English;language 字段 =
+    # 站点级兜底(宿主未提供页面语言时随 ask 发送的提示)。Wiki 页面为中文时
+    # 由宿主经 data-language/AskAIConfig.language 传 zh,页面语言优先于站点默认。
+    language: en
     starters:
       - "这篇文档对应的设备如何开始配置?"
       - "NE301 刷机失败怎么排查?"
