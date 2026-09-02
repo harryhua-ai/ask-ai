@@ -172,9 +172,22 @@ def parse_robots_disallows(text: str, agent: str = "ask-ai-crawler") -> list[str
 
 _SKIP_TAGS = frozenset(
     {
-        "script", "style", "noscript", "nav", "header", "footer", "aside",
-        "form", "iframe", "svg", "button", "select", "option", "label",
-        "head", "template",
+        "script",
+        "style",
+        "noscript",
+        "nav",
+        "header",
+        "footer",
+        "aside",
+        "form",
+        "iframe",
+        "svg",
+        "button",
+        "select",
+        "option",
+        "label",
+        "head",
+        "template",
     }
 )
 _BLOCK_TAGS = frozenset({"p", "div", "section", "article", "main", "ul", "ol", "table", "hr"})
@@ -369,9 +382,7 @@ class WebCrawlConnector:
         self._sitemap_url = str(
             config.config.get("sitemap_url") or f"{self._base_url}/sitemap_index.xml"
         )
-        self._excludes = list(
-            config.config.get("exclude_patterns", DEFAULT_EXCLUDE_PATTERNS)
-        )
+        self._excludes = list(config.config.get("exclude_patterns", DEFAULT_EXCLUDE_PATTERNS))
         self._delay_s = int(config.config.get("crawl_delay_ms", 500)) / 1000
         self._min_content = int(config.config.get("min_content_chars", MIN_CONTENT_CHARS))
         self._channel_visibility = config.channel_visibility
@@ -383,6 +394,9 @@ class WebCrawlConnector:
         self._last_run_full = False
         self._seen_urls: set[str] = set()
         self._rejected_urls: set[str] = set()
+        # P1 退休安全:本轮全量发现的权威成员 URL(robots 通过即记,先于单页
+        # 抓取/抽取)——成员资格与抽取成功分离,供 sync 退休决策使用。
+        self._accepted_urls: list[str] | None = None
 
     @property
     def source_id(self) -> str:
@@ -471,8 +485,24 @@ class WebCrawlConnector:
         return entries
 
     _SKIP_HREF_EXTS = frozenset(
-        {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".css", ".js",
-         ".zip", ".gz", ".mp4", ".mp3", ".ico", ".woff", ".woff2", ".ttf"}
+        {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".gif",
+            ".webp",
+            ".svg",
+            ".css",
+            ".js",
+            ".zip",
+            ".gz",
+            ".mp4",
+            ".mp3",
+            ".ico",
+            ".woff",
+            ".woff2",
+            ".ttf",
+        }
     )
 
     def _stats_reject(self, reason: str, url: str | None = None) -> None:
@@ -486,9 +516,7 @@ class WebCrawlConnector:
             lst = self.run_stats["rejected_urls"].get(reason)
             if lst is not None and len(lst) < self._REJECTED_URLS_CAP:
                 lst.append(url)
-        self.run_stats["rejected"][reason] = (
-            self.run_stats["rejected"].get(reason, 0) + 1
-        )
+        self.run_stats["rejected"][reason] = self.run_stats["rejected"].get(reason, 0) + 1
 
     def _same_domain_links(self, html: str) -> list[str]:
         """提取同域内容页链接(规范化/去资产后缀/排除项),供增量发现。"""
@@ -555,9 +583,21 @@ class WebCrawlConnector:
 
     # ---------------- Connector 协议 ----------------
 
+    def authoritative_source_ids(self) -> set[str] | None:
+        """本轮全量发现的权威成员集(source_id 空间),无全量轮 → None。
+
+        成员资格以「robots 通过并被接受」为准 —— 先于单页抓取/抽取记账,
+        故临时抓取失败、超时、薄内容被拒的页面**仍在成员集内**。退休决策
+        必须以本集合(权威枚举)为证据,而非抽取成功的产出集合。
+        """
+        if not getattr(self, "_last_run_full", False) or self._accepted_urls is None:
+            return None
+        return {f"{self._id}/{_url_to_source_path(u)}" for u in self._accepted_urls}
+
     def fetch_all(self) -> Iterator[RawDocument]:
         """全量:sitemap 起点 + 同域链接发现(BFS,上限 max_pages)+ 全程记账。"""
         self.run_stats = self._new_stats()
+        self._accepted_urls = []
         self._rejected_urls = set()
         self._robots_cache = None  # 每轮全量重新获取 robots
         self._seen_urls: set[str] = set(self._sitemap_entries())
@@ -575,6 +615,7 @@ class WebCrawlConnector:
                 logger.info("robots Disallow,跳过 %s", url)
                 continue
             self.run_stats["accepted"] += 1
+            self._accepted_urls.append(url)
             try:
                 doc, links = self._fetch_page(url)
             except RuntimeError as exc:
@@ -592,9 +633,10 @@ class WebCrawlConnector:
             successes += 1
             self.run_stats["extracted"] += 1
             for link in links:
-                if link not in self._seen_urls and len(self._seen_urls) < len(
-                    self._sitemap_entries()
-                ) + extra_cap:
+                if (
+                    link not in self._seen_urls
+                    and len(self._seen_urls) < len(self._sitemap_entries()) + extra_cap
+                ):
                     self._seen_urls.add(link)
                     self.run_stats["discovered"] += 1
                     queue.append(link)
@@ -610,6 +652,7 @@ class WebCrawlConnector:
         """
         self.run_stats = self._new_stats()
         self._last_run_full = False
+        self._accepted_urls = None  # 增量轮无权威成员集证据
         self._seen_urls: set[str] = set(self._sitemap_entries())
         for url in sorted(self._sitemap_entries()):
             lastmod = self._sitemap_entries()[url]

@@ -191,15 +191,15 @@ def test_fetch_changes_filters_by_lastmod(tmp_path, monkeypatch):
     conn = _make_connector(tmp_path)
     since = datetime(2026, 8, 15, tzinfo=UTC)
     monkeypatch.setattr(
-        wc.WebCrawlConnector, "_sitemap_entries", lambda self: {
+        wc.WebCrawlConnector,
+        "_sitemap_entries",
+        lambda self: {
             "https://www.camthink.ai/a/": "2026-08-20",
             "https://www.camthink.ai/b/": "2026-08-01",  # 早于 since
             "https://www.camthink.ai/c/": None,  # 无 lastmod
-        }
+        },
     )
-    monkeypatch.setattr(
-        conn, "_fetch_page", lambda url: (_fake_doc(url), [])
-    )
+    monkeypatch.setattr(conn, "_fetch_page", lambda url: (_fake_doc(url), []))
     urls = [d.url for d in conn.fetch_changes(since)]
     assert urls == ["https://www.camthink.ai/a/"]
 
@@ -226,15 +226,15 @@ def test_fetch_deleted_diffs_state_file(tmp_path, monkeypatch):
     conn = _make_connector(tmp_path)
     state_path = tmp_path / "crawl-state" / "website-camthink.json"
     monkeypatch.setattr(
-        wc.WebCrawlConnector, "_sitemap_entries", lambda self: {
+        wc.WebCrawlConnector,
+        "_sitemap_entries",
+        lambda self: {
             "https://www.camthink.ai/keep/": None,
-        }
+        },
     )
     monkeypatch.setattr(conn, "_state_path", state_path)
     state_path.parent.mkdir(parents=True)
-    state_path.write_text(
-        json.dumps(["website-camthink/keep", "website-camthink/gone"])
-    )
+    state_path.write_text(json.dumps(["website-camthink/keep", "website-camthink/gone"]))
     # 模拟全量轮视野(含 fetch_all 已置 _last_run_full)
     conn._seen_urls = {"https://www.camthink.ai/keep/"}
     conn._last_run_full = True
@@ -284,8 +284,12 @@ def test_same_content_different_paths_get_distinct_hashes(tmp_path, monkeypatch)
         "https://www.camthink.ai/post-sitemap.xml": URLSET,
         "https://www.camthink.ai/page-sitemap.xml": URLSET,
         "https://www.camthink.ai/product-sitemap.xml": URLSET,
-        "https://www.camthink.ai/a/": "<html><body><main><p>" + "x" * 300 + "</p></main></body></html>",
-        "https://www.camthink.ai/b/": "<html><body><main><p>" + "x" * 300 + "</p></main></body></html>",
+        "https://www.camthink.ai/a/": "<html><body><main><p>"
+        + "x" * 300
+        + "</p></main></body></html>",
+        "https://www.camthink.ai/b/": "<html><body><main><p>"
+        + "x" * 300
+        + "</p></main></body></html>",
     }
     urlset = """<?xml version="1.0"?>
     <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -311,7 +315,9 @@ def test_min_content_pages_rejected_and_counted(tmp_path, monkeypatch):
         "https://www.camthink.ai/page-sitemap.xml": URLSET,
         "https://www.camthink.ai/product-sitemap.xml": URLSET,
         "https://www.camthink.ai/thin/": "<html><body><p>ok</p></body></html>",
-        "https://www.camthink.ai/rich/": "<html><body><main><p>" + "y" * 300 + "</p></main></body></html>",
+        "https://www.camthink.ai/rich/": "<html><body><main><p>"
+        + "y" * 300
+        + "</p></main></body></html>",
     }
     urlset = """<?xml version="1.0"?>
     <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -332,14 +338,14 @@ def test_min_content_pages_rejected_and_counted(tmp_path, monkeypatch):
 def test_robots_disallow_blocks_crawl_and_counts(tmp_path, monkeypatch):
     """robots Disallow 对具名/通配 UA 组生效:被禁 URL 不抓取并计入 rejected.robots。"""
     pages = {
-        "https://www.camthink.ai/robots.txt": (
-            "User-agent: *\nDisallow: /private/\nAllow: /"
-        ),
+        "https://www.camthink.ai/robots.txt": ("User-agent: *\nDisallow: /private/\nAllow: /"),
         "https://www.camthink.ai/sitemap_index.xml": INDEX_XML,
         "https://www.camthink.ai/post-sitemap.xml": URLSET,
         "https://www.camthink.ai/page-sitemap.xml": URLSET,
         "https://www.camthink.ai/product-sitemap.xml": URLSET,
-        "https://www.camthink.ai/rich/": "<html><body><main><p>" + "z" * 300 + "</p></main></body></html>",
+        "https://www.camthink.ai/rich/": "<html><body><main><p>"
+        + "z" * 300
+        + "</p></main></body></html>",
     }
     urlset = """<?xml version="1.0"?>
     <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -364,7 +370,9 @@ def test_run_stats_reports_failures_without_breaking_crawl(tmp_path, monkeypatch
         "https://www.camthink.ai/post-sitemap.xml": URLSET,
         "https://www.camthink.ai/page-sitemap.xml": URLSET,
         "https://www.camthink.ai/product-sitemap.xml": URLSET,
-        "https://www.camthink.ai/rich/": "<html><body><main><p>" + "w" * 300 + "</p></main></body></html>",
+        "https://www.camthink.ai/rich/": "<html><body><main><p>"
+        + "w" * 300
+        + "</p></main></body></html>",
     }
     # 仅 products 页(会失败)与 rich 页入表,避免 URLSET 其余无页面 URL 干扰
     urlset = """<?xml version="1.0"?>
@@ -416,9 +424,11 @@ def test_fetch_deleted_only_after_full_crawl(tmp_path, monkeypatch):
     conn = _make_connector(tmp_path)
     state_path = tmp_path / "crawl-state" / "website-camthink.json"
     monkeypatch.setattr(
-        wc.WebCrawlConnector, "_sitemap_entries", lambda self: {
+        wc.WebCrawlConnector,
+        "_sitemap_entries",
+        lambda self: {
             "https://www.camthink.ai/keep/": None,
-        }
+        },
     )
     monkeypatch.setattr(conn, "_state_path", state_path)
     state_path.parent.mkdir(parents=True)
@@ -476,3 +486,70 @@ def test_excluded_links_counted_once_across_pages(tmp_path, monkeypatch):
     assert [d.url for d in docs] == ["https://www.camthink.ai/rich/"]
     # /store/x/ 被 sitemap 阶段与页面链接发现各遇一次,但 unique 计数 = 1
     assert conn.run_stats["rejected"]["exclude"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# P1 退休安全:权威成员集(accepted)与抽取成功分离
+# --------------------------------------------------------------------------- #
+
+
+def test_authoritative_source_ids_include_failed_and_rejected_pages(tmp_path, monkeypatch):
+    """accepted(成员)先于抓取记账:抓取失败/薄内容被拒页仍在权威成员集;
+    增量轮返回 None。 retiring 决策据此与抽取成功分离(Planner 修正)。"""
+    connector = _make_connector(tmp_path)  # 默认 min_content:thin 页判薄被拒
+    urlset = """<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://www.camthink.ai/products/neoeyes-503/</loc></url>
+  <url><loc>https://www.camthink.ai/page-fetch-fail/</loc></url>
+  <url><loc>https://www.camthink.ai/page-thin/</loc></url>
+</urlset>"""
+    monkeypatch.setattr(
+        connector,
+        "_sitemap_entries",
+        lambda: {
+            "https://www.camthink.ai/products/neoeyes-503/": None,
+            "https://www.camthink.ai/page-fetch-fail/": None,
+            "https://www.camthink.ai/page-thin/": None,
+        },
+    )
+    pages = {
+        "https://www.camthink.ai/products/neoeyes-503/": "<html><body>"
+        + "rich " * 400
+        + "</body></html>",
+        # page-fetch-fail:故意缺席 → _fetch_page RuntimeError
+        "https://www.camthink.ai/page-thin/": "<html><body>thin</body></html>",
+    }
+
+    def _fake_get(url, **kw):
+        class _Resp:
+            status_code = 200
+
+            def __init__(self, text):
+                self.text = text
+
+            def raise_for_status(self):
+                pass
+
+        if "robots.txt" in url:
+            return _Resp("User-agent: *\nAllow: /")
+        if "page-fetch-fail" in url:
+            raise RuntimeError("boom")  # 模拟单页 HTTP/超时失败
+        return _Resp(pages[url])
+
+    monkeypatch.setattr(wc.requests, "get", _fake_get)
+
+    docs = list(connector.fetch_all())
+    assert [d.source_id for d in docs] == ["website-camthink/products/neoeyes-503"]
+
+    membership = connector.authoritative_source_ids()
+    assert membership is not None
+    # 抓取失败页与薄内容页都仍是权威源成员(成员资格 ≠ 抽取成功)
+    assert "website-camthink/page-fetch-fail" in membership
+    assert "website-camthink/page-thin" in membership
+    assert "website-camthink/products/neoeyes-503" in membership
+
+
+def test_authoritative_source_ids_none_on_incremental_round(tmp_path, monkeypatch):
+    """增量轮(fetch_changes)无权威成员集证据 → 返回 None。"""
+    connector = _make_connector(tmp_path)
+    assert connector.authoritative_source_ids() is None

@@ -343,15 +343,23 @@ async def _handle_no_change(
     log_entry.duration_ms = int((time.monotonic() - start) * 1000)
 
 
-def _discover_source_docs(connector: Any) -> tuple[list[Any], bool]:
+def _discover_source_docs(connector: Any) -> tuple[list[Any], bool, set[str] | None]:
     """拉取当前权威全集,并评估「发现完整性」(RETIREMENT MUST BE SOURCE-CONFIRMED)。
 
     完整 = fetch_all 成功,且(若 connector 暴露 run_stats.full,如 web_crawl)
     覆盖率达到 COVERAGE_PARTIAL_RATIO。任何失败/不完整都使调用方不得执行
     退休删除(瞬时爬取失败 ≠ 文档退休)。
 
+    P1 修正(Planner FINAL REVIEW):**权威源成员资格 ≠ 抽取成功**。
+    web_crawl 的 accepted 先于单页抓取记账,覆盖率 ≥80% 仍可能存在「源里
+    在、本轮抓取/抽取失败」的页面。若 connector 提供
+    ``authoritative_source_ids()``(权威枚举成员集),退休判定必须以它为准;
+    抽取成功集合仅用于「源仍在的账本行丢失」修复分支。无该原语的连接器
+    (git/fs/woo:抽取即枚举)回退抽取集合。
+
     Returns:
-        (docs, complete):complete=False 时调用方只允许保留 + 上报。
+        (docs, complete, membership):complete=False 时调用方只允许保留 + 上报;
+        membership=None 表示 connector 无权威成员集原语(回退抽取集合)。
     """
     try:
         docs = list(connector.fetch_all())
@@ -360,7 +368,8 @@ def _discover_source_docs(connector: Any) -> tuple[list[Any], bool]:
             "源发现失败(%s),孤儿向量一律保留不删除",
             str(exc)[:160],
         )
-        return [], False
+        return [], False, None
+    complete = True
     stats = getattr(connector, "run_stats", None)
     if isinstance(stats, dict) and stats.get("full"):
         accepted = int(stats.get("accepted", 0))
@@ -372,8 +381,14 @@ def _discover_source_docs(connector: Any) -> tuple[list[Any], bool]:
                 accepted,
                 COVERAGE_PARTIAL_RATIO * 100,
             )
-            return docs, False
-    return docs, True
+            complete = False
+    membership: set[str] | None = None
+    getter = getattr(connector, "authoritative_source_ids", None)
+    if callable(getter):
+        ids = getter()
+        if isinstance(ids, (set, frozenset)):
+            membership = set(ids)
+    return docs, complete, membership
 
 
 def _reconcile_orphan_vectors(
@@ -384,10 +399,15 @@ def _reconcile_orphan_vectors(
 ) -> tuple[int, int, int]:
     """孤儿向量 reconciliation(零 embedding;分类见下,从不动兄弟文档)。
 
-    对账本无行的孤儿文档逐篇分类(P1 冻结语义):
-      - 完整发现中确认源已无此文档 → EXTRA_CONFIRMED_RETIRED:按该文档自己的
-        确定性 UUID(uuid5(source_id#i),来自校验器扫描的实际存量)精确删除;
-      - 源中仍存在(账本行丢失)→ 以存量对象属性零 embedding 重建账本行;
+    对账本无行的孤儿文档逐篇分类(P1 冻结语义 + Planner 修正):
+      - **权威源成员资格 ≠ 抽取成功**:退休判定以权威枚举成员集
+        (``authoritative_source_ids``,web_crawl 含抓取失败/被拒页)为准;
+        成员集中的孤儿(本轮抽取失败的存量页)一律保留并上报;
+      - 完整发现中成员集确认源已无此文档 → EXTRA_CONFIRMED_RETIRED:按该文档
+        自己的确定性 UUID(uuid5(source_id#i),来自校验器扫描的实际存量)
+        精确删除;
+      - 源中仍存在(抽取成功、账本行丢失)→ 以存量对象属性零 embedding 重建
+        账本行;
       - 发现失败 / 不完整 / 属性缺失 → EXTRA_UNRESOLVED_ORPHAN:保留 + 上报。
 
     删除/修复范围均由「本文档自己的 source_id + 实际 chunk_index」决定,
@@ -401,8 +421,10 @@ def _reconcile_orphan_vectors(
 
     from backend.pipeline.ingest import _deterministic_uuid
 
-    docs, complete = _discover_source_docs(connector)
-    discovered = {d.source_id for d in docs}
+    docs, complete, membership = _discover_source_docs(connector)
+    extracted_ids = {d.source_id for d in docs}
+    # 退休证据 = 权威成员集;无原语的连接器(git/fs/woo:抽取即枚举)回退抽取集
+    membership_ids = membership if membership is not None else extracted_ids
     pipeline._ensure_collection()
     collection = pipeline._collection
 
@@ -426,8 +448,17 @@ def _reconcile_orphan_vectors(
             )
             unresolved += 1
             continue
-        if sid in discovered:
-            # EXTRA_UNRESOLVED?不:源确认存在 → 账本行丢失,零 embedding 重建
+        if sid in membership_ids:
+            # 权威源成员仍在:若本轮抽取成功 → 账本行丢失,零 embedding 重建;
+            # 若仅成员(抓取/抽取临时失败,如 G004-C/D)→ 保留上报,绝不退休。
+            if sid not in extracted_ids:
+                logger.warning(
+                    "EXTRA_UNRESOLVED_ORPHAN: %s 仍在权威源成员集但本轮抽取失败"
+                    "(瞬时),保留不删除",
+                    sid,
+                )
+                unresolved += 1
+                continue
             props = fetched.objects[0].properties
             content_hash = props.get("content_hash")
             if not content_hash:
@@ -464,8 +495,8 @@ def _reconcile_orphan_vectors(
             except Exception as exc:  # noqa: BLE001 - 修复失败 → 保留
                 logger.warning("孤儿 %s 账本重建失败,保留:%s", sid, str(exc)[:160])
                 unresolved += 1
-        elif complete:
-            # EXTRA_CONFIRMED_RETIRED:完整发现中源已无此文档 → 精确退休删除
+        elif complete and sid not in membership_ids:
+            # EXTRA_CONFIRMED_RETIRED:完整权威枚举确认源已无此文档 → 精确退休删除
             for start in range(0, len(uuids), 500):
                 collection.data.delete_many(
                     where=Filter.by_id().contains_any(uuids[start : start + 500])

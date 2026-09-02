@@ -368,6 +368,97 @@ async def test_g009_repeated_healthy_sync_idempotent():
 
 
 # --------------------------------------------------------------------------- #
+# G004-C/D 权威成员资格 ≠ 抽取成功(Planner 修正:80% 覆盖率不得授权退休)
+# --------------------------------------------------------------------------- #
+
+
+def _web_connector_with_membership(membership: set[str], *, coverage_ok: bool = True):
+    """web_crawl 形态连接器:fetch_all 仅产出抽取成功的文档;
+    authoritative_source_ids() 返回权威成员集(含抓取失败/被拒页)。"""
+    connector = MagicMock()
+    connector.fetch_all.return_value = iter([_doc(f"{SRC}/alive")])
+    connector.run_stats = (
+        {"full": True, "accepted": 100, "extracted": 90}
+        if coverage_ok
+        else {"full": True, "accepted": 100, "extracted": 50}
+    )
+    connector.authoritative_source_ids = MagicMock(return_value=membership)
+    return connector
+
+
+@pytest.mark.asyncio
+async def test_g004c_member_page_fetch_failure_never_retires():
+    """G004-C:A 仍是权威源成员(sitemap/accepted),仅页面抓取失败;
+    整体覆盖率 90% → A 不得被退休/删除。"""
+    ghost = f"{SRC}/member-fetch-failed"
+    report1 = _report(expected=361, actual=361, orphan_chunks={ghost: {0}})
+    report2 = _report(expected=361, actual=361, orphan_chunks={ghost: {0}})
+    connector = _web_connector_with_membership({f"{SRC}/alive", ghost})
+    pipeline = _make_pipeline(orphan_props=_ghost_props(ghost))
+    log_entry = SyncLog(status="success")
+
+    with patch("scripts.sync.verify_source_vectors", _report_side_effect(report1, report2)):
+        await _handle_no_change(SRC, 110, connector, pipeline, MagicMock(), log_entry, 0.0)
+
+    pipeline._collection.data.delete_many.assert_not_called()
+    assert log_entry.status == "partial"
+    assert "EXTRA_UNRESOLVED_ORPHAN" in (log_entry.error_detail or "")
+
+
+@pytest.mark.asyncio
+async def test_g004d_member_page_low_content_rejection_never_retires():
+    """G004-D:A 被临时薄内容/抽取拒绝,但仍是权威源成员;覆盖率 90% → 不退休。"""
+    ghost = f"{SRC}/member-low-content"
+    report1 = _report(expected=361, actual=361, orphan_chunks={ghost: {0}})
+    report2 = _report(expected=361, actual=361, orphan_chunks={ghost: {0}})
+    connector = _web_connector_with_membership({f"{SRC}/alive", ghost})
+    pipeline = _make_pipeline(orphan_props=_ghost_props(ghost))
+    log_entry = SyncLog(status="success")
+
+    with patch("scripts.sync.verify_source_vectors", _report_side_effect(report1, report2)):
+        await _handle_no_change(SRC, 110, connector, pipeline, MagicMock(), log_entry, 0.0)
+
+    pipeline._collection.data.delete_many.assert_not_called()
+    assert log_entry.status == "partial"
+
+
+@pytest.mark.asyncio
+async def test_g004e_incomplete_enumeration_never_retires_even_with_membership():
+    """G004-E:权威枚举本身不完整(覆盖率 50%)→ 任何历史缺席文档都不得退休。"""
+    ghost = f"{SRC}/old-page"
+    report1 = _report(expected=361, actual=362, orphan_chunks={ghost: {0}})
+    report2 = _report(expected=361, actual=362, orphan_chunks={ghost: {0}})
+    connector = _web_connector_with_membership({f"{SRC}/alive", ghost}, coverage_ok=False)
+    pipeline = _make_pipeline(orphan_props=_ghost_props(ghost))
+    log_entry = SyncLog(status="success")
+
+    with patch("scripts.sync.verify_source_vectors", _report_side_effect(report1, report2)):
+        await _handle_no_change(SRC, 110, connector, pipeline, MagicMock(), log_entry, 0.0)
+
+    pipeline._collection.data.delete_many.assert_not_called()
+    assert log_entry.status == "partial"
+
+
+@pytest.mark.asyncio
+async def test_g003b_membership_confirmed_absence_still_retires_exactly():
+    """G003 补充:成员集证据确认 A 已不在权威枚举中 → 仍按精确 UUID 退休。"""
+    ghost = f"{SRC}/truly-removed"
+    report1 = _report(expected=361, actual=362, orphan_chunks={ghost: {0, 1}})
+    report2 = _report(expected=361, actual=361)
+    connector = _web_connector_with_membership({f"{SRC}/alive"})  # 成员集无 ghost
+    pipeline = _make_pipeline(orphan_props=_ghost_props(ghost), orphan_indices=2)
+    log_entry = SyncLog(status="success")
+
+    with patch("scripts.sync.verify_source_vectors", _report_side_effect(report1, report2)):
+        await _handle_no_change(SRC, 110, connector, pipeline, MagicMock(), log_entry, 0.0)
+
+    calls = pipeline._collection.data.delete_many.call_args_list
+    got = sorted(str(v) for c in calls for v in c.kwargs["where"].value)
+    assert got == sorted(_deterministic_uuid(ghost, i) for i in (0, 1))
+    assert log_entry.status == "success"
+
+
+# --------------------------------------------------------------------------- #
 # 集成:真实 Weaviate 上 ghost 精确退休(不可达时 skip)
 # --------------------------------------------------------------------------- #
 
