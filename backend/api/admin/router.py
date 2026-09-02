@@ -10,6 +10,7 @@ from backend.api.admin.business import router as business_router
 from backend.api.admin.conversations import router as conversations_router
 from backend.api.admin.customizations import router as customizations_router
 from backend.api.admin.data_sources import router as data_sources_router
+from backend.api.admin.leads import router as leads_router
 from backend.api.admin.llm_providers import router as llm_providers_router
 from backend.api.admin.sync_logs import router as sync_logs_router
 from backend.api.admin.tech import tech_router
@@ -23,6 +24,7 @@ admin_router.include_router(data_sources_router)
 admin_router.include_router(sync_logs_router)
 admin_router.include_router(customizations_router)
 admin_router.include_router(llm_providers_router)
+admin_router.include_router(leads_router)
 admin_router.include_router(conversations_router)
 admin_router.include_router(answer_overrides_router)
 admin_router.include_router(analytics_router)
