@@ -4,7 +4,7 @@
 
 **本文档的目标**:你**不需要阅读 Ask AI 任何源码**,只看这一份文档即可完成接入——无论使用官方聊天组件,还是自建界面。
 
-- 文档版本:2.0(2026-09-02,由 CAMTHINK_WIDGET_INTEGRATION.md v1.0 升级重命名而来,本文是唯一权威接入指南)
+- 文档版本:2.1(2026-09-02;变更记录见文末)
 - 依据的 Ask AI 版本:CAMTHINK V1 RC(`release/camthink-v1-rc-2026-09-01` 线,基线 `1ff2936`,含 2026-09-02 契约追加)
 - 所有配置键、端点、事件、行为均直接取自真实实现,并经其自带测试套件验证(widget 57/57;站点授权 16/16)。
 
@@ -18,24 +18,26 @@
 
 ---
 
-## 0. 接入前必读:生产 URL 状态
+## 0. 生产 API 基址(已确认)
 
-> **PRODUCTION_WIDGET_URL_READY = NO(截至 2026-09-02)**
->
-> Ask AI 后端的公网接入地址(DNS + 反向代理)**尚未建立**,因此本文示例中的
-> `https://<ASK-AI-PRODUCTION-API-BASE>` 是一个**待替换占位符**,不是已生效的地址。
->
-> 在 Ask AI 团队正式提供生产 API 基址之前,你可以先把接入代码合入站点
-> (官方 Widget 的浮动按钮可以正常渲染),但**问答功能要到生产地址就绪后才会通**。
-> 请勿自行猜测或编造该地址。该状态对 Part 1 与 Part 2 同样适用。
+> **生产 API 基址 = `https://wiki-data.camthink.ai`**
+> (2026-09-02 只读实测确认:后端健康、RC 形态、三站站点配置就绪;经 Ask AI 负责人确认作为接入基址。)
 
-**需要由 Ask AI 团队提供**(网站负责人无需操作,此处仅说明依赖):
+**分站就绪状态**:
 
-| # | 待提供项 | 说明 |
-|---|---------|------|
-| B1 | 生产 API 基址 | 一个公网可达的 **https** 域名(最终以 Ask AI 团队正式通知为准),需同时路由 `/widget/*`(官方 Widget 静态脚本)与 `/api/*`(问答接口) |
-| B2 | CORS 白名单激活 | 生产环境 `CORS_ALLOW_ORIGINS` 需包含三个站点来源(见 §1.4),否则浏览器会拦截所有请求 |
-| B3 | 站点配置确认 | 三个 `site_id` 已在生产数据库启用,且来源白名单与 §1.2 一致 |
+| 站点 | 服务端站点授权 | 浏览器 CORS | 接入状态 |
+|------|---------------|-------------|---------|
+| Wiki(wiki.camthink.ai) | ✓ 已启用 | ✓ 已放行 | **可立即接入** |
+| Website(www.camthink.ai) | ✓ 已启用 | ✓ 已放行 | **可立即接入(统一使用 www 域名)** |
+| Website(camthink.ai 非 www) | ✓ 已启用 | ✗ 未放行 | 官网请 301 到 www,或由 Ask AI 运维补录 CORS |
+| Store(store.camthink.ai) | ✓ 已启用 | ✗ **待补录** | 浏览器请求会被 CORS 拦截;**Ask AI 运维把 `https://store.camthink.ai` 加入 `CORS_ALLOW_ORIGINS` 并重启 backend 后即可** |
+
+**公开正式开放前的两项运维门(ASK-AI 侧,不阻塞接入开发)**:
+
+1. `channel_visibility` 迁移(P0 红线:内部支持案例必须先与公开回答隔离,否则存量内部内容可能出现在公开答案中);
+2. 一次真实提问的全链冒烟(本指南的实测均为只读探测,`/api/ask` 写路径未在公网入口验证)。
+
+基址实测证据(2026-09-02):`/health` → `{"status":"ok"}`;`/widget/widget.js` 与 RC 基线构建逐字节一致(251,209 B);三站 `site-config` 200;无 Origin / 伪造 Origin 一律 403(fail-closed)。
 
 ---
 
@@ -49,10 +51,10 @@ CamThink Logo 浮动按钮,点击展开对话面板。访客提问后,Widget 以
 
 ```
 访客浏览器(你的站点)
- ├─ 加载  {API基址}/widget/ask-ai-widget.css   (样式)
- ├─ 加载  {API基址}/widget/widget.js           (脚本,自动挂载浮动按钮)
- ├─ 启动时 GET {API基址}/api/widget/site-config?site_id=...   (读取本站欢迎语/推荐问题;失败自动回退,不阻塞)
- └─ 提问时 POST {API基址}/api/ask              (SSE 流式问答)
+ ├─ 加载  https://wiki-data.camthink.ai/widget/ask-ai-widget.css   (样式)
+ ├─ 加载  https://wiki-data.camthink.ai/widget/widget.js           (脚本,自动挂载浮动按钮)
+ ├─ 启动时 GET https://wiki-data.camthink.ai/api/widget/site-config?site_id=...   (读取本站欢迎语/推荐问题;失败自动回退,不阻塞)
+ └─ 提问时 POST https://wiki-data.camthink.ai/api/ask              (SSE 流式问答)
         └─ Ask AI 后端负责:站点鉴权 / 意图 / 检索 / 知识信任边界 / 生成 / 引用 / 会话记录(全部与你的站点无关)
 ```
 
@@ -71,24 +73,25 @@ CamThink Logo 浮动按钮,点击展开对话面板。访客提问后,Widget 以
   运行,问答会得到 403"站点未授权"。
 - **三个站点始终只有这三个 `site_id`**。站点支持 English / 中文切换**不**产生
   新的 site_id(语言维度见 Part 3,绝不要按语言拆分站点标识)。
-- **Website 注意**:Ask AI 侧服务端授权已同时包含 www 与非 www 两个来源,但生产
-  CORS 白名单模板当前只列了 `https://www.camthink.ai`。因此官网接入请**统一使用
-  `https://www.camthink.ai` 域名**(建议在站点边缘把非 www 301 到 www),或要求
-  Ask AI 团队把 `https://camthink.ai` 追加进 CORS 白名单。
+- **Website 注意**:服务端授权同时包含 www 与非 www,但**浏览器 CORS 层实测仅
+  放行 www**(2026-09-02)。官网接入请**统一使用 `https://www.camthink.ai` 域名**
+  (建议在站点边缘把非 www 301 到 www),或由 Ask AI 运维把非 www 追加进 CORS 白名单。
+- **Store 注意**:CORS 白名单尚缺 `https://store.camthink.ai`(见 §0),补录完成前
+  Store 页面上的 Widget 只会显示外观、无法问答。
 
 ## 1.3 快速接入(推荐路径)
 
 ### 两行标签(data-* 配置,推荐)
 
-在站点**全站公共模板**的 `</body>` 前加入(以官网为例):
+在站点**全站公共模板**的 `</body>` 前加入(以 Wiki 为例):
 
 ```html
 <!-- Ask AI Widget:CSS 与 JS 必须成对引入,缺一不可 -->
-<link rel="stylesheet" href="https://<ASK-AI-PRODUCTION-API-BASE>/widget/ask-ai-widget.css">
+<link rel="stylesheet" href="https://wiki-data.camthink.ai/widget/ask-ai-widget.css">
 <script
-  src="https://<ASK-AI-PRODUCTION-API-BASE>/widget/widget.js"
-  data-api-url="https://<ASK-AI-PRODUCTION-API-BASE>"
-  data-site-id="camthink-website"
+  src="https://wiki-data.camthink.ai/widget/widget.js"
+  data-api-url="https://wiki-data.camthink.ai"
+  data-site-id="camthink-wiki"
   async
 ></script>
 ```
@@ -102,14 +105,14 @@ CamThink Logo 浮动按钮,点击展开对话面板。访客提问后,Widget 以
 **该对象必须在 widget.js 之前定义**:
 
 ```html
-<link rel="stylesheet" href="https://<ASK-AI-PRODUCTION-API-BASE>/widget/ask-ai-widget.css">
+<link rel="stylesheet" href="https://wiki-data.camthink.ai/widget/ask-ai-widget.css">
 <script>
   window.AskAIConfig = {
-    apiUrl: "https://<ASK-AI-PRODUCTION-API-BASE>",
-    siteId: "camthink-website"
+    apiUrl: "https://wiki-data.camthink.ai",
+    siteId: "camthink-wiki"
   };
 </script>
-<script src="https://<ASK-AI-PRODUCTION-API-BASE>/widget/widget.js" async></script>
+<script src="https://wiki-data.camthink.ai/widget/widget.js" async></script>
 ```
 
 两条路径**不要混用**同一个键(混用时 `data-*` 优先,容易造成排查困惑)。
@@ -118,7 +121,7 @@ CamThink Logo 浮动按钮,点击展开对话面板。访客提问后,Widget 以
 
 | 键 | data-* 写法 | AskAIConfig 写法 | 必填 | 说明 |
 |----|-------------|------------------|------|------|
-| API 地址 | `data-api-url` | `apiUrl` | **是**(生产) | Ask AI API 基址,不带尾部 `/`。缺省值为 `http://localhost:8000`(仅本地开发有意义) |
+| API 地址 | `data-api-url` | `apiUrl` | **是**(生产) | 固定填 `https://wiki-data.camthink.ai`(不带尾部 `/`) |
 | 站点标识 | `data-site-id` | `siteId` | **是**(三站接入) | 见 §1.2。缺省 = 旧版公共 Widget(不发送站点字段,三站接入**禁止**缺省) |
 | 页面语言 | `data-language` | `language` | 见 Part 3 | 当前页面语言,如 `"en"` / `"zh"`。多语言站点按语言版本模板传值(语义与现状见 Part 3) |
 | 主题色 | `data-primary-color` | `primaryColor` | 否 | CSS 颜色值,缺省 `#f24a00`(CamThink 品牌橙)。三站接入建议**保持缺省** |
@@ -149,10 +152,10 @@ CamThink Logo 浮动按钮,点击展开对话面板。访客提问后,Widget 以
 
 ### 两层配置:服务端授权 + 浏览器 CORS
 
-| 层 | 配置 | 作用 | 三站清单(生产) |
-|----|------|------|-----------------|
-| 服务端站点授权 | 每站点 `allowed_origins`(§1.2) | 决定 403 与否 | website: www + 非 www;wiki;store |
-| 浏览器 CORS | 环境变量 `CORS_ALLOW_ORIGINS` | 决定浏览器是否放行请求 | 生产模板:`https://www.camthink.ai, https://wiki.camthink.ai, https://store.camthink.ai` |
+| 层 | 配置 | 作用 | 三站当前状态(2026-09-02 实测) |
+|----|------|------|-------------------------------|
+| 服务端站点授权 | 每站点 `allowed_origins`(§1.2) | 决定 403 与否 | website: www + 非 www;wiki;store —— 全部已生效 |
+| 浏览器 CORS | 环境变量 `CORS_ALLOW_ORIGINS` | 决定浏览器是否放行请求 | 已放行:`www.camthink.ai`、`wiki.camthink.ai`;**待放行:`store.camthink.ai`、非-www `camthink.ai`** |
 
 **推论**(排障时关键):
 
@@ -217,19 +220,18 @@ Page Context 是随每次提问自动附带的一段**页面描述**,用于帮�
 
 ## 1.6 三站接入示例
 
-以下示例均为 production-style、可直接复制(替换唯一占位符
-`<ASK-AI-PRODUCTION-API-BASE>`,见 §0)。
+以下示例均为 production-style、可直接复制。
 
-### A. 官网 Website(`camthink-website`)
+### A. 官网 Website(`camthink-website`)—— 现在即可接入(统一走 www)
 
 **全站公共模板**(普通页面,如首页/关于我们):
 
 ```html
 <!-- Ask AI Widget -->
-<link rel="stylesheet" href="https://<ASK-AI-PRODUCTION-API-BASE>/widget/ask-ai-widget.css">
+<link rel="stylesheet" href="https://wiki-data.camthink.ai/widget/ask-ai-widget.css">
 <script
-  src="https://<ASK-AI-PRODUCTION-API-BASE>/widget/widget.js"
-  data-api-url="https://<ASK-AI-PRODUCTION-API-BASE>"
+  src="https://wiki-data.camthink.ai/widget/widget.js"
+  data-api-url="https://wiki-data.camthink.ai"
   data-site-id="camthink-website"
   async
 ></script>
@@ -250,14 +252,14 @@ Page Context 是随每次提问自动附带的一段**页面描述**,用于帮�
 
 在首页等非产品页**不要**设置 `product`(保持 pageContext 未定义或只给 `page_type`)。
 
-### B. Wiki(`camthink-wiki`)
+### B. Wiki(`camthink-wiki`)—— 现在即可接入
 
 ```html
 <!-- Ask AI Widget -->
-<link rel="stylesheet" href="https://<ASK-AI-PRODUCTION-API-BASE>/widget/ask-ai-widget.css">
+<link rel="stylesheet" href="https://wiki-data.camthink.ai/widget/ask-ai-widget.css">
 <script
-  src="https://<ASK-AI-PRODUCTION-API-BASE>/widget/widget.js"
-  data-api-url="https://<ASK-AI-PRODUCTION-API-BASE>"
+  src="https://wiki-data.camthink.ai/widget/widget.js"
+  data-api-url="https://wiki-data.camthink.ai"
   data-site-id="camthink-wiki"
   async
 ></script>
@@ -275,14 +277,14 @@ Page Context 是随每次提问自动附带的一段**页面描述**,用于帮�
 </script>
 ```
 
-### C. Store(`camthink-store`)
+### C. Store(`camthink-store`)—— 待 CORS 补录后接入
 
 ```html
-<!-- Ask AI Widget -->
-<link rel="stylesheet" href="https://<ASK-AI-PRODUCTION-API-BASE>/widget/ask-ai-widget.css">
+<!-- Ask AI Widget(⚠️ 上线前置:Ask AI 运维把 store origin 加入 CORS 白名单,见 §0) -->
+<link rel="stylesheet" href="https://wiki-data.camthink.ai/widget/ask-ai-widget.css">
 <script
-  src="https://<ASK-AI-PRODUCTION-API-BASE>/widget/widget.js"
-  data-api-url="https://<ASK-AI-PRODUCTION-API-BASE>"
+  src="https://wiki-data.camthink.ai/widget/widget.js"
+  data-api-url="https://wiki-data.camthink.ai"
   data-site-id="camthink-store"
   async
 ></script>
@@ -394,10 +396,10 @@ site identity / authorization(站点鉴权,与官方 Widget 完全同一套)
 
 | 端点 | 方法 | 限流 | 用途 |
 |------|------|------|------|
-| `/api/widget/site-config?site_id=…` | GET | —(同样受站点鉴权) | 可选:读取本站欢迎语/推荐问题,供自建 UI 使用 |
-| `/api/ask` | POST | **20 次/分钟/IP** | 核心问答(SSE 流式响应) |
-| `/api/upload` | POST | 10 次/分钟/IP | 可选:附件上传(FormData,≤5 文件) |
-| `/api/feedback` | POST | — | 可选:答案反馈(up/down) |
+| `https://wiki-data.camthink.ai/api/widget/site-config?site_id=…` | GET | —(同样受站点鉴权) | 可选:读取本站欢迎语/推荐问题,供自建 UI 使用 |
+| `https://wiki-data.camthink.ai/api/ask` | POST | **20 次/分钟/IP** | 核心问答(SSE 流式响应) |
+| `https://wiki-data.camthink.ai/api/upload` | POST | 10 次/分钟/IP | 可选:附件上传(FormData,≤5 文件) |
+| `https://wiki-data.camthink.ai/api/feedback` | POST | — | 可选:答案反馈(up/down) |
 
 约束(与官方 Widget 完全一致):
 
@@ -491,7 +493,7 @@ site identity / authorization(站点鉴权,与官方 Widget 完全同一套)
 ```html
 <script>
 (async function () {
-  const API = "https://<ASK-AI-PRODUCTION-API-BASE>";
+  const API = "https://wiki-data.camthink.ai";
 
   // 1. 可选:读取站点体验(欢迎语/推荐问题);403 时按未授权处理
   const cfg = await fetch(`${API}/api/widget/site-config?site_id=camthink-website`)
@@ -586,9 +588,9 @@ site identity / authorization(站点鉴权,与官方 Widget 完全同一套)
 
 ```html
 <!-- 英文版页面模板 -->
-<script src="…/widget.js" data-api-url="…" data-site-id="camthink-website" data-language="en" async></script>
+<script src="https://wiki-data.camthink.ai/widget/widget.js" data-api-url="https://wiki-data.camthink.ai" data-site-id="camthink-wiki" data-language="en" async></script>
 <!-- 中文版页面模板 -->
-<script src="…/widget.js" data-api-url="…" data-site-id="camthink-website" data-language="zh" async></script>
+<script src="https://wiki-data.camthink.ai/widget/widget.js" data-api-url="https://wiki-data.camthink.ai" data-site-id="camthink-wiki" data-language="zh" async></script>
 ```
 
 2. **SPA / 页内即时切换语言**:语言配置在脚本加载时读取一次,页内切换后需刷新
@@ -605,7 +607,7 @@ site identity / authorization(站点鉴权,与官方 Widget 完全同一套)
 | 页面语言提示(`data-language` / `AskAIConfig.language`) | 已纳入请求契约随 ask 发送,但**当前不影响答案语言**(服务端管线尚未消费该提示)——属于预留契约,行为变更会更新本文档 |
 | 浏览器语言(navigator.language) | 自动采集进 `page_context.language`,作为生成背景信息(软提示);**不**决定答案语言 |
 | `<html lang>` | 当前**未**被读取(见 Gap G-L2) |
-| 站点默认语言 | 站点配置(language 字段)三站均为 `en`(2026-09-02 已按冻结语义修正);宿主未传页面语言时随 ask 发送 `en` |
+| 站点默认语言 | 站点配置(language 字段)三站均为 `en`(2026-09-02 已按冻结语义修正;线上服务随下次配置部署生效,当前 wiki 线上仍返回旧值 zh) |
 | 官方 Widget 界面文案 | 输入占位、错误提示、兜底欢迎语等界面文案**当前为中文,不随页面语言切换**(见 Gap G-L4) |
 | 欢迎语 / 推荐问题 | 按站点单语配置(website 英文、store 英文、**wiki 当前为中文文案**),**不**随页面语言切换(见 Gap G-L5) |
 
@@ -642,7 +644,7 @@ English
 
 # Part 4 — 验收 Checklist
 
-每站上线前逐项勾选(**全部在真实授权域名下、生产 API 地址上执行**):
+每站上线前逐项勾选(**在真实授权域名下执行**):
 
 通用项:
 
@@ -653,7 +655,7 @@ English
 [ ] 能发送问题,答案流式出现
 [ ] 答案附带引用,引用可点击且指向合理来源
 [ ] Network 中 site-config 请求返回 200,ask 请求返回 200
-[ ] ask 请求 payload 中 site_id 正确(如 camthink-website)
+[ ] ask 请求 payload 中 site_id 正确(如 camthink-wiki)
 [ ] ask 请求 Origin 为本站授权域名(DevTools → Request Headers)
 [ ] Page Context 正确(payload 中 page_context.url/title 为当前页;结构化字段与页面一致)
 [ ] 桌面端浏览器(Chrome/Safari 至少各一)布局与交互正常
@@ -687,7 +689,7 @@ English
   相关的步骤型回答与引用。
 - 英文版文档页英文提问 → 英文回答。
 
-**Store(store.camthink.ai)**
+**Store(store.camthink.ai)**(CORS 补录后)
 
 - 商品页(如 NE503)点击 "Is NE503 suitable for my project?" → 回答围绕该商品,
   `page_context.sku` 与页面商品一致。
@@ -703,8 +705,8 @@ English
 |------|-----------|------|
 | **Widget 完全不出现** | ① script 未加载(地址错/网络/广告拦截插件/CSP 拦截) ② `widget.js` 404 | ① DevTools Network 看 widget.js 请求:失败→查地址与拦截;② 404→联系 Ask AI 团队 |
 | **按钮/面板出现但样式错乱** | 引入了 JS 但**没引入 CSS** | 补上 `ask-ai-widget.css` 的 `<link>`(两者必须成对) |
-| **API 请求失败(net::ERR_… / 请求不通)** | `data-api-url` 错误;生产地址未就绪;https 页面请求了 http 接口(混合内容被拦截) | 核对地址;确认 §0 生产地址已提供;API 必须与页面同为 https |
-| **Console 出现 CORS error** | 本站 Origin 不在 Ask AI 生产 `CORS_ALLOW_ORIGINS` | 提供准确 Origin 给 Ask AI 团队加入白名单(注意 www/非 www、http/https 是不同 Origin) |
+| **API 请求失败(net::ERR_… / 请求不通)** | `data-api-url` 错误;https 页面请求了 http 接口(混合内容被拦截) | 核对地址为 `https://wiki-data.camthink.ai`;API 必须与页面同为 https |
+| **Console 出现 CORS error** | 本站 Origin 不在 Ask AI 生产 `CORS_ALLOW_ORIGINS`(Store/非-www 当前即此状态,见 §0) | 提供准确 Origin 给 Ask AI 团队加入白名单(注意 www/非 www、http/https 是不同 Origin) |
 | **提问返回"此站点未被授权使用 Ask AI。"(403)** | `data-site-id` 拼写错误;或当前 Origin 不在该站点授权清单;或站点被禁用 | 核对 §1.2 逐字符 site_id;核对 Origin;排除后联系 Ask AI 团队查站点状态 |
 | **Widget 出现但欢迎语/推荐问题是英文默认值**(预期应为站点定制文案) | site-config 拉取失败(网络/403),Widget 已静默回退 | 看 Network 里 `site-config` 请求的状态码与 Origin,按上两行排查 |
 | **Widget 重复出现** | 页面被嵌入 iframe(内外各挂了一次);或两套模板各引了一次 | 确保全站只引一次;iframe 场景只需在最外层窗口挂载 |
@@ -743,9 +745,10 @@ English
 **Ask AI 团队负责**(网站负责人无需关心,出问题联系即可):
 
 - RAG 检索、知识库(Corpus)、大模型生成、引用引擎、知识信任边界;
-- 后端服务与 API 可用性、生产 API 地址的建立与通知;
-- CORS 白名单与站点授权配置(新增 Origin 需申请);
+- 后端服务与 API 可用性、生产 API 基址(`https://wiki-data.camthink.ai`)的持续可用;
+- CORS 白名单与站点授权配置(Store/非-www 补录、新增 Origin 需申请);
 - 站点体验配置(欢迎语/推荐问题/语言);多语言行为升级(G-L1~G-L5);
+- `channel_visibility` 迁移等公开开放前置(P0 信任边界);
 - 销售线索(Lead)、对话数据的存储与统计。
 
 ---
@@ -755,9 +758,9 @@ English
 **官方 Widget(全站模板 `</body>` 前):**
 
 ```html
-<link rel="stylesheet" href="https://<ASK-AI-PRODUCTION-API-BASE>/widget/ask-ai-widget.css">
-<script src="https://<ASK-AI-PRODUCTION-API-BASE>/widget/widget.js"
-        data-api-url="https://<ASK-AI-PRODUCTION-API-BASE>"
+<link rel="stylesheet" href="https://wiki-data.camthink.ai/widget/ask-ai-widget.css">
+<script src="https://wiki-data.camthink.ai/widget/widget.js"
+        data-api-url="https://wiki-data.camthink.ai"
         data-site-id="camthink-website|camthink-wiki|camthink-store"
         data-language="en|zh"
         async></script>
@@ -770,14 +773,14 @@ English
 window.AskAIConfig.pageContext = { page_type: "...", product: "...", sku: "..." };</script>
 ```
 
-**Headless(最小问答):** `POST {API}/api/ask`,body 含
+**Headless(最小问答):** `POST https://wiki-data.camthink.ai/api/ask`,body 含
 `message` + `channel:"widget"` + `site_id`,fetch 流式消费
 `sources → token* → (error|declined)? → done`,按 §2.4 渲染引用。
 
 ---
 
 *本文档由 Ask AI 工程(Codex D,HANDOFF-G001 及其 2026-09-02 Multilingual/Headless
-follow-up)基于真实实现冻结;文中行为均可在对应版本自动化测试中追溯。占位符
-`<ASK-AI-PRODUCTION-API-BASE>` 的正式值由 Ask AI 团队另行通知。变更记录:v1.0
-Widget 接入 → v2.0 升级为 Website Integration Guide(新增 Headless 与 Multilingual
-部分;原 Widget 文件名已由本文件取代,不留双权威指南)。*
+follow-up 与生产基址回填)基于真实实现冻结;文中行为均可在对应版本自动化测试中
+追溯。变更记录:v1.0 Widget 接入 → v2.0 升级为 Website Integration Guide(新增
+Headless 与 Multilingual 部分)→ v2.1 回填生产基址 `https://wiki-data.camthink.ai`
+(2026-09-02 实测+负责人确认),标注分站 CORS 就绪状态(Store 待补录、非-www 未放行)。*
