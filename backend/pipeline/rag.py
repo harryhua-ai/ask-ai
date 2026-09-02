@@ -943,35 +943,34 @@ class RAGOrchestrator:
         t_intent = time.monotonic()
         intent = await classify_intent(query, self._llm)
         intent_ms = int((time.monotonic() - t_intent) * 1000)
-        if not attachments and not capture_mode:
-            if intent.category == "off_topic":
-                elapsed = int((time.monotonic() - start) * 1000)
-                yield json.dumps(
-                    {
-                        "type": "complete",
-                        "answer": _off_topic_reply(language),
-                        "sources": [],
-                        "is_answered": False,
-                        "language": language,
-                        "response_time_ms": elapsed,
-                        "intent": intent.category,
-                        "trace_payload": {
-                            "type": "reject_short",
-                            "stages": {
-                                "intent": {
-                                    "ms": intent_ms,
-                                    "category": intent.category,
-                                    "reason": intent.reason,
-                                }
-                            },
-                            "total_ms": elapsed,
-                            "intent": intent.category,
-                            "confidence": intent.confidence,
-                            "config_snapshot": self._config_snapshot(),
+        if not attachments and not capture_mode and intent.category == "off_topic":
+            elapsed = int((time.monotonic() - start) * 1000)
+            yield json.dumps(
+                {
+                    "type": "complete",
+                    "answer": _off_topic_reply(language),
+                    "sources": [],
+                    "is_answered": False,
+                    "language": language,
+                    "response_time_ms": elapsed,
+                    "intent": intent.category,
+                    "trace_payload": {
+                        "type": "reject_short",
+                        "stages": {
+                            "intent": {
+                                "ms": intent_ms,
+                                "category": intent.category,
+                                "reason": intent.reason,
+                            }
                         },
-                    }
-                )
-                return
+                        "total_ms": elapsed,
+                        "intent": intent.category,
+                        "confidence": intent.confidence,
+                        "config_snapshot": self._config_snapshot(),
+                    },
+                }
+            )
+            return
         # Sales Lead Capture:资格判定 LLM 与 rewrite/retrieve 并发执行,
         # commercial/product(或已有线索/检出联系方式/明确销售请求)才跑,零延迟增加。
         lead_qual_task: asyncio.Task | None = None
