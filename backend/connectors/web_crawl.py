@@ -397,6 +397,9 @@ class WebCrawlConnector:
         # P1 退休安全:本轮全量发现的权威成员 URL(robots 通过即记,先于单页
         # 抓取/抽取)——成员资格与抽取成功分离,供 sync 退休决策使用。
         self._accepted_urls: list[str] | None = None
+        # 阶段⑩ W6:待提交快照(全量轮 fetch_deleted 计算,删除效应安全完成后
+        # 由 commit_membership_snapshot 落盘);None = 无待提交。
+        self._pending_snapshot: set[str] | None = None
 
     @property
     def source_id(self) -> str:
@@ -671,16 +674,32 @@ class WebCrawlConnector:
             self.run_stats["extracted"] += 1
             yield doc
 
+    def commit_membership_snapshot(self) -> None:
+        """推进成员快照(阶段⑩ W6 冻结序:retirement 效应安全完成后才落盘)。
+
+        由 sync 层在删除循环完成后调用;删除中途被 kill 时本方法不会执行,
+        旧快照保留 → 下一轮重新报告同一差集(重复删除幂等,PRUNE IS
+        DOCUMENT-LOCAL 不变)。无待提交快照(增量轮/重复调用)→ no-op。
+        """
+        if self._pending_snapshot is not None:
+            self._save_state(self._pending_snapshot)
+            self._pending_snapshot = None
+
     def fetch_deleted(self, since: datetime) -> list[str]:
         """删除:仅全量轮做差集(上一轮状态 vs 本轮 全量视野)。
 
         增量轮视野仅 sitemap,若据此判删会把 BFS 发现页误删(覆盖震荡),
-        故增量轮返回 [] 且不覆写状态文件。
+        故增量轮返回 [] 且不推进快照。
+
+        阶段⑩ W6:全量轮也**不再在此处落盘**——只计算差集并把当前成员集
+        挂入 ``_pending_snapshot``,由 sync 层在删除循环安全完成后调用
+        ``commit_membership_snapshot()`` 推进。kill 于删除中途 → 旧快照
+        保留 → 未完成的 retirement 下轮重新发现(幂等重删收敛)。
         """
         if not self._last_run_full:
             return []
         known = set(self._seen_urls or set())
         current_ids = {f"{self._id}/{_url_to_source_path(u)}" for u in known}
         previous = self._load_state()
-        self._save_state(current_ids)
+        self._pending_snapshot = current_ids
         return sorted(previous - current_ids)

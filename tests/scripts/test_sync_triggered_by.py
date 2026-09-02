@@ -49,7 +49,8 @@ def test_main_passes_triggered_by_to_run_sync(monkeypatch):
     captured: dict = {}
 
     async def _fake_run_sync(
-        settings, source_id=None, *, dry_run=False, reindex=False, triggered_by=None
+        settings, source_id=None, *, dry_run=False, reindex=False, triggered_by=None,
+        force_replay=False, **_kw,
     ):
         captured["source_id"] = source_id
         captured["triggered_by"] = triggered_by
@@ -62,3 +63,22 @@ def test_main_passes_triggered_by_to_run_sync(monkeypatch):
 
     sync_mod.main([])
     assert captured == {"source_id": None, "triggered_by": None}
+
+
+def test_inject_recovery_replay_on_frozen_source_config():
+    """阶段⑩ F16:recovery_replay 注入对 frozen dataclass 必须生效(不可变替换)。"""
+    from backend.connectors.registry import SourceConfig
+    from scripts.sync import _inject_recovery_replay
+
+    cfgs = [
+        SourceConfig(id="a", type="github", product="p",
+                     config={"repo_url": "u"}, enabled=True, sync_interval="24h"),
+        SourceConfig(id="b", type="filesystem", product="p",
+                     config={"root_path": "/tmp"}, enabled=True, sync_interval="24h"),
+    ]
+    _inject_recovery_replay(cfgs)
+    assert cfgs[0].config["recovery_replay"] is True   # github 消费方
+    assert cfgs[1].config["recovery_replay"] is True   # 其他 connector 忽略,但注入无害
+    assert cfgs[0].config["repo_url"] == "u"           # 既有字段保留
+    with __import__("pytest").raises(__import__("dataclasses").FrozenInstanceError):
+        cfgs[0].config = {}  # 证明 frozen:注入走的是 replace,不是赋值

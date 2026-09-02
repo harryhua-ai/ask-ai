@@ -71,6 +71,26 @@ def get_sync_session_factory(engine_or_dsn: "AsyncEngine | str") -> sessionmaker
     return sessionmaker(sync_engine, expire_on_commit=False)
 
 
+async def ensure_recovery_columns(engine: AsyncEngine) -> None:
+    """阶段⑩ 恢复字段幂等迁移:sync_requests 补 attempt_count/failure_kind/next_retry_at。
+
+    init_db(create_all)只建缺失表、不补已有表的新列,故已有部署(stage⑨ 落地过
+    sync_requests)需要本迁移。幂等:列已存在时 ADD COLUMN IF NOT EXISTS 为 no-op;
+    旧行安全默认(attempt_count=0 / failure_kind=NULL / next_retry_at=NULL)。
+    生产执行窗口:任意(纯加列,不改既有数据)。
+    """
+    from sqlalchemy import text
+
+    statements = (
+        "ALTER TABLE sync_requests ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE sync_requests ADD COLUMN IF NOT EXISTS failure_kind VARCHAR(20)",
+        "ALTER TABLE sync_requests ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ",
+    )
+    async with engine.begin() as conn:
+        for stmt in statements:
+            await conn.execute(text(stmt))
+
+
 async def init_db(engine: AsyncEngine) -> None:
     """根据模型元数据创建所有表。
 

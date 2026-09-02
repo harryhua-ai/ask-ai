@@ -74,6 +74,11 @@ class GitHubConnector(DataSourceConnector):
         # 技术安全边界(Layer 1):独立于 file_types,管理员白名单不可绕过(G1)
         self._safety = TechnicalSafetyPolicy(config.config)
         self.safety_stats = new_safety_stats()
+        # 阶段⑩ F16:恢复重放上下文(runner 经 --force-incremental-replay 注入)。
+        # 为 True 时增量 fetch_changes 关闭 remote-SHA 短路,始终 fetch+reset 后
+        # 按 last-success 边界重读 git 历史 —— 补齐「clone 已推进而 ingest 被
+        # 中断」场景丢失的变更。仅恢复重试路径注入,普通 run 语义不变。
+        self._recovery_replay = bool(config.config.get("recovery_replay", False))
         self._token: str = os.environ.get("GITHUB_TOKEN", "")
 
     @staticmethod
@@ -268,10 +273,14 @@ class GitHubConnector(DataSourceConnector):
 
         SHA 相同的分支跳过(无变更)。API 故障降级为直接 fetch(见
         ``_remote_has_updates``)。
+
+        恢复重放(``_recovery_replay``,阶段⑩ F16):跳过 SHA 短路,无条件
+        fetch+reset 后按 ``since`` 边界重读本地 git 历史 —— 处理「clone HEAD
+        已推进而 ingest 被中断」场景,防止变更被假 no-change success 吞掉。
         """
         for branch in self._branches:
             self._ensure_cloned(branch)
-            if self._remote_has_updates(branch):
+            if self._recovery_replay or self._remote_has_updates(branch):
                 self._git_sync_branch(branch)
                 yield from self._read_local_changes(branch, since)
 

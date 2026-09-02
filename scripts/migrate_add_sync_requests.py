@@ -15,7 +15,7 @@ import asyncio
 import logging
 
 from backend.config import load_settings
-from backend.db.session import get_engine, init_db
+from backend.db.session import ensure_recovery_columns, get_engine, init_db
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
@@ -25,8 +25,11 @@ async def main() -> None:
     settings = load_settings()
     engine = get_engine(settings.postgres_dsn)
     await init_db(engine)  # create_all:新建 sync_requests(已存在则跳过)
+    await ensure_recovery_columns(engine)  # 阶段⑩:已有表幂等补恢复列
     await engine.dispose()
-    logger.info("✅ sync_requests 交接表已确保存在")
+    logger.info(
+        "✅ sync_requests 交接表与恢复列(attempt_count/failure_kind/next_retry_at)已确保存在"
+    )
 
 
 if __name__ == "__main__":

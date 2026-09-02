@@ -231,6 +231,14 @@ class SyncRequest(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     runner_exit_code: Mapped[int | None] = mapped_column(Integer)
     error: Mapped[str | None] = mapped_column(Text)
+    # ---- 阶段⑩ 恢复字段(持久状态仍四态;INTERRUPTED/RETRYING 为派生呈现态) ----
+    # attempt_count:实际启动过的 runner 次数(首次启动=1);MAX_TOTAL_ATTEMPTS=4。
+    # failure_kind:机器可判断的失败种类(interrupted/spawn_failed/runner_failed;
+    #   terminal 终态以 status=failed + attempt 用尽表达,不入本列)。
+    # next_retry_at:恢复重试到期时间;非空且未到 → claim_next 不可领取。
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failure_kind: Mapped[str | None] = mapped_column(String(20))
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Customization(Base):

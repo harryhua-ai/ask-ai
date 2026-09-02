@@ -1,14 +1,14 @@
 """独立同步执行面主循环测试(sync_requests 交接 → 子进程 sync.py)。
 
-阶段⑨ FINAL(Planner PARTIAL 修正):执行面 = 独立 sync-executor 容器,
+阶段⑨ FINAL + 阶段⑩ 恢复语义:执行面 = 独立 sync-executor 容器,
 运行 ``scripts/sync_executor_loop.py``。本文件覆盖交接语义的业务规则:
 
 - 领用:最旧 pending 原子置 running(FOR UPDATE SKIP LOCKED);
 - 执行:子进程运行 scripts/sync.py(同一业务 runner,AC7),argv 数据
   参数无 shell;
-- 落账:退出码 0 → done;非零/启动失败 → failed + error(可诊断);
-- 启动清理:遗留 running(上次进程中断)诚实标记 failed,不自动恢复
-  (阶段⑩边界)。
+- 落账:退出码 0 → done;非零/启动失败 → 有界恢复重试(阶段⑩);
+- 启动对账:遗留 running 以 sync_log 分流(阶段⑩,详 tests/scripts/
+  test_recovery_semantics.py)。
 
 全部走真实测试库(TEST_DATABASE_URL)+ 真实子进程(stub runner)。
 """
@@ -21,13 +21,13 @@ import pytest_asyncio
 from sqlalchemy import select
 
 from backend.db.models import SyncRequest
-from backend.db.session import get_engine, get_session_factory, init_db
+from backend.db.session import ensure_recovery_columns, get_engine, get_session_factory, init_db
 from scripts.sync_executor_loop import (
     build_runner_argv,
     claim_next,
     drain_once,
     execute_request,
-    fail_stale_running,
+    reconcile_stale_running,
 )
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
@@ -50,6 +50,7 @@ async def _db():
     dsn = os.environ.get("TEST_DATABASE_URL", load_settings().postgres_dsn)
     engine = get_engine(dsn)
     await init_db(engine)
+    await ensure_recovery_columns(engine)  # 阶段⑩恢复列幂等补齐(老测试库)
     return get_session_factory(engine)
 
 
@@ -111,14 +112,16 @@ async def test_build_runner_argv_all_sources():
 # --------------------------------------------------------------------------- #
 
 
-async def test_fail_stale_running_marks_interrupted_only(_db):
+async def test_reconcile_interrupted_schedules_retry_only(_db):
+    """阶段⑩:中断遗留 running → 延迟恢复重试;pending 行不受影响(诚实+有界)。"""
     running_id = await _add_request(_db, "stale-src", status="running")
     pending_id = await _add_request(_db, "fresh-src", status="pending")
-    marked = await fail_stale_running(_db)
-    assert marked == 1
+    stats = await reconcile_stale_running(_db)
+    assert stats["scheduled_retry"] == 1 and stats["finalized_done"] == 0
     row = await _get_request(_db, running_id)
-    assert row.status == "failed"
-    assert row.error and "中断" in row.error
+    assert row.status == "pending"
+    assert row.failure_kind == "interrupted"
+    assert row.next_retry_at is not None
     assert (await _get_request(_db, pending_id)).status == "pending"  # pending 不受影响
 
 
@@ -161,30 +164,42 @@ async def test_execute_request_success_marks_done(_db, tmp_path):
     assert row.finished_at is not None
 
 
-async def test_execute_request_child_failure_marks_failed_and_queue_continues(_db, tmp_path):
-    """AC11:子进程非零退出 → failed + 退出码可诊断;后续请求照常领用。"""
+async def test_execute_request_child_failure_schedules_bounded_retry(_db, tmp_path):
+    """阶段⑩:子进程非零退出 → runner_failed 有界重试(pending+退避),可诊断;
+    退避期内不可再领用;到期后重跑收敛。"""
+    from datetime import UTC, datetime
+
     fail_id = await _add_request(_db, "bad-src")
-    next_id = await _add_request(_db, "next-src")
-    req = await _get_request(_db, fail_id)
-    status = await execute_request(_db, req, argv=_stub_argv(tmp_path / "m2", exit_code=3))
-    assert status == "failed"
+    # 首次执行(经领用,attempt 0→1)失败 → 有界重试
+    assert await drain_once(_db, argv=_stub_argv(tmp_path / "m2", exit_code=3)) is True
     row = await _get_request(_db, fail_id)
-    assert row.status == "failed"
-    assert row.runner_exit_code == 3
-    # 队列继续:下一个请求可正常领用并成功
-    assert await drain_once(_db, argv=_stub_argv(tmp_path / "m3")) is True
-    assert (await _get_request(_db, next_id)).status == "done"
+    assert row.status == "pending"
+    assert row.attempt_count == 1
+    assert row.failure_kind == "runner_failed"
+    assert row.next_retry_at is not None
+    # 未到期不可领用(防重复执行)
+    assert await drain_once(_db, argv=_stub_argv(tmp_path / "m3")) is False
+    # 到期后重跑收敛(attempt 1→2)
+    async with _db() as session:
+        r = await session.get(SyncRequest, fail_id)
+        r.next_retry_at = datetime.now(UTC)
+        await session.commit()
+    assert await drain_once(_db, argv=_stub_argv(tmp_path / "m4")) is True
+    done_row = await _get_request(_db, fail_id)
+    assert done_row.status == "done"
+    assert done_row.attempt_count == 2  # 首次 + 一次恢复
 
 
-async def test_execute_request_spawn_failure_marks_failed_explicitly(_db):
-    """AC10:runner 无法启动 → failed + 明确错误(执行面不吞、不假报)。"""
+async def test_execute_request_spawn_failure_schedules_retry_explicitly(_db):
+    """阶段⑩:runner 无法启动 → spawn_failed 有界重试(显式 error,不吞、不假报)。"""
     req_id = await _add_request(_db, "spawn-fail-src")
     req = await _get_request(_db, req_id)
     status = await execute_request(_db, req, argv=["/nonexistent/interpreter", "-c", "pass"])
-    assert status == "failed"
+    assert status == "retry-scheduled"
     row = await _get_request(_db, req_id)
-    assert row.status == "failed"
-    assert row.runner_exit_code is None
+    assert row.status == "pending"
+    assert row.failure_kind == "spawn_failed"
+    assert row.next_retry_at is not None
     assert row.error and "启动失败" in row.error
 
 

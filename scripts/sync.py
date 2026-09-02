@@ -618,6 +618,12 @@ async def _sync_one(
         deleted = connector.fetch_deleted(since)
         for doc_id in deleted:
             pipeline.delete_document(doc_id)
+        # 阶段⑩ W6:retirement 效应安全完成后才推进 crawl 成员快照。
+        # 删除循环中途被 kill → 本调用不执行 → 旧快照保留 → 下轮重报同一
+        # 差集(重复删除幂等),ghost 不再永久化。无此能力的 connector no-op。
+        committer = getattr(connector, "commit_membership_snapshot", None)
+        if callable(committer):
+            committer()
 
         log_entry.items_new = sum(1 for v in results.values() if v > 0)
         log_entry.items_updated = sum(results.values())
@@ -693,6 +699,20 @@ def _resolve_triggered_by(source_id: str | None, triggered_by: str | None) -> st
     return "manual" if source_id else "cron"
 
 
+def _inject_recovery_replay(configs: list[SourceConfig]) -> None:
+    """阶段⑩ F16:为恢复重放轮注入 connector 上下文标记。
+
+    ``recovery_replay`` 由 GitHubConnector 消费(增量关闭 remote-SHA 短路,
+    按 last-success 边界重读 git 历史);其余 connector 忽略。SourceConfig 为
+    frozen dataclass → 以 ``dataclasses.replace`` 生成不可变替换;只改本次
+    执行的内存配置,不触碰 DB 中的 source config。
+    """
+    import dataclasses
+
+    for i, cfg in enumerate(configs):
+        configs[i] = dataclasses.replace(cfg, config={**cfg.config, "recovery_replay": True})
+
+
 async def run_sync(
     settings: Settings,
     source_id: str | None = None,
@@ -700,6 +720,7 @@ async def run_sync(
     dry_run: bool = False,
     reindex: bool = False,
     triggered_by: str | None = None,
+    force_replay: bool = False,
 ) -> None:
     """执行一次完整的同步流程。
 
@@ -767,6 +788,8 @@ async def run_sync(
         )
 
         marker = _resolve_triggered_by(source_id, triggered_by)
+        if force_replay:
+            _inject_recovery_replay(configs)
         for cfg in configs:
             if not cfg.enabled:
                 logger.info("跳过禁用的数据源 %s", cfg.id)
@@ -823,6 +846,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="sync_log.triggered_by 标记;auto=按旧规则(带 --source 记 manual,"
         "否则 cron)。独立执行面的 Admin 手动触发经此显式标记为 manual。",
     )
+    parser.add_argument(
+        "--force-incremental-replay",
+        action="store_true",
+        help="阶段⑩ 恢复重放:GitHub 增量关闭 remote-SHA 短路,按 last-success"
+        " 边界重读 git 历史(仅执行面恢复重试路径使用)。",
+    )
     return parser.parse_args(argv)
 
 
@@ -841,6 +870,7 @@ def main(argv: list[str] | None = None) -> None:
             dry_run=args.dry_run,
             reindex=args.reindex,
             triggered_by=None if args.triggered_by == "auto" else args.triggered_by,
+            force_replay=args.force_incremental_replay,
         )
     )
 
