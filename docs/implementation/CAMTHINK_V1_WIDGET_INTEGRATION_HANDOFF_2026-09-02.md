@@ -103,3 +103,129 @@
 
 - 未修改 Product Code;未 SSH 生产;未 DB 迁移;未 Weaviate/Corpus/Sync;未 CORS 生产 mutation;未 Lead/Citation/Multi-Site 语义改动;无 off-topic 重构。
 - 唯一新增"示例文件"为零(接入示例全部内嵌于指南文档,未新增 sample 仓库文件,避免样例漂移)。
+
+---
+
+# 10. FOLLOW-UP ASSESSMENT — Multilingual + Headless(2026-09-02 同日追加,Planner 已确认的两项产品需求)
+
+同一 worktree/branch(baseline 仍 `1ff2936`),无新增 worktree。范围仍限 Three-site Integration Contract;未改 Core/RAG/SSE/API 语义。
+
+## 10.A Multilingual Website Contract
+
+### 调查证据(全部源码实证)
+
+| 证据点 | 位置 | 真实行为 |
+|--------|------|---------|
+| `data-language` / `AskAIConfig.language` | `widget/src/bootstrap.tsx`(加载时读一次)+ `App.tsx:104`(`config.language ?? siteConfig?.language` 随 ask 发送) | 已纳入请求契约;**仅加载时读取,不支持页内热切换** |
+| **`req.language` 的下游消费** | `backend/api/routes.py` ask 端点 + `backend/pipeline/rag.py:695-704` `stream_answer()` 签名(**无 language 参数**) | **`req.language` 被端点完全忽略,不进生成管线**;`conversations.language` 落库的是检测值,不是请求值 |
+| AI 答案语言的真实来源 | `backend/pipeline/rag.py:508,731` `detect_language(query)` + `backend/utils/language.py` + prompt `rag.py:432`("用 {language} 回答") | **按提问文本检测**:假名→ja、汉字→zh-cn、谚文→ko、**其余(含法/德等拉丁语言)一律 en** |
+| `<html lang>` | widget/src 全量 grep | **未读取** |
+| browser language | `pageContext.ts`(navigator.language 自动采集)+ `rag.py:161-162`(作为页面语言背景行进 prompt) | 仅作生成背景**软提示**,不决定答案语言 |
+| site-config default language | `config/sites.yaml`(`language` 字段) | widget 侧作为 ask 语言兜底;**原 wiki=zh 与新冻结事实"三站默认 English"冲突 → 已修正**(见下) |
+| welcome / starters | sites.yaml 站点单语 | 不随页面语言切换(wiki 文案为中文) |
+| Widget UI/error 文案 | `ChatPanel.tsx:69,130`、`useSSE.ts:24,55-56`、`App.tsx:17` 等 | **硬编码中文**,无 i18n |
+
+### 已完成的配置修正(允许范围:明显 config correction)
+
+- `config/sites.yaml`:`camthink-wiki` 的 `language: zh → en`,并加注释说明多语言语义(站点默认 = 兜底;页面语言由宿主 data-language 表达,优先于站点默认)。
+- **验证**:`pytest tests/services/test_site_experiences.py` **16/16 通过**(测试对真实 sites.yaml 种子幂等/授权语义全绿,无语言值锚定,零回归)。欢迎语/推荐问题文案语言**未动**(内容决策,登记为 Gap)。
+
+### 输出字段
+
+```
+MULTILINGUAL_SITE_READY = PARTIAL
+  (实践可用:答案语言跟随提问文本,中/英两大场景天然正确,最终 fallback=English ✓;
+   页面语言提示、<html lang>、浏览器语言兜底、Widget UI i18n、双语 welcome/starters 尚未实现)
+CURRENT_LANGUAGE_RESOLUTION =
+  AI 答案语言 = detect_language(提问文本)[ja/zh-cn/ko, else en];
+  data-language/AskAIConfig.language → 随 ask 发送但当前被服务端忽略;
+  navigator.language → 仅 page_context 背景软提示;<html lang> 未读取;
+  site-config language(en/en/en,已修正)→ 宿主未传时的请求兜底
+GAP = G-L1 生成管线不消费 language 提示;G-L2 Widget 不读 <html lang> 且语言仅加载时读取;
+  G-L3 浏览器语言非 ask 兜底;G-L4 Widget UI 文案硬编码中文无 i18n;
+  G-L5 welcome/starters 站点单语无双语变体(wiki 文案与默认 English 未对齐,内容决策)
+RECOMMENDED_LANGUAGE_RESOLUTION =
+  Current Page / Host Language(宿主显式,发送时实时读取)
+    → <html lang> / explicit host language
+    → browser language
+    → English(站点默认 en;最终 fallback en)
+CORE_CHANGE_REQUIRED = YES(G-L1~G-L5 均属 Core/Widget 行为变更或站点契约扩展,
+  按范围边界不实施,登记待 Planner;宿主接入不被 Gap 阻塞)
+```
+
+## 10.B Headless / Custom UI Integration
+
+### 调查证据
+
+| 证据点 | 位置 | 结论 |
+|--------|------|------|
+| Widget 是否只是 API client | widget/src 全量(`App.tsx`/`useSSE.ts`/`siteConfig.ts`) | **是**——仅消费 `/api/widget/site-config`、`/api/ask`、`/api/upload`、`/api/feedback` 四个端点,无 Widget 专属端点、无私有 header |
+| `/api/ask` request contract | `backend/api/schemas.py:80-116` | message(1-8000)/language/channel(仅 widget|discord|whatsapp|mcp|admin)/conversation_history(仅 role∈{user,assistant},其他降级 user 防注入)/session_id(≤200)/attachments(≤5)/site_id(规范化+形状校验)/page_context(8 字段,extra=ignore) |
+| SSE response contract | `routes.py:168-302` + `useSSE.ts` | 事件序 `sources → token* → (error|declined)? → done`;error.kind ∈ empty_generation/provider_error/stream_interrupted;declined=预算熔断;CRLF 需归一;未知事件/字段忽略(向后兼容) |
+| conversation lifecycle | `routes.py:265-300` | 服务端持久化 conversations(含 site_id/language=检测值/sources/is_answered);**公开侧无取回历史接口,多轮由客户端 conversation_history 驱动**(widget 同构);conversation_id 用于 feedback 与对账 |
+| citation contract | `widget/src/utils/sanitize.ts`(renderMarkdownSafe)+ T29/CIT-01 | token=**受限 Markdown** + `[N]` 引用标记(1-based 对应 sources[]);无匹配来源的 [N] 移除;代码块内 [N] 豁免;链接域名白名单(github.com、raw.githubusercontent.com、camthink.ai+子域、wiki/docs 子域) |
+| site_id / Origin authorization | 同 §2 证据(sites.yaml + site_experiences.py) | headless 与 Widget **完全同一套**:enabled + Origin 精确命中,CORS 同一白名单 |
+| analytics / trust boundary / lead | `routes.py`(channel 维度守卫与持久化)+ P0 主防线 | channel="widget" 时全部服务端强制生效;**headless 复用 widget 渠道即获得完整产品能力**,不存在绕过检索直连 LLM 的路径(无此类端点) |
+| rate limit | `routes.py:87,377` | ask 20/min/IP、upload 10/min/IP(slowapi 按远端地址) |
+| browser direct usage | CORS 中间件(GET/POST + Content-Type)+ Origin 授权模型 | 浏览器直连即设计形态;**服务端转发调用无 Origin → 按设计 403**(带 site_id 时) |
+| Widget-private assumptions | `useSSE.ts` | 仅 localStorage session_id(宿主可自 generate UUID)与 channel 默认值;无其他隐性契约 |
+
+### 判定
+
+```
+HEADLESS_INTEGRATION_READY = YES(浏览器直连形态)
+  依据:官方 Widget 生产形态即消费该 API;四个端点全部公开可达;
+  身份/授权/意图/检索/信任边界/生成/引用/会话/上下文/语言/统计/线索
+  全部在服务端强制,headless 复用即得完整产品能力;契约有测试锚定(RC 冻结形态)。
+CURRENT_API_CONTRACT =
+  GET  /api/widget/site-config?site_id=…(Origin 校验;返回体验字段,不含 allowed_origins)
+  POST /api/ask(JSON;SSE: sources/token/error/declined/done;403/422/429 在流之前)
+  POST /api/upload(FormData session_id+files≤5;10/min)
+  POST /api/feedback({conversation_id, feedback: up|down})
+MISSING_PUBLIC_CONTRACT = (均为"正式化缺失",非可用性缺失,不阻塞接入)
+  - 无 API 版本号/稳定性承诺文档(现以 RC 冻结形态 + 测试锚定)
+  - 无独立 headless 渠道值(复用 "widget",分析统计与官方 Widget 同池)
+  - 无服务端会话取回接口(多轮由客户端 history 驱动)
+  - 429 响应为 slowapi 默认文案,无限流响应头
+CORE_CHANGE_REQUIRED = NO(现有 API 足以作为 Headless Integration Contract;
+  上述正式化缺失列为 Planner 可选项,不构成本次变更)
+```
+
+### 文档升级
+
+- `docs/integration/CAMTHINK_WIDGET_INTEGRATION.md` **git mv → `docs/integration/CAMTHINK_ASK_AI_WEBSITE_INTEGRATION.md`**(v2.0),重构为:
+  - Part 1 Official Widget Integration(v1.0 内容,增补读取时机、site_id 语义与多语言标注)
+  - Part 2 Headless / Custom UI Integration(新增:定位原则、API 面、请求契约表、SSE 事件契约表、引用处理规则、会话/反馈、最小可运行示例、验收要点)
+  - Part 3 Multilingual Integration(新增:冻结语义、宿主做法、**当前真实行为如实表**、期望解析链与 Gap G-L1~G-L5)
+  - Part 4 验收 Checklist(增补多语言项)、Part 5 Troubleshooting(增补语言/headless 症状)、Part 6 职责边界(更新)
+- 旧文件名已由 git mv 移除,仓库内不存在第二个权威接入指南,无冲突。
+
+### 本轮验证
+
+| 项 | 结果 |
+|----|------|
+| `pytest tests/services/test_site_experiences.py`(真实 sites.yaml) | **16/16 通过**(配置修正零回归) |
+| widget 测试/构建 | 本轮零 widget 代码改动,v1.0 交付时的 57/57 + typecheck + build 结论仍有效 |
+| 文档键值与源码一致性 | 新增契约键(端点/事件名/kind 枚举/字段名/限流值/白名单域)均逐一取自源码并在 §10.B 证据表对应 |
+
+### 本轮 Modified Files
+
+| 文件 | 变更 |
+|------|------|
+| `config/sites.yaml` | camthink-wiki language zh→en + 多语言语义注释(配置修正) |
+| `docs/integration/CAMTHINK_WIDGET_INTEGRATION.md` → `docs/integration/CAMTHINK_ASK_AI_WEBSITE_INTEGRATION.md` | git mv + v2.0 重写(三部分结构) |
+| `docs/implementation/CAMTHINK_V1_WIDGET_INTEGRATION_HANDOFF_2026-09-02.md` | 本节追加(§10) |
+
+### Follow-up 协议字段
+
+```
+STATUS = PASS
+MULTILINGUAL_SITE_READY = PARTIAL
+CORE_CHANGE_REQUIRED_MULTILINGUAL = YES(G-L1~G-L5 登记待 Planner,未实施)
+HEADLESS_INTEGRATION_READY = YES(浏览器直连)
+CORE_CHANGE_REQUIRED_HEADLESS = NO
+PRODUCTION_WIDGET_URL_READY = NO(不变,仍缺公网基址/CORS 激活)
+WEBSITE_READY / WIKI_READY / STORE_READY = NO(同前,卡生产 URL;接入包含 Headless/Multilingual 指引均已就绪)
+PRODUCTION_ACCESS = NO
+PUSHED = YES
+```
