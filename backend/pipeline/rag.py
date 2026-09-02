@@ -267,6 +267,25 @@ class RAGOrchestrator:
         self._intent_styles = intent_styles or {}
         self._visibility_guard = visibility_guard
 
+    def set_customization_snapshot(
+        self, channel_customizations: dict[str, str], default_system_prompt: str | None = None
+    ) -> None:
+        """热重载入口:整体替换运行时定制快照(Admin 变更后调用)。
+
+        并发安全:对 ``_channel_customizations`` 做**整体引用赋值**(先在
+        局部构建完整新 dict 再一次性替换),请求只会观察到旧或新完整配置,
+        不会看到逐键变更的中间态。组合语义(system_prompt→风格语气→边界
+        规则,再由 _build_messages 追加 intent_styles)不变。
+
+        Args:
+            channel_customizations: 渠道 → 合并后 system_prompt 的完整映射。
+            default_system_prompt: 未绑定渠道的回退 prompt(widget 渠道定制
+                或 yaml);None 表示保持当前回退不变。
+        """
+        self._channel_customizations = dict(channel_customizations)
+        if default_system_prompt is not None:
+            self._system_prompt = default_system_prompt
+
     def _config_snapshot(self) -> dict[str, Any]:
         """当前编排器配置快照,写入 trace 供后续对照。"""
         return {
