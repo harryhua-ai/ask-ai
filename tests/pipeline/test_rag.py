@@ -569,7 +569,10 @@ async def test_rag_off_topic_rejects_without_search():
     result = await rag.answer("今天天气怎么样?", "widget")
 
     assert result.is_answered is False
-    assert "只能回答" in result.answer
+    # 友好边界(产品契约 B):说明服务范围并引导,而非 system-style rejection
+    assert "CamThink" in result.answer
+    scope_words = ("选型", "功能", "方案")
+    assert any(w in result.answer for w in scope_words)
     searcher.search.assert_not_called()
 
 

@@ -108,9 +108,15 @@ def build_citation_context(
         第 5 个公开页之外的 chunk 从上下文丢弃(否则可被引用但访客不可见);
         非公开但参与生成的 chunk(filesystem 内部案例等)进背景资料段。
     """
-    url_to_idx: dict[str, int] = {
-        normalize_source_path(s["url"]): i + 1 for i, s in enumerate(sources)
-    }
+    url_to_idx: dict[str, int] = {}
+    for i, s in enumerate(sources):
+        url_to_idx[normalize_source_path(s["url"])] = i + 1
+        # CIT-URL 集成桥:sources[].url 呈现 canonical 时,原 GitHub blob URL
+        # 保留在 provenance_url;rerank 候选仍带原始 URL,须映射到同一编号,
+        # 否则 wiki chunk 全部落入 dropped_public_chunks、编号权威断裂。
+        provenance = s.get("provenance_url")
+        if provenance:
+            url_to_idx.setdefault(normalize_source_path(provenance), i + 1)
     source_texts: dict[int, list[str]] = defaultdict(list)
     background_chunks: list[str] = []
     dropped_public_chunks = 0
