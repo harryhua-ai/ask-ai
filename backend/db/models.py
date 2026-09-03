@@ -202,6 +202,14 @@ class DataSource(Base):
     sync_interval: Mapped[str] = mapped_column(String(20), default="24h")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # ---- S0 源生命周期契约(#18 前置;词汇表/判定原语见
+    # backend/services/source_lifecycle.py,删除编排不在本列语义内)----
+    # lifecycle_state:NULL = ACTIVE(既有行默认态,零回填);持久化值仅
+    # delete_requested / deleting / delete_failed。删除成功 = 整行删除,
+    # 无 DELETED tombstone。
+    lifecycle_state: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    lifecycle_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lifecycle_error: Mapped[str | None] = mapped_column(Text)
 
 
 class SyncRequest(Base):

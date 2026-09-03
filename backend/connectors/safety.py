@@ -20,11 +20,22 @@ connector 现有逻辑承担,本模块结论供其叠加与未来 Admin UI 消�
   `.txt` 的二进制必须被内容嗅探拦下;
 - 合法中文/Unicode 文本、合法源码不得被误伤;
 - 技术排除与知识推荐在结论结构上分离(FileAdmission 两个字段)。
+
+Secrets / credentials(PD-1 冻结,2026-09-03):属 **Layer 1 Technical
+Safety** 而非 Layer 2 推荐——环境秘密文件 / 私钥材料 / 明文凭证不得因
+管理员 file_types/allowlist 进入知识库。证据双层(只做扩展名黑名单是
+脆弱的):A)路径/名字层廉价判定(`secret_path_reason`);B)内容层
+私钥 armor 精确匹配(`secret_content_reason`,扩展名伪装的最后防线,
+在 ingest 的 `check_content` 处生效)。误伤红线:模板(`.env.example`)、
+公钥/证书(`.pub`/`.crt`/含 CERTIFICATE 的 `.pem`)、普通配置
+(YAML/JSON/TOML)不在禁列;`.pem` 等模糊形态 = 技术安全 + 推荐排除
+(`KnowledgeRole.SECRETS`),内容检出私钥才升级为硬禁。
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import PurePosixPath
@@ -111,6 +122,91 @@ MODEL_ARTIFACT_EXTS: frozenset[str] = frozenset(
     }
 )
 
+# --------------------------------------------------------------------------
+# Secrets / credentials 名字层证据(PD-1;与工件类名单同一纪律:命中即
+# Layer 1 排除,管理员 allowlist 不可绕过)。名单保守、工程可扩:
+# 只收「几乎不存在合法知识文档形态」的格式与高置信文件名。
+# --------------------------------------------------------------------------
+SECRET_EXTS: frozenset[str] = frozenset(
+    {
+        ".key",  # 私钥惯用扩展名(public*/*.pub 名字豁免,见 secret_path_reason)
+        ".ppk",  # PuTTY 私钥
+        ".p12",  # PKCS#12 证书+私钥容器
+        ".pfx",
+        ".jks",  # Java keystore
+        ".keystore",
+        ".kdbx",  # KeePass 数据库
+        ".htpasswd",
+    }
+)
+
+# 高置信秘密文件名(basename 任意层级,小写比较)
+_SECRET_EXACT_NAMES: frozenset[str] = frozenset({".env", ".htpasswd", ".netrc", ".git-credentials"})
+# .env.<suffix> 家族的模板后缀豁免(合法提交物,不硬禁;推荐层可标注)
+_SECRET_ENV_TEMPLATE_SUFFIXES: frozenset[str] = frozenset(
+    {"example", "sample", "template", "dist", "defaults", "schema"}
+)
+# SSH 私钥标准名(id_rsa / id_rsa.old / id_ed25519_backup 等变体;.pub 豁免)
+_SSH_PRIVATE_KEY_NAMES: tuple[str, ...] = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")
+# 秘密/凭证惯用 stem × 数据类扩展名组合(GCP credentials.json / k8s secrets.yaml 惯例)
+_SECRET_STEM_NAMES: frozenset[str] = frozenset({"secrets", "secret", "credentials", "credential"})
+_SECRET_DATA_EXTS: frozenset[str] = frozenset(
+    {".json", ".yaml", ".yml", ".toml", ".ini", ".properties", ".conf"}
+)
+
+# 内容层证据:私钥 armor 精确匹配(PKCS#8 / RSA / EC / DSA / OPENSSH /
+# ENCRYPTED / PGP)。公钥(PUBLIC KEY)与证书(CERTIFICATE)天然不命中。
+_PRIVATE_KEY_ARMOR_RE = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----")
+
+
+def secret_path_reason(rel_path: str) -> tuple[str, str] | None:
+    """路径/名字层秘密证据(廉价判定,读内容之前调用)。
+
+    Returns:
+        (reason, detail),reason 固定 ``"secret_file"``;非秘密路径返回 None。
+    """
+    p = PurePosixPath(rel_path)
+    name = p.name.lower()
+    ext = p.suffix.lower()
+    stem = name[: -len(ext)] if ext else name
+    if ext in SECRET_EXTS:
+        # 明示 public 的名字不因 .key 误杀(内容层仍兜底)
+        if not (stem.startswith("public") or ".pub" in stem):
+            return ("secret_file", f"ext={ext}")
+    if name in _SECRET_EXACT_NAMES:
+        return ("secret_file", f"name={name}")
+    if name == ".env" or name.startswith(".env."):
+        suffix = name[len(".env.") :] if name.startswith(".env.") else ""
+        if suffix in _SECRET_ENV_TEMPLATE_SUFFIXES:
+            return None
+        return ("secret_file", f"name={name}")
+    if name.endswith(".pub"):
+        return None
+    if any(
+        name == n
+        or name.startswith(n + ".")
+        or name.startswith(n + "_")
+        or name.startswith(n + "-")
+        for n in _SSH_PRIVATE_KEY_NAMES
+    ):
+        return ("secret_file", f"name={name}")
+    if stem in _SECRET_STEM_NAMES and ext in _SECRET_DATA_EXTS:
+        return ("secret_file", f"name={name}")
+    return None
+
+
+def secret_content_reason(content: str) -> tuple[str, str] | None:
+    """内容层秘密证据:私钥 armor(头采样窗口内精确匹配)。
+
+    扩展名伪装(cert.pem 内藏私钥)由此拦下;与扩展名/管理员配置无关。
+    """
+    if not content:
+        return None
+    m = _PRIVATE_KEY_ARMOR_RE.search(content[:_SNIFF_SAMPLE_BYTES])
+    if m:
+        return ("secret_content", f"armor={m.group(0)}")
+    return None
+
 
 class KnowledgeRole(str, Enum):
     """知识角色(Layer 2 分类;语义见产品合同 §6)。"""
@@ -127,6 +223,7 @@ class KnowledgeRole(str, Enum):
     GENERATED = "generated"
     VENDOR = "vendor"
     BINARY = "binary"
+    SECRETS = "secrets"
 
 
 # Layer 2 默认推荐(产品合同已冻结;推荐排除 ≠ 技术排除)
@@ -147,6 +244,7 @@ RECOMMENDED_EXCLUDE_ROLES: frozenset[KnowledgeRole] = frozenset(
         KnowledgeRole.BUILD_DEPLOYMENT,
         KnowledgeRole.GENERATED,
         KnowledgeRole.VENDOR,
+        KnowledgeRole.SECRETS,
     }
 )
 
@@ -253,6 +351,9 @@ class TechnicalSafetyPolicy:
 
     def check_path(self, rel_path: str, size: int) -> SafetyVerdict:
         """廉价判定(仅路径 + size,读内容**之前**调用)。"""
+        secret = secret_path_reason(rel_path)
+        if secret is not None:
+            return SafetyVerdict(False, secret[0], secret[1])
         ext = PurePosixPath(rel_path).suffix.lower()
         # 多重扩展名兜底:models/xxx.min.hef / backup.tar.gz 的末段已覆盖;
         # 双扩展名(.tar.gz)由 BINARY_EXT/类名单逐层命中,这里不再展开。
@@ -277,6 +378,9 @@ class TechnicalSafetyPolicy:
         """
         if not content:
             return SafetyVerdict(True)
+        secret = secret_content_reason(content)
+        if secret is not None:
+            return SafetyVerdict(False, secret[0], secret[1])
         sample = content[:_SNIFF_SAMPLE_BYTES]
         if "\x00" in sample:
             return SafetyVerdict(False, "binary_content", "NUL byte in head sample")
@@ -322,6 +426,14 @@ class TechnicalSafetyPolicy:
             ".tar",
         }:
             return KnowledgeRole.BINARY
+        # 秘密邻接形态:技术安全(内容层兜底)但默认推荐排除——.pem 通常是
+        # 证书链、.env.example 是模板,管理员可在确认后纳入。
+        if (
+            ext == ".pem"
+            or secret_path_reason(rel_path) is not None
+            or (name.startswith(".env") or name in {".npmrc", ".pypirc"})
+        ):
+            return KnowledgeRole.SECRETS
         if any(d in parts for d in _VENDOR_DIRS):
             return KnowledgeRole.VENDOR
         if ext in _GENERATED_EXTS or any(marker in name for marker in _GENERATED_NAME_PARTS):
@@ -373,7 +485,11 @@ class TechnicalSafetyPolicy:
             verdict = self.check_content(content)
         role = self.classify_role(rel_path)
         if not verdict.safe:
-            role = KnowledgeRole.BINARY
+            role = (
+                KnowledgeRole.SECRETS
+                if verdict.reason in ("secret_file", "secret_content")
+                else KnowledgeRole.BINARY
+            )
         return FileAdmission(
             path=rel_path,
             size=size,
