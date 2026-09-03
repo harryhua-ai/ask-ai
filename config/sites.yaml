@@ -19,6 +19,9 @@ sites:
     allowed_origins:
       - https://www.camthink.ai
       - https://camthink.ai
+      # 外部 Widget 对接测试页(裸 IP + http)。canonical 形式 = scheme://host:
+      # 浏览器 Origin 不含尾部「/」,http 默认端口 80 按规则剥除不写。
+      - http://42.194.138.11
     welcome: "Hi! I'm the CamThink assistant. Ask me anything about our AIoT products."
     language: en
     starters:

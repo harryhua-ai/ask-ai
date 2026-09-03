@@ -49,6 +49,11 @@ class TestNormalizeOrigin:
         assert normalize_origin("") is None
         assert normalize_origin(None) is None
 
+    def test_bare_ip_trailing_slash_is_canonicalized(self):
+        """用户描述的地址常带尾部「/」;浏览器 Origin 形式 = scheme://host 无路径。"""
+        assert normalize_origin("http://42.194.138.11/") == "http://42.194.138.11"
+        assert normalize_origin("http://42.194.138.11") == "http://42.194.138.11"
+
 
 # --------------------------------------------------------------------------- #
 # resolve_site(真实 DB,经 conftest db_engine 隔离)
@@ -86,6 +91,37 @@ class TestResolveSite:
         await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
         with pytest.raises(SiteDenied):
             await resolve_site(factory, "camthink-store", "https://evil.example")
+
+    async def test_bare_ip_integration_origin_allowed_for_website(self, db_engine):
+        """外部对接测试页 http://42.194.138.11:Origin(带尾斜杠)与 Referer(带路径)均命中。"""
+        factory = get_session_factory(db_engine)
+        await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
+        site = await resolve_site(factory, "camthink-website", "http://42.194.138.11/")
+        assert isinstance(site, ResolvedSite)
+        assert site.site_id == "camthink-website"
+        site = await resolve_site(factory, "camthink-website", "http://42.194.138.11/page")
+        assert isinstance(site, ResolvedSite)
+
+    async def test_unlisted_bare_ip_variants_denied_for_website(self, db_engine):
+        """白名单精确性:相邻 IP 与 https 变体不因 bare-IP 新增被连带放行。"""
+        factory = get_session_factory(db_engine)
+        await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
+        for origin in (
+            "http://42.194.138.12",
+            "https://42.194.138.11",
+            "http://42.194.138.11:8080",
+        ):
+            with pytest.raises(SiteDenied):
+                await resolve_site(factory, "camthink-website", origin)
+
+    async def test_bare_ip_origin_scoped_to_website_only(self, db_engine):
+        """该 origin 只授予 camthink-website;wiki/store 不被连带授权。"""
+        factory = get_session_factory(db_engine)
+        await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
+        with pytest.raises(SiteDenied):
+            await resolve_site(factory, "camthink-wiki", "http://42.194.138.11")
+        with pytest.raises(SiteDenied):
+            await resolve_site(factory, "camthink-store", "http://42.194.138.11")
 
     async def test_suffix_spoofed_origin_denied(self, db_engine):
         """store.camthink.ai.evil.com 含授权串但不是授权 origin(精确匹配)。"""
@@ -157,6 +193,18 @@ class TestLoadSitesConfig:
         for s in sites:
             assert s["allowed_origins"], s["site_id"]
             assert s["starters"], s["site_id"]
+
+    def test_repo_yaml_origins_are_canonical(self):
+        """所有 allowed_origins 必须已是 canonical 形式(运行时精确命中依赖它)。"""
+        for s in load_sites_config(REPO_ROOT / "config" / "sites.yaml"):
+            for origin in s["allowed_origins"]:
+                assert origin == normalize_origin(origin), (s["site_id"], origin)
+
+    def test_bare_ip_integration_origin_listed_for_website_only(self):
+        sites = {s["site_id"]: s for s in load_sites_config(REPO_ROOT / "config" / "sites.yaml")}
+        assert "http://42.194.138.11" in sites["camthink-website"]["allowed_origins"]
+        assert "http://42.194.138.11" not in sites["camthink-wiki"]["allowed_origins"]
+        assert "http://42.194.138.11" not in sites["camthink-store"]["allowed_origins"]
 
     def test_missing_config_is_loud(self, tmp_path):
         with pytest.raises(FileNotFoundError):
