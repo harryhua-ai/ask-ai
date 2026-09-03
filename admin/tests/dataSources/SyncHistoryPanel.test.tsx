@@ -24,16 +24,23 @@ const history = (items: SyncRun[]): SyncRunList => ({ items, total: items.length
 describe("SyncHistoryPanel", () => {
   it("显示文档、分块、一致性、设备和降级原因", () => {
     render(<SyncHistoryPanel runs={history([
-      run({ fallback_reason: "CUDA unavailable" }),
+      run({ fallback_reason: "CUDA unavailable", counters: { docs_total: 12, docs_processed: 12, chunks_written: 42, chunks_deleted: 5 } }),
       run({ id: 9, device: "cpu", fallback_reason: null }),
     ])} />);
     expect(screen.getAllByText("文档 12")[0]).toBeInTheDocument();
     expect(screen.getAllByText("分块 42")[0]).toBeInTheDocument();
     expect(screen.getAllByText("缺失 2")[0]).toBeInTheDocument();
     expect(screen.getAllByText("孤儿 3")[0]).toBeInTheDocument();
+    expect(screen.getByText("已删除分块 5")).toBeInTheDocument();
     expect(screen.getByText("GPU")).toBeInTheDocument();
     expect(screen.getByText("CPU")).toBeInTheDocument();
     expect(screen.getByText("降级原因：CUDA unavailable")).toBeInTheDocument();
+  });
+
+  it("以已处理文档标注 docs_processed 回退，并省略缺失的删除分块数", () => {
+    render(<SyncHistoryPanel runs={history([run({ counters: { docs_processed: 4, chunks_written: 7 } })])} />);
+    expect(screen.getByText("已处理文档 4")).toBeInTheDocument();
+    expect(screen.queryByText(/已删除分块/)).not.toBeInTheDocument();
   });
 
   it.each([

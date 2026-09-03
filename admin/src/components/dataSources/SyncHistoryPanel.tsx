@@ -44,7 +44,11 @@ function RunCard({ run }: { run: SyncRun }) {
   const facts = extractConsistencyFacts(run);
   const duration = formatDuration(run.started_at, run.finished_at);
   const fallback = fallbackLabel(run.fallback_reason);
-  const documents = counters?.docs_total ?? counters?.docs_processed;
+  const documentSummary = counters?.docs_total != null
+    ? `文档 ${counters.docs_total}`
+    : counters?.docs_processed != null
+      ? `已处理文档 ${counters.docs_processed}`
+      : null;
 
   return (
     <Card>
@@ -54,8 +58,9 @@ function RunCard({ run }: { run: SyncRun }) {
       </CardHeader>
       <CardContent className="space-y-2 p-4 pt-0 text-sm">
         <div className="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
-          {documents != null && <span>文档 {documents}</span>}
+          {documentSummary && <span>{documentSummary}</span>}
           {counters?.chunks_written != null && <span>分块 {counters.chunks_written}</span>}
+          {counters?.chunks_deleted != null && <span>已删除分块 {counters.chunks_deleted}</span>}
           {facts.missing != null && <span>缺失 {facts.missing}</span>}
           {facts.orphan != null && <span>孤儿 {facts.orphan}</span>}
           {run.device && <span>{deviceLabel(run.device)}</span>}

@@ -42,6 +42,20 @@ describe("SourceHealthPanel", () => {
     expect(screen.getByText("上一轮失败")).toBeInTheDocument();
   });
 
+  it("没有证据时不保留健康状态", () => {
+    render(
+      <SourceHealthPanel
+        connectivity={dimension("HEALTHY", null)}
+        sync={dimension("UNKNOWN", null)}
+        coverage={dimension("UNKNOWN", null)}
+        freshness={dimension("UNKNOWN", null)}
+        consistency={dimension("UNKNOWN", null)}
+      />,
+    );
+    expect(screen.queryByText("健康", { exact: true })).not.toBeInTheDocument();
+    expect(screen.getAllByText("证据不足").length).toBeGreaterThan(0);
+  });
+
   it("对不足证据提供明确提示，并将缺失与孤儿事实分开显示", () => {
     render(
       <SourceHealthPanel

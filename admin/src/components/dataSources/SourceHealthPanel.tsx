@@ -29,6 +29,10 @@ function healthVariant(state: SourceHealthDimension["state"]): "secondary" | "su
   return "secondary";
 }
 
+function withEvidenceState(dimension: SourceHealthDimension): SourceHealthDimension {
+  return dimension.evidence ? dimension : { ...dimension, state: "INSUFFICIENT_DATA" };
+}
+
 function Evidence({ dimension, separateConsistencyFacts = false }: { dimension: SourceHealthDimension; separateConsistencyFacts?: boolean }) {
   if (!dimension.evidence) return <p className="text-sm text-muted-foreground">证据不足</p>;
   const facts = separateConsistencyFacts && dimension.evidence.match(/^缺失 (.+)，孤儿 (.+)$/);
@@ -52,17 +56,19 @@ function DimensionCard({ label, dimension, separateConsistencyFacts }: { label: 
 }
 
 export function SourceHealthPanel({ connectivity, sync, coverage, freshness, consistency, activeState }: SourceHealthPanelProps) {
-  const displayedSync = activeState === "RECOVERING" ? { ...sync, state: "RECOVERING" as const } : sync;
+  const displayedSync = activeState === "RECOVERING" && sync.evidence
+    ? { ...sync, state: "RECOVERING" as const }
+    : withEvidenceState(sync);
 
   return (
     <Card>
       <CardHeader className="p-4"><CardTitle className="text-base">数据源健康</CardTitle></CardHeader>
       <CardContent className="grid gap-3 p-4 pt-0 sm:grid-cols-2 lg:grid-cols-5">
-        <DimensionCard label="连接" dimension={connectivity} />
+        <DimensionCard label="连接" dimension={withEvidenceState(connectivity)} />
         <DimensionCard label="同步" dimension={displayedSync} />
-        <DimensionCard label="覆盖" dimension={coverage} />
-        <DimensionCard label="新鲜度" dimension={freshness} />
-        <DimensionCard label="一致性" dimension={consistency} separateConsistencyFacts />
+        <DimensionCard label="覆盖" dimension={withEvidenceState(coverage)} />
+        <DimensionCard label="新鲜度" dimension={withEvidenceState(freshness)} />
+        <DimensionCard label="一致性" dimension={withEvidenceState(consistency)} separateConsistencyFacts />
       </CardContent>
     </Card>
   );

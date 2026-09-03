@@ -35,6 +35,14 @@ describe("SyncStatusPanel", () => {
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
   });
 
+  it("仅在后端给出删除分块数时显示该计数", () => {
+    const { rerender } = render(<SyncStatusPanel status={status({ counters: { chunks_written: 8, chunks_deleted: 2 } })} />);
+    expect(screen.getByText("已删除分块 2")).toBeInTheDocument();
+
+    rerender(<SyncStatusPanel status={status({ counters: { chunks_written: 8 } })} />);
+    expect(screen.queryByText(/已删除分块/)).not.toBeInTheDocument();
+  });
+
   it("显示有证据的无上游变更短路结果", () => {
     render(<SyncStatusPanel status={status({ state: "COMPLETED", counters: { docs_total: 0, items_unchanged: 12 } })} />);
     expect(screen.getByText("无上游变更 · 已检查 · 跳过灌入")).toBeInTheDocument();

@@ -63,6 +63,7 @@ export function SyncStatusPanel({ status, onRetry, technicalEvidence }: SyncStat
           {counters?.docs_total != null && <span>文档 {counters.docs_total}</span>}
           {counters?.docs_processed != null && <span>已处理文档 {counters.docs_processed}</span>}
           {counters?.chunks_written != null && <span>分块 {counters.chunks_written}</span>}
+          {counters?.chunks_deleted != null && <span>已删除分块 {counters.chunks_deleted}</span>}
           {status.device && <span>执行设备：{deviceLabel(status.device)}</span>}
         </div>
 
