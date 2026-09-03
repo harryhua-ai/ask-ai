@@ -5,6 +5,7 @@ HTML→Markdown 清洗、增量(lastmod)、删除(状态文件差集)、元数�
 """
 
 import json
+import types
 from datetime import UTC, datetime
 
 import backend.connectors.web_crawl as wc
@@ -74,6 +75,17 @@ def _make_connector(tmp_path, extra: dict | None = None) -> wc.WebCrawlConnector
             sync_interval="24h",
         )
     )
+
+
+def _fake_crawl_time(monkeypatch) -> list[float]:
+    """B3:把 web_crawl 模块内的 time 引用替换为记录型 no-op 时钟。
+
+    生产限速/退避语义不由真实等待验证,而由调用方断言「请求了正确的延迟值」;
+    monkeypatch 保证测试后精确恢复,production 行为零改动。
+    """
+    requested: list[float] = []
+    monkeypatch.setattr(wc, "time", types.SimpleNamespace(sleep=requested.append))
+    return requested
 
 
 def _patch_http(monkeypatch, pages: dict[str, str]) -> list[str]:
@@ -395,12 +407,17 @@ def test_run_stats_reports_failures_without_breaking_crawl(tmp_path, monkeypatch
 
     real_get = _get
     monkeypatch.setattr(wc.requests, "get", _get)
+    # 限速/重试退避注入(B3):替换模块内 time 引用,零真实等待;
+    # 但退避语义本身仍被断言(见 sleeps 断言:生产代码必须请求 1s+2s 退避)。
+    sleeps = _fake_crawl_time(monkeypatch)
     conn = _make_connector(tmp_path)
     docs = [d.url for d in conn.fetch_all()]
     assert docs == ["https://www.camthink.ai/rich/"]
     assert conn.run_stats["failed"] == 1
     assert any("products/neoeyes-503" in u for u in conn.run_stats["failed_urls"])
     assert conn.run_stats["extracted"] == 1
+    # 重试退避语义保持:3 次尝试在每次失败后请求 1s/2s/3s 退避(非零延迟被真实请求)
+    assert [s for s in sleeps if s > 0] == [1.0, 2.0, 3.0]
 
 
 def _patch_http_get(pages: dict):
