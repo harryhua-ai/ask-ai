@@ -42,6 +42,8 @@ sites:
     display_name: CamThink Wiki
     allowed_origins:
       - https://wiki.camthink.ai
+      # 外部 Widget 对接测试页(与 camthink-website 同一 Origin,三站镜像授权)。
+      - http://42.194.138.11
     # G-L5 对齐:站点默认语言 = English,默认文案改英文;原中文文案保留为 zh 变体。
     # Wiki 中文页面由宿主经 data-language/AskAIConfig.language 传 zh(页面语言优先)。
     welcome: "Ask me anything about CamThink device docs, configuration, and troubleshooting."
@@ -64,6 +66,8 @@ sites:
     display_name: CamThink Store
     allowed_origins:
       - https://store.camthink.ai
+      # 外部 Widget 对接测试页 /store/(同一 Origin;路径不进授权,精确命中 scheme://host)。
+      - http://42.194.138.11
     welcome: "Shopping for a CamThink device? Ask me before you order."
     language: en
     starters:
