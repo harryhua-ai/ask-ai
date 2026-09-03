@@ -149,3 +149,62 @@ SourceHealthSnapshot、expected_state、调度治理、生产部署。未合 mai
 
 **PRODUCTION_ACCESS: NONE。** 全程本地 worktree + 本地测试库;未 SSH 生产、
 未触生产 DB/Weaviate、未执行生产迁移、未部署、未触发生产同步。
+
+---
+
+# FINAL_REVIEW_CORRECTION(2026-09-03,Planner PARTIAL → 修正交付)
+
+- **CORRECTION_BASELINE: `6715e2c`**(不 squash,线性追加)
+- **CORRECTION_COMMIT: `21db533`**(origin/worktree-exec/wave0-observability-20260903,远端哈希核验一致)
+- 同工作树 `.worktrees/wave0-observability`,TDD:三缺陷先 RED 后 GREEN。
+
+## RED_EVIDENCE(在 6715e2c 上实证)
+
+- `test_red_a_normal_run_emits_and_persists_safety_filter` — FAILED(SAFETY_FILTER 未被观测)
+- `test_red_b_normal_successful_run_persists_final_consistency_before_done` — FAILED(正常成功路径 verify=0 次、consistency=None)
+- `test_red_c_duplicate_request_run_rejected_null_stays_legal` — FAILED(重复三元组可插两行,无 DB 约束)
+- 3 failed 于 `6715e2c` 树实测复现(TDD RED 记录)。
+
+## BLOCKER_A_RESOLUTION
+
+SAFETY_FILTER 进入真实同步生命周期,两条证据路径:
+1. **边界标记**:ingest 前 `_sync_one` 落 `SAFETY_FILTER(stage_current=NULL, stage_total=NULL)`——契约允许的"边界可观测、计数不可知"形态;
+2. **批界真实计数**:`ingest_all` 批回调新增 `SAFETY_FILTER(done)`(真实管线逐 doc 过 TechnicalSafetyPolicy,done=进入过滤器的 doc 数,不伪造分母),`_sync_one` 持久化足迹含 SAFETY_FILTER 且先于 DONE。
+**TechnicalSafetyPolicy 行为零改动**(仅观测,不动安全语义)。
+
+## BLOCKER_B_RESOLUTION
+
+业务成功的正常同步在 **INDEX → CONSISTENCY → DONE** 顺序上执行终局
+`verify_source_vectors`(与无变更路径**同一权威实现**,未造第二套一致性),
+结构化事实(serialize 一致)落 `SyncRun.consistency`。校验自身失败:如实记录
+`{"verification_failed": "<错误>"}`——不伪造健康载荷;业务结局仍归 sync_log,
+不因终局只读校验失败改判业务(既有 sync business rules 不变);凭 ingest
+成功推断健康被禁止(失败/未校验=⑪ 读侧 UNKNOWN)。无变更路径已有权威
+双重校验,不重复执行(其提前 return,不触达本段)。
+
+## BLOCKER_C_RESOLUTION
+
+DB 级身份强制:**部分唯一索引**
+`uq_sync_runs_request_source_attempt (request_id, source_id, attempt) WHERE request_id IS NOT NULL`
+- 请求托管三元组确定至多一行;重复插入 → IntegrityError(**不静默覆写**;遥测句柄按既有降级语义仅告警,业务不受影响);
+- **NULL 直跑不受约束**:同源同 attempt 多次独立 cron/CLI 运行保持合法(测试断言两行并存);
+- 迁移升级:`checkfirst 建表 + CREATE UNIQUE INDEX IF NOT EXISTS + 列完备 + 索引在位` 四重幂等校验;显式索引 DDL 的原因=create_all 不会给已存在的表补索引;bootstrap 安全(全新环境 create_all 自带索引)。
+
+## NEW_REGRESSION_TESTS(+3)
+
+- `test_red_a_...`:SAFETY_FILTER ∈ 阶段足迹、先于 DONE、边界标记(NULL/NULL)与批界真实计数(3)双证据;
+- `test_red_b_...`:verify 被真实调用(计数 spy)、consistency 结构化非空(expected/actual 字段)、stage=DONE;
+- `test_red_c_...`:重复三元组 IntegrityError + 恒一行;NULL 同源同 attempt 两行并存;
+- 迁移测试(16b)升级:两次 `migrate(engine)` 幂等 + 索引在位断言;fixture 迁移补索引。
+
+## FINAL_TEST_RESULTS
+
+- SyncRun 核心+集成:**28 passed**;
+- 定向电池(scripts 全目录/⑨trigger_isolation/504 golden/pipeline/connectors/data_sources+delete 双套/services):**725 passed / 3 skipped**;
+- **全量(离线隔离环境)**:**1090 passed / 6 skipped / 4 failed(82 秒)**;
+- 4 failed = `tests/embedder/test_bge.py`(reranker×3 + dimension×1)——**基线/环境证据,非本修正引入**:纯净基线同环境复现完全一致(本地缓存无 reranker 权重,离线必挂;联网全绿需下载,恰为本任务禁止的不受控行为,故如实分类保留);
+- lint:ruff/black 增量净(仅基线既有 BLE001 于 ingest.py 未动)。
+
+## PRESERVED(验收面复核)
+
+sync_requests 恢复权威/sync_log 业务权威/SyncRun 遥测三分 ✅;阶段⑩ cap/退避/孤儿对账 ✅(recovery 全文件绿);F16/W6 ✅(golden 绿);request_id argv 链接与 NULL 直跑 ✅;未知分母禁百分比 ✅;retention 30 天 ✅;遥测故障不拖垮业务 ✅;PRUNE IS DOCUMENT-LOCAL ✅;无 Health UI/无 Progress UI ✅;零生产迁移/零部署 ✅。
