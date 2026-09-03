@@ -97,7 +97,7 @@ export interface SyncRunList {
   size: number;
 }
 
-export type SourceHealthState = "HEALTHY" | "DEGRADED" | "CRITICAL" | "DISABLED" | "UNKNOWN" | "INSUFFICIENT_DATA";
+export type SourceHealthState = "HEALTHY" | "DEGRADED" | "CRITICAL" | "DISABLED" | "RECOVERING" | "UNKNOWN" | "INSUFFICIENT_DATA";
 
 export interface SourceHealthDimension {
   state: SourceHealthState;

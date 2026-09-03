@@ -81,8 +81,15 @@ const UNKNOWN: SourceHealthDimension = { state: "UNKNOWN", evidence: null, as_of
 
 function legacyDimension(sourceHealth: SourceHealthItem | undefined): SourceHealthDimension {
   if (!sourceHealth) return { ...UNKNOWN };
+  const state: SourceHealthDimension["state"] = {
+    healthy: "HEALTHY",
+    degraded: "DEGRADED",
+    critical: "CRITICAL",
+    disabled: "DISABLED",
+    insufficient_data: "INSUFFICIENT_DATA",
+  }[sourceHealth.health] ?? "UNKNOWN";
   return {
-    state: sourceHealth.health === "healthy" ? "HEALTHY" : sourceHealth.health === "insufficient_data" ? "INSUFFICIENT_DATA" : sourceHealth.health.toUpperCase() as SourceHealthDimension["state"],
+    state,
     evidence: `窗口内同步 ${sourceHealth.success_syncs}/${sourceHealth.total_syncs} 次成功`,
     as_of: sourceHealth.last_sync,
   };
@@ -95,8 +102,8 @@ export function deriveSourceHealth(
 ): Record<"connectivity" | "sync" | "coverage" | "freshness" | "consistency", SourceHealthDimension> {
   const sync = legacyDimension(sourceHealth);
   const facts = extractConsistencyFacts(latestRun);
-  const activeSync = source.state === "RECOVERING" && sync.state === "HEALTHY"
-    ? { ...sync, state: "DEGRADED" as const, evidence: "当前正在恢复" }
+  const activeSync = source.state === "RECOVERING"
+    ? { ...sync, state: "RECOVERING" as const }
     : sync;
   return {
     connectivity: sourceHealth ? { ...sync, evidence: sourceHealth.enabled ? "数据源已启用" : "数据源已禁用" } : { ...UNKNOWN },

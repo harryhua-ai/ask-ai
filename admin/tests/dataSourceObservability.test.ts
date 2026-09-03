@@ -11,6 +11,26 @@ import {
   stateLabel,
 } from "@/lib/dataSourceObservability";
 import type { SyncRun, SyncStatusItem } from "@/types/api";
+import type { SourceHealthItem } from "@/lib/api/techInsight";
+
+const legacyHealth = (health: string): SourceHealthItem => ({
+  source_id: "source-a",
+  source_type: "github",
+  product: "NE503",
+  enabled: true,
+  doc_count: 10,
+  chunk_count: 20,
+  window_days: 30,
+  total_syncs: 4,
+  success_syncs: 3,
+  partial_syncs: 0,
+  failed_syncs: 1,
+  sync_success_rate: 0.75,
+  health,
+  last_sync: "2026-09-03T01:02:03Z",
+  last_sync_status: "success",
+  last_sync_error: null,
+});
 
 describe("data source observability view models", () => {
   it("为每个 canonical state 和 stage 提供中文标签", () => {
@@ -56,5 +76,30 @@ describe("data source observability view models", () => {
     expect(Object.keys(health)).toEqual(["connectivity", "sync", "coverage", "freshness", "consistency"]);
     expect(Object.values(health).every((dimension) =>
       dimension.state === "UNKNOWN" || dimension.state === "INSUFFICIENT_DATA")).toBe(true);
+  });
+
+  it("keeps recovery explicit over every prior health state and preserves evidence", () => {
+    for (const priorState of ["healthy", "degraded", "critical", "disabled", "insufficient_data"]) {
+      const health = deriveSourceHealth(
+        { source_id: "source-a", state: "RECOVERING", stage: "FETCH" },
+        legacyHealth(priorState),
+      );
+      expect(health.sync).toEqual({
+        state: "RECOVERING",
+        evidence: `窗口内同步 3/4 次成功`,
+        as_of: "2026-09-03T01:02:03Z",
+      });
+    }
+  });
+
+  it("maps an unknown legacy health state to UNKNOWN", () => {
+    expect(deriveSourceHealth(
+      { source_id: "source-a", state: "IDLE", stage: null },
+      legacyHealth("vendor_future_state"),
+    ).sync).toEqual({
+      state: "UNKNOWN",
+      evidence: "窗口内同步 3/4 次成功",
+      as_of: "2026-09-03T01:02:03Z",
+    });
   });
 });
