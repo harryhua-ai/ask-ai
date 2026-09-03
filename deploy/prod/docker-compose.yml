@@ -26,10 +26,10 @@ volumes:
 
 # 后端类服务公共配置(YAML anchor,backend / sync / sync-cron 共享,DRY)
 x-backend-base: &backend-base
-  # PA-0B 修复:镜像 tag 可选(此前硬编码 :latest —— update.sh <tag> 实际不生效,
-  # 拉取/运行永远是 latest,既无法部署指定 RC 镜像,文档化回滚也是空操作)。
-  # tag 经 update.sh 导出的 ASKAI_IMAGE_TAG 注入;不设置 = latest(旧行为不变)。
-  image: ghcr.io/harryhua-ai/ask-ai:${ASKAI_IMAGE_TAG:-latest}
+  # #10 版本与发布治理:镜像 tag 必填且不可为 latest —— 生产部署/回滚必须
+  # 显式不可变版本 tag(经 deploy/prod/update.sh <tag> 注入);未设置时
+  # compose 直接报错,杜绝任何服务隐式跑在 :latest 上。
+  image: ghcr.io/harryhua-ai/ask-ai:${ASKAI_IMAGE_TAG:?必须显式指定不可变版本 tag(经 deploy/prod/update.sh <tag> 注入),禁止 latest}
   restart: unless-stopped
   env_file: ../../.env
   environment:

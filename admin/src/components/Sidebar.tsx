@@ -9,6 +9,7 @@ import {
   CheckSquare,
   BarChart3,
   Target,
+  Info,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -33,6 +34,7 @@ const CONFIG_ITEMS: NavItem[] = [
   { to: "/llm-providers", icon: Cpu, label: "模型配置", roles: ["admin", "editor", "viewer"] },
   { to: "/answer-overrides", icon: CheckSquare, label: "答案覆盖", roles: ["admin", "editor", "viewer"] },
   { to: "/users", icon: Users, label: "用户管理", roles: ["admin"] },
+  { to: "/system", icon: Info, label: "系统信息", roles: ["admin", "editor", "viewer"] },
 ];
 
 function renderNavLinks(items: NavItem[], onNavigate?: () => void) {

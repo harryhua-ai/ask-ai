@@ -46,6 +46,7 @@ from backend.api.admin.router import admin_router
 from backend.api.admin.schemas import validate_llm_api_base
 from backend.api.routes import router as api_router
 from backend.auth.crypto import decrypt_api_key
+from backend.release import get_release_identity
 from backend.config import load_settings, load_yaml_config
 from backend.db.session import get_engine, get_session_factory, init_db
 from backend.embedder.bge import BGEEmbedder, BGEReranker
@@ -188,6 +189,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logging.basicConfig(level=settings.log_level)
     logger.info("Ask AI 后端启动中...")
     app.state.settings = settings
+
+    # #10 版本与发布治理:启动即加载进程级 release identity(fail-closed)。
+    # APP_MODE=prod 下 RELEASE.json 缺失/非法 → 启动失败,生产镜像不得
+    # 假冒正式版本;身份加载一次后不可变,/health 与 Admin API 只直呈。
+    release = get_release_identity()
+    logger.info(
+        "release identity: version=%s git_sha=%s app_mode=%s source=%s",
+        release.version, release.git_sha, release.app_mode, release.source,
+    )
 
     try:
         # Postgres
@@ -559,8 +569,19 @@ _mount_widget_static(app, _widget_dist)
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    """健康检查端点,供编排系统探活。"""
-    return {"status": "ok"}
+    """健康检查端点,供编排系统探活。
+
+    #10:附发布身份(version/git_sha/app_mode);``status`` 保持既有
+    消费者兼容。身份为进程启动时一次性加载的 RELEASE.json(不可变),
+    非前端/环境可变值。
+    """
+    release = get_release_identity()
+    return {
+        "status": "ok",
+        "version": release.version,
+        "git_sha": release.git_sha,
+        "app_mode": release.app_mode,
+    }
 
 
 if __name__ == "__main__":
