@@ -189,6 +189,13 @@ async def list_conversations(
                         "total_ms": t.total_ms,
                         "confidence": t.confidence,
                         "markers": _infer_markers(t.type or "rag", stages),
+                        # 阶段⑯:生成失败下钻到 failure_kind(additive,旧前端忽略);
+                        # budget_declined 为独立 trace type,非 generation_error
+                        "failure_kind": (
+                            (stages.get("error") or {}).get("kind")
+                            if t.type == "generation_error"
+                            else None
+                        ),
                     }
 
     items = [
@@ -228,7 +235,24 @@ async def get_conversation(
             select(SourceClick).where(SourceClick.conversation_id == conversation_id)
         )
         clicks = clicks_result.scalars().all()
+        # 阶段⑯:最新一条 trace 的 type/failure_kind(additive,详情徽章
+        # 需要区分 拒答/生成失败/服务繁忙;列表 trace_summary 已有同源数据)
+        latest_trace = (
+            await session.execute(
+                select(Trace)
+                .where(Trace.conversation_id == conversation_id)
+                .order_by(desc(Trace.turn_index))
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    trace_stages = (latest_trace.stages if latest_trace else None) or {}
     return {
+        "trace_type": latest_trace.type if latest_trace else None,
+        "failure_kind": (
+            (trace_stages.get("error") or {}).get("kind")
+            if latest_trace and latest_trace.type == "generation_error"
+            else None
+        ),
         "id": str(conv.id),
         "question": conv.question,
         "answer": conv.answer,

@@ -50,16 +50,25 @@ from backend.services.site_experiences import (
     resolve_site,
 )
 from backend.utils.budget import BudgetLimiter, estimate_tokens
-from backend.utils.language import normalize_language
+from backend.utils.language import (
+    conversation_language,
+    normalize_language,
+    resolve_answer_language,
+)
 from backend.utils.pii import mask_pii
+from backend.utils.user_messages import (
+    BUDGET_DECLINED_KEY,
+    SERVICE_UNAVAILABLE_KEY,
+    localized_message,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 limiter = Limiter(key_func=get_remote_address)
 
-# 生成失败兜底文案(PC-02):沿用既有产品文案;客户端旧版本收到的
-# 兜底 token 也用同一文案,保证升级前后用户可见行为一致。
-SERVICE_UNAVAILABLE_MSG = "服务暂时不可用,请稍后再试。"
+# 生成失败兜底文案(PC-02):冻结产品文案,经 user_messages 本地化表取值。
+# 此常量保留 zh 形态供兼容引用;实际下发走 localized_message(key, language)。
+SERVICE_UNAVAILABLE_MSG = localized_message(SERVICE_UNAVAILABLE_KEY, "zh")
 
 # MSW:站点授权失败的对外统一文案(不区分未知站/禁用站/来源不匹配,防枚举)
 SITE_DENIED_MSG = "站点未授权或来源不受信任"
@@ -140,15 +149,81 @@ async def ask(
         except SiteDenied:
             raise HTTPException(403, SITE_DENIED_MSG)
 
+    # 地域:从 Accept-Language 提取地区码作为地域代理(无需 GeoIP 数据库)
+    country: str | None = None
+    accept_lang = request.headers.get("accept-language", "")
+    for part in accept_lang.split(","):
+        sub = part.strip().split(";")[0].split("-")
+        if len(sub) == 2:
+            country = sub[1].upper()
+            break
+
+    # 阶段⑯(语言前置):任何 user-visible fallback / Conversation 持久化
+    # 之前,先用与 rag 相同的 authoritative resolver、相同输入确定性重算
+    # 答案语言(resolve_answer_language 纯函数无 I/O,与 rag 内部值逐位
+    # 相等,单一 authority 不破)——complete 前失败不再错落 language。
+    language_hint = req.language or (site.language if site else None)
+    answer_language = resolve_answer_language(masked_message, language_hint)
+    conv_language = conversation_language(answer_language)
+
     # S2: 预算熔断 — 估算 prompt token + max_tokens 预扣
     est_input = estimate_tokens(masked_message) + sum(
         estimate_tokens(str(h.get("content", ""))) for h in req.conversation_history
     )
     if not budget.check_and_reserve(est_input + 4096):
+        # 阶段⑯(Budget Declined HARD CONTRACT):declined 是真实 outcome
+        # (DECLINED,非 generation error),必须持久化真实 Conversation,
+        # 禁止幽灵 conversation_id;文案按解析语言本地化;
+        # trace type=budget_declined,不污染 generation_error taxonomy。
+        conversation_id = str(uuid.uuid4())
+        busy_msg = localized_message(BUDGET_DECLINED_KEY, answer_language)
+        # FINAL REVIEW Blocker A:仅当 Conversation 真实持久化成功,才允许把该 id
+        # 作为 declined Conversation 身份下发;持久化失败 → 不下发任何身份
+        # (诚实优于幽灵),DECLINED 用户语义与文案保持不变,绝不弱化持久化。
+        declined_persisted = False
+        try:
+            async with session_factory() as session:
+                session.add(
+                    Conversation(
+                        id=uuid.UUID(conversation_id),
+                        question=masked_message,
+                        answer=busy_msg,
+                        channel=req.channel,
+                        language=conv_language,
+                        sources=[],
+                        is_answered=False,
+                        response_time_ms=0,
+                        country=country,
+                        site_id=req.site_id if site else None,
+                        session_id=req.session_id,
+                    )
+                )
+                session.add(
+                    Trace(
+                        conversation_id=uuid.UUID(conversation_id),
+                        turn_index=0,
+                        type="budget_declined",
+                        stages={},
+                        config_snapshot={"outcome": "declined"},
+                    )
+                )
+                await session.commit()
+                declined_persisted = True
+        except Exception:
+            logger.exception("budget declined 持久化失败, conversation_id=%s", conversation_id)
+
+        declined_payload: dict[str, Any] = {
+            "reason": busy_msg,
+            "message_key": BUDGET_DECLINED_KEY,
+        }
+        done_payload: dict[str, Any] = {}
+        if declined_persisted:
+            declined_payload["conversation_id"] = conversation_id
+            done_payload["conversation_id"] = conversation_id
 
         async def declined() -> Any:
-            yield {"event": "declined", "data": json.dumps({"reason": "服务繁忙,请稍后再试"})}
-            yield {"event": "done", "data": json.dumps({"conversation_id": str(uuid.uuid4())})}
+            yield {"event": "declined", "data": json.dumps(declined_payload)}
+            yield {"event": "done", "data": json.dumps(done_payload)}
 
         return EventSourceResponse(declined())
 
@@ -173,21 +248,14 @@ async def ask(
                     raise HTTPException(403, "Attachment access denied")
                 attachment_objs.append(att)
 
-    # 地域:从 Accept-Language 提取地区码作为地域代理(无需 GeoIP 数据库)
-    country: str | None = None
-    accept_lang = request.headers.get("accept-language", "")
-    for part in accept_lang.split(","):
-        sub = part.strip().split(";")[0].split("-")
-        if len(sub) == 2:
-            country = sub[1].upper()
-            break
-
     async def event_generator() -> Any:
         conversation_id = str(uuid.uuid4())
         full_answer = ""
         sources: list = []
         is_answered = False
-        language = "en"
+        # 阶段⑯:初始值即 authoritative 解析结果(此前恒 "en",complete 前
+        # 失败会错落 language);complete 事件仍覆盖,值由同一 resolver 决定恒等。
+        language = answer_language
         elapsed = 0
         token_emitted = False
         intent: str | None = None
@@ -231,7 +299,10 @@ async def ask(
                 elif evt_type == "complete":
                     full_answer = data.get("answer", full_answer)
                     is_answered = data["is_answered"]
-                    language = data.get("language", "en")
+                    # FINAL REVIEW Blocker B:complete 缺 language 时回退到
+                    # 前置权威解析值(绝不硬编码 "en" 覆写);有值时恒等
+                    # (同一 resolver 同输入),语言算法仍单一。
+                    language = data.get("language") or language
                     elapsed = data.get("response_time_ms", 0)
                     intent = data.get("intent")
                     trace_payload = data.get("trace_payload")
@@ -252,8 +323,9 @@ async def ask(
         if not token_emitted and failure_kind is None and full_answer:
             yield {"event": "token", "data": json.dumps({"content": full_answer})}
         elif not full_answer.strip():
+            # 阶段⑯:失败兜底文案按解析语言本地化(zh→中文,其余→英文冻结文案)
             failure_kind = failure_kind or "empty_generation"
-            full_answer = SERVICE_UNAVAILABLE_MSG
+            full_answer = localized_message(SERVICE_UNAVAILABLE_KEY, language)
             yield {"event": "token", "data": json.dumps({"content": full_answer})}
 
         # PC-02/PC-03:结构化失败信号,在 done 之前发出 —— 用户可见地
@@ -267,7 +339,10 @@ async def ask(
                     {
                         "conversation_id": conversation_id,
                         "kind": failure_kind,
-                        "message": SERVICE_UNAVAILABLE_MSG,
+                        # message 恒保留(旧客户端兼容);message_key 为
+                        # 阶段⑯新增的可选结构化身份,新客户端可据此映射
+                        "message": localized_message(SERVICE_UNAVAILABLE_KEY, language),
+                        "message_key": SERVICE_UNAVAILABLE_KEY,
                     }
                 ),
             }
@@ -293,7 +368,8 @@ async def ask(
                     question=masked_message,
                     answer=full_answer,
                     channel=req.channel,
-                    language=language,
+                    # 阶段⑯:新写入归一为 zh / en(冻结规则:中文→zh,其余→en)
+                    language=conversation_language(language),
                     sources=sources,
                     is_answered=is_answered,
                     response_time_ms=elapsed,

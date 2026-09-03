@@ -82,3 +82,18 @@ def resolve_answer_language(query: str, language_hint: str | None) -> str:
     if detected_family in _CJK_FAMILIES and detected_family != normalized_hint:
         return detected_family
     return normalized_hint
+
+
+def conversation_language(resolved: str) -> str:
+    """Conversation.language 落库归一(阶段⑯冻结语义:新写入仅 zh / en)。
+
+    V1 用户消息本地化规则:中文 → zh;其余一切 → en。
+    仅约束新写入,不做历史数据迁移(既有 zh-cn/en 混落行保持原样)。
+
+    Args:
+        resolved: ``resolve_answer_language`` 的解析值(zh-cn/zh/en/ja/…)。
+
+    Returns:
+        str: ``"zh"`` 或 ``"en"``。
+    """
+    return "zh" if _language_family(resolved).startswith("zh") else "en"

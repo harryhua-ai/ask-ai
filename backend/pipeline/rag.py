@@ -8,7 +8,7 @@
 关键设计:
 - ``RAGAnswer`` 为 ``frozen=True`` dataclass,包含答案文本、来源列表、
   是否成功回答、重排后的候选、语言、端到端延迟。
-- 重排结果为空时直接返回固定的拒答话术(``REJECT_ANSWER``),
+- 重排结果为空时直接返回按解析语言本地化的拒答话术(阶段⑯),
   ``is_answered=False``,不调用 LLM,节省成本。
 - ``answer`` 为同步生成入口;``stream_answer`` 为流式生成入口,
   返回 ``AsyncIterator[str]``,事件序列:``sources → token(s) → complete``。
@@ -48,6 +48,7 @@ from backend.pipeline.query_rewrite import extract_query, rewrite_query
 from backend.pipeline.social import match_social
 from backend.retrieval.search import SearchResult
 from backend.utils.language import detect_language, resolve_answer_language
+from backend.utils.user_messages import NO_EVIDENCE_KEY, localized_message
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,15 @@ REJECT_BUSINESS = "关于商务合作或价格咨询,请联系我们的销售团
 def _off_topic_reply(language: str) -> str:
     """按检测语言返回友好边界话术(中文为主,非中文回退英文)。"""
     return OFF_TOPIC_REPLY_ZH if language.startswith("zh") else OFF_TOPIC_REPLY_EN
+
+
+def _reject_answer(language: str) -> str:
+    """无证据拒答文案(阶段⑯本地化:zh 族→中文,其余→英文冻结文案)。
+
+    与 off_topic/social 同构:文案出自 user_messages 冻结表,
+    语言参数来自 resolve_answer_language 的解析值。
+    """
+    return localized_message(NO_EVIDENCE_KEY, language)
 
 
 class EmptyGenerationError(RuntimeError):
@@ -784,7 +794,7 @@ class RAGOrchestrator:
             if not fallback:
                 elapsed = int((time.monotonic() - start) * 1000)
                 return RAGAnswer(
-                    answer=REJECT_ANSWER,
+                    answer=_reject_answer(language),
                     sources=[],
                     is_answered=False,
                     reranked_results=[],
@@ -1074,7 +1084,7 @@ class RAGOrchestrator:
                 yield json.dumps(
                     {
                         "type": "complete",
-                        "answer": REJECT_ANSWER,
+                        "answer": _reject_answer(language),
                         "sources": [],
                         "is_answered": False,
                         "language": language,

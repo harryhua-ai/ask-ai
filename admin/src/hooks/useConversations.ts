@@ -44,6 +44,9 @@ export interface ConversationDetail {
   created_at: string;
   intent_tag: string | null;
   clicks: SourceClickItem[];
+  /** 阶段⑯:最新 trace 类型(区分 拒答/生成失败/服务繁忙),additive */
+  trace_type?: string | null;
+  failure_kind?: string | null;
 }
 
 export function useConversations(filters: ConversationFilters = {}) {

@@ -116,7 +116,8 @@ async def test_rag_rejects_when_no_results():
 
     assert isinstance(result, RAGAnswer)
     assert result.is_answered is False
-    assert "暂未在官方资料中找到" in result.answer
+    # 阶段⑯:EN query → 英文冻结拒答文案(no_evidence 本地化)
+    assert "I couldn't find relevant information in the official sources." in result.answer
 
 
 @pytest.mark.unit
@@ -382,7 +383,8 @@ async def test_rag_stream_answer_rejects_when_empty():
     assert len(events) == 1
     assert events[0]["type"] == "complete"
     assert events[0]["is_answered"] is False
-    assert "暂未在官方资料中找到" in events[0]["answer"]
+    # 阶段⑯:EN query("query")→ 英文冻结拒答文案
+    assert "I couldn't find relevant information in the official sources." in events[0]["answer"]
     # 不应调用 LLM stream
     llm.stream.assert_not_called()
 

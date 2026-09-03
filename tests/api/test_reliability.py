@@ -123,7 +123,7 @@ async def test_rel_g001_zero_token_completion_cannot_silently_succeed() -> None:
                 "answer": "",
                 "sources": [],
                 "is_answered": True,  # 旧实现:零内容也标成功
-                "language": "en",
+                "language": "zh-cn",  # 与中文 query 一致(真实 rag 经 resolver 返回检测原值)
                 "response_time_ms": 47_500,
             },
         ]
@@ -343,8 +343,11 @@ async def test_whitespace_only_stream_treated_as_empty_generation() -> None:
     events = _parse_sse_events(resp.text)
     event_types = [e["event"] for e in events]
     # 空白 token 已发出,追加兜底 token + error;不得只发 done 伪装成功
+    # (阶段⑯:EN query "test" → 英文冻结文案)
     assert event_types == ["token", "token", "error", "done"]
-    assert json.loads(events[1]["data"])["content"] == SERVICE_UNAVAILABLE
+    assert json.loads(events[1]["data"])["content"] == (
+        "The service is temporarily unavailable. Please try again later."
+    )
     assert json.loads(events[2]["data"])["kind"] == "empty_generation"
 
     persisted = _persisted_objects(session)

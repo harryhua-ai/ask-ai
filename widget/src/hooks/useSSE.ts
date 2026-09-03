@@ -4,6 +4,14 @@ import type { AttachmentRef, ChatMessage, PageContextPayload, SourceLink } from 
 export interface SSEErrorMeta {
   /** 后端 error 事件的失败类别:empty_generation / provider_error / stream_interrupted */
   kind?: string;
+  /** 阶段⑯:结构化用户消息身份(service_unavailable / budget_declined / no_evidence) */
+  messageKey?: string;
+}
+
+/** 阶段⑯:客户端本地兜底文案(缺省保持既有中文常量,旧调用零变化) */
+export interface SSEFallbackMessages {
+  serviceUnavailable: string;
+  budgetDeclined: string;
 }
 
 /** MSW:ask 请求的站点/页面附加字段(均可选;legacy 不传 = 请求体无这些键) */
@@ -20,8 +28,10 @@ export interface SSECallbacks {
   onError: (message: string, meta?: SSEErrorMeta) => void;
 }
 
-// 与后端 SERVICE_UNAVAILABLE_MSG 保持一致的兜底文案
+// 与后端 SERVICE_UNAVAILABLE_MSG 保持一致的兜底文案(服务端 message 缺失
+// 或客户端本地 HTTP 失败时的最后防线;阶段⑯起可经 opts.messages 注入双语)
 const SERVICE_UNAVAILABLE = "服务暂时不可用,请稍后再试。";
+const BUDGET_DECLINED = "服务繁忙,请稍后再试";
 
 // widget 匿名会话标识(localStorage UUID,无服务端签发)
 function getSessionId(): string {
@@ -44,8 +54,9 @@ function getSessionId(): string {
 export async function consumeSSE(
   resp: Response,
   callbacks: SSECallbacks,
-  opts?: { siteRestricted?: boolean },
+  opts?: { siteRestricted?: boolean; messages?: SSEFallbackMessages },
 ): Promise<void> {
+  const fallback = opts?.messages;
   // HTTP 错误响应:4xx/5xx 不应作为 SSE 解析,否则每个 chunk 都会 JSON 解析失败
   if (!resp.ok) {
     console.error(`SSE 请求失败: ${resp.status}`);
@@ -56,7 +67,7 @@ export async function consumeSSE(
           : "无权访问所选附件。"
         : resp.status === 422
           ? "问题内容过长或格式有误,请精简后重试。"
-          : SERVICE_UNAVAILABLE;
+          : fallback?.serviceUnavailable || SERVICE_UNAVAILABLE;
     callbacks.onError(msg);
     return;
   }
@@ -92,9 +103,15 @@ export async function consumeSSE(
         } else if (eventType === "token") {
           callbacks.onToken(data.content || "");
         } else if (eventType === "error") {
-          callbacks.onError(data.message || SERVICE_UNAVAILABLE, { kind: data.kind });
+          // 服务端 message 恒为主显示(已本地化);message_key 为可选结构化身份
+          callbacks.onError(data.message || fallback?.serviceUnavailable || SERVICE_UNAVAILABLE, {
+            kind: data.kind,
+            messageKey: data.message_key,
+          });
         } else if (eventType === "declined") {
-          callbacks.onError(data.reason || "服务繁忙,请稍后再试");
+          callbacks.onError(data.reason || fallback?.budgetDeclined || BUDGET_DECLINED, {
+            messageKey: data.message_key,
+          });
         } else if (eventType === "done") {
           callbacks.onDone(data.conversation_id);
         }
@@ -132,8 +149,9 @@ export function buildAskBody(
   return body;
 }
 
-// SSE 流式接收 hook:解析 event/data 行,分发到对应回调
-export function useSSE(apiUrl: string) {
+// SSE 流式接收 hook:解析 event/data 行,分发到对应回调。
+// messages(可选,阶段⑯):UI 语言对应的本地兜底文案;缺省行为与旧版一致。
+export function useSSE(apiUrl: string, messages?: SSEFallbackMessages) {
   const uploadFiles = useCallback(async (files: File[]): Promise<AttachmentRef[]> => {
     if (files.length === 0) return [];
     const fd = new FormData();
@@ -178,8 +196,11 @@ export function useSSE(apiUrl: string) {
       body: JSON.stringify(buildAskBody(message, history, channel, attachments, extra)),
     });
 
-    await consumeSSE(resp, callbacks, { siteRestricted: Boolean(extra?.siteId) });
-  }, [apiUrl]);
+    await consumeSSE(resp, callbacks, {
+      siteRestricted: Boolean(extra?.siteId),
+      messages,
+    });
+  }, [apiUrl, messages]);
 
   return { ask, uploadFiles };
 }
