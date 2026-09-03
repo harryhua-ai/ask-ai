@@ -1,54 +1,97 @@
-"""Document 复合 PK (content_hash, branch) 测试:多分支同内容各留一行。
+"""documents 身份契约测试(Issue #13 Stage A,D1/D2 冻结)。
 
-回归 2026-07-31 端到端验证发现的 bug:单 content_hash PK 导致跨分支
-同内容文件互相覆盖。修复后复合 PK (content_hash, branch) 使各分支独立。
+回归 Issue #13 根因 RC-1:旧 PK (content_hash, branch) 为内容寻址 —— 同内容
+同分支多路径只允许一行且行归属被"最后灌入者"抢占。新契约:PK = (source_id)
+路径身份,同内容不同路径(同分支/同源/跨源)必须各自成行;content_hash 降级
+为内容指纹索引,不再承担唯一性。
+
+历史注:本文件旧版断言「同 (content_hash, branch) 重复插入触发 PK 冲突」——
+那正是 Issue #13 的根因契约,已随 D1/D2 冻结被本新契约取代。
 """
+
 import pytest
-from sqlalchemy import select
+from sqlalchemy import exc as sa_exc, select
 
 from backend.db.models import Document
 
 
+def _row(path: str, branch: str, content_hash: str = "same-hash") -> Document:
+    return Document(
+        content_hash=content_hash,
+        source_id=path,
+        source_type="github",
+        product="p",
+        title="t",
+        url="u",
+        branch=branch,
+        chunk_count=2,
+    )
+
+
 @pytest.mark.asyncio
-async def test_same_content_diff_branch_coexist(db_session):
-    """同 content_hash、不同 branch 应各留一行(核心回归点)。"""
-    s1 = Document(
-        content_hash="hash1", source_id="r/main/f.py", source_type="local_git",
-        product="p", title="f", url="u", branch="main", chunk_count=2,
-    )
-    s2 = Document(
-        content_hash="hash1", source_id="r/feat/f.py", source_type="local_git",
-        product="p", title="f", url="u", branch="feat-a", chunk_count=2,
-    )
-    db_session.add(s1)
+async def test_a_same_hash_same_branch_diff_paths_coexist(db_session):
+    """A:同 hash + 同 branch + 不同路径 → 两行并存(D2 核心契约)。
+
+    旧 PK (content_hash, branch) 下第二行必然主键冲突(Issue #13 根因)。
+    """
+    db_session.add(_row("repo/main/dir_a/util.py", "main"))
     await db_session.commit()
-    db_session.add(s2)
-    await db_session.commit()  # 复合 PK (hash1, feat-a) 与 (hash1, main) 不冲突
-    rows = (await db_session.execute(
-        select(Document).where(Document.content_hash == "hash1")
-    )).scalars().all()
+    db_session.add(_row("repo/main/dir_b/util.py", "main"))
+    await db_session.commit()  # 新 PK (source_id):不冲突
+
+    rows = (
+        (await db_session.execute(select(Document).where(Document.content_hash == "same-hash")))
+        .scalars()
+        .all()
+    )
     assert len(rows) == 2
-    assert {r.branch for r in rows} == {"main", "feat-a"}
+    assert {r.source_id for r in rows} == {"repo/main/dir_a/util.py", "repo/main/dir_b/util.py"}
 
 
 @pytest.mark.asyncio
-async def test_same_branch_same_content_integrity(db_session):
-    """同 (content_hash, branch) 重复插入应触发 PK 冲突(不产生双行)。"""
-    s1 = Document(
-        content_hash="hash2", source_id="r/main/g.py", source_type="local_git",
-        product="p", title="g", url="u", branch="main", chunk_count=1,
-    )
-    db_session.add(s1)
+async def test_b_same_hash_across_sources_coexist(db_session):
+    """B:同 hash 跨数据源 → 各自成行(生产实锤:cJSON.c 跨 ne301/apic)。"""
+    db_session.add(_row("ne301-local/main/Lib/cJSON.c", "main"))
     await db_session.commit()
-    s2 = Document(
-        content_hash="hash2", source_id="r/main/g.py", source_type="local_git",
-        product="p", title="g", url="u", branch="main", chunk_count=3,
+    db_session.add(_row("ne503-apic-69d3594b/main/mcu/Lib/cJSON.c", "main"))
+    await db_session.commit()
+
+    rows = (
+        (await db_session.execute(select(Document).where(Document.content_hash == "same-hash")))
+        .scalars()
+        .all()
     )
-    db_session.add(s2)
-    with pytest.raises(Exception):
+    assert {r.source_id.split("/")[0] for r in rows} == {"ne301-local", "ne503-apic-69d3594b"}
+
+
+@pytest.mark.asyncio
+async def test_a2_same_content_diff_branch_still_coexist(db_session):
+    """旧契约中仍然正确的部分保留:同内容跨分支各留一行(路径本就不同)。"""
+    db_session.add(_row("r/main/f.py", "main"))
+    await db_session.commit()
+    db_session.add(_row("r/feat/f.py", "feat"))
+    await db_session.commit()
+    rows = (
+        (await db_session.execute(select(Document).where(Document.content_hash == "same-hash")))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_pk_is_path_duplicate_path_rejected(db_session):
+    """唯一性权威 = source_id(路径):同路径重复行被 PK 拒绝(幂等灌入由
+    upsert 承担,而非放行双行)。"""
+    db_session.add(_row("repo/main/g.py", "main", content_hash="h1"))
+    await db_session.commit()
+    db_session.add(_row("repo/main/g.py", "main", content_hash="h2"))
+    with pytest.raises(sa_exc.IntegrityError):
         await db_session.commit()
     await db_session.rollback()
-    rows = (await db_session.execute(
-        select(Document).where(Document.content_hash == "hash2")
-    )).scalars().all()
+    rows = (
+        (await db_session.execute(select(Document).where(Document.source_id == "repo/main/g.py")))
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1

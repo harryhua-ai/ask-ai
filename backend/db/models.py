@@ -1,7 +1,7 @@
 """SQLAlchemy ORM 模型定义。
 
 包含 11 张表(对齐设计文档 §11 SQL DDL + 灌入管道需要的 documents 表):
-- documents: 已灌入文档元数据(content_hash 去重,灌入管道维护)
+- documents: 已灌入文档元数据(source_id 路径身份为主键,content_hash 为内容指纹索引;灌入管道维护)
 - conversations: 对话记录(含 Phase 2/3 预留字段)
 - source_clicks: 来源点击日志
 - sync_log: 同步任务日志
@@ -41,24 +41,25 @@ class Base(DeclarativeBase):
 class Document(Base):
     """已灌入向量库的文档元数据(灌入管道维护)。
 
-    用 ``(content_hash, branch)`` 复合主键实现 doc 级去重:同内容跨分支各留一行,同分支重复灌入仅更新
-    chunk_count 与 updated_at,避免 Postgres 行膨胀。chunk 级数据落在
-    Weaviate,本表只承担"哪些文档已灌入 / 何时被灌入 / 灌了多少 chunk"
-    的索引职责,供同步脚本与未来管理界面使用。
+    Issue #13(D1/D2 冻结):主键 = ``source_id``(复合路径串
+    ``<source_id>/<branch>/<rel_path>``),即**源文档(路径)身份** ——
+    每个真实文档一行;不同 source/path 即使 ``content_hash`` 相同也必须
+    各自成行。``content_hash`` 降级为内容指纹/索引(检索去重辅助查询),
+    不再承担唯一性身份。chunk 级数据落在 Weaviate(uuid5(source_id#i),
+    与本表同为路径寻址),本表承担"哪些文档已灌入 / 何时被灌入 / 灌了
+    多少 chunk"的对账权威,供同步 reconciliation 与管理界面使用。
     """
 
     __tablename__ = "documents"
 
-    content_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
-    source_id: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    source_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     source_type: Mapped[str] = mapped_column(String(50), nullable=False)
     product: Mapped[str] = mapped_column(String(50), nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
-    branch: Mapped[str] = mapped_column(
-        String(100), default="", nullable=False, primary_key=True, index=True
-    )
+    branch: Mapped[str] = mapped_column(String(100), default="", nullable=False, index=True)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

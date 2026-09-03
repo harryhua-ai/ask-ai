@@ -51,6 +51,7 @@ load_dotenv()
 
 import weaviate
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 import backend.connectors.filesystem  # 触发 @register 装饰器
 import backend.connectors.github
@@ -168,15 +169,82 @@ MAX_INCREMENTAL_LOOKBACK = timedelta(days=30)
 COVERAGE_PARTIAL_RATIO = 0.8
 
 
-def _consistency_facts(report: Any) -> dict:
-    """VectorGapReport → 结构化一致性事实(只留计数,SyncRun.consistency 用)。"""
-    return {
+def _consistency_facts(
+    report: Any,
+    *,
+    identity_facts: dict | None = None,
+    retired_chunks: int | None = None,
+    repaired_ledger_rows: int | None = None,
+) -> dict:
+    """VectorGapReport → 结构化一致性事实(SyncRun.consistency 用)。
+
+    Wave-0 既有六键不变(共享契约,消费方兼容);Issue #13 增量五键
+    (PROPOSED_SHARED_INTERFACE,与 Sync Truth worktree 共享同一 jsonb,
+    不建第二套 observability model):
+      - duplicate_doc_count / polluted_artifact_chunks:账本身份面事实,
+        由 ``_ledger_identity_facts`` 查得,调用方经 ``identity_facts`` 注入;
+      - retired_chunks / repaired_ledger_rows:本轮 reconciliation 实际
+        退休/重建量(无 reconciliation 的调用点不伪造 0,键省略);
+      - repair_required:恒推导 = 非健康 ∨ 存在污染 artifact,供 #11/#15
+        消费。
+    """
+    polluted = int((identity_facts or {}).get("polluted_artifact_chunks") or 0)
+    facts = {
         "expected_chunks": report.expected_chunks,
         "actual_chunks": report.actual_chunks,
         "missing": len(report.missing_source_ids),
         "refill": len(report.refill_source_ids),
         "stale_chunk_count": report.stale_chunk_count,
         "orphan_count": report.orphan_count,
+        "repair_required": (not report.is_healthy) or polluted > 0,
+    }
+    if identity_facts is not None:
+        facts["duplicate_doc_count"] = int(identity_facts.get("duplicate_doc_count") or 0)
+        facts["polluted_artifact_chunks"] = polluted
+    if retired_chunks is not None:
+        facts["retired_chunks"] = int(retired_chunks)
+    if repaired_ledger_rows is not None:
+        facts["repaired_ledger_rows"] = int(repaired_ledger_rows)
+    return facts
+
+
+async def _ledger_identity_facts(session_factory: Any, source_prefix: str) -> dict:
+    """账本身份面事实(Issue #13 共享一致性遥测,只读)。
+
+    - duplicate_doc_count:同 content_hash 多路径涉及的账本行数(D2 下为
+      合法共存,仅作事实呈现;恒等于"多余身份行"的观察口径);
+    - polluted_artifact_chunks:路径被当前 Technical Safety 判为禁止
+      artifact 的账本行 chunk 总数(historical invalid pollution,D3)。
+
+    Args:
+        session_factory: 异步会话工厂。
+        source_prefix: 数据源 ID(内部拼 ``'{prefix}/%'`` 前缀匹配)。
+    """
+    from backend.connectors.safety import historical_artifact_verdict
+
+    async with session_factory() as session:
+        dup_rows = (
+            await session.execute(
+                select(Document.content_hash, func.count(Document.source_id))
+                .where(Document.source_id.like(f"{source_prefix}/%"))
+                .group_by(Document.content_hash)
+                .having(func.count(Document.source_id) > 1)
+            )
+        ).all()
+        rows = (
+            await session.execute(
+                select(Document.source_id, Document.chunk_count).where(
+                    Document.source_id.like(f"{source_prefix}/%")
+                )
+            )
+        ).all()
+    duplicate_doc_count = int(sum(n for _, n in dup_rows))
+    polluted_artifact_chunks = sum(
+        int(cc) for sid, cc in rows if not historical_artifact_verdict(str(sid)).safe
+    )
+    return {
+        "duplicate_doc_count": duplicate_doc_count,
+        "polluted_artifact_chunks": polluted_artifact_chunks,
     }
 
 
@@ -413,10 +481,11 @@ async def _handle_no_change(
                 f"多余 chunk {report.stale_chunk_count} 个(已由 ingest 清理)"
             )
         retired = repaired = unresolved = 0
+        chunk_totals = {"retired_chunks": 0, "repaired_chunks": 0}
         if report.orphan_chunks:
             try:
                 retired, repaired, unresolved = _reconcile_orphan_vectors(
-                    source_id, connector, pipeline, report
+                    source_id, connector, pipeline, report, chunk_totals=chunk_totals
                 )
             except Exception as exc:  # noqa: BLE001 - reconciliation 失败绝不删除
                 logger.error(
@@ -434,7 +503,24 @@ async def _handle_no_change(
         # 处置后复验:以真实账本↔向量状态判定 success / partial
         report2 = await verify_source_vectors(session_factory, pipeline, source_id)
         if telemetry is not None:
-            await telemetry.consistency(session_factory, _consistency_facts(report2))
+            try:
+                identity_facts = await _ledger_identity_facts(session_factory, source_id)
+            except Exception as exc:  # noqa: BLE001 - 遥测尽力而为:身份事实不可得则增量键省略
+                logger.warning(
+                    "数据源 %s 账本身份事实查询失败(增量键省略): %s",
+                    source_id,
+                    str(exc)[:160],
+                )
+                identity_facts = None
+            await telemetry.consistency(
+                session_factory,
+                _consistency_facts(
+                    report2,
+                    identity_facts=identity_facts,
+                    retired_chunks=chunk_totals["retired_chunks"],
+                    repaired_ledger_rows=repaired,
+                ),
+            )
         if report2.is_healthy:
             log_entry.status = "success"
             log_entry.items_unchanged = existing
@@ -526,6 +612,8 @@ def _reconcile_orphan_vectors(
     connector: Any,
     pipeline: IngestionPipeline,
     report: Any,
+    *,
+    chunk_totals: dict | None = None,
 ) -> tuple[int, int, int]:
     """孤儿向量 reconciliation(零 embedding;分类见下,从不动兄弟文档)。
 
@@ -537,11 +625,23 @@ def _reconcile_orphan_vectors(
         自己的确定性 UUID(uuid5(source_id#i),来自校验器扫描的实际存量)
         精确删除;
       - 源中仍存在(抽取成功、账本行丢失)→ 以存量对象属性零 embedding 重建
-        账本行;
+        账本行。Issue #13(D1/D2)后账本按 ``source_id`` 路径身份 upsert,
+        **同内容不同路径的兄弟孤儿不再触发 (content_hash, branch) 主键冲突**
+        —— 即 Issue #13 的 UniqueViolation 根因在此根除;若插入仍因身份
+        约束失败(如并发灌入竞态),显式记 EXTRA_UNRESOLVED_ORPHAN 上报,
+        绝不吞错假装成功;
       - 发现失败 / 不完整 / 属性缺失 → EXTRA_UNRESOLVED_ORPHAN:保留 + 上报。
 
     删除/修复范围均由「本文档自己的 source_id + 实际 chunk_index」决定,
     结构上不可能触及兄弟文档(PRUNE IS DOCUMENT-LOCAL 同源不变量)。
+
+    Args:
+        source_id: 数据源 ID。
+        connector: 已实例化 connector(权威发现)。
+        pipeline: IngestionPipeline(Weaviate 访问 + 账本会话工厂)。
+        report: VectorGapReport(orphan_chunks 为孤儿明细)。
+        chunk_totals: 可选出参 dict;调用方传入时写入
+            ``retired_chunks`` / ``repaired_chunks``(共享一致性遥测消费)。
 
     Returns:
         (retired, repaired, unresolved) — 三分类篇数。
@@ -559,6 +659,9 @@ def _reconcile_orphan_vectors(
     collection = pipeline._collection
 
     retired = repaired = unresolved = 0
+    if chunk_totals is not None:
+        chunk_totals.setdefault("retired_chunks", 0)
+        chunk_totals.setdefault("repaired_chunks", 0)
     for sid, indices in sorted(report.orphan_chunks.items()):
         uuids = [_deterministic_uuid(sid, i) for i in sorted(indices)]
         try:
@@ -616,12 +719,24 @@ def _reconcile_orphan_vectors(
                     )
                     session.commit()
                 repaired += 1
+                if chunk_totals is not None:
+                    chunk_totals["repaired_chunks"] += len(indices)
                 logger.info(
                     "EXTRA_ORPHAN_LEDGER_REPAIRED: %s 账本行已按存量重建"
                     "(chunk_count=%d,零 embedding)",
                     sid,
                     max(indices) + 1,
                 )
+            except IntegrityError as exc:
+                # Issue #13:身份约束冲突(如同路径并发灌入竞态)→ 显式保留并
+                # 上报,绝不吞错假装 reconciliation 成功
+                logger.warning(
+                    "EXTRA_UNRESOLVED_ORPHAN: %s 账本重建触发身份约束冲突"
+                    "(并发竞态或账本漂移),保留待人工核查:%s",
+                    sid,
+                    str(exc)[:160],
+                )
+                unresolved += 1
             except Exception as exc:  # noqa: BLE001 - 修复失败 → 保留
                 logger.warning("孤儿 %s 账本重建失败,保留:%s", sid, str(exc)[:160])
                 unresolved += 1
@@ -632,6 +747,8 @@ def _reconcile_orphan_vectors(
                     where=Filter.by_id().contains_any(uuids[start : start + 500])
                 )
             retired += 1
+            if chunk_totals is not None:
+                chunk_totals["retired_chunks"] += len(indices)
             logger.info(
                 "EXTRA_CONFIRMED_RETIRED: %s 已不在权威源(完整发现),"
                 "按确定性 UUID 精确删除 %d 个残留 chunk",
@@ -793,7 +910,18 @@ async def _sync_one(
         await tel.progress(session_factory, STAGE_CONSISTENCY, None, None)
         try:
             _final = await verify_source_vectors(session_factory, pipeline, cfg.id)
-            await tel.consistency(session_factory, _consistency_facts(_final))
+            try:
+                _identity = await _ledger_identity_facts(session_factory, cfg.id)
+            except Exception as exc:  # noqa: BLE001 - 身份事实不可得≠业务失败
+                logger.warning(
+                    "数据源 %s 账本身份事实查询失败(增量键省略): %s",
+                    cfg.id,
+                    str(exc)[:160],
+                )
+                _identity = None
+            await tel.consistency(
+                session_factory, _consistency_facts(_final, identity_facts=_identity)
+            )
         except Exception as exc:  # noqa: BLE001 - 校验不可用≠业务失败,证据面如实降级
             logger.warning(
                 "数据源 %s 终局一致性校验失败(如实记录,不伪造健康): %s",
