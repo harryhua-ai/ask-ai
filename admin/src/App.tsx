@@ -14,6 +14,7 @@ import AnswerOverrides from "@/pages/AnswerOverrides";
 import Analytics from "@/pages/Analytics";
 import BusinessOverview from "@/pages/BusinessOverview";
 import SalesLeads from "@/pages/SalesLeads";
+import SystemInfo from "@/pages/SystemInfo";
 
 export default function App() {
   return (
@@ -37,6 +38,7 @@ export default function App() {
                   <Route path="/answer-overrides" element={<AnswerOverrides />} />
                   <Route path="/analytics" element={<Analytics />} />
                   <Route path="/users" element={<Users />} />
+                  <Route path="/system" element={<SystemInfo />} />
                 </Routes>
               </Layout>
             </ProtectedRoute>

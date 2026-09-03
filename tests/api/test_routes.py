@@ -111,11 +111,18 @@ def _make_streaming_rag(events: list[dict[str, Any]]) -> AsyncMock:
 
 @pytest.mark.integration
 async def test_health() -> None:
-    """brief Step 4 原始用例:健康检查返回 200 + ``{"status": "ok"}``。"""
+    """健康检查:``status`` 保持兼容;#10 扩展发布身份字段(与 authority 同源)。"""
+    from backend.release import get_release_identity
+
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    body = resp.json()
+    rid = get_release_identity()
+    assert body["status"] == "ok"
+    assert body["version"] == rid.version
+    assert body["git_sha"] == rid.git_sha
+    assert body["app_mode"] == rid.app_mode
 
 
 # --------------------------------------------------------------------------- #

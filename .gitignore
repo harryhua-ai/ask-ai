@@ -62,3 +62,6 @@ gui-test-screenshots/
 
 # git worktrees(主仓内多树,不入库)
 /.worktrees/
+
+# #10 构建期生成物(镜像内联,禁止提交;由 scripts/generate_release_manifest.sh 生成)
+/RELEASE.json

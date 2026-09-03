@@ -89,8 +89,29 @@ jobs:
           tags: |
             type=sha,format=short
             type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=tag
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+
+      # #10 版本与发布治理:构建期生成不可变 RELEASE.json(权威链第一步)。
+      # tag 构建:version = tag(去 v 前缀的 SemVer);main/manual:0.0.0+main.<sha8>
+      # (合法 SemVer build metadata,非正式版本,不会假冒发布)。
+      - name: Generate RELEASE.json
+        id: release
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="$GITHUB_REF_NAME"
+            IMAGE_TAG="$GITHUB_REF_NAME"
+          else
+            VERSION="0.0.0+main.$(echo "$GITHUB_SHA" | cut -c1-8)"
+            IMAGE_TAG="sha-$(echo "$GITHUB_SHA" | cut -c1-7)"
+          fi
+          bash scripts/generate_release_manifest.sh \
+            "$VERSION" "$GITHUB_SHA" \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$IMAGE_TAG" \
+            "${{ github.run_id }}" RELEASE.json
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -109,3 +130,22 @@ jobs:
           # 改 min 后:pyproject/uv.lock 不变时 uv sync+torch 层靠 cache-from 照样命中(极少改),
           # 回写量从 ~14GB → ~5GB,build 预计 45min → ~15min。
           # GIT_SHA build-arg: bust COPY backend/ 层的 stale cache,确保代码层随 commit 重建
+
+      - name: Assert in-image RELEASE.json matches this build
+        env:
+          EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+          EXPECTED_SHA: ${{ github.sha }}
+          PRIMARY_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.release.outputs.image_tag }}
+        run: |
+          CID=$(docker create "$PRIMARY_IMAGE")
+          docker cp "$CID:/app/RELEASE.json" ./RELEASE.image.json
+          docker rm "$CID" > /dev/null
+          ACTUAL_VERSION=$(jq -r .version ./RELEASE.image.json)
+          ACTUAL_SHA=$(jq -r .git_sha ./RELEASE.image.json)
+          echo "in-image RELEASE.json: version=$ACTUAL_VERSION git_sha=$ACTUAL_SHA"
+          if [ "$ACTUAL_VERSION" != "${EXPECTED_VERSION#v}" ]; then
+            echo "❌ 镜像内 version=$ACTUAL_VERSION ≠ 构建 $EXPECTED_VERSION"; exit 1
+          fi
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "❌ 镜像内 git_sha=$ACTUAL_SHA ≠ 构建 $EXPECTED_SHA"; exit 1
+          fi

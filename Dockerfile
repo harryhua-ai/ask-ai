@@ -76,6 +76,11 @@ COPY backend/ ./backend/
 COPY scripts/ ./scripts/
 COPY config/ ./config/
 
+# #10 版本与发布治理:构建期生成的发布清单(CI 总是先生成;本地构建请先跑
+# scripts/generate_release_manifest.sh)。backend 启动 fail-closed:
+# APP_MODE=prod 且缺失/非法 → 启动失败,生产镜像不得假冒正式版本。
+COPY RELEASE.json ./RELEASE.json
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

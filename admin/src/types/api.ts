@@ -201,3 +201,17 @@ export interface RefreshResult {
   cluster_count: number;
   total_questions: number;
 }
+
+// ==================== #10 版本与发布治理:Release identity ====================
+// 与后端 GET /api/admin/system/release 一一对应;值全部来自后端运行时
+// release authority(镜像内 RELEASE.json),前端零版本常量。
+
+export interface ReleaseInfo {
+  version: string;
+  git_sha: string;
+  built_at: string | null;
+  app_mode: string;
+  image: string | null;
+  ci_run_id: string | null;
+  source: "manifest" | "fallback";
+}

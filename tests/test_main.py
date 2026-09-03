@@ -11,17 +11,26 @@ from backend.config import load_yaml_config
 
 @pytest.mark.unit
 async def test_health_returns_ok() -> None:
-    """健康检查应返回可供编排系统识别的固定响应。
+    """健康检查:status 兼容既有消费者 + 发布身份字段 truthful(#10)。
 
     使用 ASGITransport(不触发 lifespan),避免依赖 Postgres / Weaviate。
+    测试环境 APP_MODE≠prod 且无 RELEASE.json → dev 兜底身份(0.0.0-dev)。
     """
     from backend.main import app
+    from backend.release import get_release_identity
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    rid = get_release_identity()
+    # 既有消费者契约:status 字段保持
+    assert body["status"] == "ok"
+    # #10 扩展字段 = 运行时 release authority(非前端/环境可变值)
+    assert body["version"] == rid.version
+    assert body["git_sha"] == rid.git_sha
+    assert body["app_mode"] == rid.app_mode
 
 
 @pytest.mark.unit
