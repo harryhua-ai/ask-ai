@@ -152,3 +152,81 @@ export TEST_DATABASE_URL=postgresql+asyncpg://ask_ai:ask_ai@localhost:5432/ask_a
 - AC6 ✅ 504 Golden Regression 保留
 - AC7 ✅ 无 xdist;AC8 ✅ 无 marker 重写;AC9 ✅ 数量/coverage 只增不减
 - AC10 ✅ Full Suite 全绿 ×2;AC11 ✅ 40.21/39.74s ≤ 60s
+
+---
+
+# FINAL_REVIEW_CORRECTION(2026-09-03 追加)
+
+- FINAL REVIEW 结论:PARTIAL(单一 blocker,其余验收全部接受)
+- CORRECTION_BASELINE:`edcf98dae520d0d61524a35e189db280bcce0a36`(未被 squash,修正以增量 commit 叠加)
+- 本节追加以下小节:MODULE_SCOPE_HF_LEAK_ROOT_CAUSE / FIX / NEW_REGRESSION_TEST / FULL_SUITE_RUN_1 / FULL_SUITE_RUN_2 / FINAL_PERFORMANCE / CORRECTION_COMMIT
+
+## MODULE_SCOPE_HF_LEAK_ROOT_CAUSE
+
+- `tests/conftest.py::_hf_env_isolation` 是 **function 级** autouse 守卫:它只能覆盖「单个测试函数生命周期内」的 env 变更;
+- B5 的 `real_embedder` / `real_reranker` 是 **module 级** fixture,`BGEEmbedder/BGEReranker.__init__` 在模块 fixture 的 **setup 阶段**调用生产 `_ensure_hf_cache()` → `os.environ.setdefault` 变更发生在任何 function 守卫快照**之前**;function 守卫随后把「已变更态」当作快照原样保护,模块结束后变更存活,泄漏进后续模块的测试上下文;
+- 推理期不读 HF 环境变量,但 frozen B1 契约要求的是**精确环境恢复**(缺失→缺失/存在→原值)与「测试顺序不得变更后续测试的 HF 缓存路由」——module 边界是必须覆盖的作用域,评审属实。
+
+## FIX
+
+`tests/embedder/test_bge.py`:新增 `_load_with_exact_hf_env_guard(factory)`——模块级 fixture 生命周期的精确快照/finally 恢复(与 function 守卫同一契约语义):
+
+```python
+snapshot = {var: os.environ[var] for var in _HF_VARS if var in os.environ}
+try:
+    return factory()
+finally:
+    # 缺失→缺失;存在→原值
+```
+
+`real_embedder` / `real_reranker` 构造改为经该守卫执行。要点:
+- **B5 完整保留**:仍是 module 级实例复用、真实模型推理,未回退为逐测试加载;
+- 环境变量仅在**构造期间**需要(setdefault→FlagEmbedding 缓存路由),构造一结束即恢复不影响已加载实例;构造抛异常时 finally 同样恢复;
+- 生产 `_ensure_hf_cache` 行为零改动;无全局 OFFLINE hack;
+- `tests/conftest.py` 另增会话起点基线:`_HF_SESSION_BASELINE`(conftest **模块导入期**捕获,早于一切 fixture)+ `hf_session_baseline` session fixture,作为跨模块断言的权威参照。
+
+## NEW_REGRESSION_TEST
+
+新增两个测试文件(收集顺序按文件名字母序:step1 → step2,均为可执行证明,不依赖顺序注释):
+
+1. `tests/embedder/test_hf_module_scope_step1_polluter.py`
+   - **模块级 fixture**(与 real_embedder 同作用域生命周期):强制「变量原本缺失」前置态 → 经**真实生产构造器**(`BGEEmbedder(device="cpu", cache_dir=tmp)`,fake FlagEmbedding 免权重加载)触发 `_ensure_hf_cache` 真实进程 env 变更 → 测试内断言污染活跃(HF_HOME/HF_HUB_CACHE/TRANSFORMERS_CACHE == tmp 路径、≠ 会话基线);
+   - fixture 的 `finally` 即**被测的模块级恢复边界**(缺失→缺失;存在→原值)。
+2. `tests/embedder/test_hf_module_scope_step2_restored.py`
+   - 独立测试上下文(位于 step1 模块生命周期**之后**,亦在 test_bge 模块生命周期之后):断言当前进程 HF 环境 == `hf_session_baseline` 逐字节一致——覆盖「原本缺失→缺失」(裸环境)与「原本存在→精确原值」(预设环境)两种语义。
+
+**RED→GREEN 实证**(TDD,修复前先运行):
+
+- RED(修复前,裸环境 `env -u HF_HOME -u HF_HUB_CACHE -u TRANSFORMERS_CACHE`):`pytest tests/embedder/test_bge.py + step1 + step2` → **1 failed**:
+  `AssertionError: HF 环境跨模块边界泄漏: HF_HOME 期望 None(会话起点), 实际 '/…/ask-ai/models'`——模块级 real_embedder 变更存活到 step2 独立上下文,可执行检测成立;
+- GREEN(同一命令,修复后):**24 passed / 15.79s**;
+- 裸环境 + OFFLINE tripwire(范围限定,证明零下载路径):**24 passed / 4.97s**;
+- 预设 warm-cache 环境:**24 passed / 15.64s**。
+
+## FULL_SUITE_RUN_1(修正后)
+
+命令与环境同 §5(同基线确认轮配置):
+
+- **1071 passed + 6 skipped + 0 failed**,pytest 46.53s / wall 48.61s(当轮机器负载偏高)
+
+## FULL_SUITE_RUN_2(修正后)
+
+- **1071 passed + 6 skipped + 0 failed**,pytest 40.80s / wall 42.74s
+
+## FINAL_PERFORMANCE
+
+- 修正前最优两轮:40.21 / 39.74s;修正后两轮:46.53 / 40.80s——增量≈+2 个回归测试与守卫开销(µs 级),Run 1 的 46.53s 为机器负载波动(与 Run 2 同代码差 5.7s);
+- 目标 ≤60s:**两轮均达成**;hard ceiling ≤75s:余量充足;符合「允许相对 ~40s 有小幅回退」的验收口径;
+- Test Count Invariant:1075 → 1077 collected(+2 = 两个模块级边界回归文件,各 1 test),零删除/零新增 skip/零 xfail;6 skipped 与基线一致。
+
+## CORRECTION_COMMIT
+
+- 分支不变:`worktree-exec/test-isolation-performance-20260903`;`edcf98d` 保留不 squash,修正以独立 commit 叠加并推送 origin;
+- 修正改动面:`tests/embedder/test_bge.py`(守卫+两 fixture 包裹)、`tests/conftest.py`(会话基线+fixture)、新增 2 个回归文件;生产代码仍零改动。
+
+## Final State(修正后)
+
+**CANDIDATE READY**
+
+- blocker(module-scope HF leak)修复且有 RED→GREEN 可执行证明;
+- 全部既有验收(AC1~AC11)与保留项(B1 function 守卫/B2/B3/B4/B5/504/无 xdist/无 marker 重写/零生产改动/零 coverage 减少)复核保持成立。
