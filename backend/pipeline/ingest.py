@@ -7,7 +7,7 @@
 设计要点:
 - ``ingest_document`` 同步执行,默认只写 Weaviate;构造时传入
   ``session_factory``(SQLAlchemy 同步 sessionmaker)即可同步 upsert
-  Postgres ``documents`` 表(用 ``content_hash`` 作主键去重)。
+  Postgres ``documents`` 表(按 ``source_id`` 路径身份 upsert,Issue #13)。
 - 单 chunk 写 Weaviate 失败仅 warning,不中断后续 chunk;单 doc 失败仅 error,
   不中断 ``ingest_all`` 中其他文档(错误隔离)。
 - 空 content / chunk_document 返回空列表时直接返回 0,跳过 Weaviate 与 Postgres。
@@ -219,7 +219,7 @@ class IngestionPipeline:
             2. ``embedder.embed`` 批量生成向量。
             3. 逐 chunk 写 Weaviate;**单 chunk 失败仅 warning**,继续后续 chunk。
             4. 若提供了 ``session_factory``,在 Postgres ``documents`` 表
-               upsert doc 级元数据(content_hash 去重,更新 chunk_count)。
+               upsert doc 级元数据(source_id 路径身份,更新 chunk_count)。
 
         Args:
             doc: 待灌入的原始文档。
@@ -426,7 +426,7 @@ class IngestionPipeline:
 
         Raises:
             RuntimeError: 任一 doc 灌入失败(部分 doc 可能已成功写入,
-                重试幂等:content_hash 去重 + 确定性 UUID 覆盖写)。
+                重试幂等:source_id 路径 upsert + 确定性 UUID 覆盖写)。
         """
         results: dict[str, int] = {}
         failed: list[str] = []
@@ -665,10 +665,12 @@ class IngestionPipeline:
     def _upsert_postgres(self, doc: RawDocument, chunk_count: int) -> None:
         """在 Postgres ``documents`` 表 upsert doc 行。
 
-        用 ``(content_hash, branch)`` 复合主键去重:同内容跨分支各留一行;同分支重复灌入更新 chunk_count / source_id /
-        updated_at,不存在则插入新行。内容变更(新 hash 无匹配)时先删除同
-        source_id 的旧版本行——否则旧行永远残留,documents 表同 source_id
-        多行导致一致性校验的 expected 被抬高,永远报不一致。
+        Issue #13(D1/D2):主键 = ``source_id``(路径身份),按路径 upsert —
+        同路径重复灌入原地更新 content_hash/chunk_count(内容变更亦然,单行
+        原位演进,无旧行残留);不同 source/path 即使 ``content_hash`` 相同
+        也各自成行,**禁止任何"同 hash 已存在行"被另一路径抢占改写 source_id**
+        (旧内容寻址 PK 的行归属翻转缺陷在此根除)。内容指纹 ``content_hash``
+        保留索引,供同内容检测类查询使用。
 
         Args:
             doc: 原始文档(取 content_hash / source_id / title 等字段)。
@@ -677,18 +679,9 @@ class IngestionPipeline:
         assert self._session_factory is not None
         with self._session_factory() as session:
             existing = session.execute(
-                select(Document).where(
-                    Document.content_hash == doc.content_hash, Document.branch == doc.branch
-                )
+                select(Document).where(Document.source_id == doc.source_id)
             ).scalar_one_or_none()
             if existing is None:
-                # 内容变更:清理同 source_id 的旧版本行(防幽灵行累积)
-                session.execute(
-                    delete(Document).where(
-                        Document.source_id == doc.source_id,
-                        Document.content_hash != doc.content_hash,
-                    )
-                )
                 session.add(
                     Document(
                         content_hash=doc.content_hash,
@@ -703,7 +696,7 @@ class IngestionPipeline:
                     )
                 )
             else:
-                existing.source_id = doc.source_id
+                existing.content_hash = doc.content_hash
                 existing.source_type = doc.source_type
                 existing.product = doc.product
                 existing.title = doc.title
@@ -714,13 +707,10 @@ class IngestionPipeline:
             session.commit()
 
     def _delete_postgres(self, source_id: str) -> None:
-        """删除 Postgres ``documents`` 表中匹配 source_id 的全部行。
+        """删除 Postgres ``documents`` 表中该 source_id(路径身份)的账本行。
 
-        注意:同一 source_id 可能对应多个 content_hash(如内容更新过),
-        因此按 source_id 而非 content_hash 删除。
-
-        Args:
-            source_id: 文档源系统唯一标识。
+        Issue #13 后 source_id 为主键,单路径恰一行;按 source_id 删除即精确
+        移除该文档(同内容其他路径行不受影响)。
         """
         assert self._session_factory is not None
         with self._session_factory() as session:

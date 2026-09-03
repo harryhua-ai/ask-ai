@@ -511,3 +511,55 @@ def record_safety_exclusion(stats: dict, rel_path: str, reason: str, detail: str
     stats["excluded"] += 1
     stats["reasons"][reason] = stats["reasons"].get(reason, 0) + 1
     logger.warning("技术安全排除 %s: %s %s", rel_path, reason, detail[:120])
+
+
+# -------------------------------------------------------------------------- #
+# Issue #13:历史 corpus 污染检测原语(machine truth = Technical Safety 本尊)
+#
+# 冻结契约(D3):Technical Safety 永远高于管理员 file_types/include policy;
+# 历史 corpus 中已被当前 Technical Safety 禁止的 artifact(如 .hef/.so/.bin/
+# .onnx/.pt)判定为 invalid historical pollution,供 repair tooling 以与现行
+# 准入**同一份判定逻辑**识别与退休 —— 检测不得复制/硬编码扩展名清单,防止
+# 两份词表漂移。
+# -------------------------------------------------------------------------- #
+
+
+def rel_path_from_source_id(source_id: str) -> str:
+    """从复合文档键 ``<source>/<branch>/<rel_path>`` 提取相对路径。
+
+    这是账本/向量库 source_id 的统一格式(github.py:235 等)。退化输入
+    (不足三段,如 web_crawl 的 ``<source>/<slug>``)时取最后一段 ——
+    扩展名判定只关心文件名尾部,安全侧不因格式差异漏判。
+
+    Args:
+        source_id: 复合文档键。
+
+    Returns:
+        相对路径(最后两段之外的完整尾部)。
+    """
+    parts = source_id.split("/", 2)
+    return parts[2] if len(parts) == 3 else parts[-1]
+
+
+def historical_artifact_verdict(
+    source_id: str,
+    *,
+    policy: TechnicalSafetyPolicy | None = None,
+) -> SafetyVerdict:
+    """判定存量 corpus 中的文档是否为当前 Technical Safety 禁止的 artifact。
+
+    复用现行准入的 :meth:`TechnicalSafetyPolicy.check_path`(同一份
+    ``MODEL_ARTIFACT_EXTS`` + 尺寸词表,零复制)。历史对象 size 不可信/通常
+    未知,传 0 跳过尺寸判定 —— 仅扩展名类判定即可覆盖 .hef/.so/.bin 等全部
+    禁止类型;二进制内容嗅探属灌入期防线,不适用于已入库对象。
+
+    Args:
+        source_id: 复合文档键(账本行或 Weaviate 属性)。
+        policy: 可注入策略(测试用);缺省用默认阈值实例。
+
+    Returns:
+        SafetyVerdict。``safe=False`` 即历史 invalid artifact,
+        ``reason`` 为机器可读原因(model_artifact_ext / hard_oversized)。
+    """
+    pol = policy or TechnicalSafetyPolicy()
+    return pol.check_path(rel_path_from_source_id(source_id), 0)

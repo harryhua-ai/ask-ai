@@ -980,12 +980,17 @@ def test_prune_failure_does_not_break_ingest():
 
 
 @pytest.mark.unit
-def test_upsert_postgres_deletes_old_hash_rows_for_same_source_id():
-    """内容变更(新 hash 无匹配)时,插入新行前应删除同 source_id 的旧版本行。"""
+def test_upsert_postgres_path_identity_single_execute_no_legacy_delete():
+    """Issue #13(新契约):upsert 按 source_id 路径身份查找。
+
+    旧行为(已废除):内容变更时先 DELETE 同 source_id 旧 hash 行再插入
+    (两次 execute)。新行为:单条 SELECT 按路径查行,行存在则原位覆写、
+    不存在则插入 —— 无旧版本行清理路径(路径主键下单行原位演进)。
+    """
     embedder = _make_embedder()
     client = _make_weaviate_client()
 
-    # (新 hash, branch) 无匹配 → 走插入分支
+    # 该路径无行 → 走插入分支
     session = MagicMock()
     scalar_result = MagicMock()
     scalar_result.scalar_one_or_none.return_value = None
@@ -1000,8 +1005,48 @@ def test_upsert_postgres_deletes_old_hash_rows_for_same_source_id():
     pipeline = IngestionPipeline(embedder, client, session_factory=session_factory)
     pipeline._upsert_postgres(_make_doc(content_hash="newhash"), 1)
 
-    # 两次 execute:第一次查 (content_hash, branch),第二次删旧版本行
-    assert session.execute.call_count == 2
-    # delete 语句被 add 前执行
+    # 单次 execute:仅按 source_id 查找;无遗留 DELETE 语句
+    assert session.execute.call_count == 1
     assert session.add.called
+    session.commit.assert_called_once()
+
+
+@pytest.mark.unit
+def test_upsert_postgres_existing_row_updated_in_place_never_hijacked():
+    """Issue #13(核心回归):命中已有行必须按路径匹配更新,不得按内容哈希
+    抢占兄弟路径的行(旧行为会改写 existing.source_id,行归属随灌入顺序
+    翻转,产生结构性孤儿)。"""
+    embedder = _make_embedder()
+    client = _make_weaviate_client()
+
+    existing = MagicMock()
+    existing.source_id = "src/main/dir_a/util.py"  # 已有行属于路径 A
+    session = MagicMock()
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = existing
+    session.execute.return_value = scalar_result
+
+    @contextmanager
+    def _factory():
+        yield session
+
+    session_factory = MagicMock(side_effect=_factory)
+
+    pipeline = IngestionPipeline(embedder, client, session_factory=session_factory)
+    # 同内容、不同路径 B(RawDocument 不可变,构造期给定)
+    incoming = _make_doc(
+        content_hash="samehash",
+        source_id="src/main/dir_b/util.py",
+        branch="main",
+    )
+    pipeline._upsert_postgres(incoming, 3)
+
+    # 查找条件 = source_id(路径),而不是 content_hash
+    stmt = session.execute.call_args[0][0]
+    compiled = str(stmt.compile())
+    assert "source_id" in compiled
+    assert "content_hash" not in compiled.split("WHERE")[-1]  # WHERE 条件不含内容指纹
+    # 行归属不被抢占:existing.source_id 保持路径 A;incoming 的路径只影响新行
+    assert existing.source_id == "src/main/dir_a/util.py"
+    assert not session.add.called  # 行存在 → 原位更新,不插入新行
     session.commit.assert_called_once()
