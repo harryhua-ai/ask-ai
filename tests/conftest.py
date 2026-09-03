@@ -1,14 +1,63 @@
 """pytest 全局 fixtures。"""
 
 import os
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import backend.auth.jwt
+from backend.auth.jwt import hash_password as _real_hash_password
 from backend.config import load_settings
 from backend.db.models import Base
 from backend.db.session import get_engine, get_session_factory, init_db
+
+# --------------------------------------------------------------------------- #
+# B1 测试隔离契约:HuggingFace 缓存环境变量每测试精确快照/恢复
+#
+# 生产代码 backend/embedder/bge.py::_ensure_hf_cache 通过 os.environ.setdefault
+# 直接写进程级 HF_HOME / HF_HUB_CACHE / TRANSFORMERS_CACHE(生产语义,本任务不改)。
+# 任何测试触发该路径(真实 BGE 集成测试 / 传 cache_dir 的构造器单测)都会把变量
+# 留在本进程;若指向已销毁的 tmp_path,后续真实 BGE 测试会命中死缓存而重新下载数 GB
+# 权重。此 autouse 守卫保证每个测试结束后这些变量恢复到测试前的精确状态
+# (原本缺失 → 恢复缺失;原本存在 → 恢复原值),测试顺序无关。
+# --------------------------------------------------------------------------- #
+
+_HF_ENV_VARS = ("HF_HOME", "HF_HUB_CACHE", "TRANSFORMERS_CACHE")
+
+
+@pytest.fixture(autouse=True)
+def _hf_env_isolation():
+    """HF 缓存环境变量隔离守卫(见模块级契约注释)。"""
+    snapshot = {var: os.environ[var] for var in _HF_ENV_VARS if var in os.environ}
+    yield
+    for var in _HF_ENV_VARS:
+        if var in snapshot:
+            os.environ[var] = snapshot[var]
+        else:
+            os.environ.pop(var, None)
+
+
+# --------------------------------------------------------------------------- #
+# B2 bcrypt 成本收敛:进程内按明文缓存真实哈希
+#
+# admin 测试的每个 fixture 都调用 hash_password 建测试用户(bcrypt cost 12,
+# 每次 ~250ms,整轮 ~40s)。此处把 backend.auth.jwt.hash_password 替换为
+# lru_cache 包装:同一明文整个 pytest 会话只做一次真实 bcrypt 计算,产物即
+# 真实哈希;认证端 verify_password / 登录失败路径零改动,行为 coverage 不变。
+# conftest 模块级生效(import 早于全部测试模块的 from-import 绑定)。
+# 真实 hash+verify 回归保留于 tests/auth/test_jwt.py(经同一包装,仍是真实
+# bcrypt 算法;wrong-password 断言验证真实 verify 语义)。
+# --------------------------------------------------------------------------- #
+
+
+@lru_cache(maxsize=None)
+def _cached_hash_password(plain: str) -> str:
+    return _real_hash_password(plain)
+
+
+backend.auth.jwt.hash_password = _cached_hash_password
 
 
 @pytest.fixture

@@ -11,8 +11,8 @@
 """
 
 import logging
-import time
-from datetime import UTC, datetime
+import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -110,17 +110,17 @@ def test_filesystem_should_include_with_include_dirs(tmp_path) -> None:  # type:
 def test_filesystem_fetch_changes_mtime_filter(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """``fetch_changes`` 应仅返回 ``mtime`` 晚于 ``since`` 的文件。
 
-    实现:写文件后 sleep 1s 记录 ``now``,再 sleep 1s 后写第二个文件;
-    用 ``now`` 作为 since,应只取到第二个文件。
+    B4:不再用真实 sleep 拉开 mtime——两文件写完后用 ``os.utime`` 把 old.md
+    的 mtime 确定性回拨到 ``since`` 之前(1 小时),new.md 保持真实当前
+    mtime(晚于 since)。被测的 mtime 过滤语义零改动,验收等价且免 2.2s 等待。
     """
     old_file = tmp_path / "old.md"
     old_file.write_text("old")
-    # 让 old.md 的 mtime 落在 sleep 前
-    time.sleep(1.1)
     since = datetime.now(tz=UTC)
-    time.sleep(1.1)
     new_file = tmp_path / "new.md"
     new_file.write_text("new")
+    past = (since - timedelta(hours=1)).timestamp()
+    os.utime(old_file, (past, past))
 
     config = _make_config(str(tmp_path))
     connector = ConnectorRegistry.create(config)
