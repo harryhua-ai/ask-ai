@@ -133,3 +133,25 @@ describe("SystemInfo(/system)", () => {
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 });
+
+// ====================  Final RC:DataSources 与 SystemInfo 共存(Admin 双页)  ====================
+
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+describe("Final RC Admin 共存", () => {
+  it("两页模块可同时导入(零模块/注册冲突)", async () => {
+    const [ds, sys] = await Promise.all([
+      import("@/pages/DataSources"),
+      import("@/pages/SystemInfo"),
+    ]);
+    expect(typeof ds.default).toBe("function");
+    expect(typeof sys.default).toBe("function");
+  });
+
+  it("App 路由表同时注册 /data-sources 与 /system(静态契约锁)", () => {
+    const appSrc = readFileSync(resolve(process.cwd(), "src/App.tsx"), "utf-8");
+    expect(appSrc).toContain('path="/data-sources"');
+    expect(appSrc).toContain('path="/system"');
+  });
+});
