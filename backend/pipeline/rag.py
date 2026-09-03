@@ -44,11 +44,26 @@ from backend.pipeline.lead_qualify import (
     decide_invite,
     parse_qualification,
 )
+from backend.pipeline.product_resolver import (
+    MODE_AMBIGUOUS,
+    MODE_COMPARISON,
+    MODE_EXACT,
+    MODE_UNSUPPORTED,
+    ProductResolution,
+    resolve_products,
+)
 from backend.pipeline.query_rewrite import extract_query, rewrite_query
 from backend.pipeline.social import match_social
+from backend.product_taxonomy import UNKNOWN_SLUG, get_taxonomy
 from backend.retrieval.search import SearchResult
 from backend.utils.language import detect_language, resolve_answer_language
-from backend.utils.user_messages import NO_EVIDENCE_KEY, localized_message
+from backend.utils.user_messages import (
+    NO_EVIDENCE_KEY,
+    PRODUCT_AMBIGUOUS_KEY,
+    PRODUCT_EVIDENCE_INSUFFICIENT_KEY,
+    PRODUCT_NOT_SUPPORTED_KEY,
+    localized_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +96,69 @@ def _reject_answer(language: str) -> str:
     语言参数来自 resolve_answer_language 的解析值。
     """
     return localized_message(NO_EVIDENCE_KEY, language)
+
+
+def _resolve_product_boundary(
+    query: str,
+    *,
+    page_context: dict | None,
+    conversation_history: list[dict] | None,
+    product_hint: str | None,
+    capture_mode: bool,
+) -> tuple[Any, ProductResolution, list[str] | None, frozenset[str] | None, str, dict]:
+    """目标产品解析与资格集合计算(Issue #5 契约 §2/§5/§6)。
+
+    Lead capture 轮(capture_mode)不启用边界:联系方式确认必须生成,
+    不被澄清/不足语义吞掉(与 off_topic 捕获轮豁免同构)。
+
+    Returns:
+        (taxonomy, resolution, scope_labels, eligible_slugs, boundary_prompt,
+         product_scope_stage)
+    """
+    taxonomy = get_taxonomy()
+    if capture_mode:
+        resolution = ProductResolution("none")
+    else:
+        resolution = resolve_products(
+            query,
+            page_context=page_context,
+            history=conversation_history,
+            explicit_hint=product_hint,
+            taxonomy=taxonomy,
+        )
+    scope_labels: list[str] | None = None
+    eligible_slugs: frozenset[str] | None = None
+    boundary_prompt = ""
+    if resolution.mode in (MODE_EXACT, MODE_COMPARISON):
+        eligible_slugs = taxonomy.eligible_slugs(resolution.targets)
+        scope_labels = taxonomy.eligible_labels(resolution.targets)
+        boundary_prompt = taxonomy.boundary_prompt(resolution.targets)
+    scope_stage = {
+        "mode": resolution.mode,
+        "targets": list(resolution.targets),
+        "source": resolution.source,
+    }
+    return (
+        taxonomy,
+        resolution,
+        scope_labels,
+        eligible_slugs,
+        boundary_prompt,
+        scope_stage,
+    )
+
+
+def _product_insufficient_reply(
+    language: str, resolution: ProductResolution, taxonomy: Any
+) -> tuple[str, str]:
+    """目标产品证据不足 → 产品化文案 + 结构化键;无边界时保持既有拒答。"""
+    if resolution.mode in (MODE_EXACT, MODE_COMPARISON):
+        display = "、".join(taxonomy.display_name(t) for t in resolution.targets)
+        return (
+            localized_message(PRODUCT_EVIDENCE_INSUFFICIENT_KEY, language, product=display),
+            PRODUCT_EVIDENCE_INSUFFICIENT_KEY,
+        )
+    return _reject_answer(language), NO_EVIDENCE_KEY
 
 
 class EmptyGenerationError(RuntimeError):
@@ -128,6 +206,10 @@ class RAGAnswer:
     response_time_ms: int
     intent: str = "product"
     trace_payload: dict | None = None
+    # 结构化结果键(Issue #5 契约 §8):answered / no_evidence /
+    # product_ambiguous / product_evidence_insufficient / product_not_supported /
+    # off_topic / smalltalk / override。前端与可观测系统按键路由,不解析自由文本。
+    result_key: str = "answered"
 
 
 # --------------------------------------------------------------------------- #
@@ -142,6 +224,9 @@ def product_hint(page_context: dict | None) -> str | None:
     """从 page_context 提取产品线索:product → product_id → sku 取首个非空。
 
     归一化 = 小写 + 仅保留字母数字与连字符;无可提取线索返回 None。
+    注意:``RAGOrchestrator.answer/stream_answer`` 的 ``product_hint`` 参数
+    (AskRequest.product 显式提示,契约 §2)在本方法作用域内会遮蔽本名,
+    方法内部一律使用别名 :data:`page_product_hint`。
     """
     for key in ("product", "product_id", "sku"):
         value = (page_context or {}).get(key)
@@ -152,6 +237,10 @@ def product_hint(page_context: dict | None) -> str | None:
             if normalized:
                 return normalized
     return None
+
+
+#: 编排器方法内部的别名(product_hint 形参名会遮蔽模块函数,见上函数 docstring)
+page_product_hint = product_hint
 
 
 def apply_page_context_boost(
@@ -403,11 +492,16 @@ class RAGOrchestrator:
         *,
         product_filter: str | None,
         channel: str,
+        product_labels: list[str] | None = None,
     ) -> tuple[list[SearchResult], dict[str, int]]:
         """统一检索 + 三路 RRF 融合(answer / stream_answer 共用,保证 parity)。
 
         主 hybrid(search_query) + 符号 BM25(extracted) + intent boost 桶(extracted)
         → 单次 rrf_fuse 三路融合。任一路异常 / 为空均降级,不中断主流程。
+
+        ``product_labels`` = taxonomy 资格标签集(Issue #5 契约 §5):非空时
+        作为硬过滤 AND 进三路检索 —— sibling 在 Weaviate 侧即被排除,rerank /
+        兜底 / boost 桶没有任何一路能把 sibling 塞回来。
 
         Returns:
             (融合去重后的 SearchResult 列表, 各路命中数 dict)
@@ -418,6 +512,7 @@ class RAGOrchestrator:
             limit=self._recall_limit,
             product_filter=product_filter,
             channel=channel,
+            product_labels=product_labels,
         )
 
         symbol_results: list[SearchResult] = []
@@ -427,6 +522,7 @@ class RAGOrchestrator:
                 limit=self._recall_limit,
                 product_filter=product_filter,
                 channel=channel,
+                product_labels=product_labels,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("符号召回失败,降级:%s", str(exc)[:200])
@@ -435,11 +531,13 @@ class RAGOrchestrator:
         bucket_cfg = INTENT_BOOST_FILTERS.get(intent_category)
         if bucket_cfg:
             try:
-                # boost 桶跨产品(support 案例存为 product="knowledge"),不透传 product_filter
+                # support 案例存为 product="knowledge"(跨产品设计),但知识桶
+                # 同样受资格标签约束(§9:support intent 不得成为跨产品后门)
                 bucket_results = self._searcher.search_bucket(
                     query=extracted,
                     limit=self._recall_limit,
                     channel=channel,
+                    product_labels=product_labels,
                     **bucket_cfg,
                 )
             except Exception as exc:  # noqa: BLE001
@@ -513,6 +611,7 @@ class RAGOrchestrator:
         image_context: str = "",
         page_hint: str = "",
         lead_instruction: str = "",
+        product_boundary: str = "",
     ) -> list[dict]:
         """构造 OpenAI 风格的 messages 列表。
 
@@ -520,7 +619,9 @@ class RAGOrchestrator:
         history 截断到最近 ``conversation_max_turns * 2`` 条消息。
 
         system_prompt 由 channel(base)与 intent(风格)正交叠加:
-        先取渠道专属 prompt(未命中回退默认),再附加意图风格片段(若有)。
+        先取渠道专属 prompt(未命中回退默认),再附加意图风格片段(若有);
+        ``product_boundary``(Issue #5 契约 §6:目标产品声明 + sibling 冒充
+        禁令)在 intent 风格之后、lead 指令之前附加;空串时不附加(零回归)。
 
         Args:
             channel: 渠道标识。当 ``channel_customizations`` 命中该渠道时,
@@ -533,10 +634,13 @@ class RAGOrchestrator:
                 背景内容不得作为事实依据或引用来源。
             lead_instruction: Lead 跟随指令(邀请留联系方式 / 联系方式确认)。
                 空串时不附加,行为与基线完全一致(零回归)。
+            product_boundary: 产品边界冻结规则段(契约 §6);空串不附加。
         """
         base = self._channel_customizations.get(channel, self._system_prompt)
         style = self._intent_styles.get(intent, "")
         system_prompt = f"{base}\n\n{style}" if style else base
+        if product_boundary:
+            system_prompt = f"{system_prompt}\n\n{product_boundary}"
         if lead_instruction:
             system_prompt = f"{system_prompt}\n\n{lead_instruction}"
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
@@ -643,6 +747,7 @@ class RAGOrchestrator:
         site_name: str | None = None,
         lead_ctx: LeadTurnContext | None = None,
         language_hint: str | None = None,
+        product_hint: str | None = None,
     ) -> RAGAnswer:
         """同步生成 RAG 答案。
 
@@ -705,6 +810,47 @@ class RAGOrchestrator:
         if social is not None:
             return social
 
+        # Issue #5 产品边界(契约 §2):目标解析在意图分类之前 —— 澄清/不支持
+        # 短路可省一次意图 LLM 调用;capture 轮不启用边界。
+        taxonomy, resolution, scope_labels, eligible_slugs, boundary_prompt, product_scope_stage = (
+            _resolve_product_boundary(
+                query,
+                page_context=page_context,
+                conversation_history=conversation_history,
+                product_hint=product_hint,
+                capture_mode=bool(lead_ctx and lead_ctx.capture_mode),
+            )
+        )
+        if resolution.mode != "none":
+            stages["product_scope"] = product_scope_stage
+        if resolution.mode == MODE_AMBIGUOUS or resolution.mode == MODE_UNSUPPORTED:
+            elapsed = int((time.monotonic() - start) * 1000)
+            if resolution.mode == MODE_AMBIGUOUS:
+                boundary_answer = localized_message(PRODUCT_AMBIGUOUS_KEY, language)
+                result_key = PRODUCT_AMBIGUOUS_KEY
+                trace_type = "product_clarify"
+            else:
+                boundary_answer = localized_message(PRODUCT_NOT_SUPPORTED_KEY, language)
+                result_key = PRODUCT_NOT_SUPPORTED_KEY
+                trace_type = "product_unsupported"
+            return RAGAnswer(
+                answer=boundary_answer,
+                sources=[],
+                is_answered=False,
+                reranked_results=[],
+                language=language,
+                response_time_ms=elapsed,
+                intent="product",
+                trace_payload={
+                    "type": trace_type,
+                    "stages": stages,
+                    "total_ms": elapsed,
+                    "intent": "product",
+                    "config_snapshot": {**self._config_snapshot(), "result_key": result_key},
+                },
+                result_key=result_key,
+            )
+
         t_intent = time.monotonic()
         intent = await classify_intent(query, self._llm)
         stages["intent"] = {
@@ -760,6 +906,7 @@ class RAGOrchestrator:
             intent.category,
             product_filter=product_filter,
             channel=channel,
+            product_labels=scope_labels,
         )
         stages["retrieve"] = {
             "ms": int((time.monotonic() - t_ret) * 1000),
@@ -777,6 +924,25 @@ class RAGOrchestrator:
         if self._pruner:
             reranked = await self._pruner.prune(search_query, reranked)
             pruned_count = pre_prune_count - len(reranked)
+
+        # 防御性二次过滤(契约 §5 纵深):检索闸门在 Weaviate 侧;若闸门缺陷
+        # 导致 sibling 泄漏进候选,此处强制出清(fused 一并过滤,兜底不可回流)。
+        if eligible_slugs is not None:
+            pre_defensive = len(reranked)
+            fused = [
+                r
+                for r in fused
+                if (taxonomy.canonicalize(r.product) or UNKNOWN_SLUG) in eligible_slugs
+            ]
+            reranked = [
+                r
+                for r in reranked
+                if (taxonomy.canonicalize(r.product) or UNKNOWN_SLUG) in eligible_slugs
+            ]
+            if pre_defensive != len(reranked):
+                product_scope_stage["ineligible_filtered"] = pre_defensive - len(reranked)
+                stages["product_scope"] = product_scope_stage
+
         stages["rerank"] = {
             "ms": int((time.monotonic() - t_rr) * 1000),
             "top_score": reranked[0].score if reranked else None,
@@ -793,8 +959,13 @@ class RAGOrchestrator:
             fallback = fused[: self._top_k] if fused else []
             if not fallback:
                 elapsed = int((time.monotonic() - start) * 1000)
+                # Issue #5 契约 §8/§14:目标产品在库但证据不足 → 产品化不足
+                # 语义(绝不借 sibling 顶替);无边界时保持既有 no_evidence。
+                reject_text, reject_key = _product_insufficient_reply(
+                    language, resolution, taxonomy
+                )
                 return RAGAnswer(
-                    answer=_reject_answer(language),
+                    answer=reject_text,
                     sources=[],
                     is_answered=False,
                     reranked_results=[],
@@ -807,8 +978,9 @@ class RAGOrchestrator:
                         "total_ms": elapsed,
                         "intent": intent.category,
                         "confidence": intent.confidence,
-                        "config_snapshot": self._config_snapshot(),
+                        "config_snapshot": {**self._config_snapshot(), "result_key": reject_key},
                     },
+                    result_key=reject_key,
                 )
             # 降级:用 fused top-N 作上下文,标记 fallback 供 trace 追踪
             reranked = fallback
@@ -821,13 +993,14 @@ class RAGOrchestrator:
 
         # MSW:page_context 软加分(仅重排,不过滤;G009),与 stream_answer 同位同语义
         if page_context is not None:
-            hint = product_hint(page_context)
+            hint = page_product_hint(page_context)
             reranked = apply_page_context_boost(reranked, page_context)
             stages["retrieve"]["page_boost"] = {"applied": hint is not None, "hint": hint}
 
         sources = self._extract_sources(reranked)
-        # 引用完整性:LLM 编号集 = 访客可见集合(权威编号上下文)
-        cite_ctx = build_citation_context(reranked, sources)
+        # 引用完整性:LLM 编号集 = 访客可见集合(权威编号上下文);
+        # CIT-03:编号携带产品标签,产品边界启用时同步做资格校验
+        cite_ctx = build_citation_context(reranked, sources, taxonomy=taxonomy)
         # Sales Lead:资格判定(同步路径串行执行)+ 邀请/确认决策
         lead_qual: LeadQualification | None = None
         lead_instruction = ""
@@ -844,6 +1017,7 @@ class RAGOrchestrator:
             intent=intent.category,
             page_hint=page_hint_text(page_context, site_name),
             lead_instruction=lead_instruction,
+            product_boundary=boundary_prompt,
         )
 
         t_gen = time.monotonic()
@@ -853,9 +1027,13 @@ class RAGOrchestrator:
             "latency_ms": getattr(llm_response, "latency_ms", None),
             "tokens_output": getattr(llm_response, "tokens_output", None),
         }
-        # 引用终验(幂等):剔除悬空/无据标记,不改正文
+        # 引用终验(幂等):剔除悬空/无据/产品不合格标记,不改正文
         final_answer, cite_stats = validate_citations(
-            llm_response.content, len(sources), cite_ctx.source_texts
+            llm_response.content,
+            len(sources),
+            cite_ctx.source_texts,
+            source_products=cite_ctx.source_products,
+            eligible_slugs=eligible_slugs,
         )
         stages["output"] = {"ms": 0, "sources_count": len(sources)}
         stages["citation_integrity"] = {**cite_ctx.stats, **cite_stats}
@@ -877,6 +1055,7 @@ class RAGOrchestrator:
                 "confidence": intent.confidence,
                 "config_snapshot": self._config_snapshot(),
             },
+            result_key="answered",
         )
 
     async def stream_answer(
@@ -890,6 +1069,7 @@ class RAGOrchestrator:
         site_name: str | None = None,
         lead_ctx: LeadTurnContext | None = None,
         language_hint: str | None = None,
+        product_hint: str | None = None,
     ) -> AsyncIterator[str]:
         """流式生成 RAG 答案,Yield JSON 字符串事件。
 
@@ -937,6 +1117,7 @@ class RAGOrchestrator:
                         "language": language,
                         "response_time_ms": elapsed,
                         "intent": "product",
+                        "result_key": "override",
                         "trace_payload": {
                             "type": "override",
                             "stages": {},
@@ -962,10 +1143,61 @@ class RAGOrchestrator:
                     "language": language,
                     "response_time_ms": elapsed,
                     "intent": social.intent,
+                    "result_key": "smalltalk",
                     "trace_payload": social.trace_payload,
                 }
             )
             return
+
+        # Issue #5 产品边界(契约 §2):目标解析在意图分类之前 —— 澄清/不支持
+        # 短路可省一次意图 LLM 调用;capture 轮不启用边界(确认必须生成)。
+        taxonomy, resolution, scope_labels, eligible_slugs, boundary_prompt, product_scope_stage = (
+            _resolve_product_boundary(
+                query,
+                page_context=page_context,
+                conversation_history=conversation_history,
+                product_hint=product_hint,
+                capture_mode=bool(lead_ctx and lead_ctx.capture_mode),
+            )
+        )
+        if resolution.mode == MODE_AMBIGUOUS or resolution.mode == MODE_UNSUPPORTED:
+            elapsed = int((time.monotonic() - start) * 1000)
+            if resolution.mode == MODE_AMBIGUOUS:
+                boundary_answer = localized_message(PRODUCT_AMBIGUOUS_KEY, language)
+                result_key = PRODUCT_AMBIGUOUS_KEY
+                trace_type = "product_clarify"
+            else:
+                boundary_answer = localized_message(PRODUCT_NOT_SUPPORTED_KEY, language)
+                result_key = PRODUCT_NOT_SUPPORTED_KEY
+                trace_type = "product_unsupported"
+            yield json.dumps(
+                {
+                    "type": "complete",
+                    "answer": boundary_answer,
+                    "sources": [],
+                    "is_answered": False,
+                    "language": language,
+                    "response_time_ms": elapsed,
+                    "intent": "product",
+                    "result_key": result_key,
+                    "trace_payload": {
+                        "type": trace_type,
+                        "stages": {
+                            "language": {
+                                "hint": language_hint,
+                                "detected": detected_language,
+                                "resolved": language,
+                            },
+                            "product_scope": product_scope_stage,
+                        },
+                        "total_ms": elapsed,
+                        "intent": "product",
+                        "config_snapshot": {**self._config_snapshot(), "result_key": result_key},
+                    },
+                }
+            )
+            return
+        product_scope_in_trace = resolution.mode != "none"
 
         # 意图识别(4 分类):off_topic 直接拒答;commercial/product/support 进入检索
         # (commercial 原「过渡期拒答」已废:WooCommerce 产品数据已灌库,commercial
@@ -989,6 +1221,7 @@ class RAGOrchestrator:
                     "language": language,
                     "response_time_ms": elapsed,
                     "intent": intent.category,
+                    "result_key": "off_topic",
                     "trace_payload": {
                         "type": "reject_short",
                         "stages": {
@@ -1040,6 +1273,7 @@ class RAGOrchestrator:
             intent.category,
             product_filter=product_filter,
             channel=channel,
+            product_labels=scope_labels,
         )
         search_ms = int((time.monotonic() - t1) * 1000)
 
@@ -1055,6 +1289,23 @@ class RAGOrchestrator:
         if self._pruner:
             reranked = await self._pruner.prune(query, reranked)
             pruned_count = pre_prune_count - len(reranked)
+
+        # 防御性二次过滤(契约 §5 纵深,先于兜底判定):检索闸门在 Weaviate 侧;
+        # 若闸门缺陷导致 sibling 泄漏,此处强制出清(fused 一并过滤,兜底不可回流)。
+        if eligible_slugs is not None:
+            pre_defensive = len(reranked)
+            fused = [
+                r
+                for r in fused
+                if (taxonomy.canonicalize(r.product) or UNKNOWN_SLUG) in eligible_slugs
+            ]
+            reranked = [
+                r
+                for r in reranked
+                if (taxonomy.canonicalize(r.product) or UNKNOWN_SLUG) in eligible_slugs
+            ]
+            if pre_defensive != len(reranked):
+                product_scope_stage["ineligible_filtered"] = pre_defensive - len(reranked)
 
         if len(reranked) < effective_min:
             # P1 兜底:rerank 滤光但 fused 非空时降级用 fused top-N(与 answer 同策略)
@@ -1081,15 +1332,21 @@ class RAGOrchestrator:
                     except Exception:  # noqa: BLE001 — 与 _run_qualifier 同为 fail-open
                         reject_lead_payload = None
                 elapsed = int((time.monotonic() - start) * 1000)
+                # Issue #5 契约 §8/§14:目标产品在库但证据不足 → 产品化不足
+                # 语义(绝不借 sibling 顶替);无边界时保持既有 no_evidence。
+                reject_text, reject_key = _product_insufficient_reply(
+                    language, resolution, taxonomy
+                )
                 yield json.dumps(
                     {
                         "type": "complete",
-                        "answer": _reject_answer(language),
+                        "answer": reject_text,
                         "sources": [],
                         "is_answered": False,
                         "language": language,
                         "response_time_ms": elapsed,
                         "intent": intent.category,
+                        "result_key": reject_key,
                         "trace_payload": {
                             "type": "reject_short",
                             "stages": {
@@ -1121,11 +1378,19 @@ class RAGOrchestrator:
                                     "pruned": pruned_count,
                                     "results": self._rerank_snippets(reranked),
                                 },
+                                **(
+                                    {"product_scope": product_scope_stage}
+                                    if product_scope_in_trace
+                                    else {}
+                                ),
                             },
                             "total_ms": elapsed,
                             "intent": intent.category,
                             "confidence": intent.confidence,
-                            "config_snapshot": self._config_snapshot(),
+                            "config_snapshot": {
+                                **self._config_snapshot(),
+                                "result_key": reject_key,
+                            },
                         },
                         "lead": reject_lead_payload,
                     }
@@ -1145,7 +1410,7 @@ class RAGOrchestrator:
         # 之后、sources 提取之前 —— sources 顺序即权威可见编号顺序。
         page_boost_stage: dict | None = None
         if page_context is not None:
-            hint = product_hint(page_context)
+            hint = page_product_hint(page_context)
             reranked = apply_page_context_boost(reranked, page_context)
             page_boost_stage = {"applied": hint is not None, "hint": hint}
 
@@ -1191,8 +1456,9 @@ class RAGOrchestrator:
             }
 
         sources = self._extract_sources(reranked)
-        # 引用完整性:LLM 编号集 = 访客可见集合(权威编号上下文)
-        cite_ctx = build_citation_context(reranked, sources)
+        # 引用完整性:LLM 编号集 = 访客可见集合(权威编号上下文);
+        # CIT-03:编号携带产品标签,产品边界启用时同步做资格校验
+        cite_ctx = build_citation_context(reranked, sources, taxonomy=taxonomy)
         messages = self._build_messages(
             query,
             cite_ctx.context,
@@ -1204,13 +1470,18 @@ class RAGOrchestrator:
             image_context="",
             page_hint=page_hint_text(page_context, site_name),
             lead_instruction=lead_instruction,
+            product_boundary=boundary_prompt,
         )
 
         yield json.dumps({"type": "sources", "sources": sources})
 
-        # 流式确定性校验:悬空/无据标记在下行前剔除(跨 token 拆分安全)
+        # 流式确定性校验:悬空/无据标记在下行前剔除(跨 token 拆分安全);
+        # CIT-03:产品边界启用时,编号所属产品不在资格集 → 标记在下行前剔除
         citation_filter = CitationStreamFilter(
-            n_sources=len(sources), source_texts=cite_ctx.source_texts
+            n_sources=len(sources),
+            source_texts=cite_ctx.source_texts,
+            source_products=cite_ctx.source_products,
+            eligible_slugs=eligible_slugs,
         )
         full_answer = ""
         t3 = time.monotonic()
@@ -1241,7 +1512,11 @@ class RAGOrchestrator:
 
         # 幂等终验(防御纵深):正常情况下与流式校验结果一致
         final_answer, residual_stats = validate_citations(
-            full_answer, len(sources), cite_ctx.source_texts
+            full_answer,
+            len(sources),
+            cite_ctx.source_texts,
+            source_products=cite_ctx.source_products,
+            eligible_slugs=eligible_slugs,
         )
         if residual_stats["dangling_dropped"] or residual_stats["unsupported_dropped"]:
             logger.warning(
@@ -1329,6 +1604,11 @@ class RAGOrchestrator:
                             **citation_filter.stats,
                         },
                         **({"lead": lead_stage} if lead_stage else {}),
+                        **(
+                            {"product_scope": product_scope_stage}
+                            if product_scope_in_trace
+                            else {}
+                        ),
                     },
                     "total_ms": elapsed,
                     "intent": intent.category,
@@ -1337,5 +1617,6 @@ class RAGOrchestrator:
                     "attachments": attachment_summary,
                 },
                 "lead": lead_payload,
+                "result_key": "answered",
             }
         )

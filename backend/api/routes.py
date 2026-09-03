@@ -281,6 +281,8 @@ async def ask(
                 # ML 闭环:请求 language 提示被消费为默认答案语境(G-L1);
                 # 显式 site_id 未带提示时回落站点默认语言(宿主默认语境)
                 language_hint=req.language or (site.language if site else None),
+                # Issue #5 契约 §2:结构化目标产品提示(显式、最高优先级)
+                product_hint=req.product,
             ):
                 data = json.loads(chunk)
                 evt_type = data["type"]

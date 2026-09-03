@@ -267,6 +267,7 @@ async def test_rag_filters_internal_sources_from_public_list():
         title="NE101 README",
         url="https://github.com/camthink-ai/ne101/README.md",
         source_type="github",
+        product="ne101",  # 产品边界(契约 §5):语料标签须与查询目标一致
     )
     internal_sr = _make_sr(
         text="internal case",
@@ -274,6 +275,7 @@ async def test_rag_filters_internal_sources_from_public_list():
         title="NE101-电源适配器电压咨询",
         url="file:///home/ubuntu/knowledge-support/2026-04/NE101-电源.md",
         source_type="filesystem",
+        product="knowledge",
     )
 
     rag, _, _, _ = _build_orchestrator(
@@ -319,7 +321,8 @@ async def test_rag_web_crawl_source_enters_public_list():
         title="NeoEdge AI Box NG4500",
         url="https://www.camthink.ai/product/neoedge-ai-box-ng4500/",
         source_type="web_crawl",
-        product="website",
+        # 迁移后该 URL 命中 taxonomy 官网产品页规则 → product=ng4500(契约 §3)
+        product="ng4500",
     )
 
     rag, _, _, _ = _build_orchestrator(
@@ -606,7 +609,7 @@ async def test_rag_commercial_enters_search_after_woocommerce_enabled():
 @pytest.mark.unit
 async def test_rag_product_question_answers_with_few_results():
     """意图为 product 时,即使结果数 < min_results 仍尝试回答。"""
-    sr = _make_sr()
+    sr = _make_sr(product="ne301")  # 与查询产品一致(契约 §5 资格过滤)
     searcher = MagicMock()
     searcher.search.return_value = [sr]
     searcher.search_symbols.return_value = []
@@ -635,7 +638,7 @@ async def test_rag_product_question_answers_with_few_results():
 @pytest.mark.unit
 async def test_rag_intent_fail_open_proceeds():
     """意图识别失败时 fail-open 为 product,正常进入 RAG 管线。"""
-    sr = _make_sr()
+    sr = _make_sr(product="ne301")  # 与查询产品一致(契约 §5 资格过滤)
     searcher = MagicMock()
     searcher.search.return_value = [sr]
     searcher.search_symbols.return_value = []
@@ -702,7 +705,9 @@ async def test_rag_uses_symbol_recall_and_rrf():
 @pytest.mark.unit
 async def test_rag_routes_commercial_to_search():
     """commercial 意图 → 进检索作答(WooCommerce 灌库后,不再 REJECT_BUSINESS)。"""
-    rag, searcher, reranker, llm = _build_orchestrator(searcher_results=[_make_sr()])
+    rag, searcher, reranker, llm = _build_orchestrator(
+        searcher_results=[_make_sr(product="ne301")]  # 与查询产品一致(契约 §5)
+    )
     llm.generate = AsyncMock(side_effect=[
         # classify_intent 返回 commercial
         _make_llm_response('{"category": "commercial", "reason": "价格"}'),

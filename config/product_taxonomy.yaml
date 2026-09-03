@@ -1,0 +1,146 @@
+# Canonical Product Taxonomy(Issue #5 契约冻结 §1)
+#
+# 数据驱动的产品身份权威:查询解析(别名→canonical)、文档推导(路径/URL 规则)、
+# 检索资格集合(shared/platform 展开)、历史标签 canonicalize 全部以本文件为唯一事实源。
+# 禁止在业务代码中出现产品名 if/else;产品知识变更 = 改本文件,不改代码。
+#
+# kind 语义:
+#   product  — 可独立作为问答目标的硬件产品
+#   platform — 可独立作为问答目标的软件平台(适用产品由 applies_to 声明)
+#   shared   — 多产品共享内容桶(不可作为目标,可按 applies_to 入围证据)
+#   support  — 内部支持案例桶(共享背景证据,永不可引用——既有 CIT 白名单语义)
+#   store    — 商城/配件桶(不作为产品事实证据)
+version: 1
+
+products:
+  - slug: ne101
+    kind: product
+    display_name: "NeoEye NE101"
+    aliases: ["ne101", "ne-101", "neoeye ne101"]
+  - slug: ne301
+    kind: product
+    display_name: "NeoEye NE301"
+    aliases: ["ne301", "ne-301", "neoeye ne301"]
+  - slug: ne302
+    kind: product
+    display_name: "NeoEye NE302"
+    aliases: ["ne302", "ne-302", "neoeye ne302"]
+  - slug: ne503
+    kind: product
+    display_name: "NeoEye NE503"
+    aliases: ["ne503", "ne-503", "neoeye ne503"]
+  - slug: ng4500
+    kind: product
+    display_name: "NeoEdge NG4500"
+    aliases: ["ng4500", "ng-4500", "neoedge ng4500"]
+  - slug: neomind
+    kind: platform
+    display_name: "NeoMind"
+    aliases: ["neomind", "neo-mind"]
+    # 适用范围为本仓 corpus 结构推定(平台管理全系列设备);PD-1 拍板后可调
+    applies_to: [ne101, ne301, ne302, ne503, ng4500]
+  - slug: neoruntime
+    kind: platform
+    display_name: "NeoRuntime"
+    aliases: ["neoruntime", "neo-runtime"]
+    applies_to: [ne503]
+  - slug: aitoolstack
+    kind: platform
+    display_name: "AI ToolStack"
+    aliases: ["aitoolstack", "ai toolstack", "ai-toolstack"]
+    applies_to: [ne101, ne301, ne302, ne503, ng4500]
+
+shared_buckets:
+  - slug: hardware-common
+    kind: shared
+    display_name: "硬件开发资源(共享)"
+    aliases: []
+    applies_to: [ne101, ne301, ne302, ne503, ng4500]
+  - slug: ai-common
+    kind: shared
+    display_name: "AI 应用文档(共享)"
+    aliases: []
+    applies_to: [ne101, ne301, ne302, ne503, ng4500]
+  - slug: release-notes
+    kind: shared
+    display_name: "发布说明(共享)"
+    aliases: []
+    applies_to: [ne101, ne301, ne302, ne503, ng4500, neomind]
+  - slug: knowledge
+    kind: support
+    display_name: "支持案例(共享背景)"
+    aliases: []
+    applies_to: [ne101, ne301, ne302, ne503, ng4500, neomind, neoruntime, aitoolstack]
+  - slug: commercial
+    kind: store
+    display_name: "商城"
+    aliases: ["online-store", "store"]
+
+# 历史标签/大小写漂移 canonicalize(chunk 与 data_sources现存原始标签 → canonical slug)。
+# 生产实证(Discovery §5);migration 与检索资格展开共用。
+# 注意:"wiki"/"website" 是混合源标签,故意不登记——由 document_derivation 按文档推导,
+# 推导不出 = unknown,禁止猜测。
+legacy_labels:
+  ai-toolstack: aitoolstack
+  meta-hailo-os: ne503
+  neomind-dashboard: neomind
+  neomind-devicetype: neomind
+  neomind-extensions: neomind
+  neoruntime-apps: neoruntime
+  neoruntime-sdks: neoruntime
+  online-store: commercial
+  accessories: commercial
+
+# 文档级产品推导(ingest 与 migration 共用;先规则后标签 canonicalize,均未命中 = unknown)。
+# 匹配语义:path_any 命中 source_id 子串 / url_any 命中 url 子串(大小写不敏感)。
+# 规则以源当前标签分组(混合源标签在 dev/prod 环境一致,规则环境无关)。
+document_derivation:
+  - label: wiki
+    rules:
+      - {path_any: ["docs/6-neoeyes-ne503-series", "i18n/en/docusaurus-plugin-content-docs/current/6-neoeyes-ne503-series"], product: ne503}
+      - {path_any: ["docs/5-neoeyes-ne301-series", "i18n/en/docusaurus-plugin-content-docs/current/5-neoeyes-ne301-series"], product: ne301}
+      - {path_any: ["docs/8-neoeyes-ne302-series", "i18n/en/docusaurus-plugin-content-docs/current/8-neoeyes-ne302-series"], product: ne302}
+      - {path_any: ["docs/2-neoeyes-ne101-series", "i18n/en/docusaurus-plugin-content-docs/current/2-neoeyes-ne101-series"], product: ne101}
+      - {path_any: ["docs/1-neoedge-ng4500-series", "i18n/en/docusaurus-plugin-content-docs/current/1-neoedge-ng4500-series"], product: ng4500}
+      - {path_any: ["docs/0-neomind", "i18n/en/docusaurus-plugin-content-docs/current/0-neomind"], product: neomind}
+      - {path_any: ["docs/3-hardware-dev-resources", "i18n/en/docusaurus-plugin-content-docs/current/3-hardware-dev-resources"], product: hardware-common}
+      - {path_any: ["docs/4-ai-application", "i18n/en/docusaurus-plugin-content-docs/current/4-ai-application"], product: ai-common}
+      - {path_any: ["docs/7-release-notes", "i18n/en/docusaurus-plugin-content-docs/current/7-release-notes"], product: release-notes}
+  - label: website
+    rules:
+      # 官网产品页 URL 模式(生产 366 chunk 全量 URL 清单实证,Discovery 实现 §PD-5)
+      - {url_any: ["ne503", "neoeyes-503"], product: ne503}
+      - {url_any: ["ne301", "neoeyes-301"], product: ne301}
+      - {url_any: ["ne101"], product: ne101}
+      - {url_any: ["ne302"], product: ne302}
+      - {url_any: ["ng4500"], product: ng4500}
+      - {url_any: ["/product/neomind", "product-category/neomind"], product: neomind}
+      # Unknown Closure(#5,2026-09-03):AI ToolStack 官方工具页 = 平台身份
+      # (URL 显式路径 + taxonomy 别名身份,非兄弟页推断;工具族其余页面不命中)
+      - {url_any: ["/tools/ai-tool-stack"], product: aitoolstack}
+
+# 设备指代词(歧义检测):出现指代且无法解析出目标产品 → PRODUCT_AMBIGUOUS(文本澄清)
+ambiguity:
+  deixis_patterns:
+    - "这个设备"
+    - "该设备"
+    - "这款设备"
+    - "这个产品"
+    - "该产品"
+    - "这款产品"
+    - "这个型号"
+    - "该型号"
+    - "这个摄像头"
+    - "这款摄像头"
+    - "本设备"
+    - "本产品"
+    - "哪个型号"
+    - "哪款设备"
+    - "哪款产品"
+    - "the device"
+    - "this device"
+    - "this product"
+    - "this camera"
+    - "this model"
+    - "the camera"
+    - "which model"

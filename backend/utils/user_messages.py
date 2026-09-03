@@ -13,8 +13,21 @@ from __future__ import annotations
 SERVICE_UNAVAILABLE_KEY = "service_unavailable"
 BUDGET_DECLINED_KEY = "budget_declined"
 NO_EVIDENCE_KEY = "no_evidence"
+# 产品边界结构化键(Issue #5 契约 §8;SSE complete 事件 result_key 同值)
+PRODUCT_AMBIGUOUS_KEY = "product_ambiguous"
+PRODUCT_EVIDENCE_INSUFFICIENT_KEY = "product_evidence_insufficient"
+PRODUCT_NOT_SUPPORTED_KEY = "product_not_supported"
 
-MESSAGE_KEYS = frozenset({SERVICE_UNAVAILABLE_KEY, BUDGET_DECLINED_KEY, NO_EVIDENCE_KEY})
+MESSAGE_KEYS = frozenset(
+    {
+        SERVICE_UNAVAILABLE_KEY,
+        BUDGET_DECLINED_KEY,
+        NO_EVIDENCE_KEY,
+        PRODUCT_AMBIGUOUS_KEY,
+        PRODUCT_EVIDENCE_INSUFFICIENT_KEY,
+        PRODUCT_NOT_SUPPORTED_KEY,
+    }
+)
 
 # 冻结文案(Product Contract,逐字;zh 与既有用户可见行为一致)
 _MESSAGES: dict[str, dict[str, str]] = {
@@ -30,19 +43,42 @@ _MESSAGES: dict[str, dict[str, str]] = {
         "zh": "暂未在官方资料中找到相关信息。",
         "en": "I couldn't find relevant information in the official sources.",
     },
+    # 产品边界(Issue #5 契约 §8):{product} 为目标产品展示名,调用方 fill
+    PRODUCT_AMBIGUOUS_KEY: {
+        "zh": "请告诉我要了解的具体产品型号(如 NE301、NE503),我再为您查询。",
+        "en": "Could you tell me which product model you're asking about (e.g. NE301, NE503)?",
+    },
+    PRODUCT_EVIDENCE_INSUFFICIENT_KEY: {
+        "zh": "官方资料中暂未找到 {product} 的相关说明,建议联系技术支持获取帮助。",
+        "en": "I couldn't find relevant information about {product} in the official "
+        "sources. Please contact technical support for further help.",
+    },
+    PRODUCT_NOT_SUPPORTED_KEY: {
+        "zh": "您询问的产品暂不在支持范围内,请尝试询问 CamThink 产品相关问题。",
+        "en": "The product you asked about is not in my supported scope. "
+        "Please ask about CamThink products.",
+    },
 }
 
 
-def localized_message(key: str, language: str) -> str:
+def localized_message(key: str, language: str, **kwargs: str) -> str:
     """按解析语言取冻结文案。
 
     Args:
         key: MESSAGE_KEYS 之一(未知键 fail-safe 回落 service_unavailable)。
         language: ``resolve_answer_language`` 的解析值(zh-cn/zh/en/ja/…);
             zh 族 → 中文,其余 → 英文。
+        **kwargs: 文案占位符填充(如 ``product="NeoEye NE503"``);
+            文案无占位符时忽略。
 
     Returns:
         str: 本地化后的用户可见文案。
     """
     table = _MESSAGES.get(key, _MESSAGES[SERVICE_UNAVAILABLE_KEY])
-    return table["zh"] if language.startswith("zh") else table["en"]
+    text = table["zh"] if language.startswith("zh") else table["en"]
+    if kwargs:
+        try:
+            return text.format(**kwargs)
+        except (KeyError, IndexError):
+            return text
+    return text

@@ -42,7 +42,7 @@ def test_build_messages_page_hint_confined_to_user_section():
 @pytest.mark.unit
 async def test_stream_answer_applies_soft_boost_and_trace():
     """page_context product 线索 → rerank 后软加分:sources 顺序翻转 + trace 记录。"""
-    a = _make_sr(product="ne301", score=0.9, title="DocA", url="https://x/a")
+    a = _make_sr(product="hardware-common", score=0.9, title="DocA", url="https://x/a")  # 共享平台:对 ne503 合格但不吃 hint
     b = _make_sr(product="ne503", score=0.8, title="DocB", url="https://x/b")
     rag, _searcher, _reranker, llm = _build_orchestrator(
         searcher_results=[a, b], reranked_results=[a, b]

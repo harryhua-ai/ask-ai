@@ -28,6 +28,7 @@ PUBLIC_SR = _make_sr(
     text="NE101 由 USB-C 5V/1A 供电。",
     source_id="github-wiki/neoeyes-ne101/power.md",
     source_type="github",
+    product="ne101",  # 产品边界(契约 §5):语料标签与查询目标一致
 )
 UNKNOWN_SR = _make_sr(
     text="幽灵 chunk:疑似内部跟进记录,来源不在权威配置中。",
