@@ -31,6 +31,7 @@ from backend.connectors.safety import (
 )
 from backend.db.models import Document
 from backend.embedder.base import Embedder
+from backend.embedder.fallback import CpuFallbackError, SyncEmbedderHandle, classify_cuda_failure
 from backend.pipeline.chunk import chunk_document_semantic
 from backend.pipeline.chunk_code import LANG_MAP as _CODE_LANG_MAP
 from backend.pipeline.chunk_code import chunk_code
@@ -311,7 +312,7 @@ class IngestionPipeline:
                         self._collection.data.insert(
                             properties=_props, vector=_vec_list, uuid=_det_uuid
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001 - insert failure tries replace
                         self._collection.data.replace(
                             properties=_props, vector=_vec_list, uuid=_det_uuid
                         )
@@ -445,6 +446,10 @@ class IngestionPipeline:
                 if progress is not None:
                     progress(STAGE_EMBED, done)
                     progress(STAGE_INDEX, done)
+            except CpuFallbackError:
+                # GPU→CPU 已经是本 run 唯一允许的设备切换;CPU 再失败必须
+                # 直接成为终局错误,不能退回逐 doc 重试或重新触发回退。
+                raise
             except Exception as exc:  # noqa: BLE001 - 整批失败回退逐 doc
                 logger.error("批处理失败(start=%d): %s,回退逐 doc", start, str(exc)[:200])
                 for doc in batch:
@@ -517,23 +522,85 @@ class IngestionPipeline:
             spans.append((s, len(all_texts)))
         try:
             all_vectors = self._embedder.embed(all_texts)
-        except Exception as exc:  # noqa: BLE001 - embed 失败回退逐 doc(保留原 per-doc 行为)
-            logger.error(
-                "批量 embed 失败(%d texts): %s,回退逐 doc",
-                len(all_texts),
-                str(exc)[:200],
-            )
-            for doc, _chunks in doc_chunks:
+        except CpuFallbackError:
+            # A failed CPU transition is terminal and must not enter the
+            # existing per-document isolation path.
+            raise
+        except Exception as exc:
+            reason = classify_cuda_failure(exc)
+            if reason is not None and isinstance(self._embedder, SyncEmbedderHandle):
+                detail = f"{type(exc).__name__}: {exc}"[:500]
+                if not self._embedder.fallback_to_cpu(reason, detail):
+                    raise CpuFallbackError(
+                        f"CPU fallback unavailable after {reason}: {detail}",
+                        reason=reason,
+                        detail=detail,
+                    ) from exc
                 try:
-                    results[doc.source_id] = self.ingest_document(doc)
-                except Exception as exc2:  # noqa: BLE001
-                    logger.error("索引失败 %s: %s", doc.source_id, exc2)
-                    results[doc.source_id] = 0
-                    if failed is not None:
-                        failed.append(doc.source_id)
-            return results
+                    all_vectors = self._embedder.embed(all_texts)
+                except Exception as cpu_exc:
+                    raise CpuFallbackError(
+                        f"CPU fallback failed after {reason}: "
+                        f"{type(cpu_exc).__name__}: {cpu_exc}",
+                        reason=reason,
+                        detail=(
+                            f"{type(exc).__name__}: {exc}; CPU fallback failed: "
+                            f"{type(cpu_exc).__name__}: {cpu_exc}"
+                        ),
+                    ) from cpu_exc
+                if len(all_vectors) != len(all_texts):
+                    raise CpuFallbackError(
+                        f"CPU fallback returned {len(all_vectors)} vectors,"
+                        f" expected {len(all_texts)}",
+                        reason=reason,
+                        detail=(
+                            f"{type(exc).__name__}: {exc}; CPU fallback returned "
+                            f"{len(all_vectors)} vectors, expected {len(all_texts)}"
+                        ),
+                    )
+                logger.warning(
+                    "批量 embed GPU 故障(%s),已切换 CPU(%d docs/%d texts)",
+                    reason,
+                    len(doc_chunks),
+                    len(all_texts),
+                )
+            elif isinstance(self._embedder, SyncEmbedderHandle) and self._embedder.fallback_reason:
+                # A CPU model that was already selected after GPU fallback has
+                # no safe alternate device or retry path.  CPU failure is a
+                # real run failure, not a reason to re-encode per document.
+                fallback_reason = self._embedder.fallback_reason
+                raise CpuFallbackError(
+                    f"CPU fallback failed after {fallback_reason}: "
+                    f"{type(exc).__name__}: {exc}",
+                    reason=fallback_reason,
+                    detail=(
+                        f"{self._embedder.fallback_detail or 'GPU fallback'}; "
+                        f"CPU encode failed: {type(exc).__name__}: {exc}"
+                    ),
+                ) from exc
+            else:
+                # 非 CUDA 故障保留既有逐 doc 同设备隔离路径;绝不换设备。
+                logger.error(
+                    "批量 embed 失败(%d texts): %s,回退逐 doc",
+                    len(all_texts),
+                    str(exc)[:200],
+                )
+                for doc, _chunks in doc_chunks:
+                    try:
+                        results[doc.source_id] = self.ingest_document(doc)
+                    except Exception as exc2:  # noqa: BLE001
+                        logger.error("索引失败 %s: %s", doc.source_id, exc2)
+                        results[doc.source_id] = 0
+                        if failed is not None:
+                            failed.append(doc.source_id)
+                return results
         if len(all_vectors) != len(all_texts):
             raise RuntimeError(f"embedder 返回 {len(all_vectors)} 向量,期望 {len(all_texts)}")
+        if isinstance(self._embedder, SyncEmbedderHandle):
+            # Counts both the transition batch and subsequent sticky CPU
+            # batches; explicit CPU mode has no fallback_reason and is not
+            # counted as automatic fallback.
+            self._embedder.record_cpu_batch(len(doc_chunks))
 
         # Phase 3:构造整批对象 → 单次 insert_many(跨 doc,1 次往返)→ replace 回退 → 按 doc 统计
         self._ensure_collection()

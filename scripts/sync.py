@@ -69,6 +69,12 @@ from backend.db.session import (
     init_db,
 )
 from backend.embedder.bge import BGEEmbedder
+from backend.embedder.fallback import (
+    CpuFallbackError,
+    SyncEmbedderHandle,
+    _build_sync_embedder,
+    _terminal_sync_embedder,
+)
 from backend.pipeline.ingest import IngestionPipeline
 from backend.services.source_lifecycle import sync_eligible_condition
 from backend.services.sync_runs import (
@@ -83,7 +89,22 @@ from backend.services.sync_runs import (
 )
 from backend.services.vector_consistency import verify_source_vectors
 
+try:
+    # W2 owns this function and may not yet be present in the W1 worktree.
+    # This nullable import is only an adapter around the frozen contract; W1
+    # does not create a competing persistence or API implementation.
+    from backend.services.sync_runs import record_device
+except ImportError:  # pragma: no cover - exercised before W2 is integrated
+    record_device = None
+
 logger = logging.getLogger(__name__)
+
+
+def build_sync_embedder(settings) -> SyncEmbedderHandle:
+    """Build the sync handle through the W1 fallback factory."""
+    # Keep the existing scripts.sync.BGEEmbedder seam for offline tests while
+    # the public factory and lifecycle implementation live in backend/embedder.
+    return _build_sync_embedder(settings, BGEEmbedder)
 
 
 def _parse_weaviate_endpoint(weaviate_url: str) -> tuple[str, int]:
@@ -295,6 +316,12 @@ class _RunTelemetry:
 
     async def _do(self, coro) -> None:
         if self.run_id is None:
+            # Service calls are coroutine objects created by the thin methods
+            # below.  Close them when start telemetry did not obtain a run id,
+            # otherwise best-effort telemetry degrades into RuntimeWarnings.
+            close = getattr(coro, "close", None)
+            if callable(close):
+                close()
             return
         try:
             await coro
@@ -321,6 +348,28 @@ class _RunTelemetry:
         from backend.services.sync_runs import record_consistency
 
         await self._do(record_consistency(session_factory, self.run_id, report))
+
+    async def device(
+        self,
+        session_factory: Any,
+        *,
+        execution_device: str,
+        fallback_reason: str | None = None,
+        fallback_detail: str | None = None,
+    ) -> None:
+        """Consume W2's frozen ``record_device`` interface best-effort."""
+        if record_device is None:
+            logger.debug("W2 record_device unavailable; skipping device telemetry")
+            return
+        await self._do(
+            record_device(
+                session_factory,
+                self.run_id,
+                execution_device=execution_device,
+                fallback_reason=fallback_reason,
+                fallback_detail=fallback_detail,
+            )
+        )
 
     async def finish(
         self, session_factory: Any, *, status: str, error: str | None, sync_log_id: Any
@@ -810,6 +859,35 @@ async def _sync_one(
     )
     # Wave-0:attempt 启动即落 SyncRun 运行事实(不等同步结束);dry_run 不落。
     tel = _RunTelemetry()
+    runtime_handle = getattr(pipeline, "_embedder", None)
+    if not isinstance(runtime_handle, SyncEmbedderHandle):
+        runtime_handle = None
+    runtime_snapshot = (
+        runtime_handle.activity_snapshot() if runtime_handle is not None else None
+    )
+
+    async def _record_runtime_facts() -> None:
+        """Write facts produced by this source's real embedding activity.
+
+        The model is constructed before source discovery.  Therefore a
+        healthy GPU model plus a SHA short-circuit is not evidence of healthy
+        GPU embedding; a real encode or a real fallback event is required.
+        """
+        if runtime_handle is None or runtime_snapshot is None:
+            return
+        has_activity = runtime_handle.has_activity_since(runtime_snapshot)
+        if not has_activity and runtime_handle.fallback_reason is None:
+            return
+        await tel.device(
+            session_factory,
+            execution_device=runtime_handle.telemetry_execution_device,
+            fallback_reason=runtime_handle.fallback_reason,
+            fallback_detail=runtime_handle.fallback_detail,
+        )
+        cpu_counts = runtime_handle.cpu_counters_since(runtime_snapshot)
+        if cpu_counts["cpu_batches"] or cpu_counts["cpu_docs"]:
+            await tel.counters(session_factory, **cpu_counts)
+
     if not dry_run:
         await tel.start(
             session_factory,
@@ -999,6 +1077,7 @@ async def _sync_one(
                     await session.commit()
             except Exception as exc:  # noqa: BLE001 - SyncLog 写入失败不中断批次
                 logger.error("SyncLog 写入失败 %s: %s", cfg.id, exc)
+            await _record_runtime_facts()
             # Wave-0:SyncRun 终局(业务成败归 sync_log;completed=attempt 跑完)
             _run_status = "failed" if log_entry.status == "failed" else "completed"
             await tel.finish(
@@ -1099,11 +1178,14 @@ async def run_sync(
         session_factory = get_session_factory(engine)
         configs = await _load_configs_from_db(session_factory)
         sync_session_factory = get_sync_session_factory(settings.postgres_dsn)
-        embedder = BGEEmbedder(
-            device=settings.embedder_device,
-            batch_size=settings.embedder_batch_size,
-            max_length=settings.embedder_max_length,
-        )
+        try:
+            embedder = build_sync_embedder(settings)
+        except CpuFallbackError as exc:
+            # Keep the failed setup inside the sync process boundary so every
+            # source can receive normal failed-run accounting.  This does not
+            # retry, restart, or touch the backend online model process.
+            logger.error("同步 embedder GPU→CPU fallback 终止: %s", exc)
+            embedder = _terminal_sync_embedder(exc)
         pipeline = IngestionPipeline(
             embedder,
             weaviate_client,

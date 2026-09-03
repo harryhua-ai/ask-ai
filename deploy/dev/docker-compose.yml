@@ -32,6 +32,7 @@ x-backend-base: &backend-base
     WEAVIATE_URL: http://weaviate:8080
     WEAVIATE_CLASS_NAME: Document
     EMBEDDER_DEVICE: cuda
+    EMBEDDER_CPU_FALLBACK: "${EMBEDDER_CPU_FALLBACK:-on}"
     EMBEDDER_BATCH_SIZE: "16"
     MODEL_CACHE_DIR: /models
     HF_HOME: /models
