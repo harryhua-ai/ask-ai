@@ -1,0 +1,88 @@
+........................................................................ [  8%]
+........................................................................ [ 16%]
+........................................................................ [ 25%]
+........................................................................ [ 33%]
+........................................................................ [ 42%]
+........................................................................ [ 50%]
+........................................................................ [ 59%]
+........................................................................ [ 67%]
+........................................................................ [ 75%]
+........................................................................ [ 84%]
+........................................................................ [ 92%]
+.............................................................            [100%]
+=============================== warnings summary ===============================
+../../.venv/lib/python3.14/site-packages/slowapi/extension.py:720
+../../.venv/lib/python3.14/site-packages/slowapi/extension.py:720
+../../.venv/lib/python3.14/site-packages/slowapi/extension.py:720
+  /Users/harryhua/Documents/GitHub/ask-ai/.venv/lib/python3.14/site-packages/slowapi/extension.py:720: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    if asyncio.iscoroutinefunction(func):
+
+tests/auth/test_jwt.py::test_create_and_decode_token
+  /Users/harryhua/Documents/GitHub/ask-ai/.venv/lib/python3.14/site-packages/jwt/api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 11 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    return self._jws.encode(
+
+tests/auth/test_jwt.py::test_create_and_decode_token
+  /Users/harryhua/Documents/GitHub/ask-ai/.venv/lib/python3.14/site-packages/jwt/api_jwt.py:368: InsecureKeyLengthWarning: The HMAC key is 11 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    decoded = self.decode_complete(
+
+tests/connectors/test_web_crawl_w6_snapshot.py::test_fetch_deleted_does_not_advance_snapshot
+  tests/connectors/test_web_crawl_w6_snapshot.py:66: PytestWarning: The test <Function test_fetch_deleted_does_not_advance_snapshot> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_fetch_deleted_does_not_advance_snapshot(tmp_path, monkeypatch):
+
+tests/connectors/test_web_crawl_w6_snapshot.py::test_uncommitted_snapshot_survives_restart_and_rediscovery
+  tests/connectors/test_web_crawl_w6_snapshot.py:79: PytestWarning: The test <Function test_uncommitted_snapshot_survives_restart_and_rediscovery> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_uncommitted_snapshot_survives_restart_and_rediscovery(tmp_path, monkeypatch):
+
+tests/connectors/test_web_crawl_w6_snapshot.py::test_commit_is_noop_without_pending_snapshot
+  tests/connectors/test_web_crawl_w6_snapshot.py:96: PytestWarning: The test <Function test_commit_is_noop_without_pending_snapshot> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_commit_is_noop_without_pending_snapshot(tmp_path, monkeypatch):
+
+tests/connectors/test_web_crawl_w6_snapshot.py::test_incremental_round_never_touches_snapshot
+  tests/connectors/test_web_crawl_w6_snapshot.py:102: PytestWarning: The test <Function test_incremental_round_never_touches_snapshot> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_incremental_round_never_touches_snapshot(tmp_path, monkeypatch):
+
+tests/db/test_documents_pk.py::test_same_branch_same_content_integrity
+  <sys>:0: SAWarning: New instance <Document at 0x116e2cc30> with identity key (<class 'backend.db.models.Document'>, ('hash2', 'main'), None) conflicts with persistent instance <Document at 0x1169c3ed0>
+
+tests/pipeline/test_rag.py::test_rag_rejects_when_no_results
+tests/pipeline/test_rag.py::test_rag_stream_answer_rejects_when_empty
+tests/pipeline/test_rag.py::test_answer_passes_channel_to_searcher
+  /Users/harryhua/Documents/GitHub/ask-ai/.venv/lib/python3.14/site-packages/_pytest/stash.py:108: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    del self._storage[key]
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/scripts/test_recovery_semantics.py: 9 warnings
+tests/scripts/test_sync_executor_loop.py: 4 warnings
+tests/services/test_504_golden_regression.py: 1 warning
+  /Users/harryhua/Documents/GitHub/ask-ai/.worktrees/ingest-safety/scripts/sync_executor_loop.py:229: SAWarning: implicitly coercing SELECT object to scalar subquery; please use the .scalar_subquery() method to produce a scalar subquery.
+    .where(SyncRequest.id == subq)
+
+tests/scripts/test_sync_gap_heal.py::test_partial_chunk_loss_refills_via_refill_source_ids
+tests/scripts/test_sync_gap_heal.py::test_no_change_but_vector_gap_triggers_heal_and_partial
+tests/scripts/test_sync_gap_heal.py::test_no_change_and_healthy_keeps_success_skip
+  /Users/harryhua/Documents/GitHub/ask-ai/.worktrees/ingest-safety/scripts/sync.py:684: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    session.add(log_entry)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/services/test_clustering.py::test_cluster_groups_similar_questions
+tests/services/test_clustering.py::test_cluster_result_has_representative_question
+  /Users/harryhua/Documents/GitHub/ask-ai/.worktrees/ingest-safety/backend/services/clustering.py:190: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    session.add(db_cluster)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 10 durations =============================
+6.01s call     tests/connectors/test_web_crawl.py::test_run_stats_reports_failures_without_breaking_crawl
+4.33s call     tests/services/test_504_golden_regression.py::test_new_execution_plane_keeps_real_backend_responsive
+3.03s call     tests/services/test_504_golden_regression.py::test_old_inline_pattern_starves_event_loop
+2.21s call     tests/connectors/test_filesystem.py::test_filesystem_fetch_changes_mtime_filter
+1.09s call     tests/services/test_clustering.py::test_cluster_groups_similar_questions
+0.85s call     tests/test_lifespan_smoke.py::test_lifespan_starts_and_wires_llm_state
+0.63s call     tests/auth/test_jwt.py::test_hash_and_verify_password
+0.57s setup    tests/pipeline/test_ingest_prune_document_local.py::test_weaviate_text_equal_is_tokenized_semantics_guard
+0.55s setup    tests/pipeline/test_ingest_prune_document_local.py::test_prune_document_local_real_weaviate
+0.55s call     tests/pipeline/test_sync_lifecycle.py::test_integration_ghost_retired_exactly_on_real_weaviate
+853 passed, 32 warnings in 31.17s

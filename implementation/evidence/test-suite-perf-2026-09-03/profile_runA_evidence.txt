@@ -1,0 +1,9 @@
+=== RUN A hang evidence Thu Sep  3 11:39:56 CST 2026 ===
+pid=91230 blocked in hf_xet, test region: tests/embedder/test_bge.py integration tests
+leaked cache dir: pytest-549/test_ensure_hf_cache_sets_env_0/models/hub
+1207064793 Sep  3 11:39:47 2026 /private/var/folders/f0/f6166mt56d577_mcl_y_2xhc0000gn/T/pytest-of-harryhua/pytest-549/test_ensure_hf_cache_sets_env_0/models/hub/models--BAAI--bge-m3/blobs/1eebfb28493f67bba03ce0ef64bfdc7fc5a3bd9d7493f818bb1d78cd798416b4.incomplete
+1024000000 Sep  3 11:38:38 2026 /private/var/folders/f0/f6166mt56d577_mcl_y_2xhc0000gn/T/pytest-of-harryhua/pytest-549/test_ensure_hf_cache_sets_env_0/models/hub/models--BAAI--bge-m3/blobs/b5e0ce3470abf5ef3831aa1bd5553b486803e83251590ab7ff35a117cf6aad38.incomplete
+--- sample stack hf_xet frames ---
+390
+    +     2431 ???  (in hf_xet.abi3.so)  load address 0x31c79c000 + 0x245f98  [0x31c9e1f98]
+    +       2431 ???  (in hf_xet.abi3.so)  load address 0x31c79c000 + 0x3f1a70  [0x31cb8da70]

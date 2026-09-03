@@ -1,0 +1,28 @@
+.............................................................sss...      [100%]
+=============================== warnings summary ===============================
+../../.venv/lib/python3.14/site-packages/slowapi/extension.py:720
+../../.venv/lib/python3.14/site-packages/slowapi/extension.py:720
+../../.venv/lib/python3.14/site-packages/slowapi/extension.py:720
+  /Users/harryhua/Documents/GitHub/ask-ai/.venv/lib/python3.14/site-packages/slowapi/extension.py:720: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    if asyncio.iscoroutinefunction(func):
+
+tests/e2e/test_symbol_recall.py:27
+  /Users/harryhua/Documents/GitHub/ask-ai/.worktrees/ingest-safety/tests/e2e/test_symbol_recall.py:27: PytestUnknownMarkWarning: Unknown pytest.mark.e2e - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.e2e
+
+tests/e2e/test_symbol_recall.py:43
+  /Users/harryhua/Documents/GitHub/ask-ai/.worktrees/ingest-safety/tests/e2e/test_symbol_recall.py:43: PytestUnknownMarkWarning: Unknown pytest.mark.e2e - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.e2e
+
+tests/api/admin/test_data_source_delete_document_local.py::test_real_weaviate_delete_document_local
+  /Users/harryhua/Documents/GitHub/ask-ai/.venv/lib/python3.14/site-packages/weaviate/warnings.py:196: DeprecationWarning: Dep024: You are using the `vectorizer_config` argument in `collection.config.create()`, which is deprecated.
+              Use the `vector_config` argument instead.
+              
+    warnings.warn(
+
+tests/embedder/test_bge.py::test_embedder_produces_vectors
+  /Users/harryhua/Documents/GitHub/ask-ai/.venv/lib/python3.14/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+64 passed, 3 skipped, 997 deselected, 7 warnings in 17.91s

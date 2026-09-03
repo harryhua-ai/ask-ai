@@ -1,0 +1,172 @@
+........................................................................ [  6%]
+........................................................................ [ 13%]
+...................s.................................................... [ 20%]
+........................................................................ [ 27%]
+........................................................................ [ 33%]
+............................ss.......................................... [ 40%]
+........................................................................ [ 47%]
+........................................................................ [ 54%]
+........................................................................ [ 60%]
+........................................................................ [ 67%]
+........................................................................ [ 74%]
+........................................................................ [ 81%]
+............................................................sss......... [ 87%]
+........................................................................ [ 94%]
+........................................................                 [100%]
+=============================== warnings summary ===============================
+../../.venv/lib/python3.14/site-packages/slowapi/extension.py:720
+../../.venv/lib/python3.14/site-packages/slowapi/extension.py:720
+../../.venv/lib/python3.14/site-packages/slowapi/extension.py:720
+  /Users/harryhua/Documents/GitHub/ask-ai/.venv/lib/python3.14/site-packages/slowapi/extension.py:720: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    if asyncio.iscoroutinefunction(func):
+
+tests/e2e/test_symbol_recall.py:27
+  /Users/harryhua/Documents/GitHub/ask-ai/.worktrees/ingest-safety/tests/e2e/test_symbol_recall.py:27: PytestUnknownMarkWarning: Unknown pytest.mark.e2e - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.e2e
+
+tests/e2e/test_symbol_recall.py:43
+  /Users/harryhua/Documents/GitHub/ask-ai/.worktrees/ingest-safety/tests/e2e/test_symbol_recall.py:43: PytestUnknownMarkWarning: Unknown pytest.mark.e2e - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.e2e
+
+tests/api/admin/test_data_source_delete.py::test_purge_prefix_boundary_safe
+  tests/api/admin/test_data_source_delete.py:197: PytestWarning: The test <Function test_purge_prefix_boundary_safe> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_purge_prefix_boundary_safe(monkeypatch):
+
+tests/api/admin/test_data_source_delete_document_local.py::test_real_weaviate_delete_document_local
+  /Users/harryhua/Documents/GitHub/ask-ai/.venv/lib/python3.14/site-packages/weaviate/warnings.py:196: DeprecationWarning: Dep024: You are using the `vectorizer_config` argument in `collection.config.create()`, which is deprecated.
+              Use the `vector_config` argument instead.
+              
+    warnings.warn(
+
+tests/api/admin/test_llm_allowed_hosts.py::TestValidateApiBaseAuthz::test_unauthorized_public_host_denied_by_default
+  tests/api/admin/test_llm_allowed_hosts.py:248: PytestWarning: The test <Function test_unauthorized_public_host_denied_by_default> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_unauthorized_public_host_denied_by_default(self):
+
+tests/api/admin/test_llm_allowed_hosts.py::TestValidateApiBaseAuthz::test_authorized_public_host_allowed
+  tests/api/admin/test_llm_allowed_hosts.py:252: PytestWarning: The test <Function test_authorized_public_host_allowed> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_authorized_public_host_allowed(self):
+
+tests/api/admin/test_llm_allowed_hosts.py::TestValidateApiBaseAuthz::test_private_literal_denied_even_if_public_authorized
+  tests/api/admin/test_llm_allowed_hosts.py:258: PytestWarning: The test <Function test_private_literal_denied_even_if_public_authorized> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_private_literal_denied_even_if_public_authorized(self):
+
+tests/api/admin/test_llm_allowed_hosts.py::TestValidateApiBaseAuthz::test_private_tier_authorization_allows_private_literal
+  tests/api/admin/test_llm_allowed_hosts.py:265: PytestWarning: The test <Function test_private_tier_authorization_allows_private_literal> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_private_tier_authorization_allows_private_literal(self):
+
+tests/api/admin/test_llm_allowed_hosts.py::TestValidateApiBaseAuthz::test_cgnat_range_requires_private_tier
+  tests/api/admin/test_llm_allowed_hosts.py:271: PytestWarning: The test <Function test_cgnat_range_requires_private_tier> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_cgnat_range_requires_private_tier(self):
+
+tests/api/admin/test_llm_allowed_hosts.py::TestValidateApiBaseAuthz::test_malformed_scheme_denied_even_authorized
+  tests/api/admin/test_llm_allowed_hosts.py:276: PytestWarning: The test <Function test_malformed_scheme_denied_even_authorized> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_malformed_scheme_denied_even_authorized(self):
+
+tests/api/admin/test_llm_allowed_hosts.py::TestValidateApiBaseAuthz::test_prod_https_still_required_for_public_authorized_host
+  tests/api/admin/test_llm_allowed_hosts.py:283: PytestWarning: The test <Function test_prod_https_still_required_for_public_authorized_host> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_prod_https_still_required_for_public_authorized_host(self, monkeypatch):
+
+tests/api/admin/test_llm_allowed_hosts.py::TestValidateApiBaseAuthz::test_prod_private_authorized_host_allows_http
+  tests/api/admin/test_llm_allowed_hosts.py:291: PytestWarning: The test <Function test_prod_private_authorized_host_allows_http> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_prod_private_authorized_host_allows_http(self, monkeypatch):
+
+tests/api/admin/test_llm_allowed_hosts.py::TestValidateApiBaseAuthz::test_builtin_hosts_still_pre_authorized
+  tests/api/admin/test_llm_allowed_hosts.py:299: PytestWarning: The test <Function test_builtin_hosts_still_pre_authorized> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_builtin_hosts_still_pre_authorized(self):
+
+tests/auth/test_jwt.py::test_create_and_decode_token
+  /Users/harryhua/Documents/GitHub/ask-ai/.venv/lib/python3.14/site-packages/jwt/api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 11 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    return self._jws.encode(
+
+tests/auth/test_jwt.py::test_create_and_decode_token
+  /Users/harryhua/Documents/GitHub/ask-ai/.venv/lib/python3.14/site-packages/jwt/api_jwt.py:368: InsecureKeyLengthWarning: The HMAC key is 11 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    decoded = self.decode_complete(
+
+tests/connectors/test_web_crawl_w6_snapshot.py::test_fetch_deleted_does_not_advance_snapshot
+  tests/connectors/test_web_crawl_w6_snapshot.py:66: PytestWarning: The test <Function test_fetch_deleted_does_not_advance_snapshot> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_fetch_deleted_does_not_advance_snapshot(tmp_path, monkeypatch):
+
+tests/connectors/test_web_crawl_w6_snapshot.py::test_uncommitted_snapshot_survives_restart_and_rediscovery
+  tests/connectors/test_web_crawl_w6_snapshot.py:79: PytestWarning: The test <Function test_uncommitted_snapshot_survives_restart_and_rediscovery> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_uncommitted_snapshot_survives_restart_and_rediscovery(tmp_path, monkeypatch):
+
+tests/connectors/test_web_crawl_w6_snapshot.py::test_commit_is_noop_without_pending_snapshot
+  tests/connectors/test_web_crawl_w6_snapshot.py:96: PytestWarning: The test <Function test_commit_is_noop_without_pending_snapshot> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_commit_is_noop_without_pending_snapshot(tmp_path, monkeypatch):
+
+tests/connectors/test_web_crawl_w6_snapshot.py::test_incremental_round_never_touches_snapshot
+  tests/connectors/test_web_crawl_w6_snapshot.py:102: PytestWarning: The test <Function test_incremental_round_never_touches_snapshot> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_incremental_round_never_touches_snapshot(tmp_path, monkeypatch):
+
+tests/db/test_documents_pk.py::test_same_branch_same_content_integrity
+  <sys>:0: SAWarning: New instance <Document at 0x10d59bd80> with identity key (<class 'backend.db.models.Document'>, ('hash2', 'main'), None) conflicts with persistent instance <Document at 0x10d54fcd0>
+
+tests/embedder/test_bge.py::test_embedder_produces_vectors
+  /Users/harryhua/Documents/GitHub/ask-ai/.venv/lib/python3.14/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+    warnings.warn(
+
+tests/pipeline/test_rag.py::test_rag_rejects_when_no_results
+tests/pipeline/test_rag.py::test_rag_stream_answer_rejects_when_empty
+tests/pipeline/test_rag.py::test_answer_passes_channel_to_searcher
+  /Users/harryhua/Documents/GitHub/ask-ai/.venv/lib/python3.14/site-packages/_pytest/stash.py:108: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    del self._storage[key]
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/scripts/test_recovery_semantics.py: 9 warnings
+tests/scripts/test_sync_executor_loop.py: 4 warnings
+tests/services/test_504_golden_regression.py: 1 warning
+  /Users/harryhua/Documents/GitHub/ask-ai/.worktrees/ingest-safety/scripts/sync_executor_loop.py:229: SAWarning: implicitly coercing SELECT object to scalar subquery; please use the .scalar_subquery() method to produce a scalar subquery.
+    .where(SyncRequest.id == subq)
+
+tests/scripts/test_sync_gap_heal.py::test_partial_chunk_loss_refills_via_refill_source_ids
+tests/scripts/test_sync_gap_heal.py::test_no_change_but_vector_gap_triggers_heal_and_partial
+tests/scripts/test_sync_gap_heal.py::test_no_change_and_healthy_keeps_success_skip
+  /Users/harryhua/Documents/GitHub/ask-ai/.worktrees/ingest-safety/scripts/sync.py:684: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    session.add(log_entry)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/services/test_clustering.py::test_cluster_groups_similar_questions
+tests/services/test_clustering.py::test_cluster_result_has_representative_question
+  /Users/harryhua/Documents/GitHub/ask-ai/.worktrees/ingest-safety/backend/services/clustering.py:190: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    session.add(db_cluster)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+6.01s call     tests/connectors/test_web_crawl.py::test_run_stats_reports_failures_without_breaking_crawl
+4.37s call     tests/services/test_504_golden_regression.py::test_new_execution_plane_keeps_real_backend_responsive
+3.45s call     tests/embedder/test_bge.py::test_embedder_produces_vectors
+3.01s call     tests/services/test_504_golden_regression.py::test_old_inline_pattern_starves_event_loop
+2.21s call     tests/connectors/test_filesystem.py::test_filesystem_fetch_changes_mtime_filter
+1.54s call     tests/api/admin/test_data_source_delete_document_local.py::test_real_weaviate_delete_document_local
+1.16s call     tests/embedder/test_bge.py::test_reranker_scores_pairs
+0.99s call     tests/embedder/test_bge.py::test_reranker_single_document_returns_list
+0.84s call     tests/test_lifespan_smoke.py::test_lifespan_starts_and_wires_llm_state
+0.74s call     tests/embedder/test_bge.py::test_embedder_dimension_property
+0.69s setup    tests/api/admin/test_llm_allowed_hosts.py::test_authorize_public_host_creates_public_tier
+0.68s setup    tests/api/admin/test_leads.py::test_business_overview_new_leads_semantics
+0.67s setup    tests/api/admin/test_leads.py::test_detail_contains_contact_value
+0.67s setup    tests/api/admin/test_llm_allowed_hosts.py::test_viewer_can_list_hosts
+0.67s setup    tests/api/admin/test_llm_allowed_hosts.py::test_authorize_host_duplicate_409
+0.66s setup    tests/api/admin/test_leads.py::test_detail_404
+0.66s setup    tests/api/admin/test_llm_allowed_hosts.py::test_authorize_host_input_normalized
+0.66s setup    tests/api/admin/test_leads.py::test_handoff_role_enforced_and_idempotent
+0.66s setup    tests/api/admin/test_llm_allowed_hosts.py::test_editor_and_viewer_cannot_authorize
+0.66s setup    tests/api/admin/test_llm_allowed_hosts.py::test_revoke_host_admin_204_then_404
+0.66s call     tests/auth/test_jwt.py::test_hash_and_verify_password
+0.66s setup    tests/api/admin/test_llm_allowed_hosts.py::test_authorize_private_ip_gets_private_tier
+0.65s setup    tests/api/admin/test_llm_allowed_hosts.py::test_authorize_host_rejects_wildcard_and_empty
+0.65s setup    tests/api/admin/test_leads.py::test_list_requires_auth
+0.65s setup    tests/api/admin/test_leads.py::test_list_viewer_ok_and_masks_contact
+=========================== short test summary info ============================
+SKIPPED [1] tests/api/admin/test_sync_trigger_isolation.py:320: 测试库存在其他启用源,noop 语义需干净库,跳过
+SKIPPED [1] tests/e2e/test_symbol_recall.py:27: 需全量索引 + symbol_* 回填,设 RUN_SYMBOL_E2E=1 触发
+SKIPPED [1] tests/e2e/test_symbol_recall.py:43: 需全量索引 + symbol_* 回填,设 RUN_SYMBOL_E2E=1 触发
+SKIPPED [1] tests/scripts/test_sync_db.py:59: local_git 已移除 registry 注册(决策 2A),待迁移 github connector
+SKIPPED [1] tests/scripts/test_sync_db.py:174: local_git 已移除 registry 注册(决策 2A),待迁移 github connector
+SKIPPED [1] tests/scripts/test_sync_db.py:247: local_git 已移除 registry 注册(决策 2A),待迁移 github connector
+1058 passed, 6 skipped, 46 warnings in 84.12s (0:01:24)
+EXIT_CODE=0 WALL_SECONDS=86

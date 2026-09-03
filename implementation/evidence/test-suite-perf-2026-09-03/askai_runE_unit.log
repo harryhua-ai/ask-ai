@@ -1,0 +1,46 @@
+........................................................................ [ 12%]
+........................................................................ [ 25%]
+........................................................................ [ 38%]
+........................................................................ [ 51%]
+........................................................................ [ 64%]
+........................................................................ [ 77%]
+........................................................................ [ 90%]
+....................................................                     [100%]
+=============================== warnings summary ===============================
+../../.venv/lib/python3.14/site-packages/slowapi/extension.py:720
+../../.venv/lib/python3.14/site-packages/slowapi/extension.py:720
+../../.venv/lib/python3.14/site-packages/slowapi/extension.py:720
+  /Users/harryhua/Documents/GitHub/ask-ai/.venv/lib/python3.14/site-packages/slowapi/extension.py:720: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    if asyncio.iscoroutinefunction(func):
+
+tests/e2e/test_symbol_recall.py:27
+  /Users/harryhua/Documents/GitHub/ask-ai/.worktrees/ingest-safety/tests/e2e/test_symbol_recall.py:27: PytestUnknownMarkWarning: Unknown pytest.mark.e2e - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.e2e
+
+tests/e2e/test_symbol_recall.py:43
+  /Users/harryhua/Documents/GitHub/ask-ai/.worktrees/ingest-safety/tests/e2e/test_symbol_recall.py:43: PytestUnknownMarkWarning: Unknown pytest.mark.e2e - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.e2e
+
+tests/api/admin/test_data_source_delete_document_local.py::test_real_weaviate_delete_document_local
+  /Users/harryhua/Documents/GitHub/ask-ai/.venv/lib/python3.14/site-packages/weaviate/warnings.py:196: DeprecationWarning: Dep024: You are using the `vectorizer_config` argument in `collection.config.create()`, which is deprecated.
+              Use the `vector_config` argument instead.
+              
+    warnings.warn(
+
+tests/pipeline/test_rag.py::test_rag_rejects_when_no_results
+tests/pipeline/test_rag.py::test_rag_stream_answer_rejects_when_empty
+tests/pipeline/test_rag.py::test_answer_passes_channel_to_searcher
+  /Users/harryhua/Documents/GitHub/ask-ai/.venv/lib/python3.14/site-packages/_pytest/stash.py:108: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    del self._storage[key]
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/services/test_clustering.py::test_cluster_groups_similar_questions
+tests/services/test_clustering.py::test_cluster_result_has_representative_question
+  /Users/harryhua/Documents/GitHub/ask-ai/.worktrees/ingest-safety/backend/services/clustering.py:190: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    session.add(db_cluster)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+556 passed, 508 deselected, 11 warnings in 9.04s
