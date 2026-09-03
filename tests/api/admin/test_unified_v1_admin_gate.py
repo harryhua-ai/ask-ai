@@ -216,7 +216,7 @@ def g008_purge(monkeypatch):
         return {"ledger_chunks": 2, "orphans": 0}
 
     monkeypatch.setattr(
-        "backend.api.admin.data_sources._purge_source_corpus_sync", _fake
+        "backend.services.source_deletion.purge_source_corpus_sync", _fake
     )
     return calls
 
@@ -228,10 +228,17 @@ async def test_int_v1_g008_deleted_source_not_resurrected_by_sync(g008_seed, g00
 
     factory = app.state.session_factory
 
-    # 1) 删除 uv1g008-a(向量 purge mock,204)
+    # 1) 删除 uv1g008-a(#18:202 受理 → 后台 sweep 完成 purge 与删行)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.delete(f"/api/admin/data-sources/{_G008_A}", headers=g008_seed)
-    assert resp.status_code == 204
+    assert resp.status_code == 202
+    from backend.services.source_deletion import process_pending_deletions
+
+    settings = app.state.settings
+    processed = await process_pending_deletions(
+        factory, settings.weaviate_url, settings.weaviate_class_name
+    )
+    assert processed == [_G008_A]
     assert [c["prefix"] for c in g008_purge] == [_G008_A]
 
     # 2) 同步宇宙 = 配置表:被删源已不在(⇒ run_sync/cron/自愈都触不到它)

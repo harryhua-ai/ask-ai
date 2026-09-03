@@ -53,7 +53,18 @@ async def wild_seed():
         await session.commit()
     token = create_access_token(str(user_id), "admin", app.state.settings.jwt_secret)
     yield {"Authorization": f"Bearer {token}"}
+    # 测试卫生:清理所有 CASE 源行与账本,避免幸存 B 源(active)泄漏到
+    # 同会话后续模块(如 test_source_lifecycle 的 eligible 精确集合断言)
     async with factory() as session:
+        for a, b in CASES:
+            await session.execute(
+                DataSource.__table__.delete().where(DataSource.id.in_([a, b]))
+            )
+        await session.execute(
+            Document.__table__.delete().where(
+                Document.source_id.in_([f"{sid}/doc" for a, b in CASES for sid in (a, b)])
+            )
+        )
         await session.execute(User.__table__.delete().where(User.email == _USER_EMAIL))
         await session.commit()
 
@@ -64,9 +75,19 @@ def _mk_purge(monkeypatch, store: list):
         return {"ledger_docs": len(ledger), "orphans": 0}
 
     monkeypatch.setattr(
-        "backend.api.admin.data_sources._purge_source_corpus_sync", _fake
+        "backend.services.source_deletion.purge_source_corpus_sync", _fake
     )
     return store
+
+
+async def _process_deletions() -> list[str]:
+    """驱动后台删除 sweep(测试环境无 lifespan worker,手动推进)。"""
+    from backend.services.source_deletion import process_pending_deletions
+
+    settings = app.state.settings
+    return await process_pending_deletions(
+        app.state.session_factory, settings.weaviate_url, settings.weaviate_class_name
+    )
 
 
 async def _seed_source_and_docs(sid: str) -> None:
@@ -134,7 +155,10 @@ async def test_wildcard_id_deletion_is_literal(wild_seed, monkeypatch, src_a, sr
         resp = await client.delete(
             f"/api/admin/data-sources/{src_a}", headers=wild_seed
         )
-    assert resp.status_code == 204
+    # #18:202 受理(持久 DELETE_REQUESTED),purge 由后台 sweep 执行
+    assert resp.status_code == 202
+    processed = await _process_deletions()
+    assert processed == [src_a]
 
     # A:配置与账本清空;purge 账本精确等于 A 自己的文档
     factory = app.state.session_factory

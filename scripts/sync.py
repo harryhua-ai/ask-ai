@@ -69,6 +69,7 @@ from backend.db.session import (
 )
 from backend.embedder.bge import BGEEmbedder
 from backend.pipeline.ingest import IngestionPipeline
+from backend.services.source_lifecycle import sync_eligible_condition
 from backend.services.sync_runs import (
     STAGE_CHUNK,
     STAGE_CONSISTENCY,
@@ -123,7 +124,14 @@ async def _load_configs_from_db(session_factory: Any) -> list[SourceConfig]:
     """
     async with session_factory() as session:
         result = await session.execute(
-            select(DataSource).where(DataSource.enabled.is_(True)).order_by(DataSource.id)
+            select(DataSource)
+            .where(
+                DataSource.enabled.is_(True),
+                # #18 lifecycle deny-by-default:删除在途/失败源(含未来
+                # 未知状态)一律不进同步宇宙,防止同步复活已清理语料
+                sync_eligible_condition(),
+            )
+            .order_by(DataSource.id)
         )
         rows = result.scalars().all()
     return [to_source_config(ds) for ds in rows]
