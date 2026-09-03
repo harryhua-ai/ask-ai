@@ -3,13 +3,13 @@
 **Gate**: #11 Real Knowledge Health × #12 Persistent Realtime Sync Progress × #13 Data Integrity Stage A × #14 GPU→CPU Sync Runtime Fallback × #15 Per-source Sync History(#9 由 #12 吸收)
 **日期**: 2026-09-03
 **Executor**: SINGLE EXECUTOR(本窗口)
-**STATUS**: **CANDIDATE READY**(待 Planner FINAL REVIEW;未合 main、未部署、零生产触碰)
+**STATUS**: **CANDIDATE READY(REV 2,Correction Gate 已并入)**(待 Planner FINAL REVIEW;未合 main、未部署、零生产触碰。REV 1=`285f19a`;REV 2=Correction Gate 后 `855b88a`,见 §20)
 
 ---
 
 ## 1. STATUS
 
-CANDIDATE READY。五个已验收能力(#11/#12/#13/#14/#15)整合为单一集成候选,全部冻结语义保留、四 merge 零语义丢失、全量离线回归 1359/5/0 零失败、Admin 240 全绿、双构建绿、三迁移幂等 ×2 直跑实证。
+CANDIDATE READY(**REV 2**)。五个已验收能力(#11/#12/#13/#14/#15)整合为单一集成候选,全部冻结语义保留、四 merge 零语义丢失、全量离线回归 **1361**/5/0 零失败、Admin 240 全绿、双构建绿、三迁移幂等 ×2 直跑实证。REV 2 并入 Planner Correction Gate(#13 修复事实 → #11 Consistency 健康消费,§20);REV 1 全量数字 1359/5/0 见 §14。
 
 ## 2. AUTHORITATIVE_BASELINE
 
@@ -36,7 +36,7 @@ CANDIDATE READY。五个已验收能力(#11/#12/#13/#14/#15)整合为单一集�
 
 ## 4. FINAL_COMMIT / BRANCH / WORKTREE
 
-- **FINAL_COMMIT**: `285f19a47d0f2a4b2482e83bb28d7e6f764a2b1c`
+- **FINAL_COMMIT(REV 2)**: `855b88af98e90fbd628e8be07ca74f2d5374f4e8`(REV 1=`285f19a`+Correction `855b88a`,同分支连续)
 - **BRANCH**: `integration/sync-truth-data-integrity-20260903`(已推 origin,远端 hash 本地一致核验)
 - **WORKTREE**: `.worktrees/sync-truth-integration`(新建,保留)
 
@@ -180,7 +180,7 @@ PASS。九阶段+实时落笔+刷新恢复+终态稳定+cron NULL,代码级并�
 
 ## 16. KNOWN_LIMITATIONS(如实上报)
 
-1. **健康 Consistency 维度 vs #13 facts v2 的消费面缺口(交 Planner 裁决)**:W2 冻结的 Consistency 派生只消费 `missing/orphan_count/verification_failed`;#13 的 `repair_required/duplicate_doc_count/polluted_artifact_chunks` 已持久化且经 /sync-runs 历史完整可见,但**不会翻转健康维度**。这不是矛盾或静默丢弃(两契约各自语义完好、事实全暴露),但"账本污染存在"时健康可能仍显示 HEALTHY。若 Planner 要求污染可见于健康,需一次**显式的语义扩展裁决**(属 Product 语义变化,本门按"Integration only"原则不擅自扩展)。
+1. ~~**健康 Consistency 维度 vs #13 facts v2 的消费面缺口(交 Planner 裁决)**~~ **已由 REV 2 Correction Gate 闭环(§20)**:REV 1 按 Integration-only 原则如实上报未擅自扩展;Planner 裁决 PARTIAL(唯一 blocker)后,`_consistency_dim` 已消费 repair_required/polluted_artifact_chunks(→degraded→overall ACTION_REQUIRED),duplicate_doc_count 保持信息事实。
 2. **共享 ask_ai_test 顺序瞬态**(基线既有,W2 报告 §8.7 已记):focused 首跑 test_documents_pk 1 失败,隔离复跑+全量复跑均绿。权威数字以全量离线跑为准。
 3. **`bb45dd7`(#14 docs 提交)未合入**:见 §3 裁决记录;#14 报告以嵌套 docs 仓为权威。
 4. **生产 .env 需在部署窗口补 `EMBEDDER_CPU_FALLBACK`**(缺省=on,不补也不改变行为;显式声明便于运维审计)。
@@ -207,3 +207,32 @@ PASS。九阶段+实时落笔+刷新恢复+终态稳定+cron NULL,代码级并�
 ## 19. PRODUCTION_MUTATIONS
 
 **NONE。** 本门全程零生产触碰:无部署、无生产迁移、无 corpus/vector 变更、无 repair、无源变更、无 CUDA 故障注入、无 force-recreate。§17 为纯文档计划。
+
+---
+
+## 20. REV 2 — Correction Gate:#13 Consistency Facts → #11 Knowledge Health
+
+**Planner verdict**: PARTIAL,唯一 integration blocker = §16-1 缺口(本报告如实上报项被裁决为必改):`missing=0/orphan=0/polluted>0/repair_required=true` 状态下 Consistency=ok、overall=HEALTHY,违反集成后 #11/#13 真值契约。
+
+**修正提交**: `855b88a`(同分支连续,PREVIOUS=`285f19a`;未重做集成、未动无关行为)。
+
+**精确修正**(`backend/api/admin/sync_runs.py::_consistency_dim`,唯一实现改动):
+- 保留:verification_failed 最优先(unknown)/missing+orphan 语义(degraded)/读时派生/无快照/无自由文本解析/overall precedence 原封(#14 设备遥测仍不影响健康);
+- 新增消费:`polluted_artifact_chunks>0` ∨ `repair_required=true` → 维度 **degraded**(经既有 `consistency=="degraded" → ACTION_REQUIRED` 聚合升级,**聚合零改动**);evidence 如实暴露结构化事实(污染数+待修标志+duplicate 信息事实);
+- 明确不健康化:`duplicate_doc_count>0` 单独(#13 D2 合法共存,信息事实);`retired_chunks/repaired_ledger_rows`(本轮已处置量,非未决问题)。
+
+**新增测试**(共 2 文件 +3 用例,全绿):
+- `test_sync_health_pure.py::test_8`:A(polluted+repair→degraded→overall ACTION_REQUIRED)/B(duplicate-only→ok,信息入 evidence)/C(无 #13 键 evidence 逐字不变)/D(verification_failed 优先级不变,polluted 在场仍 unknown)+2 边界(repair_required 无 polluted 键防御→degraded;retired/repaired 处置量→ok);
+- `test_sync_health_derivation.py::test_3`:端点级端到端(真实 DB 源+SyncRun facts v2 → /sync-health → consistency degraded+overall ACTION_REQUIRED,且 freshness=fresh 在场——证明升级不依赖 STALE)。
+
+**REV 2 验证**:
+| 项 | 结果 |
+|---|---|
+| 健康 focused(pure+derivation) | 8+3 全绿 |
+| #13 consistency-facts focused | facts_v2/rebuild/documents_pk/ledger 全绿 |
+| W2 相关(sync_runs_api/runtime_facts/progress/core) | 单文件 10+全绿;一跨文件顺序 9-error 经 stash 在 REV 1 复现同错 → **基线既有共享库顺序卫生项**(同 §14 瞬态类),非修正引入 |
+| 全量后端离线 | **1361 passed / 5 skipped / 0 failed**(45.19s;=REV 1 的 1359+新增 2 精确并集) |
+| Admin vitest | 240 全绿(API shape 未变,state 词表复用既有 degraded) |
+| lint | ruff 消 C408 ×2(一处基线既有一并清);black py312 ✓;`git diff --check` ✓ |
+
+**REV 2 交付物**:分支同前(FINAL_COMMIT=`855b88a`,远端一致核验);**PRODUCTION_MUTATIONS 仍为 NONE**。
