@@ -70,4 +70,20 @@ describe("SourceHealthPanel", () => {
     expect(screen.getByText("缺失 2")).toBeInTheDocument();
     expect(screen.getByText("孤儿 3")).toBeInTheDocument();
   });
+
+  it("校验失败后缀不并入孤儿事实行(整体呈现)", () => {
+    // consistencyDimension 在 verification_failed 时 evidence 带后缀
+    // "；校验失败"——拆分正则不得把它吞进「孤儿」值里。
+    render(
+      <SourceHealthPanel
+        connectivity={dimension("UNKNOWN", null)}
+        sync={dimension("UNKNOWN", null)}
+        coverage={dimension("UNKNOWN", null)}
+        freshness={dimension("UNKNOWN", null)}
+        consistency={dimension("UNKNOWN", "缺失 2，孤儿 3；校验失败")}
+      />,
+    );
+    expect(screen.getByText("缺失 2，孤儿 3；校验失败")).toBeInTheDocument();
+    expect(screen.queryByText("孤儿 3；校验失败")).not.toBeInTheDocument();
+  });
 });

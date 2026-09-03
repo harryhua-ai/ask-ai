@@ -37,7 +37,13 @@ export type SyncStage =
   | "CONSISTENCY"
   | "DONE";
 
-export type ExecutionDevice = "GPU" | "CPU" | "UNKNOWN" | string;
+/**
+ * W2 execution_device 原始串。后端下发的是设备原文(如 "cuda"/"cpu",
+ * GPU→CPU 降级伴随 fallback_reason/fallback_detail 字段),不保证封闭枚举,
+ * 故类型为 string——展示层由 deviceLabel() 归一为 GPU/CPU/原文。
+ * 已知归一值:GPU / CPU / UNKNOWN。
+ */
+export type ExecutionDevice = string;
 
 export interface SyncCounters {
   docs_total?: number | null;

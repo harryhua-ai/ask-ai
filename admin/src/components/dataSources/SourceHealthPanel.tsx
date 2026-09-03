@@ -35,7 +35,9 @@ function withEvidenceState(dimension: SourceHealthDimension): SourceHealthDimens
 
 function Evidence({ dimension, separateConsistencyFacts = false }: { dimension: SourceHealthDimension; separateConsistencyFacts?: boolean }) {
   if (!dimension.evidence) return <p className="text-sm text-muted-foreground">证据不足</p>;
-  const facts = separateConsistencyFacts && dimension.evidence.match(/^缺失 (.+)，孤儿 (.+)$/);
+  // 仅拆分纯「缺失/孤儿」事实；带后缀(如 "；校验失败")时整体呈现,
+  // 避免把后缀吞进孤儿值(孤儿行出现 "3；校验失败" 的误读)。
+  const facts = separateConsistencyFacts && dimension.evidence.match(/^缺失 (.+)，孤儿 ([^；]+)$/);
   if (facts) {
     return <div className="space-y-1 text-sm text-muted-foreground"><p>缺失 {facts[1]}</p><p>孤儿 {facts[2]}</p></div>;
   }
