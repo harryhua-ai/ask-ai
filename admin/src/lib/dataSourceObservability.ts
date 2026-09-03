@@ -1,11 +1,4 @@
-import type {
-  DataSource,
-  SourceHealthDimension,
-  SyncRun,
-  SyncState,
-  SyncStatusItem,
-} from "@/types/api";
-import type { SourceHealthItem } from "@/lib/api/techInsight";
+import type { SyncRun, SyncState, SyncStatusItem } from "@/types/api";
 
 const STATE_LABELS: Record<string, string> = {
   QUEUED: "排队中",
@@ -29,6 +22,42 @@ const STAGE_LABELS: Record<string, string> = {
   CONSISTENCY: "一致性校验",
   DONE: "完成",
 };
+
+// --------------------------------------------------------------------------- //
+// #11 Health Authority:W2 /sync-health 是五维健康唯一权威。前端对 state 只做
+// 「本地化」,不重判、不改写、不派生第二健康态;未知词表原文透传。
+// 维度级(小写)与 overall(大写)词表以 W2 后端实现为准。
+// --------------------------------------------------------------------------- //
+
+const HEALTH_STATE_LABELS: Record<string, string> = {
+  // 维度级(W2 _dim 词表)
+  ok: "正常",
+  healthy: "健康",
+  degraded: "降级",
+  critical: "严重",
+  failed: "失败",
+  stale: "过期",
+  fresh: "新鲜",
+  partial: "部分覆盖",
+  unknown: "未知",
+  insufficient_data: "证据不足",
+  // overall(W2 _overall_health 词表)
+  HEALTHY: "健康",
+  RECOVERING: "恢复中",
+  STALE: "过期",
+  ACTION_REQUIRED: "需处理",
+  PARTIAL: "部分",
+  DEGRADED: "降级",
+  INSUFFICIENT_DATA: "证据不足",
+  EXCLUDED: "已排除",
+  EMPTY_UNEXPECTED: "意外为空",
+  EMPTY_EXPECTED: "预期为空",
+};
+
+export function healthStateLabel(state: string | null | undefined): string {
+  if (!state) return "未知状态";
+  return HEALTH_STATE_LABELS[state] ?? state;
+}
 
 export function stateLabel(state: string | null | undefined): string {
   return (state && STATE_LABELS[state]) ?? "未知状态";
@@ -99,165 +128,4 @@ export function deviceLabel(device: string | null | undefined): string {
 
 export function fallbackLabel(reason: string | null | undefined): string | null {
   return reason ? `降级原因：${reason}` : null;
-}
-
-const UNKNOWN: SourceHealthDimension = { state: "UNKNOWN", evidence: null, as_of: null };
-type HealthDimensions = Record<"connectivity" | "sync" | "coverage" | "freshness" | "consistency", SourceHealthDimension>;
-const LEGACY_HEALTH_STATES: Record<string, SourceHealthDimension["state"]> = {
-  healthy: "HEALTHY",
-  degraded: "DEGRADED",
-  critical: "CRITICAL",
-  disabled: "DISABLED",
-  insufficient_data: "INSUFFICIENT_DATA",
-};
-
-function legacyDimension(sourceHealth: SourceHealthItem | undefined): SourceHealthDimension {
-  if (!sourceHealth) return { ...UNKNOWN };
-  const state = LEGACY_HEALTH_STATES[sourceHealth.health] ?? "UNKNOWN";
-  return {
-    state,
-    evidence: `窗口内同步 ${sourceHealth.success_syncs}/${sourceHealth.total_syncs} 次成功`,
-    as_of: sourceHealth.last_sync,
-  };
-}
-
-function latestRunTime(run: SyncRun | undefined): string | null {
-  return run?.finished_at ?? run?.started_at ?? null;
-}
-
-function connectivityDimension(latestRun: SyncRun | undefined): SourceHealthDimension {
-  if (!latestRun) return { ...UNKNOWN };
-  const asOf = latestRunTime(latestRun);
-  const displayState = syncRunDisplayState(latestRun.status);
-  const connectorFailures = latestRun.counters?.failed;
-  const error = latestRun.error_summary ?? latestRun.sync_log?.error_detail;
-  const phase = stageLabel(latestRun.stage);
-  const hasConnectivityError = !!error && /connect|network|timeout|dns|http|fetch|github|sitemap|连接|网络|超时/i.test(error);
-
-  if (displayState === "FAILED" && (latestRun.stage === "DISCOVER" || latestRun.stage === "FETCH" || hasConnectivityError)) {
-    return {
-      state: "CRITICAL",
-      evidence: `连接失败证据：${phase}${error ? ` · ${error}` : ""}`,
-      as_of: asOf,
-    };
-  }
-  if (typeof connectorFailures === "number" && connectorFailures > 0) {
-    return {
-      state: "DEGRADED",
-      evidence: `连接器失败 ${connectorFailures} 项${error ? ` · ${error}` : ""}`,
-      as_of: asOf,
-    };
-  }
-  if (displayState === "COMPLETED") {
-    return { state: "HEALTHY", evidence: "最近运行已完成连接阶段", as_of: asOf };
-  }
-  if (displayState === "FAILED" && latestRun.stage) {
-    return {
-      state: "HEALTHY",
-      evidence: `失败发生于${phase}，未归因为连接阶段`,
-      as_of: asOf,
-    };
-  }
-  return { ...UNKNOWN };
-}
-
-function coverageDimension(source: DataSource, sourceHealth: SourceHealthItem | undefined): SourceHealthDimension {
-  if (!sourceHealth || !Number.isFinite(sourceHealth.doc_count) || !Number.isFinite(sourceHealth.chunk_count)) {
-    return { ...UNKNOWN };
-  }
-  const evidence = `文档 ${sourceHealth.doc_count}，分块 ${sourceHealth.chunk_count}`;
-  if (!source.enabled) return { state: "DISABLED", evidence, as_of: sourceHealth.last_sync };
-  return {
-    state: sourceHealth.doc_count > 0 && sourceHealth.chunk_count > 0 ? "HEALTHY" : "DEGRADED",
-    evidence,
-    as_of: sourceHealth.last_sync,
-  };
-}
-
-function intervalMilliseconds(interval: string): number | null {
-  const match = interval.match(/^(\d+)([hm])$/);
-  if (!match) return null;
-  const amount = Number(match[1]);
-  if (!Number.isFinite(amount) || amount <= 0) return null;
-  return amount * (match[2] === "h" ? 60 * 60 * 1000 : 60 * 1000);
-}
-
-function durationThresholdLabel(milliseconds: number): string {
-  const hours = milliseconds / (60 * 60 * 1000);
-  return Number.isInteger(hours) ? `${hours}小时` : `${milliseconds / (60 * 1000)}分钟`;
-}
-
-function successfulSyncTime(
-  source: DataSource,
-  sourceHealth: SourceHealthItem | undefined,
-  latestRun: SyncRun | undefined,
-): string | null {
-  if (latestRun?.sync_log?.status === "success" && latestRun.finished_at) return latestRun.finished_at;
-  if (sourceHealth?.last_sync_status === "success" && sourceHealth.last_sync) return sourceHealth.last_sync;
-  if (source.last_sync_status === "success" && source.last_sync) return source.last_sync;
-  return null;
-}
-
-function freshnessDimension(
-  source: DataSource,
-  sourceHealth: SourceHealthItem | undefined,
-  latestRun: SyncRun | undefined,
-  now: Date,
-): SourceHealthDimension {
-  const lastSuccess = successfulSyncTime(source, sourceHealth, latestRun);
-  if (!lastSuccess) return { ...UNKNOWN };
-  const interval = intervalMilliseconds(source.sync_interval);
-  const successTime = new Date(lastSuccess).getTime();
-  if (interval === null || !Number.isFinite(successTime)) {
-    return { state: "UNKNOWN", evidence: `最近成功同步 ${lastSuccess}，同步间隔证据无效`, as_of: now.toISOString() };
-  }
-  const threshold = interval * 2;
-  const fresh = now.getTime() - successTime <= threshold;
-  return {
-    state: fresh ? "HEALTHY" : "DEGRADED",
-    evidence: `最近成功同步 ${lastSuccess}，阈值 ${durationThresholdLabel(threshold)}`,
-    as_of: now.toISOString(),
-  };
-}
-
-function consistencyDimension(latestRun: SyncRun | undefined): SourceHealthDimension {
-  if (!latestRun?.consistency) return { ...UNKNOWN };
-  const facts = extractConsistencyFacts(latestRun);
-  const evidence = facts.missing !== null || facts.orphan !== null
-    ? `缺失 ${facts.missing ?? "未知"}，孤儿 ${facts.orphan ?? "未知"}`
-    : null;
-  if (latestRun.consistency.verification_failed) {
-    return {
-      state: "UNKNOWN",
-      evidence: evidence ? `${evidence}；校验失败` : "一致性校验失败",
-      as_of: latestRunTime(latestRun),
-    };
-  }
-  if (!evidence) return { ...UNKNOWN };
-  return {
-    state: (facts.missing ?? 0) > 0 || (facts.orphan ?? 0) > 0 ? "DEGRADED" : "HEALTHY",
-    evidence,
-    as_of: latestRunTime(latestRun),
-  };
-}
-
-export function deriveSourceHealth(
-  source: DataSource,
-  sourceHealth?: SourceHealthItem,
-  latestRun?: SyncRun,
-  activeStatus?: SyncStatusItem,
-  now = new Date(),
-): HealthDimensions {
-  const sync = legacyDimension(sourceHealth);
-  const isRecovering = activeStatus?.state === "RECOVERING" || activeStatus?.recovering === true;
-  const activeSync = isRecovering && sync.evidence
-    ? { ...sync, state: "RECOVERING" as const }
-    : sync;
-  return {
-    connectivity: connectivityDimension(latestRun),
-    sync: activeSync,
-    coverage: coverageDimension(source, sourceHealth),
-    freshness: freshnessDimension(source, sourceHealth, latestRun, now),
-    consistency: consistencyDimension(latestRun),
-  };
 }

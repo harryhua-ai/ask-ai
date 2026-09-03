@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { fetchSourceHealth } from "@/lib/api/techInsight";
 import { splitIntoBatches } from "@/utils/upload";
-import type { DataSource, PreviewDir, SyncRunList, SyncStatusResponse } from "@/types/api";
+import type { DataSource, PreviewDir, SyncHealthResponse, SyncRunList, SyncStatusResponse } from "@/types/api";
 
 export interface SyncRunParams {
   status?: string;
@@ -13,6 +13,19 @@ export interface SyncRunParams {
 
 export function fetchSyncStatus(): Promise<SyncStatusResponse> {
   return apiFetch<SyncStatusResponse>("/sync-status");
+}
+
+/** #11 Health Authority:W2 /sync-health 是五维健康唯一权威读模型。 */
+export function fetchSyncHealth(): Promise<SyncHealthResponse> {
+  return apiFetch<SyncHealthResponse>("/sync-health");
+}
+
+export function useSyncHealth(options?: { refetchInterval?: number | false }) {
+  return useQuery({
+    queryKey: ["sync-health"],
+    queryFn: fetchSyncHealth,
+    refetchInterval: options?.refetchInterval,
+  });
 }
 
 export function fetchSyncRuns(sourceId: string, params: SyncRunParams = {}): Promise<SyncRunList> {

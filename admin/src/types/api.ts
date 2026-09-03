@@ -122,12 +122,36 @@ export interface SyncRunList {
   size: number;
 }
 
-export type SourceHealthState = "HEALTHY" | "DEGRADED" | "CRITICAL" | "DISABLED" | "RECOVERING" | "UNKNOWN" | "INSUFFICIENT_DATA";
+// --------------------------------------------------------------------------- //
+// W2 /sync-health(#11 Health Authority):五维健康唯一权威读模型。
+// state 为后端权威词表原文(维度级小写 ok/healthy/degraded/critical/failed/
+// stale/fresh/partial/unknown/insufficient_data;overall 大写聚合词表);
+// 前端只本地化呈现,绝不重判或派生第二健康态。
+// --------------------------------------------------------------------------- //
 
-export interface SourceHealthDimension {
-  state: SourceHealthState;
+export interface SyncHealthDimension {
+  state: string;
   evidence: string | null;
   as_of: string | null;
+}
+
+export interface SyncHealthItem {
+  source_id: string;
+  source_type: string;
+  enabled: boolean;
+  expected_state: string;
+  overall: string;
+  recovering: boolean;
+  document_count: number | null;
+  connectivity: SyncHealthDimension;
+  sync: SyncHealthDimension;
+  coverage: SyncHealthDimension;
+  freshness: SyncHealthDimension;
+  consistency: SyncHealthDimension;
+}
+
+export interface SyncHealthResponse {
+  items: SyncHealthItem[];
 }
 
 /** GitHub 数据源 config 形状(统一 git 类型:clone + fetch+reset + API SHA 感知)。 */

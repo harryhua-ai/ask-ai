@@ -13,6 +13,7 @@ import {
   useTriggerSync,
   useTriggerSyncAll,
   useSourceHealth,
+  useSyncHealth,
   useSyncRuns,
   useSyncStatus,
   fetchPreviewBranches,
@@ -28,8 +29,7 @@ import { DirPicker } from "@/components/DirPicker";
 import { SourceHealthPanel } from "@/components/dataSources/SourceHealthPanel";
 import { SyncHistoryPanel } from "@/components/dataSources/SyncHistoryPanel";
 import { SyncStatusPanel } from "@/components/dataSources/SyncStatusPanel";
-import { deriveSourceHealth } from "@/lib/dataSourceObservability";
-import type { DataSource, SyncStatusItem } from "@/types/api";
+import type { DataSource, SyncHealthItem, SyncStatusItem } from "@/types/api";
 import type { SourceHealthItem } from "@/lib/api/techInsight";
 import { toast } from "sonner";
 import { toUploadItems, filterByWhitelist, isJunkPath } from "@/utils/upload";
@@ -355,21 +355,17 @@ function isBackendActive(status: SyncStatusItem | undefined): status is SyncStat
 
 function SourceObservabilityDetails({
   source,
-  health,
+  syncHealth,
   activeStatus,
   expanded,
 }: {
   source: DataSource;
-  health?: SourceHealthItem;
+  /** #11 Health Authority:W2 /sync-health 权威条目,面板直呈,前端不重判 */
+  syncHealth?: SyncHealthItem;
   activeStatus?: SyncStatusItem;
   expanded: boolean;
 }) {
   const runsQuery = useSyncRuns(source.id, { enabled: expanded });
-  const latestRun = runsQuery.data?.items[0];
-  const dimensions = useMemo(
-    () => deriveSourceHealth(source, health, latestRun, activeStatus),
-    [source, health, latestRun, activeStatus],
-  );
 
   if (!expanded && !activeStatus) return null;
   const historyError = runsQuery.error instanceof Error
@@ -391,14 +387,7 @@ function SourceObservabilityDetails({
                 error={historyError}
                 onRetry={() => runsQuery.refetch()}
               />
-              <SourceHealthPanel
-                connectivity={dimensions.connectivity}
-                sync={dimensions.sync}
-                coverage={dimensions.coverage}
-                freshness={dimensions.freshness}
-                consistency={dimensions.consistency}
-                activeState={activeStatus?.state}
-              />
+              <SourceHealthPanel health={syncHealth} />
             </>
           )}
         </div>
@@ -429,6 +418,14 @@ export default function DataSources() {
   const healthMap = useMemo(
     () => new Map((healthData?.items ?? []).map((h) => [h.source_id, h])),
     [healthData],
+  );
+  // #11 Health Authority:五维健康唯一权威 = W2 /sync-health(只读直呈,前端不重判)
+  const { data: syncHealthData } = useSyncHealth({
+    refetchInterval: hasActiveSyncs ? 5000 : false,
+  });
+  const syncHealthMap = useMemo(
+    () => new Map((syncHealthData?.items ?? []).map((h) => [h.source_id, h])),
+    [syncHealthData],
   );
   const createDs = useCreateDataSource();
   const updateDs = useUpdateDataSource();
@@ -1178,7 +1175,7 @@ export default function DataSources() {
             </TableRow>
             <SourceObservabilityDetails
               source={ds}
-              health={health}
+              syncHealth={syncHealthMap.get(ds.id)}
               activeStatus={activeStatus}
               expanded={isExpanded}
             />

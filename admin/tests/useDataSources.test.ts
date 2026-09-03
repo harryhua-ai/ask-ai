@@ -4,8 +4,10 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import {
+  fetchSyncHealth,
   fetchSyncRuns,
   fetchSyncStatus,
+  useSyncHealth,
   useSyncRuns,
   useSyncStatus,
   useTriggerSync,
@@ -28,6 +30,15 @@ describe("data source observability API hooks", () => {
     vi.mocked(apiFetch).mockResolvedValue({ items: [] });
     await fetchSyncStatus();
     expect(apiFetch).toHaveBeenCalledWith("/sync-status");
+  });
+
+  it("uses the frozen /sync-health authority path (#11)", async () => {
+    vi.mocked(apiFetch).mockResolvedValue({ items: [] });
+    await fetchSyncHealth();
+    expect(apiFetch).toHaveBeenCalledWith("/sync-health");
+    const hook = renderHook(() => useSyncHealth(), { wrapper });
+    await waitFor(() => expect(hook.result.current.isSuccess).toBe(true));
+    expect(hook.result.current.data).toEqual({ items: [] });
   });
 
   it("URL-encodes source and optional run filters", async () => {

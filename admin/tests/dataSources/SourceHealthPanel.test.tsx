@@ -1,89 +1,98 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { SourceHealthPanel } from "@/components/dataSources/SourceHealthPanel";
-import type { SourceHealthDimension } from "@/types/api";
+import type { SyncHealthItem } from "@/types/api";
 
 afterEach(cleanup);
 
-const dimension = (state: SourceHealthDimension["state"], evidence: string | null): SourceHealthDimension => ({
+// W2 /sync-health 权威条目形态(词表/evidence 均按后端原文)
+const dim = (state: string, evidence: string | null = "evidence text", as_of: string | null = null) => ({
   state,
   evidence,
-  as_of: "2026-09-03T01:02:03Z",
+  as_of,
 });
 
-describe("SourceHealthPanel", () => {
-  it("呈现五个健康维度的状态、证据和截至时间", () => {
-    render(
-      <SourceHealthPanel
-        connectivity={dimension("HEALTHY", "数据源已启用")}
-        sync={dimension("DEGRADED", "窗口内同步 3/4 次成功")}
-        coverage={dimension("HEALTHY", "文档 12，分块 42")}
-        freshness={dimension("HEALTHY", "最近同步 2026-09-03T01:02:03Z")}
-        consistency={dimension("DEGRADED", "缺失 2，孤儿 3")}
-      />,
-    );
-    for (const label of ["连接", "同步", "覆盖", "新鲜度", "一致性", "健康", "降级", "数据源已启用", "窗口内同步 3/4 次成功", "截至 2026-09-03T01:02:03Z"]) {
-      expect(screen.getAllByText(label, { exact: false }).length).toBeGreaterThan(0);
+const health = (overrides: Partial<SyncHealthItem> = {}): SyncHealthItem => ({
+  source_id: "website-camthink",
+  source_type: "web_crawl",
+  enabled: true,
+  expected_state: "REQUIRED",
+  overall: "HEALTHY",
+  recovering: false,
+  document_count: 12,
+  connectivity: dim("ok", "latest run #8 completed@DONE"),
+  sync: dim("healthy", "24/25 syncs succeeded in 30d"),
+  coverage: dim("ok", "extracted=50/50 accepted"),
+  freshness: dim("fresh", "last success 3600s ago (threshold=7200s)"),
+  consistency: dim("ok", "missing=0, extra_orphan=0 (expected=42, actual=42)"),
+  ...overrides,
+});
+
+describe("SourceHealthPanel(#11 Health Authority:W2 /sync-health 直呈)", () => {
+  it("renders the five dimensions and overall exactly as the backend states them", () => {
+    render(<SourceHealthPanel health={health()} />);
+    for (const label of ["连接", "同步", "覆盖", "新鲜度", "一致性"]) {
+      expect(screen.getByRole("heading", { name: label })).toBeInTheDocument();
     }
+    // 后端状态词表 → 本地化徽章(不得改判)
+    expect(screen.getAllByText("正常").length).toBe(3);        // connectivity/coverage/consistency ok
+    expect(screen.getAllByText("健康").length).toBe(2);        // sync healthy + overall HEALTHY
+    // 后端 evidence 原文逐字呈现
+    expect(screen.getByText("last success 3600s ago (threshold=7200s)")).toBeInTheDocument();
+    expect(screen.getByText("24/25 syncs succeeded in 30d")).toBeInTheDocument();
   });
 
-  it("将 RECOVERING 作为同步健康的覆盖态", () => {
+  it("does not override backend UNKNOWN states into another health state", () => {
     render(
       <SourceHealthPanel
-        activeState="RECOVERING"
-        connectivity={dimension("HEALTHY", "数据源已启用")}
-        sync={dimension("CRITICAL", "上一轮失败")}
-        coverage={dimension("HEALTHY", "文档 12")}
-        freshness={dimension("HEALTHY", "最近同步")}
-        consistency={dimension("HEALTHY", "缺失 0，孤儿 0")}
+        health={health({
+          overall: "INSUFFICIENT_DATA",
+          connectivity: dim("unknown", null),
+          coverage: dim("unknown", "no sync_runs evidence"),
+          freshness: dim("unknown", null),
+        })}
       />,
     );
+    // UNKNOWN 徽章保持「未知」,不被前端改判为「证据不足」状态
+    expect(screen.getAllByText("未知").length).toBe(3);
+    // overall INSUFFICIENT_DATA 徽章 + 2 个 evidence 空占位,均为「证据不足」
+    expect(screen.getAllByText("证据不足").length).toBe(3);
+  });
+
+  it("presents backend RECOVERING without frontend synthesis", () => {
+    render(
+      <SourceHealthPanel
+        health={health({ overall: "RECOVERING", recovering: true, sync: dim("degraded", "12/25 syncs succeeded in 30d") })}
+      />,
+    );
+    // 恢复中只能来自后端 overall/state,面板原样呈现
     expect(screen.getByText("恢复中")).toBeInTheDocument();
-    expect(screen.getByText("上一轮失败")).toBeInTheDocument();
+    expect(screen.getByText("降级")).toBeInTheDocument();
   });
 
-  it("没有证据时不保留健康状态", () => {
+  it("localizes backend STALE freshness without recomputing thresholds", () => {
     render(
       <SourceHealthPanel
-        connectivity={dimension("HEALTHY", null)}
-        sync={dimension("UNKNOWN", null)}
-        coverage={dimension("UNKNOWN", null)}
-        freshness={dimension("UNKNOWN", null)}
-        consistency={dimension("UNKNOWN", null)}
+        health={health({ overall: "STALE", freshness: dim("stale", "no successful sync on record") })}
       />,
     );
-    expect(screen.queryByText("健康", { exact: true })).not.toBeInTheDocument();
-    expect(screen.getAllByText("证据不足").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("过期").length).toBe(2); // overall STALE + freshness stale
+    expect(screen.getByText("no successful sync on record")).toBeInTheDocument();
   });
 
-  it("对不足证据提供明确提示，并将缺失与孤儿事实分开显示", () => {
+  it("passes unknown backend vocabulary through verbatim (no reinterpretation)", () => {
     render(
       <SourceHealthPanel
-        connectivity={dimension("INSUFFICIENT_DATA", null)}
-        sync={dimension("UNKNOWN", null)}
-        coverage={dimension("UNKNOWN", null)}
-        freshness={dimension("UNKNOWN", null)}
-        consistency={dimension("DEGRADED", "缺失 2，孤儿 3")}
+        health={health({ connectivity: dim("vendor_future_state", "mystery evidence") })}
       />,
     );
-    expect(screen.getAllByText("证据不足").length).toBeGreaterThan(0);
-    expect(screen.getByText("缺失 2")).toBeInTheDocument();
-    expect(screen.getByText("孤儿 3")).toBeInTheDocument();
+    expect(screen.getByText("vendor_future_state")).toBeInTheDocument();
+    expect(screen.getByText("mystery evidence")).toBeInTheDocument();
   });
 
-  it("校验失败后缀不并入孤儿事实行(整体呈现)", () => {
-    // consistencyDimension 在 verification_failed 时 evidence 带后缀
-    // "；校验失败"——拆分正则不得把它吞进「孤儿」值里。
-    render(
-      <SourceHealthPanel
-        connectivity={dimension("UNKNOWN", null)}
-        sync={dimension("UNKNOWN", null)}
-        coverage={dimension("UNKNOWN", null)}
-        freshness={dimension("UNKNOWN", null)}
-        consistency={dimension("UNKNOWN", "缺失 2，孤儿 3；校验失败")}
-      />,
-    );
-    expect(screen.getByText("缺失 2，孤儿 3；校验失败")).toBeInTheDocument();
-    expect(screen.queryByText("孤儿 3；校验失败")).not.toBeInTheDocument();
+  it("shows an honest empty state when the backend provides no health item", () => {
+    render(<SourceHealthPanel />);
+    expect(screen.getByText("暂无健康数据(等待后端 /sync-health 提供)")).toBeInTheDocument();
+    expect(screen.queryByText("连接")).not.toBeInTheDocument();
   });
 });

@@ -1,76 +1,76 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { SourceHealthDimension, SyncState } from "@/types/api";
+import { healthStateLabel } from "@/lib/dataSourceObservability";
+import type { SyncHealthDimension, SyncHealthItem } from "@/types/api";
 
 export interface SourceHealthPanelProps {
-  connectivity: SourceHealthDimension;
-  sync: SourceHealthDimension;
-  coverage: SourceHealthDimension;
-  freshness: SourceHealthDimension;
-  consistency: SourceHealthDimension;
-  activeState?: SyncState | null;
+  /** W2 /sync-health 权威条目;后端未提供时如实呈现「暂无健康数据」。 */
+  health?: SyncHealthItem;
 }
 
-const healthLabels: Record<SourceHealthDimension["state"], string> = {
-  HEALTHY: "健康",
-  DEGRADED: "降级",
-  CRITICAL: "严重",
-  DISABLED: "已禁用",
-  RECOVERING: "恢复中",
-  UNKNOWN: "未知",
-  INSUFFICIENT_DATA: "证据不足",
-};
+/**
+ * #11 Health Authority:本面板是 W2 `/sync-health` 的**直呈视图**。
+ * state 徽章 = 后端词表本地化;evidence/as_of 原样展示;
+ * 前端不做任何健康重判(无 regex 分类、无阈值派生、无状态覆盖、
+ * 不从 /sync-status 注入 RECOVERING——恢复中由后端 overall/state 表达)。
+ */
 
-function healthVariant(state: SourceHealthDimension["state"]): "secondary" | "success" | "warning" | "destructive" | "outline" {
-  if (state === "HEALTHY") return "success";
-  if (state === "DEGRADED" || state === "RECOVERING") return "warning";
-  if (state === "CRITICAL") return "destructive";
-  if (state === "UNKNOWN" || state === "INSUFFICIENT_DATA") return "outline";
+function healthVariant(state: string): "secondary" | "success" | "warning" | "destructive" | "outline" {
+  // 仅配色映射(呈现层),不改状态语义
+  if (["ok", "healthy", "fresh"].includes(state)) return "success";
+  if (["degraded", "partial", "stale"].includes(state)) return "warning";
+  if (["failed", "critical"].includes(state)) return "destructive";
+  if (["unknown", "insufficient_data"].includes(state)) return "outline";
   return "secondary";
 }
 
-function withEvidenceState(dimension: SourceHealthDimension): SourceHealthDimension {
-  return dimension.evidence ? dimension : { ...dimension, state: "INSUFFICIENT_DATA" };
+function overallVariant(state: string): "secondary" | "success" | "warning" | "destructive" | "outline" {
+  if (state === "HEALTHY") return "success";
+  if (["RECOVERING", "STALE", "PARTIAL", "DEGRADED"].includes(state)) return "warning";
+  if (state === "ACTION_REQUIRED") return "destructive";
+  if (["INSUFFICIENT_DATA", "EXCLUDED", "EMPTY_UNEXPECTED", "EMPTY_EXPECTED"].includes(state)) return "outline";
+  return "secondary";
 }
 
-function Evidence({ dimension, separateConsistencyFacts = false }: { dimension: SourceHealthDimension; separateConsistencyFacts?: boolean }) {
-  if (!dimension.evidence) return <p className="text-sm text-muted-foreground">证据不足</p>;
-  // 仅拆分纯「缺失/孤儿」事实；带后缀(如 "；校验失败")时整体呈现,
-  // 避免把后缀吞进孤儿值(孤儿行出现 "3；校验失败" 的误读)。
-  const facts = separateConsistencyFacts && dimension.evidence.match(/^缺失 (.+)，孤儿 ([^；]+)$/);
-  if (facts) {
-    return <div className="space-y-1 text-sm text-muted-foreground"><p>缺失 {facts[1]}</p><p>孤儿 {facts[2]}</p></div>;
-  }
-  return <p className="text-sm text-muted-foreground">{dimension.evidence}</p>;
-}
-
-function DimensionCard({ label, dimension, separateConsistencyFacts }: { label: string; dimension: SourceHealthDimension; separateConsistencyFacts?: boolean }) {
+function DimensionCard({ label, dimension }: { label: string; dimension: SyncHealthDimension }) {
   return (
     <div className="rounded-lg border border-border p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
         <h4 className="font-medium">{label}</h4>
-        <Badge variant={healthVariant(dimension.state)}>{healthLabels[dimension.state]}</Badge>
+        <Badge variant={healthVariant(dimension.state)}>{healthStateLabel(dimension.state)}</Badge>
       </div>
-      <Evidence dimension={dimension} separateConsistencyFacts={separateConsistencyFacts} />
+      {/* evidence 原样直呈;为空时仅占位提示,不改写状态徽章 */}
+      {dimension.evidence ? (
+        <p className="text-sm text-muted-foreground">{dimension.evidence}</p>
+      ) : (
+        <p className="text-sm text-muted-foreground">证据不足</p>
+      )}
       {dimension.as_of && <p className="mt-2 text-xs text-muted-foreground">截至 {dimension.as_of}</p>}
     </div>
   );
 }
 
-export function SourceHealthPanel({ connectivity, sync, coverage, freshness, consistency, activeState }: SourceHealthPanelProps) {
-  const displayedSync = activeState === "RECOVERING" && sync.evidence
-    ? { ...sync, state: "RECOVERING" as const }
-    : withEvidenceState(sync);
-
+export function SourceHealthPanel({ health }: SourceHealthPanelProps) {
   return (
     <Card>
-      <CardHeader className="p-4"><CardTitle className="text-base">数据源健康</CardTitle></CardHeader>
-      <CardContent className="grid gap-3 p-4 pt-0 sm:grid-cols-2 lg:grid-cols-5">
-        <DimensionCard label="连接" dimension={withEvidenceState(connectivity)} />
-        <DimensionCard label="同步" dimension={displayedSync} />
-        <DimensionCard label="覆盖" dimension={withEvidenceState(coverage)} />
-        <DimensionCard label="新鲜度" dimension={withEvidenceState(freshness)} />
-        <DimensionCard label="一致性" dimension={withEvidenceState(consistency)} separateConsistencyFacts />
+      <CardHeader className="flex-row items-center justify-between space-y-0 p-4">
+        <CardTitle className="text-base">数据源健康</CardTitle>
+        {health && (
+          <Badge variant={overallVariant(health.overall)}>{healthStateLabel(health.overall)}</Badge>
+        )}
+      </CardHeader>
+      <CardContent className="p-4 pt-0">
+        {health ? (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <DimensionCard label="连接" dimension={health.connectivity} />
+            <DimensionCard label="同步" dimension={health.sync} />
+            <DimensionCard label="覆盖" dimension={health.coverage} />
+            <DimensionCard label="新鲜度" dimension={health.freshness} />
+            <DimensionCard label="一致性" dimension={health.consistency} />
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">暂无健康数据(等待后端 /sync-health 提供)</p>
+        )}
       </CardContent>
     </Card>
   );

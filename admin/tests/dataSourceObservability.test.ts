@@ -1,52 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
-  deriveSourceHealth,
   deviceLabel,
   extractConsistencyFacts,
   fallbackLabel,
   formatDuration,
+  healthStateLabel,
   progressPercent,
   shortCircuitSummary,
   stageLabel,
   stateLabel,
   syncRunDisplayState,
 } from "@/lib/dataSourceObservability";
-import type { DataSource, SyncRun } from "@/types/api";
-import type { SourceHealthItem } from "@/lib/api/techInsight";
-
-const legacyHealth = (health: string): SourceHealthItem => ({
-  source_id: "source-a",
-  source_type: "github",
-  product: "NE503",
-  enabled: true,
-  doc_count: 10,
-  chunk_count: 20,
-  window_days: 30,
-  total_syncs: 4,
-  success_syncs: 3,
-  partial_syncs: 0,
-  failed_syncs: 1,
-  sync_success_rate: 0.75,
-  health,
-  last_sync: "2026-09-03T01:02:03Z",
-  last_sync_status: "success",
-  last_sync_error: null,
-});
-
-const source = (overrides: Partial<DataSource> = {}): DataSource => ({
-  id: "source-a",
-  type: "github",
-  product: "NE503",
-  enabled: true,
-  config: {},
-  sync_interval: "1h",
-  created_at: "2026-09-01T00:00:00Z",
-  updated_at: "2026-09-01T00:00:00Z",
-  last_sync: null,
-  last_sync_status: null,
-  last_sync_error: null,
-  ...overrides,
-});
+import type { SyncRun } from "@/types/api";
 
 describe("data source observability view models", () => {
   it("为每个 canonical state 和 stage 提供中文标签", () => {
@@ -102,147 +67,48 @@ describe("data source observability view models", () => {
     expect(syncRunDisplayState("vendor_future_status")).toBeNull();
   });
 
-  it("returns unknown health dimensions when a source has no evidence", () => {
-    const health = deriveSourceHealth(
-      source({ id: "empty-source" }),
-      undefined,
-      undefined,
-      undefined,
-      new Date("2026-09-03T04:00:00Z"),
-    );
-    expect(Object.keys(health)).toEqual(["connectivity", "sync", "coverage", "freshness", "consistency"]);
-    expect(Object.values(health).every((dimension) =>
-      dimension.state === "UNKNOWN" || dimension.state === "INSUFFICIENT_DATA")).toBe(true);
-  });
+  // ------------------------------------------------------------------ //
+  // #11 Health Authority:前端只本地化 W2 /sync-health 的状态词表,
+  //     不重判、不改写;未知词表原文透传(绝不映射成另一种健康态)。
+  // ------------------------------------------------------------------ //
 
-  it("derives each health dimension only from its frozen evidence", () => {
-    const latestRun: SyncRun = {
-      id: 8,
-      source_id: "source-a",
-      triggered_by: "manual",
-      request_id: 42,
-      attempt: 1,
-      recovery: false,
-      status: "failed",
-      started_at: "2026-09-03T03:00:00Z",
-      finished_at: "2026-09-03T03:01:00Z",
-      duration_seconds: 60,
-      stage: "FETCH",
-      counters: { failed: 1 },
-      consistency: { missing: 2, orphan_count: 3 },
-      execution_device: "cpu",
-      fallback_reason: "CUDA unavailable",
-      fallback_detail: "CUDAOutOfMemoryError",
-      error_summary: "connector timeout",
-      sync_log: {
-        status: "failed",
-        items_new: 0,
-        chunks_written: 0,
-        items_deleted: 0,
-        items_unchanged: 0,
-        error_detail: "connector timeout",
-      },
-    };
-    const health = deriveSourceHealth(
-      source({ last_sync: "2026-09-03T01:02:03Z", last_sync_status: "success" }),
-      legacyHealth("degraded"),
-      latestRun,
-      undefined,
-      new Date("2026-09-03T04:00:00Z"),
-    );
-
-    expect(health.connectivity.state).toBe("CRITICAL");
-    expect(health.connectivity.evidence).toContain("connector timeout");
-    expect(health.sync.state).toBe("DEGRADED");
-    expect(health.coverage).toEqual({
-      state: "HEALTHY",
-      evidence: "文档 10，分块 20",
-      as_of: "2026-09-03T01:02:03Z",
-    });
-    expect(health.freshness.state).toBe("DEGRADED");
-    expect(health.freshness.evidence).toContain("阈值 2小时");
-    expect(health.consistency.state).toBe("DEGRADED");
-    expect(health.consistency.evidence).toBe("缺失 2，孤儿 3");
-  });
-
-  it("uses a recent run error as connectivity evidence even after a later phase", () => {
-    const health = deriveSourceHealth(
-      source(),
-      undefined,
-      {
-        id: 9,
-        source_id: "source-a",
-        triggered_by: "cron",
-        request_id: null,
-        attempt: 1,
-        recovery: false,
-        status: "failed",
-        started_at: "2026-09-03T03:00:00Z",
-        finished_at: "2026-09-03T03:01:00Z",
-        duration_seconds: 60,
-        stage: "PARSE",
-        counters: null,
-        consistency: null,
-        execution_device: null,
-        fallback_reason: null,
-        fallback_detail: null,
-        error_summary: "network timeout",
-        sync_log: null,
-      },
-    );
-    expect(health.connectivity.state).toBe("CRITICAL");
-    expect(health.connectivity.evidence).toContain("network timeout");
-  });
-
-  it("uses twice the source interval for freshness without inventing a timestamp", () => {
-    const health = deriveSourceHealth(
-      source({ sync_interval: "30m", last_sync: "2026-09-03T03:15:00Z", last_sync_status: "success" }),
-      undefined,
-      undefined,
-      undefined,
-      new Date("2026-09-03T04:00:00Z"),
-    );
-    expect(health.freshness.state).toBe("HEALTHY");
-    expect(health.freshness.evidence).toContain("阈值 1小时");
-  });
-
-  it("keeps recovery explicit over every prior health state and preserves evidence", () => {
-    for (const priorState of ["healthy", "degraded", "critical", "disabled", "insufficient_data"]) {
-      const health = deriveSourceHealth(
-        source(),
-        legacyHealth(priorState),
-        undefined,
-        {
-          source_id: "source-a",
-          state: "RECOVERING",
-          request_id: 42,
-          attempt: 2,
-          recovering: true,
-          stage: "FETCH",
-          stage_current: null,
-          stage_total: null,
-          counters: null,
-          execution_device: null,
-          started_at: "2026-09-03T01:00:00Z",
-          updated_at: "2026-09-03T01:00:01Z",
-        },
-      );
-      expect(health.sync).toEqual({
-        state: "RECOVERING",
-        evidence: `窗口内同步 3/4 次成功`,
-        as_of: "2026-09-03T01:02:03Z",
-      });
+  it("localizes the W2 dimension-level health states", () => {
+    for (const [state, label] of [
+      ["ok", "正常"],
+      ["healthy", "健康"],
+      ["degraded", "降级"],
+      ["critical", "严重"],
+      ["failed", "失败"],
+      ["stale", "过期"],
+      ["fresh", "新鲜"],
+      ["partial", "部分覆盖"],
+      ["unknown", "未知"],
+      ["insufficient_data", "证据不足"],
+    ] as const) {
+      expect(healthStateLabel(state)).toBe(label);
     }
   });
 
-  it("maps an unknown legacy health state to UNKNOWN", () => {
-    expect(deriveSourceHealth(
-      source(),
-      legacyHealth("vendor_future_state"),
-    ).sync).toEqual({
-      state: "UNKNOWN",
-      evidence: "窗口内同步 3/4 次成功",
-      as_of: "2026-09-03T01:02:03Z",
-    });
+  it("localizes the W2 overall health vocabulary", () => {
+    for (const [state, label] of [
+      ["HEALTHY", "健康"],
+      ["RECOVERING", "恢复中"],
+      ["STALE", "过期"],
+      ["ACTION_REQUIRED", "需处理"],
+      ["PARTIAL", "部分"],
+      ["DEGRADED", "降级"],
+      ["INSUFFICIENT_DATA", "证据不足"],
+      ["EXCLUDED", "已排除"],
+      ["EMPTY_UNEXPECTED", "意外为空"],
+      ["EMPTY_EXPECTED", "预期为空"],
+    ] as const) {
+      expect(healthStateLabel(state)).toBe(label);
+    }
+  });
+
+  it("passes unknown backend health states through verbatim without reinterpretation", () => {
+    expect(healthStateLabel("vendor_future_state")).toBe("vendor_future_state");
+    expect(healthStateLabel("")).toBe("未知状态");
+    expect(healthStateLabel(null)).toBe("未知状态");
   });
 });

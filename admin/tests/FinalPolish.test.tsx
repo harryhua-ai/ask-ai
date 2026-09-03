@@ -31,6 +31,7 @@ vi.mock("@/hooks/useDataSources", () => ({
   useTriggerSync: () => ({ mutate: vi.fn(), isPending: false }),
   useTriggerSyncAll: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSourceHealth: () => ({ data: undefined, isLoading: false }),
+  useSyncHealth: () => ({ data: undefined, isLoading: false }),
   useSyncStatus: () => ({ data: { items: [] }, isLoading: false }),
   useSyncRuns: () => ({ data: undefined, isLoading: false, error: null, refetch: vi.fn() }),
   usePreviewDirs: () => ({ data: { dirs: [] }, isLoading: false, error: null }),

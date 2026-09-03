@@ -9,6 +9,7 @@ import {
   fetchPreviewFileTypes,
   useTriggerSyncAll,
   useSourceHealth,
+  useSyncHealth,
   useSyncRuns,
   useSyncStatus,
 } from "@/hooks/useDataSources";
@@ -40,6 +41,7 @@ vi.mock("@/hooks/useDataSources", () => ({
   useTriggerSync: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useTriggerSyncAll: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   useSourceHealth: vi.fn(() => ({ data: undefined, isLoading: false })),
+  useSyncHealth: vi.fn(() => ({ data: undefined, isLoading: false })),
   useSyncStatus: vi.fn(() => ({ data: { items: [] }, isLoading: false })),
   useSyncRuns: vi.fn(() => ({
     data: undefined,
@@ -57,6 +59,7 @@ beforeEach(() => {
   vi.mocked(useTriggerSync).mockReturnValue({ mutate: vi.fn(), isPending: false });
   vi.mocked(useTriggerSyncAll).mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   vi.mocked(useSourceHealth).mockReturnValue({ data: undefined, isLoading: false });
+  vi.mocked(useSyncHealth).mockReturnValue({ data: undefined, isLoading: false });
   vi.mocked(useSyncStatus).mockReturnValue({ data: { items: [] }, isLoading: false });
   vi.mocked(useSyncRuns).mockReturnValue({
     data: undefined,
@@ -798,10 +801,14 @@ const dshHealth = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-function renderWithHealth(sources: unknown[], items: unknown[] | undefined) {
+function renderWithHealth(sources: unknown[], items: unknown[] | undefined, syncHealthItems?: unknown[]) {
   vi.mocked(useDataSources).mockReturnValue({ data: sources as never, isLoading: false });
   vi.mocked(useSourceHealth).mockReturnValue({
     data: items ? { items: items as never, days: 30 } : undefined,
+    isLoading: false,
+  });
+  vi.mocked(useSyncHealth).mockReturnValue({
+    data: syncHealthItems ? { items: syncHealthItems as never } : undefined,
     isLoading: false,
   });
   const qc = new QueryClient();
@@ -852,9 +859,24 @@ describe("DSH 数据源健康语义", () => {
       refetch: vi.fn(),
     }));
 
+    const syncHealthItem = {
+      source_id: "website-camthink",
+      source_type: "web_crawl",
+      enabled: true,
+      expected_state: "REQUIRED",
+      overall: "HEALTHY",
+      recovering: false,
+      document_count: 12,
+      connectivity: { state: "ok", evidence: "latest run #8 completed@DONE", as_of: null },
+      sync: { state: "healthy", evidence: "24/25 syncs succeeded in 30d", as_of: null },
+      coverage: { state: "ok", evidence: "extracted=50/50 accepted", as_of: null },
+      freshness: { state: "fresh", evidence: "last success 3600s ago", as_of: null },
+      consistency: { state: "ok", evidence: "missing=0, extra_orphan=0", as_of: null },
+    };
     renderWithHealth(
       [dshSource({ last_sync: "2026-09-03T01:02:03Z", last_sync_status: "success" })],
       [dshHealth({ last_sync: "2026-09-03T01:02:03Z" })],
+      [syncHealthItem],
     );
 
     expect(useSyncRuns).toHaveBeenCalledWith("website-camthink", { enabled: false });
@@ -875,6 +897,43 @@ describe("DSH 数据源健康语义", () => {
     }
     expect(screen.getAllByText("缺失 2").length).toBeGreaterThan(0);
     expect(screen.getAllByText("孤儿 3").length).toBeGreaterThan(0);
+  });
+
+  it("#11 Health Authority:五维面板由 /sync-health 驱动,前端不重判状态", () => {
+    const syncHealthItem = {
+      source_id: "website-camthink",
+      source_type: "web_crawl",
+      enabled: true,
+      expected_state: "REQUIRED",
+      overall: "STALE",
+      recovering: false,
+      document_count: 12,
+      connectivity: { state: "ok", evidence: "latest run #8 completed@DONE", as_of: "2026-09-03T01:00:00Z" },
+      sync: { state: "insufficient_data", evidence: "1/1 syncs in 30d (<3)", as_of: null },
+      coverage: { state: "unknown", evidence: "no sync_runs evidence", as_of: null },
+      freshness: { state: "stale", evidence: "no successful sync on record", as_of: null },
+      consistency: { state: "ok", evidence: "missing=0, extra_orphan=0", as_of: null },
+    };
+    renderWithHealth(
+      [dshSource({ last_sync: "2026-09-03T01:02:03Z", last_sync_status: "success" })],
+      [dshHealth({ last_sync: "2026-09-03T01:02:03Z" })],
+      [syncHealthItem],
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看可观测性" }));
+
+    // overall 由后端给:STALE → 过期(前端只本地化)
+    expect(screen.getByText("数据源健康")).toBeInTheDocument();
+    expect(screen.getAllByText("过期").length).toBe(2); // overall + freshness
+    // 后端词表逐维本地化,UNKNOWN 不被改判
+    expect(screen.getByText("未知")).toBeInTheDocument();          // coverage unknown
+    expect(screen.getByText("证据不足")).toBeInTheDocument();      // sync insufficient_data
+    // evidence 原文直呈
+    expect(screen.getByText("no successful sync on record")).toBeInTheDocument();
+    expect(screen.getByText("no sync_runs evidence")).toBeInTheDocument();
+    // 前端不再派生:旧的本地推导文案不得出现
+    expect(screen.queryByText("阈值 2小时")).not.toBeInTheDocument();
+    expect(screen.queryByText("文档 75，分块 1200")).not.toBeInTheDocument();
   });
 
   it("G001 健康:当前成功 + 历史 96%(窗口/分母可见)+ 内容数", () => {
