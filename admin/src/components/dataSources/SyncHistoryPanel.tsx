@@ -7,8 +7,9 @@ import {
   fallbackLabel,
   formatDuration,
   stateLabel,
+  syncRunDisplayState,
 } from "@/lib/dataSourceObservability";
-import type { SyncRun, SyncRunList } from "@/types/api";
+import type { SyncRun, SyncRunList, SyncState } from "@/types/api";
 
 export interface SyncHistoryPanelProps {
   runs: SyncRunList | undefined;
@@ -17,7 +18,13 @@ export interface SyncHistoryPanelProps {
   onRetry?: () => void;
 }
 
-function stateVariant(state: SyncRun["state"]): "secondary" | "success" | "warning" | "destructive" | "outline" {
+const SYNC_LOG_STATUS_LABELS: Record<string, string> = {
+  success: "成功",
+  partial: "补齐",
+  failed: "失败",
+};
+
+function stateVariant(state: SyncState | null): "secondary" | "success" | "warning" | "destructive" | "outline" {
   if (state === "COMPLETED") return "success";
   if (state === "RUNNING" || state === "RECOVERING") return "warning";
   if (state === "FAILED" || state === "INTERRUPTED") return "destructive";
@@ -26,14 +33,17 @@ function stateVariant(state: SyncRun["state"]): "secondary" | "success" | "warni
 }
 
 function TechnicalEvidence({ run }: { run: SyncRun }) {
-  if (run.id == null && run.request_id == null && !run.error_summary) return null;
   return (
     <details className="rounded-md border border-border p-2 text-xs text-muted-foreground">
       <summary className="cursor-pointer font-medium text-foreground">技术证据</summary>
       <div className="mt-2 space-y-1 font-mono break-all">
         <p>run_id: {run.id}</p>
         {run.request_id != null && <p>request_id: {run.request_id}</p>}
+        {run.attempt != null && <p>attempt: {run.attempt}</p>}
+        {run.recovery != null && <p>recovery: {String(run.recovery)}</p>}
         {run.error_summary && <p>{run.error_summary}</p>}
+        {run.fallback_detail && <p>{run.fallback_detail}</p>}
+        {run.sync_log?.error_detail && <p>{run.sync_log.error_detail}</p>}
       </div>
     </details>
   );
@@ -41,29 +51,36 @@ function TechnicalEvidence({ run }: { run: SyncRun }) {
 
 function RunCard({ run }: { run: SyncRun }) {
   const counters = run.counters;
+  const syncLog = run.sync_log;
   const facts = extractConsistencyFacts(run);
-  const duration = formatDuration(run.started_at, run.finished_at);
+  const duration = run.duration_seconds != null
+    ? formatDuration(run.duration_seconds * 1000)
+    : formatDuration(run.started_at, run.finished_at);
   const fallback = fallbackLabel(run.fallback_reason);
-  const documentSummary = counters?.docs_total != null
-    ? `文档 ${counters.docs_total}`
-    : counters?.docs_processed != null
-      ? `已处理文档 ${counters.docs_processed}`
-      : null;
+  const displayState = syncRunDisplayState(run.status);
+  const businessStatus = syncLog?.status
+    ? (SYNC_LOG_STATUS_LABELS[syncLog.status] ?? syncLog.status)
+    : null;
 
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between space-y-0 p-4">
         <CardTitle className="text-sm">同步记录</CardTitle>
-        <Badge variant={stateVariant(run.state)}>{stateLabel(run.state)}</Badge>
+        <Badge variant={stateVariant(displayState)}>{stateLabel(displayState)}</Badge>
       </CardHeader>
       <CardContent className="space-y-2 p-4 pt-0 text-sm">
         <div className="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
-          {documentSummary && <span>{documentSummary}</span>}
-          {counters?.chunks_written != null && <span>分块 {counters.chunks_written}</span>}
+          {run.started_at && <span>开始 {run.started_at}</span>}
+          {run.triggered_by && <span>触发 {run.triggered_by}</span>}
+          {businessStatus && <span>{`业务结果：${businessStatus}`}</span>}
+          {syncLog?.items_new != null && <span>新增文档 {syncLog.items_new}</span>}
+          {syncLog?.items_deleted != null && <span>删除文档 {syncLog.items_deleted}</span>}
+          {syncLog?.items_unchanged != null && <span>未变更文档 {syncLog.items_unchanged}</span>}
+          {syncLog?.chunks_written != null && <span>分块 {syncLog.chunks_written}</span>}
           {counters?.chunks_deleted != null && <span>已删除分块 {counters.chunks_deleted}</span>}
           {facts.missing != null && <span>缺失 {facts.missing}</span>}
           {facts.orphan != null && <span>孤儿 {facts.orphan}</span>}
-          {run.device && <span>{deviceLabel(run.device)}</span>}
+          {run.execution_device && <span>{deviceLabel(run.execution_device)}</span>}
           {duration !== "未知" && <span>用时 {duration}</span>}
         </div>
         {fallback && <p className="text-muted-foreground">{fallback}</p>}

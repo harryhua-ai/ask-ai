@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { Fragment, useState, useMemo } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import LoadError from "@/components/LoadError";
 import { useForm } from "react-hook-form";
@@ -13,6 +13,8 @@ import {
   useTriggerSync,
   useTriggerSyncAll,
   useSourceHealth,
+  useSyncRuns,
+  useSyncStatus,
   fetchPreviewBranches,
   fetchPreviewFileTypes,
   uploadSourceFiles,
@@ -23,7 +25,11 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { DirPicker } from "@/components/DirPicker";
-import type { DataSource } from "@/types/api";
+import { SourceHealthPanel } from "@/components/dataSources/SourceHealthPanel";
+import { SyncHistoryPanel } from "@/components/dataSources/SyncHistoryPanel";
+import { SyncStatusPanel } from "@/components/dataSources/SyncStatusPanel";
+import { deriveSourceHealth } from "@/lib/dataSourceObservability";
+import type { DataSource, SyncStatusItem } from "@/types/api";
 import type { SourceHealthItem } from "@/lib/api/techInsight";
 import { toast } from "sonner";
 import { toUploadItems, filterByWhitelist, isJunkPath } from "@/utils/upload";
@@ -341,16 +347,84 @@ function dsToForm(ds: DataSource): FormValues {
   };
 }
 
+const ACTIVE_SYNC_STATES = new Set(["QUEUED", "WAITING", "RUNNING", "RECOVERING"]);
+
+function isBackendActive(status: SyncStatusItem | undefined): status is SyncStatusItem {
+  return !!status && ACTIVE_SYNC_STATES.has(status.state);
+}
+
+function SourceObservabilityDetails({
+  source,
+  health,
+  activeStatus,
+  expanded,
+}: {
+  source: DataSource;
+  health?: SourceHealthItem;
+  activeStatus?: SyncStatusItem;
+  expanded: boolean;
+}) {
+  const runsQuery = useSyncRuns(source.id, { enabled: expanded });
+  const latestRun = runsQuery.data?.items[0];
+  const dimensions = useMemo(
+    () => deriveSourceHealth(source, health, latestRun, activeStatus),
+    [source, health, latestRun, activeStatus],
+  );
+
+  if (!expanded && !activeStatus) return null;
+  const historyError = runsQuery.error instanceof Error
+    ? runsQuery.error.message
+    : runsQuery.error
+      ? "同步历史加载失败"
+      : null;
+
+  return (
+    <TableRow>
+      <TableCell colSpan={8} className="bg-muted/20">
+        <div className="space-y-4 py-2">
+          {activeStatus && <SyncStatusPanel status={activeStatus} />}
+          {expanded && (
+            <>
+              <SyncHistoryPanel
+                runs={runsQuery.data}
+                isLoading={runsQuery.isLoading}
+                error={historyError}
+                onRetry={() => runsQuery.refetch()}
+              />
+              <SourceHealthPanel
+                connectivity={dimensions.connectivity}
+                sync={dimensions.sync}
+                coverage={dimensions.coverage}
+                freshness={dimensions.freshness}
+                consistency={dimensions.consistency}
+                activeState={activeStatus?.state}
+              />
+            </>
+          )}
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+}
+
 export default function DataSources() {
-  const [syncingIds, setSyncingIds] = useState<Set<string>>(() => new Set());
-  const [triggeredAt, setTriggeredAt] = useState<Record<string, number>>(() => ({}));
+  const { data: syncStatus } = useSyncStatus({ refetchInterval: 5000 });
+  const activeStatusMap = useMemo(
+    () => new Map(
+      (syncStatus?.items ?? [])
+        .filter(isBackendActive)
+        .map((status) => [status.source_id, status]),
+    ),
+    [syncStatus],
+  );
+  const hasActiveSyncs = activeStatusMap.size > 0;
   const { data: sources, isLoading, isError, error, refetch } = useDataSources({
-    refetchInterval: syncingIds.size > 0 ? 5000 : false,
+    refetchInterval: hasActiveSyncs ? 5000 : false,
   });
   // DSH-02:数据源健康的主展示位。窗口 30 天历史可靠性按 source_id join 当前列表;
   // 同步进行中与列表同节奏 5s 轮询,同步完成后健康态即时跟进。
   const { data: healthData } = useSourceHealth({
-    refetchInterval: syncingIds.size > 0 ? 5000 : false,
+    refetchInterval: hasActiveSyncs ? 5000 : false,
   });
   const healthMap = useMemo(
     () => new Map((healthData?.items ?? []).map((h) => [h.source_id, h])),
@@ -367,6 +441,7 @@ export default function DataSources() {
   const [branchLoading, setBranchLoading] = useState(false);
   const [branchError, setBranchError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [fetchedBranches, setFetchedBranches] = useState<string[]>([]);
   const [syncCustom, setSyncCustom] = useState(false);
   const [pickedFiles, setPickedFiles] = useState<File[]>([]);
@@ -605,94 +680,23 @@ export default function DataSources() {
   };
 
   const handleSync = (ds: DataSource) => {
-    setSyncingIds((prev) => new Set(prev).add(ds.id));
-    setTriggeredAt((prev) => ({ ...prev, [ds.id]: Date.now() }));
     triggerSync.mutate(ds.id);
+  };
+
+  const toggleObservability = (id: string) => {
+    setExpandedIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   const canWrite =
     user?.role === "admin" || user?.role === "editor";
   const handleSyncAll = async () => {
-    // 后端顺序同步所有启用源(一个后台任务,避免并发 GPU OOM);
-    // 把返回的 source_ids 批量入 syncingIds + triggeredAt,复用现有轮询逐个检测完成。
-    const data = await triggerSyncAll.mutateAsync();
-    if (data.count === 0) return;
-    const now = Date.now();
-    setSyncingIds((prev) => {
-      const next = new Set(prev);
-      data.source_ids.forEach((id) => next.add(id));
-      return next;
-    });
-    setTriggeredAt((prev) => {
-      const next = { ...prev };
-      data.source_ids.forEach((id) => {
-        next[id] = now;
-      });
-      return next;
-    });
+    await triggerSyncAll.mutateAsync();
   };
-
-  // 后端 trigger_sync 为 fire-and-forget,需轮询 list 检测 last_sync 推进以判定结束;
-  // 再按 last_sync_status 区分成功/失败/补齐(partial),失败/补齐时带 error_detail。
-  useEffect(() => {
-    if (syncingIds.size === 0) return;
-    const now = Date.now();
-    const completed: string[] = [];
-    const failed: { id: string; error: string | null }[] = [];
-    const partial: { id: string; error: string | null }[] = [];
-    const stale: string[] = [];
-    for (const id of syncingIds) {
-      const ds = sources?.find((s) => s.id === id);
-      const ts = ds?.last_sync ? new Date(ds.last_sync).getTime() : 0;
-      const triggered = triggeredAt[id] ?? 0;
-      if (ts && ts > triggered) {
-        // last_sync 推进 → 同步尝试已结束,按 status 区分成功/失败/补齐
-        if (ds?.last_sync_status === "failed") {
-          failed.push({ id, error: ds.last_sync_error ?? null });
-        } else if (ds?.last_sync_status === "partial") {
-          partial.push({ id, error: ds.last_sync_error ?? null });
-        } else {
-          completed.push(id);
-        }
-      } else if (now - triggered > 5 * 60 * 1000) {
-        stale.push(id);
-      }
-    }
-    if (completed.length > 0) {
-      completed.forEach((id) => toast.success(`同步完成:${id}`));
-      setSyncingIds((prev) => {
-        const next = new Set(prev);
-        completed.forEach((id) => next.delete(id));
-        return next;
-      });
-    }
-    if (failed.length > 0) {
-      failed.forEach(({ id, error }) => toast.error(`同步失败:${error || id}`));
-      setSyncingIds((prev) => {
-        const next = new Set(prev);
-        failed.forEach(({ id }) => next.delete(id));
-        return next;
-      });
-    }
-    if (partial.length > 0) {
-      partial.forEach(({ id, error }) =>
-        toast.warning(`同步完成(补齐缺口):${error ?? id}`),
-      );
-      setSyncingIds((prev) => {
-        const next = new Set(prev);
-        partial.forEach(({ id }) => next.delete(id));
-        return next;
-      });
-    }
-    if (stale.length > 0) {
-      stale.forEach((id) => toast.warning(`同步超时,请稍后在「最新同步」列确认:${id}`));
-      setSyncingIds((prev) => {
-        const next = new Set(prev);
-        stale.forEach((id) => next.delete(id));
-        return next;
-      });
-    }
-  }, [sources, syncingIds, triggeredAt]);
 
   return (
     <div className="space-y-4">
@@ -703,7 +707,7 @@ export default function DataSources() {
           <Button
             variant="outline"
             onClick={handleSyncAll}
-            disabled={triggerSyncAll.isPending || syncingIds.size > 0}
+            disabled={triggerSyncAll.isPending || hasActiveSyncs}
           >
             {triggerSyncAll.isPending ? "触发中..." : "同步全部"}
           </Button>
@@ -1038,7 +1042,7 @@ export default function DataSources() {
             <TableHead>产品线</TableHead>
             <TableHead>类型</TableHead>
             <TableHead>状态</TableHead>
-            <TableHead>健康 (近30天)</TableHead>
+            <TableHead>同步健康 (近30天)</TableHead>
             <TableHead>最新同步</TableHead>
             <TableHead>内容</TableHead>
             <TableHead>同步间隔</TableHead>
@@ -1062,12 +1066,17 @@ export default function DataSources() {
             </TableRow>
           ) : sources?.map((ds) => {
             const health = healthMap.get(ds.id);
+            const activeStatus = activeStatusMap.get(ds.id);
+            const isActive = isBackendActive(activeStatus);
+            const isExpanded = expandedIds.has(ds.id);
+            const isTriggerPending = triggerSync.isPending && triggerSync.variables === ds.id;
             const healthMeta = health ? HEALTH_META[health.health] : undefined;
             const latestMeta = ds.last_sync_status
               ? LATEST_STATUS_META[ds.last_sync_status]
               : undefined;
             return (
-            <TableRow key={ds.id}>
+            <Fragment key={ds.id}>
+            <TableRow>
               <TableCell>
                 <div className="leading-tight">{ds.product}</div>
                 <SourceLocationLine ds={ds} />
@@ -1141,12 +1150,15 @@ export default function DataSources() {
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={syncingIds.has(ds.id) || !ds.enabled}
+                  disabled={isActive || isTriggerPending || !ds.enabled}
                   onClick={() => handleSync(ds)}
                 >
-                  {syncingIds.has(ds.id) ? "同步中..." : "同步"}
+                  {isActive ? "同步中..." : isTriggerPending ? "触发中..." : "同步"}
                 </Button>
                 )}
+                <Button size="sm" variant="outline" onClick={() => toggleObservability(ds.id)}>
+                  {isExpanded ? "收起可观测性" : "查看可观测性"}
+                </Button>
                 {canWrite && (
                 <>
                 <Button size="sm" variant="outline" onClick={() => openEdit(ds)}>
@@ -1164,6 +1176,13 @@ export default function DataSources() {
                 )}
               </TableCell>
             </TableRow>
+            <SourceObservabilityDetails
+              source={ds}
+              health={health}
+              activeStatus={activeStatus}
+              expanded={isExpanded}
+            />
+            </Fragment>
             );
           })}
         </TableBody>

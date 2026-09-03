@@ -35,7 +35,7 @@ function serialiseEvidence(evidence: unknown): string {
 export function SyncStatusPanel({ status, onRetry, technicalEvidence }: SyncStatusPanelProps) {
   const percent = progressPercent(status.stage_current, status.stage_total);
   const shortCircuit = shortCircuitSummary(status.counters);
-  const hasTechnicalEvidence = status.request_id != null || status.run_id != null || status.error_summary || technicalEvidence !== undefined;
+  const hasTechnicalEvidence = status.request_id != null || status.attempt != null || status.recovering != null || technicalEvidence !== undefined;
   const canRetry = status.state === "FAILED" || status.state === "INTERRUPTED";
   const counters = status.counters;
 
@@ -64,7 +64,7 @@ export function SyncStatusPanel({ status, onRetry, technicalEvidence }: SyncStat
           {counters?.docs_processed != null && <span>已处理文档 {counters.docs_processed}</span>}
           {counters?.chunks_written != null && <span>分块 {counters.chunks_written}</span>}
           {counters?.chunks_deleted != null && <span>已删除分块 {counters.chunks_deleted}</span>}
-          {status.device && <span>执行设备：{deviceLabel(status.device)}</span>}
+          {status.execution_device && <span>执行设备：{deviceLabel(status.execution_device)}</span>}
         </div>
 
         {canRetry && onRetry && <Button size="sm" variant="outline" onClick={onRetry}>重新同步</Button>}
@@ -73,9 +73,9 @@ export function SyncStatusPanel({ status, onRetry, technicalEvidence }: SyncStat
           <details className="rounded-md border border-border p-2 text-xs text-muted-foreground">
             <summary className="cursor-pointer font-medium text-foreground">技术证据</summary>
             <div className="mt-2 space-y-1 font-mono break-all">
-              {status.run_id != null && <p>run_id: {status.run_id}</p>}
               {status.request_id != null && <p>request_id: {status.request_id}</p>}
-              {status.error_summary && <p>{status.error_summary}</p>}
+              {status.attempt != null && <p>attempt: {status.attempt}</p>}
+              {status.recovering != null && <p>recovering: {String(status.recovering)}</p>}
               {technicalEvidence !== undefined && <pre className="whitespace-pre-wrap">{serialiseEvidence(technicalEvidence)}</pre>}
             </div>
           </details>

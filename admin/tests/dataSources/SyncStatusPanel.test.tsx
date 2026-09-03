@@ -13,8 +13,12 @@ const status = (overrides: Partial<SyncStatusItem> = {}): SyncStatusItem => ({
   stage_current: 3,
   stage_total: 12,
   counters: { docs_total: 12, docs_processed: 3, chunks_written: 8 },
-  device: "cuda:0",
+  execution_device: "cuda:0",
   request_id: 42,
+  attempt: 2,
+  recovering: false,
+  started_at: "2026-09-03T01:00:00Z",
+  updated_at: "2026-09-03T01:00:01Z",
   ...overrides,
 });
 
@@ -61,7 +65,7 @@ describe("SyncStatusPanel", () => {
     const onRetry = vi.fn();
     render(
       <SyncStatusPanel
-        status={status({ state: "FAILED", error_summary: "同步失败" })}
+        status={status({ state: "FAILED" })}
         onRetry={onRetry}
         technicalEvidence={{ exception_class: "CUDAOutOfMemoryError" }}
       />,
@@ -70,6 +74,7 @@ describe("SyncStatusPanel", () => {
     const details = screen.getByText("技术证据").closest("details");
     expect(details).not.toHaveAttribute("open");
     expect(details?.textContent).toContain("request_id: 42");
+    expect(details?.textContent).toContain("attempt: 2");
     expect(details?.textContent).toContain("CUDAOutOfMemoryError");
     fireEvent.click(screen.getByRole("button", { name: "重新同步" }));
     expect(onRetry).toHaveBeenCalledOnce();

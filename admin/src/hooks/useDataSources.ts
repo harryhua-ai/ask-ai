@@ -27,7 +27,12 @@ export function useSyncStatus(options?: { refetchInterval?: number | false }) {
   return useQuery({
     queryKey: ["sync-status"],
     queryFn: fetchSyncStatus,
-    refetchInterval: options?.refetchInterval,
+    refetchInterval: (query) => {
+      const interval = options?.refetchInterval;
+      if (interval === undefined || interval === false) return false;
+      const data = query.state.data as SyncStatusResponse | undefined;
+      return data?.items.length ? interval : false;
+    },
   });
 }
 
@@ -106,7 +111,9 @@ export function useTriggerSync() {
     mutationFn: (id: string) =>
       apiFetch<{ status: string; source_id: string }>(`/data-sources/${id}/sync`, { method: "POST" }),
     onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: ["sync-status"] });
       qc.invalidateQueries({ queryKey: ["data-sources"] });
+      qc.invalidateQueries({ queryKey: ["source-health"] });
       toast.success(`已触发同步:${id}(后台进行中,完成后「最新同步」列自动刷新)`);
     },
     onError: (err) => {
@@ -124,7 +131,9 @@ export function useTriggerSyncAll() {
         method: "POST",
       }),
     onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["sync-status"] });
       qc.invalidateQueries({ queryKey: ["data-sources"] });
+      qc.invalidateQueries({ queryKey: ["source-health"] });
       if (data.count === 0) {
         toast.warning("没有可同步的启用数据源");
       } else {
