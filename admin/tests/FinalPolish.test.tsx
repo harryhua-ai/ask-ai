@@ -34,6 +34,7 @@ vi.mock("@/hooks/useDataSources", () => ({
   usePreviewDirs: () => ({ data: { dirs: [] }, isLoading: false, error: null }),
   fetchPreviewBranches: vi.fn(),
   fetchPreviewFileTypes: vi.fn(),
+  fetchRepoDiscovery: vi.fn(),
 }));
 
 vi.mock("@/hooks/useLLMProviders", () => ({

@@ -17,8 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from weaviate.classes.query import Filter
 
 from backend.api.admin.schemas import DataSourceCreate, DataSourceOut, DataSourceUpdate
+from backend.api.admin.source_center_schemas import (
+    DiscoveryResultOut,
+    GitHubDiscoveryRequest,
+)
 from backend.auth.dependencies import CurrentUser, require_role
 from backend.db.models import DataSource, Document, SyncLog
+from backend.services import repo_discovery
 
 router = APIRouter(prefix="/data-sources", tags=["数据源管理"])
 logger = logging.getLogger(__name__)
@@ -605,6 +610,34 @@ async def preview_file_types(
         if ext:
             extensions.add(ext)
     return {"extensions": sorted(extensions)}
+
+
+@router.post("/discover-repo")
+async def discover_repo_source(
+    req: GitHubDiscoveryRequest, _: EditorDep
+) -> DiscoveryResultOut:
+    """#16 Simple Mode:Repo URL(+可选分支)→ 仓库内容发现 + 推荐纳入策略。
+
+    S0 共享 Discovery 契约(Source Center foundation)的 Git producer:
+    只读远程 trees 扫描——**不 clone、不落盘、不触发同步、零配置写入**;
+    推荐产物 ``recommended_config`` 编译为既有 config 词表
+    (file_types/exclude_dirs),用户确认后经既有创建/更新端点保存,
+    同步语义与 ingestion authority 不变(PD-2)。
+
+    技术安全边界:秘密文件/模型工件/超大文件在发现层即标为不可纳入,
+    且内容层安全检查在同步灌入时仍会执行——任何 Admin allowlist 不可绕过。
+    发现属 editor+ 操作(与既有 preview 端点同权限位)。
+    """
+    try:
+        result = await run_in_threadpool(
+            repo_discovery.discover_repository,
+            req.repo_url,
+            req.branch,
+            repo_discovery.default_api_get,
+        )
+    except repo_discovery.RepoDiscoveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return DiscoveryResultOut.from_result(result)
 
 
 @router.post("/{source_id}/sync", status_code=202)
