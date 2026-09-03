@@ -15,12 +15,13 @@ crawl 全量轮候选集未定型等),此时 ``progress_fraction`` 返回 None�
 
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.db.models import SyncRequest, SyncRun
+from backend.db.models import SyncLog, SyncRequest, SyncRun
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,15 @@ STATE_FAILED = "FAILED"
 STATE_INTERRUPTED = "INTERRUPTED"
 
 RETENTION_DAYS = 30
+
+# ---- Execution device 词表(W2 冻结;W1 经 record_device 写入) ----
+# gpu = 全程 GPU;cpu = 起 CPU(env 显式/探测无 GPU);
+# gpu_to_cpu = 本次运行发生过自动降级且最终以 CPU 完成。
+# 禁止自由文本作为机器真值;fallback_detail 才是人类可读补充。
+DEVICE_GPU = "gpu"
+DEVICE_CPU = "cpu"
+DEVICE_GPU_TO_CPU = "gpu_to_cpu"
+EXECUTION_DEVICES = (DEVICE_GPU, DEVICE_CPU, DEVICE_GPU_TO_CPU)
 
 
 def progress_fraction(stage_total: int | None, stage_current: int | None) -> float | None:
@@ -290,3 +300,233 @@ def derive_run_state(
             RUN_INTERRUPTED: STATE_INTERRUPTED,
         }.get(run.status, STATE_RUNNING)
     return STATE_IDLE
+
+
+def _request_recovering(request: SyncRequest) -> bool:
+    """请求是否带恢复语义(与 derive_run_state 同一判据,单一事实)。"""
+    return (request.attempt_count or 0) > 1 or request.failure_kind is not None
+
+
+def derive_source_state(
+    request: SyncRequest | None,
+    run_for_request: SyncRun | None,
+    latest_run: SyncRun | None,
+    *,
+    now: datetime | None = None,
+) -> str:
+    """⑫ sync-status 每源呈现态派生(纯函数;不改动 derive_run_state 语义)。
+
+    在全局 derive_run_state 之上补 per-source 切片真相:
+
+    - 请求运行中但该源在**本请求下**已有终态运行行(sync-all 串行推进
+      已处理到它)→ 如实呈现切片终态 COMPLETED/FAILED/INTERRUPTED;
+    - 请求运行中但该源切片尚未开始(排队于串行 runner / attempt 启动窗口)
+      → QUEUED(已接受、待执行),不冒充 RUNNING;恢复语义优先 RECOVERING;
+    - 请求 pending → 沿用 derive_run_state 的 QUEUED/WAITING/RECOVERING;
+    - 无在途请求 → 沿用 derive_run_state(None, latest_run) 终态/遗留瞬态。
+
+    禁止 fake active:无可证明请求与运行行时返回 IDLE。
+    """
+    now = now or datetime.now(UTC)
+    if request is not None and request.status in ("pending", "running"):
+        recovering = _request_recovering(request)
+        if run_for_request is not None:
+            if run_for_request.status == RUN_RUNNING:
+                return STATE_RECOVERING if recovering else STATE_RUNNING
+            # 本请求下该源切片已终态(串行 runner 已处理完它)
+            return {
+                RUN_COMPLETED: STATE_COMPLETED,
+                RUN_FAILED: STATE_FAILED,
+                RUN_INTERRUPTED: STATE_INTERRUPTED,
+            }.get(run_for_request.status, STATE_RUNNING)
+        # 本请求下该源尚未开始切片
+        if recovering:
+            return STATE_RECOVERING
+        if request.status == "pending":
+            if request.next_retry_at is not None and request.next_retry_at > now:
+                return STATE_WAITING
+            return STATE_QUEUED
+        return STATE_QUEUED
+    return derive_run_state(None, latest_run, now=now)
+
+
+def is_ingestion_skipped(counters: dict | None, log: Any | None) -> bool:
+    """读侧判定「无上游变更 / 跳过灌入」(run-local 可证明事实,禁止猜测)。
+
+    主判据:写侧 no-change 健康分支落下的 ``counters.ingestion_skipped``;
+    兜底:该字段落地前的历史行,由 sync_log 语义推导
+    (unchanged>0 且 new=0 且 written=0 ⇒ 本轮零灌入且确认无上游变更)。
+    refill/孤儿处置等真实灌入路径不满足判据,绝不误标 skipped。
+    """
+    if counters and counters.get("ingestion_skipped"):
+        return True
+    if log is not None:
+        return bool(
+            (getattr(log, "items_unchanged", 0) or 0) > 0
+            and (getattr(log, "items_new", 0) or 0) == 0
+            and (getattr(log, "items_updated", 0) or 0) == 0
+        )
+    return False
+
+
+# --------------------------------------------------------------------------- #
+# 读侧查询(⑫ sync-status / sync-runs / sync-health 共用;只读)
+# --------------------------------------------------------------------------- #
+
+
+async def get_latest_runs_by_source(
+    session_factory: async_sessionmaker[AsyncSession],
+    source_ids: list[str] | None = None,
+) -> dict[str, SyncRun]:
+    """每源最新一行 SyncRun(任意状态;按 started_at, id 取新)。
+
+    Args:
+        session_factory: 异步会话工厂。
+        source_ids: 限定源集合;None = 全部源。
+    """
+    async with session_factory() as session:
+        query = select(SyncRun)
+        if source_ids is not None:
+            query = query.where(SyncRun.source_id.in_(source_ids))
+        rows = (
+            (
+                await session.execute(
+                    query.order_by(
+                        SyncRun.source_id, SyncRun.started_at.desc(), SyncRun.id.desc()
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    latest: dict[str, SyncRun] = {}
+    for row in rows:
+        latest.setdefault(row.source_id, row)
+    return latest
+
+
+async def get_running_runs(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> list[SyncRun]:
+    """全部 running 运行行(含 cron request_id=NULL 直跑路径)。"""
+    async with session_factory() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(SyncRun).where(SyncRun.status == RUN_RUNNING)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return list(rows)
+
+
+async def get_latest_runs_for_requests(
+    session_factory: async_sessionmaker[AsyncSession], request_ids: list[int]
+) -> dict[tuple[int, str], SyncRun]:
+    """给定请求集合下,每 (request_id, source_id) 的最新运行行(取 attempt 最大)。"""
+    if not request_ids:
+        return {}
+    async with session_factory() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(SyncRun)
+                    .where(SyncRun.request_id.in_(request_ids))
+                    .order_by(SyncRun.request_id, SyncRun.source_id, SyncRun.attempt)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    latest: dict[tuple[int, str], SyncRun] = {}
+    for row in rows:
+        key = (row.request_id, row.source_id)
+        prev = latest.get(key)
+        if prev is None or row.attempt >= prev.attempt:
+            latest[key] = row
+    return latest
+
+
+async def list_runs(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    source_id: str | None = None,
+    status: str | None = None,
+    offset: int = 0,
+    limit: int = 20,
+) -> tuple[list[SyncRun], int]:
+    """运行历史分页(started_at 倒序);返回 (rows, total)。"""
+    async with session_factory() as session:
+        query = select(SyncRun)
+        count_query = select(func.count()).select_from(SyncRun)
+        if source_id is not None:
+            query = query.where(SyncRun.source_id == source_id)
+            count_query = count_query.where(SyncRun.source_id == source_id)
+        if status is not None:
+            query = query.where(SyncRun.status == status)
+            count_query = count_query.where(SyncRun.status == status)
+        total = (await session.execute(count_query)).scalar() or 0
+        rows = (
+            (
+                await session.execute(
+                    query.order_by(SyncRun.started_at.desc(), SyncRun.id.desc())
+                    .offset(offset)
+                    .limit(limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return list(rows), int(total)
+
+
+async def get_sync_logs_by_ids(
+    session_factory: async_sessionmaker[AsyncSession], log_ids: list[Any]
+) -> dict[Any, Any]:
+    """按 id 批量取 sync_log(运行历史 join 用);返回 {id: SyncLog}。"""
+    if not log_ids:
+        return {}
+    async with session_factory() as session:
+        rows = (
+            (await session.execute(select(SyncLog).where(SyncLog.id.in_(log_ids))))
+            .scalars()
+            .all()
+        )
+    return {row.id: row for row in rows}
+
+
+# --------------------------------------------------------------------------- #
+# 运行设备事实(W2 冻结写入通道;W1 GPU fallback 遥测消费)
+# --------------------------------------------------------------------------- #
+
+
+async def record_device(
+    session_factory: async_sessionmaker[AsyncSession],
+    run_id: int,
+    *,
+    execution_device: str,
+    fallback_reason: str | None = None,
+    fallback_detail: str | None = None,
+) -> None:
+    """落运行设备事实(execution_device / fallback_*,W1 冻结接口)。
+
+    machine truth 纪律:``execution_device`` 必须属于 EXECUTION_DEVICES
+    受控词表,越界一律 ValueError(自由文本绝不入列);``fallback_reason``
+    为机器可读原因码(截 32);``fallback_detail`` 为人类可读补充(截 500),
+    绝不作为状态判断依据。与 _RunTelemetry 既有纪律一致:调用方的
+    best-effort 包装负责「遥测失败不阻断业务」,本函数自身如实写。
+    """
+    if execution_device not in EXECUTION_DEVICES:
+        raise ValueError(
+            f"execution_device 必须属于 {EXECUTION_DEVICES},收到 {execution_device!r}"
+        )
+    values: dict[str, object] = {"execution_device": execution_device}
+    if fallback_reason is not None:
+        values["fallback_reason"] = fallback_reason[:32]
+    if fallback_detail is not None:
+        values["fallback_detail"] = fallback_detail[:500]
+    async with session_factory() as session:
+        await session.execute(update(SyncRun).where(SyncRun.id == run_id).values(**values))
+        await session.commit()
