@@ -143,3 +143,46 @@ scripts/sync.py(唯一业务实现;--force-incremental-replay → run_sync(force
 
 - FINAL_IMPLEMENTATION_COMMIT:见最终响应(实现+测试+迁移,单提交推 origin)
 - REPORT_COMMIT:见最终响应(docs 仓,单独提交,不夹带其他窗口变更)
+
+---
+
+# REVISION 1 — Planner FINAL REVIEW PARTIAL 修正(2026-09-03)
+
+## 18. Planner FINAL REVIEW — PARTIAL FINDINGS(原样记录)
+
+- **Finding A(中断上限旁路)**:`reconcile_stale_running()` 缺 MAX_TOTAL_ATTEMPTS 闸门——attempt=4 的请求被中断后对账会安排 pending 重试,第 5 次启动违背冻结上限。要求修复定序:(1) 对账完成事实;(2) 已完成 → finalize;(3) 否则 attempt 用尽 → 终态 failed(failure_kind 具机器语义、next_retry_at=NULL、finished_at 落、永不可领取);(4) 否则安排 interrupted 恢复。TDD:A1-A4 走真实 reconcile→claim 路径。
+- **Finding B(复检边界被覆写)**:`claim_next()` 重试领取会覆盖 picked_at,而 `execute_request()` 的孤儿复检用 `req.picked_at` 当证据边界——被中断 attempt 的执行开始时间丢失,等待期完成事实可能被漏判。要求:保留被中断 attempt 的执行开始时间直至 pre-spawn 复检完成。TDD:B1(真实 drain_once 路径,等待期孤儿完成 → 吸收为 done,runner 执行次数=0)/ B2(无新 log → 真实 spawn,attempt 递增)/ B3(原始 T0 之前的旧 log 不计入)。
+- 其余要求:F16/W6 不回退;定向回归 + **全量后端套件在 FINAL_CORRECTION_COMMIT 上 0 failures**(明示"不得以 subset 904 passed 推断 full PASS");compose 三变体;ruff/black 仅增量;PRODUCTION_ACCESS=NONE;不进入阶段⑪。
+
+## 19. CORRECTION A — 中断上限闸门(已修)
+
+- `reconcile_stale_running()` 重写为三分支定序,严格按 Planner 要求:**完成事实(单源 + terminal sync_log ≥ picked_at)→ done**;**elif `attempt_count >= MAX_TOTAL_ATTEMPTS` → 终态 failed**(failure_kind="interrupted"、next_retry_at=NULL、finished_at 落账,claim 过滤天然永不可领取);**else → pending + interrupted + 退避 next_retry_at**。
+- 双重防线:`execute_request()` 增启动点护栏——entry 时 attempt ≥ 上限直接终态 failed,不递增、不启动。
+- 顺带修掉一个真实隐患:`_increment_attempt` 只更新 DB,内存 `req.attempt_count` 滞留旧值会让 `_schedule_retry` 越限调度;现递增后立即同步内存值。
+- 测试 A1-A4(真实 reconcile→claim 路径):attempt=4 中断 → 对账终态 failed 且 claim 恒 None;claim 不再递增(领用≠启动);启动点护栏拒绝;上限内正常调度。
+
+## 20. CORRECTION B — 孤儿复检证据锚(已修)
+
+- 新列 `sync_requests.attempt_started_at`(TIMESTAMPTZ,`ensure_recovery_columns` 幂等补齐,现 4 条 ALTER);对账安排 interrupted 恢复时写入 = 被中断 attempt 的 picked_at;此后 retry claim 覆盖 picked_at 也不丢锚。
+- 复检边界 = `attempt_started_at`(旧数据无锚回退 picked_at);**复检条件修正为 `failure_kind == "interrupted"` 即生效**——原 `attempt_count > 1` 会漏掉"首启即中断(attempt=1)"场景(Planner B1 正是此场景);同步把 recovery 旁路(`--force-incremental-replay`,F16)扩展覆盖 interrupted 恢复,首启即中断的重放同样绕过 SHA 短路。
+- 递增时机对齐 §4 冻结语义:`claim_next` 不再递增,真实启动前才 `_increment_attempt`(领用≠启动,启动后=1)。
+- 测试 B1/B2/B3 全部走真实 `claim_next → drain_once` 路径(runner 以 spy 计数):B1 runner 执行 0 次、吸收为 done;B2 真实 spawn 且 attempt 1→2;B3 原始 T0 前旧 log 不计为完成事实。
+- 调试记录(诚实):B1 一度假红,根因是**测试夹具跨 run 污染**——上轮失败残留的 b1-src success sync_log(被中断 attempt 的后续 run)使对账误走"完成事实"分支、锚永不落;夹具 `_clean_table` 增补 SyncLog 定向清理(b1/b2/b3-src)后稳定绿。修正测试全文件 23 passed(15 原 + 8 新)。
+
+## 21. FINAL FULL REGRESSION(最终树)
+
+- 定向组合(tests/scripts/ + F16 golden + W6 golden + web_crawl 全套 + E3/E4/E5 收敛 + 504 golden):**106 passed / 3 skipped**(17.0s)。
+- 阶段⑧安全 + 阶段⑨ trigger/隔离/执行面/discovery:**59 passed**(4.9s)。
+- **全量后端套件两轮均 0 failures**:第 1 轮(整形前树)1058 passed / 6 skipped / 0 failed(36:12);随后 ruff/black 增量整形仅动 1 个测试文件(导入序 + 1 个因断言修改而未用的变量)——按合同红线**不以整形前结果推断最终树**,在最终树整轮重跑:**1058 passed / 6 skipped / 0 failed(36:45,EXIT=0)**。
+- compose `config --quiet` ×3(prod/dev/local)PASS;本修正未改 compose。
+- ruff:black/py312 目标下 6 个增量文件全洁;仅余 2 个 F841 位于 dd399dd 既有代码块(非本次 diff 块),按"只修增量"不动。black(line-length=100)增量净。
+- F16/W6 架构零改动,golden 回归全绿(含于定向组合)。
+
+## 22. Correction Commits
+
+- FINAL_CORRECTION_COMMIT:`1b8572a`(线性于 dd399dd,无 squash;origin/worktree-exec/sync-isolation-20260902,远端哈希核验一致)。
+- REPORT_COMMIT:见最终响应(docs 仓,单独提交,只含本报告文件,不夹带其他窗口变更)。
+
+## 23. Production Access Statement(修正轮)
+
+**PRODUCTION_ACCESS: NONE。** 修正轮全程本地 worktree + 本地测试库;未 SSH 生产、未触生产 DB/Weaviate、未触发生产同步、未执行生产迁移、未部署;未进入阶段⑪。
