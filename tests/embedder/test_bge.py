@@ -318,6 +318,30 @@ def test_reranker_passes_device_to_flagembedding(monkeypatch, tmp_path, device, 
 # --------------------------------------------------------------------------- #
 
 
+def _load_with_exact_hf_env_guard(factory):
+    """模块级 fixture 生命周期的 HF 环境精确守卫(B1 契约在更高作用域的延伸)。
+
+    function 级 autouse 守卫(tests/conftest.py::_hf_env_isolation)不覆盖
+    module 级 fixture 的 setup/teardown 边界:真实模型构造发生在模块 fixture
+    中时,生产 _ensure_hf_cache 的 setdefault 变更会存活到模块之外,重定向
+    后续测试的 HF 缓存路由(Planner FINAL REVIEW PARTIAL 修正点)。任何在
+    function 作用域之外调用 _ensure_hf_cache 的 fixture 必须在其生命周期内
+    以精确快照/finally 恢复:缺失→缺失;存在→原值。
+
+    推理期不读 HF 环境变量,构造一结束即恢复不影响已加载实例;
+    构造抛异常时同样恢复(finally)。
+    """
+    snapshot = {var: os.environ[var] for var in _HF_VARS if var in os.environ}
+    try:
+        return factory()
+    finally:
+        for var in _HF_VARS:
+            if var in snapshot:
+                os.environ[var] = snapshot[var]
+            else:
+                os.environ.pop(var, None)
+
+
 @pytest.fixture(scope="module")
 def real_embedder():
     """模块级共享真实 BGE-m3 实例(B5)。
@@ -327,7 +351,7 @@ def real_embedder():
     """
     from backend.embedder.bge import BGEEmbedder
 
-    return BGEEmbedder(device="cpu")
+    return _load_with_exact_hf_env_guard(lambda: BGEEmbedder(device="cpu"))
 
 
 @pytest.fixture(scope="module")
@@ -335,7 +359,7 @@ def real_reranker():
     """模块级共享真实 bge-reranker 实例(同 real_embedder)。"""
     from backend.embedder.bge import BGEReranker
 
-    return BGEReranker(device="cpu")
+    return _load_with_exact_hf_env_guard(lambda: BGEReranker(device="cpu"))
 
 
 @pytest.mark.integration

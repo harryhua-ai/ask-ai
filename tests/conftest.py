@@ -26,6 +26,23 @@ from backend.db.session import get_engine, get_session_factory, init_db
 
 _HF_ENV_VARS = ("HF_HOME", "HF_HUB_CACHE", "TRANSFORMERS_CACHE")
 
+# 会话起点基线:conftest 导入早于全部测试模块与任何 fixture 执行,是跨模块
+# 边界回归(hf_session_baseline)唯一可靠的「原始环境」权威参照点。
+_HF_SESSION_BASELINE: dict[str, str | None] = {
+    var: os.environ.get(var) for var in _HF_ENV_VARS
+}
+
+
+@pytest.fixture(scope="session")
+def hf_session_baseline() -> dict[str, str | None]:
+    """会话起点 HF 环境基线(不可变 dict)。
+
+    供模块级 fixture 边界回归断言「模块生命周期结束后,后续独立测试上下文
+    看到与会话起点逐字节一致的环境」。在 conftest 模块导入时捕获,不受任何
+    测试/fixture 期间变更影响。
+    """
+    return dict(_HF_SESSION_BASELINE)
+
 
 @pytest.fixture(autouse=True)
 def _hf_env_isolation():
