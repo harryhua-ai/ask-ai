@@ -16,6 +16,7 @@
 
 import logging
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -33,6 +34,12 @@ from backend.embedder.base import Embedder
 from backend.pipeline.chunk import chunk_document_semantic
 from backend.pipeline.chunk_code import LANG_MAP as _CODE_LANG_MAP
 from backend.pipeline.chunk_code import chunk_code
+from backend.services.sync_runs import (
+    STAGE_CHUNK,
+    STAGE_EMBED,
+    STAGE_INDEX,
+    STAGE_SAFETY_FILTER,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -398,7 +405,9 @@ class IngestionPipeline:
         except Exception as exc:  # noqa: BLE001 - 清理失败不阻断灌入
             logger.warning("清理陈旧 chunk 失败 source_id=%s: %s", source_id, str(exc)[:120])
 
-    def ingest_all(self, docs: list[RawDocument]) -> dict[str, int]:
+    def ingest_all(
+        self, docs: list[RawDocument], *, progress: "Callable[[str, int], None] | None" = None
+    ) -> dict[str, int]:
         """批量灌入文档,单 doc 失败不中断后续,但整体失败时 raise。
 
         跨 doc 累积 chunk 后一次性 embed(embedder 内部按 ``batch_size`` 批处理),
@@ -422,10 +431,20 @@ class IngestionPipeline:
         results: dict[str, int] = {}
         failed: list[str] = []
         batch_size = 64  # 每批 64 doc:控制内存,跨 doc 累积满 batch_size embed
+        total = len(docs)
         for start in range(0, len(docs), batch_size):
             batch = docs[start : start + batch_size]
+            done = min(start + batch_size, total)
             try:
+                if progress is not None:
+                    # CORRECTION A:SAFETY_FILTER 批界真实计数(每 doc 均过
+                    # TechnicalSafetyPolicy 检查,done=进入过滤器的 doc 数)
+                    progress(STAGE_SAFETY_FILTER, done)
+                    progress(STAGE_CHUNK, done)  # 批界回调:chunk 相位(同步缓冲用)
                 results.update(self._ingest_doc_batch(batch, failed))
+                if progress is not None:
+                    progress(STAGE_EMBED, done)
+                    progress(STAGE_INDEX, done)
             except Exception as exc:  # noqa: BLE001 - 整批失败回退逐 doc
                 logger.error("批处理失败(start=%d): %s,回退逐 doc", start, str(exc)[:200])
                 for doc in batch:

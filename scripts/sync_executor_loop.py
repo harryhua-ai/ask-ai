@@ -88,7 +88,12 @@ def _backoff_seconds() -> tuple[int, int, int]:
 
 
 def build_runner_argv(
-    source_id: str | None, triggered_by: str, *, recovery: bool = False
+    source_id: str | None,
+    triggered_by: str,
+    *,
+    recovery: bool = False,
+    request_id: int | None = None,
+    attempt: int = 1,
 ) -> list[str]:
     """构造 sync runner argv(逐元素列表,无 shell)。
 
@@ -106,17 +111,22 @@ def build_runner_argv(
         argv.append("--force-incremental-replay")
     if source_id is not None:
         argv += ["--source", source_id]
+    # ⑪+⑫ Wave-0:request→run 确定性链接(runner 据此写 SyncRun.request_id/
+    # attempt);cron/CLI 直跑不带这两个参数,request_id 合法为 NULL。
+    if request_id is not None:
+        argv += ["--request-id", str(request_id)]
+    argv += ["--attempt", str(attempt)]
     return argv
 
 
-async def _has_terminal_sync_log_after(session_factory, source_id: str, picked_at) -> bool:
-    """查询某源在 picked_at 之后是否已有 terminal sync_log(该次执行的事实证据)。
+async def _latest_terminal_log_id(session_factory, source_id: str, picked_at):
+    """返回某源在 picked_at 之后最新 terminal sync_log 的 id(完成事实证据)。
 
     任意 terminal 状态(success/partial/failed)都证明 runner 走完了自己的
-    执行(业务成败按 Contract §14 不归本恢复调度)。
+    执行(业务成败按 Contract §14 不归本恢复调度);无则 None。
     """
     if picked_at is None:
-        return False
+        return None
     async with session_factory() as session:
         result = await session.execute(
             select(SyncLog.id)
@@ -125,9 +135,33 @@ async def _has_terminal_sync_log_after(session_factory, source_id: str, picked_a
                 SyncLog.status.in_(["success", "partial", "failed"]),
                 func.coalesce(SyncLog.finished_at, SyncLog.started_at) >= picked_at,
             )
+            .order_by(func.coalesce(SyncLog.finished_at, SyncLog.started_at).desc())
             .limit(1)
         )
-        return result.scalar_one_or_none() is not None
+        return result.scalar_one_or_none()
+
+
+async def _has_terminal_sync_log_after(session_factory, source_id: str, picked_at) -> bool:
+    """布尔包装:某源在 picked_at 之后是否已有 terminal sync_log。"""
+    return await _latest_terminal_log_id(session_factory, source_id, picked_at) is not None
+
+
+async def _stamp_runs_finalized(session_factory, request_id: int, *, evidence, stats) -> None:
+    """对账裁决**之后**同步 SyncRun 遥测(服从而非第二恢复权威)。
+
+    - 有完成证据的源 → completed + sync_log 链接(实际完成优先);
+    - 其余 running 行 → interrupted(进程确实被中断);
+    - 仅写 sync_runs,绝不触碰 sync_requests 的阶段⑩裁决。
+    """
+    from backend.services.sync_runs import complete_runs_with_evidence, interrupt_running_runs
+
+    if evidence:
+        stats["runs_completed"] = stats.get(
+            "runs_completed", 0
+        ) + await complete_runs_with_evidence(session_factory, request_id, evidence)
+    stats["runs_interrupted"] = stats.get("runs_interrupted", 0) + await interrupt_running_runs(
+        session_factory, request_id
+    )
 
 
 async def reconcile_stale_running(session_factory) -> dict[str, int]:
@@ -144,7 +178,13 @@ async def reconcile_stale_running(session_factory) -> dict[str, int]:
          开始时间)——retry claim 会覆盖 picked_at,孤儿完成复检必须锚定
          本列(CORRECTION B);attempt_count 不在对账时递增。
     """
-    stats = {"finalized_done": 0, "scheduled_retry": 0, "terminal_failed": 0}
+    stats = {
+        "finalized_done": 0,
+        "scheduled_retry": 0,
+        "terminal_failed": 0,
+        "runs_completed": 0,
+        "runs_interrupted": 0,
+    }
     backoff = _backoff_seconds()
     async with session_factory() as session:
         rows = (
@@ -165,6 +205,16 @@ async def reconcile_stale_running(session_factory) -> dict[str, int]:
                     row.id,
                     row.source_id,
                 )
+                await _stamp_runs_finalized(
+                    session_factory,
+                    row.id,
+                    evidence={
+                        row.source_id: await _latest_terminal_log_id(
+                            session_factory, row.source_id, row.picked_at
+                        )
+                    },
+                    stats=stats,
+                )
             elif int(row.attempt_count or 0) >= MAX_TOTAL_ATTEMPTS:
                 row.status = "failed"
                 row.failure_kind = "interrupted"
@@ -180,6 +230,7 @@ async def reconcile_stale_running(session_factory) -> dict[str, int]:
                     row.id,
                     row.attempt_count,
                 )
+                await _stamp_runs_finalized(session_factory, row.id, evidence=None, stats=stats)
             else:
                 attempt = max(int(row.attempt_count or 0), 1)
                 delay = backoff[min(attempt, len(backoff)) - 1]
@@ -198,6 +249,7 @@ async def reconcile_stale_running(session_factory) -> dict[str, int]:
                     row.id,
                     retry_at.isoformat(),
                 )
+                await _stamp_runs_finalized(session_factory, row.id, evidence=None, stats=stats)
         await session.commit()
     return stats
 
@@ -241,10 +293,16 @@ async def run_runner(
     *,
     argv: list[str] | None = None,
     recovery: bool = False,
+    request_id: int | None = None,
+    attempt: int = 1,
 ) -> int:
     """以子进程运行 sync runner 并等待退出(argv 可注入供测试)。"""
     real_argv = (
-        argv if argv is not None else build_runner_argv(source_id, triggered_by, recovery=recovery)
+        argv
+        if argv is not None
+        else build_runner_argv(
+            source_id, triggered_by, recovery=recovery, request_id=request_id, attempt=attempt
+        )
     )
     logger.warning("执行面启动 sync runner: argv=%s", " ".join(real_argv))
     proc = await asyncio.create_subprocess_exec(*real_argv, cwd=str(REPO_ROOT))
@@ -377,7 +435,8 @@ async def execute_request(
         # 复检证据边界 = 被中断 attempt 的开始时间(旧数据无锚时回退 picked_at)。
         # 首启即中断(attempt=1)同样在等待期可能被孤儿 runner 完成,CORRECTION B。
         boundary = req.attempt_started_at or req.picked_at
-        if await _has_terminal_sync_log_after(session_factory, req.source_id, boundary):
+        evidence_id = await _latest_terminal_log_id(session_factory, req.source_id, boundary)
+        if evidence_id is not None:
             logger.warning(
                 "恢复复检: request_id=%d 的源 %s 在等待期已由孤儿 runner 完成 → done(不二次执行)",
                 req.id,
@@ -390,6 +449,10 @@ async def execute_request(
                     .values(status="done", next_retry_at=None, error=None, finished_at=func.now())
                 )
                 await session.commit()
+            # 遥测面:孤儿 attempt 实际完成 → completed + sync_log 链接(Wave-0)
+            from backend.services.sync_runs import complete_runs_with_evidence
+
+            await complete_runs_with_evidence(session_factory, req.id, {req.source_id: evidence_id})
             return "done"
 
     # 中断恢复(含首启即中断 attempt=1)必须带 F16 旁路:clone 可能已前进
@@ -404,7 +467,12 @@ async def execute_request(
     )
     try:
         exit_code = await run_runner(
-            req.source_id, req.triggered_by or "manual", argv=argv, recovery=recovery
+            req.source_id,
+            req.triggered_by or "manual",
+            argv=argv,
+            recovery=recovery,
+            request_id=req.id,
+            attempt=attempt,
         )
     except OSError as exc:
         return await _schedule_retry(
@@ -448,6 +516,14 @@ async def run_forever(settings: Settings) -> None:
         stats = {}
     if stats:
         logger.warning("启动对账完成: %s", stats)
+    try:  # Wave-0 retention:30 天遥测清理(失败不阻断执行面)
+        from backend.services.sync_runs import purge_expired_sync_runs
+
+        purged = await purge_expired_sync_runs(session_factory)
+        if purged:
+            logger.warning("sync_runs retention 清理 %d 行(>%d 天)", purged, 30)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("sync_runs retention 清理失败(忽略): %s", str(exc)[:200])
     logger.warning(
         "同步执行面已启动(独立于 backend 容器生命周期): poll=%.1fs max_attempts=%d",
         POLL_INTERVAL_SECONDS,

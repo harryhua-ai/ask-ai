@@ -69,6 +69,16 @@ from backend.db.session import (
 )
 from backend.embedder.bge import BGEEmbedder
 from backend.pipeline.ingest import IngestionPipeline
+from backend.services.sync_runs import (
+    STAGE_CHUNK,
+    STAGE_CONSISTENCY,
+    STAGE_DONE,
+    STAGE_EMBED,
+    STAGE_FETCH,
+    STAGE_INDEX,
+    STAGE_PARSE,
+    STAGE_SAFETY_FILTER,
+)
 from backend.services.vector_consistency import verify_source_vectors
 
 logger = logging.getLogger(__name__)
@@ -158,6 +168,100 @@ MAX_INCREMENTAL_LOOKBACK = timedelta(days=30)
 COVERAGE_PARTIAL_RATIO = 0.8
 
 
+def _consistency_facts(report: Any) -> dict:
+    """VectorGapReport → 结构化一致性事实(只留计数,SyncRun.consistency 用)。"""
+    return {
+        "expected_chunks": report.expected_chunks,
+        "actual_chunks": report.actual_chunks,
+        "missing": len(report.missing_source_ids),
+        "refill": len(report.refill_source_ids),
+        "stale_chunk_count": report.stale_chunk_count,
+        "orphan_count": report.orphan_count,
+    }
+
+
+class _RunTelemetry:
+    """单源 SyncRun 遥测句柄(⑪+⑫ Wave-0):尽力而为,绝不影响业务同步。
+
+    SyncRun 是运行期事实(attempt 启动即落行),DB 抖动时静默降级为
+    无遥测(与 SyncLog 写失败不中断批次的既有语义一致)。
+    """
+
+    def __init__(self) -> None:
+        self.run_id: int | None = None
+
+    async def start(
+        self,
+        session_factory: Any,
+        *,
+        source_id: str,
+        request_id: int | None,
+        attempt: int,
+        recovery: bool,
+        triggered_by: str,
+    ) -> None:
+        if self.run_id is not None:
+            return
+        try:
+            from backend.services.sync_runs import start_run
+
+            row = await start_run(
+                session_factory,
+                source_id=source_id,
+                attempt=attempt,
+                request_id=request_id,
+                recovery=recovery,
+                triggered_by=triggered_by,
+            )
+            self.run_id = row.id
+        except Exception as exc:  # noqa: BLE001 - 遥测失败不阻断业务
+            logger.warning("SyncRun 创建失败(降级无遥测): %s", str(exc)[:200])
+
+    async def _do(self, coro) -> None:
+        if self.run_id is None:
+            return
+        try:
+            await coro
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("SyncRun 更新失败(忽略): %s", str(exc)[:200])
+
+    async def progress(
+        self, session_factory: Any, stage: str, current: int | None, total: int | None
+    ) -> None:
+        from backend.services.sync_runs import update_progress
+
+        await self._do(
+            update_progress(
+                session_factory, self.run_id, stage=stage, stage_current=current, stage_total=total
+            )
+        )
+
+    async def counters(self, session_factory: Any, **kv: object) -> None:
+        from backend.services.sync_runs import update_counters
+
+        await self._do(update_counters(session_factory, self.run_id, **kv))
+
+    async def consistency(self, session_factory: Any, report: dict) -> None:
+        from backend.services.sync_runs import record_consistency
+
+        await self._do(record_consistency(session_factory, self.run_id, report))
+
+    async def finish(
+        self, session_factory: Any, *, status: str, error: str | None, sync_log_id: Any
+    ) -> None:
+        from backend.services.sync_runs import finish_run
+
+        await self._do(
+            finish_run(
+                session_factory,
+                self.run_id,
+                status=status,
+                error_summary=error,
+                sync_log_id=sync_log_id,
+            )
+        )
+
+
 def _coverage_line(stats: dict) -> str:
     """run_stats → 紧凑覆盖行(写入 SyncLog.error_detail,真实呈现抓取覆盖)。"""
     rej = stats.get("rejected") or {}
@@ -229,6 +333,7 @@ async def _handle_no_change(
     log_entry: SyncLog,
     start: float,
     dry_run: bool = False,
+    telemetry: "_RunTelemetry | None" = None,
 ) -> None:
     """无变更路径:先做向量一致性校验,缺口则 fetch_all 过滤补灌并记 partial。
 
@@ -263,6 +368,9 @@ async def _handle_no_change(
         log_entry.duration_ms = int((time.monotonic() - start) * 1000)
         return
     report = await verify_source_vectors(session_factory, pipeline, source_id)
+    if telemetry is not None:
+        await telemetry.progress(session_factory, STAGE_CONSISTENCY, None, None)
+        await telemetry.consistency(session_factory, _consistency_facts(report))
     if report.is_healthy:
         logger.info("数据源 %s 无变更,跳过(documents 已有 %d)", source_id, existing)
         log_entry.items_new = 0
@@ -325,6 +433,8 @@ async def _handle_no_change(
             )
         # 处置后复验:以真实账本↔向量状态判定 success / partial
         report2 = await verify_source_vectors(session_factory, pipeline, source_id)
+        if telemetry is not None:
+            await telemetry.consistency(session_factory, _consistency_facts(report2))
         if report2.is_healthy:
             log_entry.status = "success"
             log_entry.items_unchanged = existing
@@ -436,9 +546,9 @@ def _reconcile_orphan_vectors(
     Returns:
         (retired, repaired, unresolved) — 三分类篇数。
     """
-    from backend.db.models import Document
     from weaviate.classes.query import Filter
 
+    from backend.db.models import Document
     from backend.pipeline.ingest import _deterministic_uuid
 
     docs, complete, membership = _discover_source_docs(connector)
@@ -543,6 +653,9 @@ async def _sync_one(
     triggered_by: str = "cron",
     dry_run: bool = False,
     reindex: bool = False,
+    request_id: int | None = None,
+    attempt: int = 1,
+    recovery_replay: bool = False,
 ) -> None:
     """同步单个数据源:fetch → ingest → delete → 写 SyncLog。
 
@@ -570,6 +683,17 @@ async def _sync_one(
         status="success",
         triggered_by=triggered_by,
     )
+    # Wave-0:attempt 启动即落 SyncRun 运行事实(不等同步结束);dry_run 不落。
+    tel = _RunTelemetry()
+    if not dry_run:
+        await tel.start(
+            session_factory,
+            source_id=cfg.id,
+            request_id=request_id,
+            attempt=attempt,
+            recovery=recovery_replay,
+            triggered_by=triggered_by,
+        )
 
     try:
         connector = ConnectorRegistry.create(cfg)
@@ -584,8 +708,11 @@ async def _sync_one(
             # 后全部走 insert_many 批量写,UUID 不冲突。
             logger.info("reindex 模式:数据源 %s 强制全量重灌", cfg.id)
             docs = list(connector.fetch_all())
+            await tel.progress(session_factory, STAGE_FETCH, len(docs), len(docs))
         else:
             docs = list(connector.fetch_changes(since))
+            # materialize 后总数可信才写 total;此前分母未知(stage=DISCOVER)
+            await tel.progress(session_factory, STAGE_FETCH, len(docs), len(docs))
             if not docs:
                 # 区分首次(无 documents 记录)vs 无变更(已有记录)
                 existing = await _count_documents(session_factory, cfg.id)
@@ -599,6 +726,7 @@ async def _sync_one(
                         log_entry,
                         start,
                         dry_run=dry_run,
+                        telemetry=tel if not dry_run else None,
                     )
                     return
                 # 首次同步:documents 表无记录,回退到全量拉取
@@ -606,6 +734,24 @@ async def _sync_one(
                 docs = list(connector.fetch_all())
 
         logger.info("数据源 %s 抓取到 %d 篇文档", cfg.id, len(docs))
+        # Wave-0:解析/覆盖计数(web_crawl 等 connector 提供多少记多少)
+        _rs = getattr(connector, "run_stats", None)
+        if isinstance(_rs, dict):
+            await tel.counters(
+                session_factory,
+                discovered=_rs.get("discovered"),
+                accepted=_rs.get("accepted"),
+                extracted=_rs.get("extracted"),
+                failed=_rs.get("failed"),
+                rejected=_rs.get("rejected"),
+            )
+            _acc = _rs.get("accepted")
+            await tel.progress(
+                session_factory,
+                STAGE_PARSE,
+                _rs.get("extracted"),
+                _acc if _rs.get("full") else None,  # 非全量轮分母未知
+            )
 
         if dry_run:
             # dry-run 模式:不灌入向量库,只统计文档数后返回
@@ -614,7 +760,22 @@ async def _sync_one(
             log_entry.duration_ms = int((time.monotonic() - start) * 1000)
             return
 
-        results = pipeline.ingest_all(docs)
+        _docs_total = len(docs)
+        # CORRECTION A:SAFETY_FILTER 边界可观测(真实过滤发生在 ingest 内部;
+        # 批界计数由回调如实提供,无分母时不伪造 total)
+        await tel.progress(session_factory, STAGE_SAFETY_FILTER, None, None)
+        _ingest_seen: dict[str, int] = {}
+
+        def _ingest_progress(stage: str, done: int) -> None:
+            # 同步回调(ingest 阻塞事件循环期间无法 await DB):仅缓冲,
+            # 批界之后由 _sync_one 统一落笔——语义等价,行为零改变
+            _ingest_seen[stage] = done
+
+        results = pipeline.ingest_all(docs, progress=_ingest_progress)
+        for _st in (STAGE_SAFETY_FILTER, STAGE_CHUNK, STAGE_EMBED, STAGE_INDEX):
+            if _st in _ingest_seen:
+                await tel.progress(session_factory, _st, _ingest_seen[_st], _docs_total)
+        await tel.counters(session_factory, docs_total=_docs_total, docs_done=len(results))
         deleted = connector.fetch_deleted(since)
         for doc_id in deleted:
             pipeline.delete_document(doc_id)
@@ -624,6 +785,22 @@ async def _sync_one(
         committer = getattr(connector, "commit_membership_snapshot", None)
         if callable(committer):
             committer()
+
+        # CORRECTION B:终局一致性事实(INDEX → CONSISTENCY → DONE)。
+        # 复用权威 verify_source_vectors(与无变更路径同一实现,不造第二套);
+        # 凭 ingest 成功推断健康被禁止——校验失败如实记录,不伪造健康载荷,
+        # 业务结局仍归 sync_log(既有 sync business rules 不变)。
+        await tel.progress(session_factory, STAGE_CONSISTENCY, None, None)
+        try:
+            _final = await verify_source_vectors(session_factory, pipeline, cfg.id)
+            await tel.consistency(session_factory, _consistency_facts(_final))
+        except Exception as exc:  # noqa: BLE001 - 校验不可用≠业务失败,证据面如实降级
+            logger.warning(
+                "数据源 %s 终局一致性校验失败(如实记录,不伪造健康): %s",
+                cfg.id,
+                str(exc)[:200],
+            )
+            await tel.consistency(session_factory, {"verification_failed": str(exc)[:300]})
 
         log_entry.items_new = sum(1 for v in results.values() if v > 0)
         log_entry.items_updated = sum(results.values())
@@ -653,6 +830,7 @@ async def _sync_one(
                         f"{extracted / accepted:.0%} < {COVERAGE_PARTIAL_RATIO:.0%}),记 partial"
                     )
 
+        await tel.progress(session_factory, STAGE_DONE, len(docs), len(docs))
         log_entry.finished_at = datetime.now(UTC)
         log_entry.duration_ms = int((time.monotonic() - start) * 1000)
         logger.info(
@@ -685,6 +863,14 @@ async def _sync_one(
                     await session.commit()
             except Exception as exc:  # noqa: BLE001 - SyncLog 写入失败不中断批次
                 logger.error("SyncLog 写入失败 %s: %s", cfg.id, exc)
+            # Wave-0:SyncRun 终局(业务成败归 sync_log;completed=attempt 跑完)
+            _run_status = "failed" if log_entry.status == "failed" else "completed"
+            await tel.finish(
+                session_factory,
+                status=_run_status,
+                error=log_entry.error_detail if _run_status == "failed" else None,
+                sync_log_id=getattr(log_entry, "id", None),
+            )
 
 
 def _resolve_triggered_by(source_id: str | None, triggered_by: str | None) -> str:
@@ -721,6 +907,8 @@ async def run_sync(
     reindex: bool = False,
     triggered_by: str | None = None,
     force_replay: bool = False,
+    request_id: int | None = None,
+    attempt: int = 1,
 ) -> None:
     """执行一次完整的同步流程。
 
@@ -803,6 +991,9 @@ async def run_sync(
                 triggered_by=marker,
                 dry_run=dry_run,
                 reindex=reindex,
+                request_id=request_id,
+                attempt=attempt,
+                recovery_replay=force_replay,
             )
     finally:
         # 无论成功 / 失败,都释放 Weaviate client 与 Postgres engine
@@ -847,6 +1038,20 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "否则 cron)。独立执行面的 Admin 手动触发经此显式标记为 manual。",
     )
     parser.add_argument(
+        "--request-id",
+        type=int,
+        default=None,
+        help="⑪+⑫ Wave-0:关联 sync_requests.id(SyncRun.request_id);"
+        "cron/CLI 直跑不传 → NULL(合法,非错误)。",
+    )
+    parser.add_argument(
+        "--attempt",
+        type=int,
+        default=1,
+        help="⑪+⑫ Wave-0:本次 runner 启动是第几次 attempt(执行面传入;"
+        "首启=1)。仅用于 SyncRun 遥测归属,不影响恢复语义。",
+    )
+    parser.add_argument(
         "--force-incremental-replay",
         action="store_true",
         help="阶段⑩ 恢复重放:GitHub 增量关闭 remote-SHA 短路,按 last-success"
@@ -871,6 +1076,8 @@ def main(argv: list[str] | None = None) -> None:
             reindex=args.reindex,
             triggered_by=None if args.triggered_by == "auto" else args.triggered_by,
             force_replay=args.force_incremental_replay,
+            request_id=args.request_id,
+            attempt=args.attempt,
         )
     )
 
