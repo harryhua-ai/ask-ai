@@ -177,6 +177,10 @@ async def ask(
         # trace type=budget_declined,不污染 generation_error taxonomy。
         conversation_id = str(uuid.uuid4())
         busy_msg = localized_message(BUDGET_DECLINED_KEY, answer_language)
+        # FINAL REVIEW Blocker A:仅当 Conversation 真实持久化成功,才允许把该 id
+        # 作为 declined Conversation 身份下发;持久化失败 → 不下发任何身份
+        # (诚实优于幽灵),DECLINED 用户语义与文案保持不变,绝不弱化持久化。
+        declined_persisted = False
         try:
             async with session_factory() as session:
                 session.add(
@@ -204,21 +208,22 @@ async def ask(
                     )
                 )
                 await session.commit()
+                declined_persisted = True
         except Exception:
             logger.exception("budget declined 持久化失败, conversation_id=%s", conversation_id)
 
+        declined_payload: dict[str, Any] = {
+            "reason": busy_msg,
+            "message_key": BUDGET_DECLINED_KEY,
+        }
+        done_payload: dict[str, Any] = {}
+        if declined_persisted:
+            declined_payload["conversation_id"] = conversation_id
+            done_payload["conversation_id"] = conversation_id
+
         async def declined() -> Any:
-            yield {
-                "event": "declined",
-                "data": json.dumps(
-                    {
-                        "reason": busy_msg,
-                        "message_key": BUDGET_DECLINED_KEY,
-                        "conversation_id": conversation_id,
-                    }
-                ),
-            }
-            yield {"event": "done", "data": json.dumps({"conversation_id": conversation_id})}
+            yield {"event": "declined", "data": json.dumps(declined_payload)}
+            yield {"event": "done", "data": json.dumps(done_payload)}
 
         return EventSourceResponse(declined())
 
@@ -294,7 +299,10 @@ async def ask(
                 elif evt_type == "complete":
                     full_answer = data.get("answer", full_answer)
                     is_answered = data["is_answered"]
-                    language = data.get("language", "en")
+                    # FINAL REVIEW Blocker B:complete 缺 language 时回退到
+                    # 前置权威解析值(绝不硬编码 "en" 覆写);有值时恒等
+                    # (同一 resolver 同输入),语言算法仍单一。
+                    language = data.get("language") or language
                     elapsed = data.get("response_time_ms", 0)
                     intent = data.get("intent")
                     trace_payload = data.get("trace_payload")

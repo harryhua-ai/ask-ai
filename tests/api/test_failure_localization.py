@@ -404,6 +404,131 @@ async def test_social_reply_success_regression() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# FINAL REVIEW CORRECTION — Blocker A/B 回归
+# --------------------------------------------------------------------------- #
+
+
+def _make_failing_session_factory():
+    """commit 必抛的 mock session factory(模拟 DB 持久化故障)。"""
+    from unittest.mock import AsyncMock, MagicMock
+
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit.side_effect = RuntimeError("db down")
+    factory = MagicMock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=None)
+    return factory, session
+
+
+async def test_budget_declined_persistence_failure_emits_no_ghost_identity() -> None:
+    """Blocker A:declined 持久化失败时,不得把未持久化的 UUID 冒充
+    Conversation 身份下发给客户端(禁幽灵 conversation_id)。
+
+    不变量:凡以下发、可用的 declined Conversation 身份,必对应一次
+    成功持久化;持久化失败 → 不下发任何身份,但 DECLINED 用户语义保持
+    (本地化繁忙文案 + 无 error 事件,不得变成 generation failure)。
+    """
+    app.state.budget = BudgetLimiter(BudgetConfig(daily_request_limit=0, daily_token_limit=0))
+    rag = _make_streaming_rag()
+    factory, session = _make_failing_session_factory()
+
+    async with _ask_request(rag, factory) as client:
+        resp = await client.post("/api/ask", json={"message": "NE503 参数怎么样"})
+
+    events = _parse_sse_events(resp.text)
+    # DECLINED != FAILURE:仍走 declined+done,无 error 事件
+    assert [e["event"] for e in events] == ["declined", "done"]
+    declined = json.loads(events[0]["data"])
+    done = json.loads(events[1]["data"])
+    # 本地化文案与结构化身份保留
+    assert declined["reason"] == ZH_BUDGET
+    assert declined["message_key"] == "budget_declined"
+    # 持久化失败 → 绝不下发任何(幽灵)conversation 身份
+    assert "conversation_id" not in declined
+    assert "conversation_id" not in done
+    # 持久化确实尝试过(语义未弱化:仍写了 Conversation+Trace)
+    added_types = [type(o).__name__ for o in _persisted_objects(session)]
+    assert "Conversation" in added_types and "Trace" in added_types
+
+
+async def test_budget_declined_success_still_emits_real_id() -> None:
+    """Blocker A 护栏:正常持久化路径保持真实 id 下发(不弱化)。"""
+    app.state.budget = BudgetLimiter(BudgetConfig(daily_request_limit=0, daily_token_limit=0))
+    rag = _make_streaming_rag()
+    factory, session = _make_mock_session_factory()
+
+    async with _ask_request(rag, factory) as client:
+        resp = await client.post("/api/ask", json={"message": "NE503 参数怎么样"})
+
+    events = _parse_sse_events(resp.text)
+    declined = json.loads(events[0]["data"])
+    done = json.loads(events[1]["data"])
+    assert declined["conversation_id"] == done["conversation_id"]
+    assert _conversation_of(session).id == uuid.UUID(done["conversation_id"])
+
+
+async def test_complete_without_language_keeps_authoritative_zh() -> None:
+    """Blocker B:complete 缺 language 不得把权威 zh 重置为硬编码 en。
+
+    中文 query → 前置权威解析 zh → complete 无 language 键且零内容
+    → 兜底文案仍中文 + Conversation.language 仍 zh。
+    """
+    _setup_budget_high()
+    rag = _make_streaming_rag(
+        [
+            {
+                "type": "complete",
+                "answer": "",
+                "sources": [],
+                "is_answered": True,
+                "response_time_ms": 5,  # 故意省略 language 键
+            }
+        ]
+    )
+    factory, session = _make_mock_session_factory()
+
+    async with _ask_request(rag, factory) as client:
+        resp = await client.post("/api/ask", json={"message": "NE301 烧写失败怎么排查?"})
+
+    events = _parse_sse_events(resp.text)
+    assert [e["event"] for e in events] == ["token", "error", "done"]
+    # 用户可见兜底仍中文(authoritative zh 未被覆写)
+    assert json.loads(events[0]["data"])["content"] == ZH_SERVICE_UNAVAILABLE
+    assert json.loads(events[1]["data"])["message"] == ZH_SERVICE_UNAVAILABLE
+    conv = _conversation_of(session)
+    assert conv.language == "zh"
+
+
+async def test_complete_without_language_keeps_authoritative_en() -> None:
+    """Blocker B 英文等价:complete 缺 language → en 权威不被破坏。"""
+    _setup_budget_high()
+    # 零内容 complete(缺 language 键)→ empty_generation 兜底路径
+    rag = _make_streaming_rag(
+        [
+            {
+                "type": "complete",
+                "answer": "",
+                "sources": [],
+                "is_answered": True,
+                "response_time_ms": 5,
+            }
+        ]
+    )
+    factory, session = _make_mock_session_factory()
+
+    async with _ask_request(rag, factory) as client:
+        resp = await client.post("/api/ask", json={"message": "camera flash failure"})
+
+    events = _parse_sse_events(resp.text)
+    # 零内容 → empty_generation 兜底;complete 缺 language → 仍英文
+    assert [e["event"] for e in events] == ["token", "error", "done"]
+    error = json.loads(events[1]["data"])
+    assert error["message"] == EN_SERVICE_UNAVAILABLE
+    assert _conversation_of(session).language == "en"
+
+
+# --------------------------------------------------------------------------- #
 # 纯函数:user_messages / conversation_language
 # --------------------------------------------------------------------------- #
 
