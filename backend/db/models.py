@@ -285,6 +285,20 @@ class SyncRun(Base):
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # FINAL REVIEW CORRECTION C:(request_id, source_id, attempt) 对请求托管
+    # 运行在 DB 层强制唯一(部分唯一索引,仅 request 非空生效);NULL 直跑
+    # (cron/CLI)不受约束,同源同 attempt 多次独立运行合法。
+    __table_args__ = (
+        Index(
+            "uq_sync_runs_request_source_attempt",
+            "request_id",
+            "source_id",
+            "attempt",
+            unique=True,
+            postgresql_where=text("request_id IS NOT NULL"),
+        ),
+    )
+
 
 class Customization(Base):
     __tablename__ = "customizations"

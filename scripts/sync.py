@@ -77,6 +77,7 @@ from backend.services.sync_runs import (
     STAGE_FETCH,
     STAGE_INDEX,
     STAGE_PARSE,
+    STAGE_SAFETY_FILTER,
 )
 from backend.services.vector_consistency import verify_source_vectors
 
@@ -760,6 +761,9 @@ async def _sync_one(
             return
 
         _docs_total = len(docs)
+        # CORRECTION A:SAFETY_FILTER 边界可观测(真实过滤发生在 ingest 内部;
+        # 批界计数由回调如实提供,无分母时不伪造 total)
+        await tel.progress(session_factory, STAGE_SAFETY_FILTER, None, None)
         _ingest_seen: dict[str, int] = {}
 
         def _ingest_progress(stage: str, done: int) -> None:
@@ -768,7 +772,7 @@ async def _sync_one(
             _ingest_seen[stage] = done
 
         results = pipeline.ingest_all(docs, progress=_ingest_progress)
-        for _st in (STAGE_CHUNK, STAGE_EMBED, STAGE_INDEX):
+        for _st in (STAGE_SAFETY_FILTER, STAGE_CHUNK, STAGE_EMBED, STAGE_INDEX):
             if _st in _ingest_seen:
                 await tel.progress(session_factory, _st, _ingest_seen[_st], _docs_total)
         await tel.counters(session_factory, docs_total=_docs_total, docs_done=len(results))
@@ -781,6 +785,22 @@ async def _sync_one(
         committer = getattr(connector, "commit_membership_snapshot", None)
         if callable(committer):
             committer()
+
+        # CORRECTION B:终局一致性事实(INDEX → CONSISTENCY → DONE)。
+        # 复用权威 verify_source_vectors(与无变更路径同一实现,不造第二套);
+        # 凭 ingest 成功推断健康被禁止——校验失败如实记录,不伪造健康载荷,
+        # 业务结局仍归 sync_log(既有 sync business rules 不变)。
+        await tel.progress(session_factory, STAGE_CONSISTENCY, None, None)
+        try:
+            _final = await verify_source_vectors(session_factory, pipeline, cfg.id)
+            await tel.consistency(session_factory, _consistency_facts(_final))
+        except Exception as exc:  # noqa: BLE001 - 校验不可用≠业务失败,证据面如实降级
+            logger.warning(
+                "数据源 %s 终局一致性校验失败(如实记录,不伪造健康): %s",
+                cfg.id,
+                str(exc)[:200],
+            )
+            await tel.consistency(session_factory, {"verification_failed": str(exc)[:300]})
 
         log_entry.items_new = sum(1 for v in results.values() if v > 0)
         log_entry.items_updated = sum(results.values())

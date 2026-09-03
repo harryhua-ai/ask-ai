@@ -33,6 +33,10 @@ async def _db():
     dsn = os.environ.get("TEST_DATABASE_URL", load_settings().postgres_dsn)
     engine = get_engine(dsn)
     await init_db(engine)  # create_all:sync_runs 新表自举
+    # CORRECTION C:既有库补身份唯一索引(正式迁移契约,幂等)
+    from scripts.migrate_add_sync_runs import migrate
+
+    await migrate(engine)
     return get_session_factory(engine)
 
 
@@ -355,8 +359,16 @@ def test_16a_derive_states_matrix():
     assert sr.derive_run_state(None, SyncRun(status=sr.RUN_INTERRUPTED)) == sr.STATE_INTERRUPTED
 
 
-async def test_16b_migration_idempotent_on_test_db(_db, _db_engine=None):
-    """幂等迁移:重复建表无副作用;列齐全(与迁移脚本契约一致)。"""
+async def migrate_cleanup(engine) -> None:
+    """迁移前清 sync_runs 残留(测试库复用防御;正式迁移面向全新表无此需)。"""
+    from sqlalchemy import text as _t
+
+    async with engine.begin() as conn:
+        await conn.execute(_t("DELETE FROM sync_runs"))
+
+
+async def test_16b_migration_idempotent_on_test_db(_db):
+    """幂等迁移:建表+身份索引重复执行无副作用;列与索引契约满足。"""
     from sqlalchemy import inspect
 
     import scripts.migrate_add_sync_runs as mig
@@ -364,14 +376,18 @@ async def test_16b_migration_idempotent_on_test_db(_db, _db_engine=None):
     dsn = os.environ.get("TEST_DATABASE_URL", load_settings().postgres_dsn)
     engine = get_engine(dsn)
     try:
+        await migrate_cleanup(engine)  # 隔离:清残留行防历史脏数据卡唯一索引
         for _ in range(2):  # 第二次必须无副作用
-            async with engine.begin() as conn:
-                await conn.run_sync(lambda sc: mig.SyncRun.__table__.create(sc, checkfirst=True))
+            await mig.migrate(engine)
         async with engine.connect() as conn:
             cols = await conn.run_sync(
                 lambda sc: {c["name"] for c in inspect(sc).get_columns("sync_runs")}
             )
+            idx = await conn.run_sync(
+                lambda sc: {i["name"] for i in inspect(sc).get_indexes("sync_runs")}
+            )
         assert mig.EXPECTED_COLUMNS <= cols
+        assert mig.IDENTITY_INDEX in idx
     finally:
         await engine.dispose()
 
@@ -662,3 +678,139 @@ async def test_sync_one_telemetry_failure_never_breaks_business(_db):
             .all()
         )
     assert log  # 业务 SyncLog 正常落库
+
+
+# --------------------------------------------------------------------------- #
+# FINAL REVIEW CORRECTION — RED 测试(三缺陷)
+# --------------------------------------------------------------------------- #
+
+
+async def test_red_a_normal_run_emits_and_persists_safety_filter(_db, monkeypatch):
+    """BLOCKER A:正常同步生命周期必须观测并持久化 SAFETY_FILTER。
+
+    真实管线在 ingest 批界逐 doc 过安全过滤;批次完成数是可真实提供的
+    计数(进入过滤器的 doc 数),不伪造分母。
+    """
+    from backend.connectors.registry import SourceConfig
+    from scripts.sync import _sync_one
+
+    _install_fake_connector()
+    recorded: list[tuple] = []
+    _real = sr.update_progress
+
+    async def _spy(factory, run_id, *, stage, stage_current=None, stage_total=None):
+        recorded.append((stage, stage_current, stage_total))
+        return await _real(
+            factory, run_id, stage=stage, stage_current=stage_current, stage_total=stage_total
+        )
+
+    monkeypatch.setattr(sr, "update_progress", _spy)
+
+    class _Pipeline:
+        def ingest_all(self, docs, *, progress=None):
+            if progress is not None:
+                progress("SAFETY_FILTER", len(docs))  # 真实管线:逐 doc 过滤后按批界上报
+                progress("CHUNK", len(docs))
+                progress("EMBED", len(docs))
+                progress("INDEX", len(docs))
+            return {f"d{i}": 2 for i in range(len(docs))}
+
+    cfg = SourceConfig(
+        id="w0-src", type="w0fake", product="test", enabled=True, config={}, sync_interval="24h"
+    )
+    await _sync_one(cfg, _Pipeline(), _db, triggered_by="manual", request_id=9001, attempt=1)
+
+    stages = [r[0] for r in recorded]
+    assert sr.STAGE_SAFETY_FILTER in stages, f"SAFETY_FILTER 未被观测: {stages}"
+    assert stages.index(sr.STAGE_SAFETY_FILTER) < stages.index(sr.STAGE_DONE)
+    sf_all = [r for r in recorded if r[0] == sr.STAGE_SAFETY_FILTER]
+    # 边界标记(NULL/NULL,契约允许)+ 批界真实计数(进入过滤器的 doc 数)
+    assert any(r[1] == 3 for r in sf_all), f"无真实计数: {sf_all}"
+    assert any(r[1] is None for r in sf_all), f"缺边界标记: {sf_all}"
+
+
+async def test_red_b_normal_successful_run_persists_final_consistency_before_done(_db, monkeypatch):
+    """BLOCKER B:业务成功的正常同步必须以真实 verify_source_vectors 收尾,
+    CONSISTENCY 先于 DONE;不得凭 ingest 成功推断健康。"""
+    from backend.connectors.registry import SourceConfig
+    from scripts import sync as sync_mod
+    from scripts.sync import _sync_one
+
+    _install_fake_connector()
+
+    class _FakeCollection:
+        def iterator(self, return_properties=None):
+            return iter([])
+
+    class _FakeCollections:
+        def get(self, name):
+            return _FakeCollection()
+
+    class _FakeClient:
+        collections = _FakeCollections()
+
+    class _Pipeline:
+        _client = _FakeClient()
+        _class_name = "W0Fake"
+
+        def ingest_all(self, docs, *, progress=None):
+            if progress is not None:
+                progress("SAFETY_FILTER", len(docs))
+                progress("CHUNK", len(docs))
+                progress("EMBED", len(docs))
+                progress("INDEX", len(docs))
+            return {f"d{i}": 2 for i in range(len(docs))}
+
+    calls = {"verify": 0}
+    _orig = sync_mod.verify_source_vectors
+
+    async def _count_verify(*a, **k):
+        calls["verify"] += 1
+        return await _orig(*a, **k)
+
+    monkeypatch.setattr(sync_mod, "verify_source_vectors", _count_verify)
+
+    cfg = SourceConfig(
+        id="w0-src", type="w0fake", product="test", enabled=True, config={}, sync_interval="24h"
+    )
+    await _sync_one(cfg, _Pipeline(), _db, triggered_by="manual", request_id=9002, attempt=1)
+
+    assert calls["verify"] >= 1, "正常成功路径未执行终局一致性校验"
+    async with _db() as session:
+        run = (
+            (
+                await session.execute(
+                    select(SyncRun).where(SyncRun.source_id == "w0-src").order_by(SyncRun.id.desc())
+                )
+            )
+            .scalars()
+            .first()
+        )
+    assert run.stage == sr.STAGE_DONE
+    assert run.consistency is not None, "终局一致性事实未持久化"
+    assert run.consistency.get("expected_chunks") == 0
+    assert run.consistency.get("actual_chunks") == 0
+
+
+async def test_red_c_duplicate_request_run_rejected_null_stays_legal(_db):
+    """BLOCKER C:非空 request 三元组 DB 级唯一;NULL 直跑多次合法。"""
+    from sqlalchemy.exc import IntegrityError
+
+    await sr.start_run(_db, source_id="w0-src", attempt=1, request_id=777)
+    with pytest.raises(IntegrityError):
+        await sr.start_run(_db, source_id="w0-src", attempt=1, request_id=777)
+    async with _db() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(SyncRun).where(SyncRun.request_id == 777, SyncRun.source_id == "w0-src")
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(rows) == 1  # 不静默覆写、不产生双权威行
+    # NULL request_id 直跑:同源同 attempt 多次独立运行合法
+    r1 = await sr.start_run(_db, source_id="w0-src2", attempt=1, request_id=None)
+    r2 = await sr.start_run(_db, source_id="w0-src2", attempt=1, request_id=None)
+    assert r1.id != r2.id

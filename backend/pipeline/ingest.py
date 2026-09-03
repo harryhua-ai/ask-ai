@@ -38,6 +38,7 @@ from backend.services.sync_runs import (
     STAGE_CHUNK,
     STAGE_EMBED,
     STAGE_INDEX,
+    STAGE_SAFETY_FILTER,
 )
 
 logger = logging.getLogger(__name__)
@@ -436,6 +437,9 @@ class IngestionPipeline:
             done = min(start + batch_size, total)
             try:
                 if progress is not None:
+                    # CORRECTION A:SAFETY_FILTER 批界真实计数(每 doc 均过
+                    # TechnicalSafetyPolicy 检查,done=进入过滤器的 doc 数)
+                    progress(STAGE_SAFETY_FILTER, done)
                     progress(STAGE_CHUNK, done)  # 批界回调:chunk 相位(同步缓冲用)
                 results.update(self._ingest_doc_batch(batch, failed))
                 if progress is not None:
