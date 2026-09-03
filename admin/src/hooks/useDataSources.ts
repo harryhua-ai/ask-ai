@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { fetchSourceHealth } from "@/lib/api/techInsight";
 import { splitIntoBatches } from "@/utils/upload";
-import type { DataSource, PreviewDir } from "@/types/api";
+import type { DataSource, PreviewDir, RepoDiscoveryResult } from "@/types/api";
 
 export function useDataSources(options?: { refetchInterval?: number | false }) {
   return useQuery({
@@ -127,7 +127,26 @@ export async function uploadSourceFiles(
   return { saved };
 }
 
-/** 预览仓库内全部文件后缀(C10 增补:默认全列,用户按需删)。 */
+/**
+ * #16 Simple Mode:仓库内容发现(S0 共享契约)。
+ * 只读远程扫描,不 clone 不落盘;返回后端冻结的推荐策略与人读理由,
+ * 前端只呈现与原样采用,不二次推导。
+ */
+export async function fetchRepoDiscovery(
+  repoUrl: string,
+  branch: string | null,
+): Promise<RepoDiscoveryResult> {
+  return apiFetch<RepoDiscoveryResult>("/data-sources/discover-repo", {
+    method: "POST",
+    body: JSON.stringify({ repo_url: repoUrl, ...(branch ? { branch } : {}) }),
+  });
+}
+
+/**
+ * 预览仓库内全部文件后缀(保留端点兼容)。
+ * #16 起"全部后缀默认纳入"的预填行为已废除——策略由发现流程推荐,
+ * 本函数仅保留给高级场景/既有测试使用。
+ */
 export async function fetchPreviewFileTypes(
   owner: string,
   repo: string,

@@ -14,7 +14,7 @@ import {
   useTriggerSyncAll,
   useSourceHealth,
   fetchPreviewBranches,
-  fetchPreviewFileTypes,
+  fetchRepoDiscovery,
   uploadSourceFiles,
 } from "@/hooks/useDataSources";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,8 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { DirPicker } from "@/components/DirPicker";
-import type { DataSource } from "@/types/api";
+import { PolicyChips, RepoDiscoveryPanel } from "@/components/dataSources/RepoDiscoveryPanel";
+import type { DataSource, RepoDiscoveryResult } from "@/types/api";
 import type { SourceHealthItem } from "@/lib/api/techInsight";
 import { toast } from "sonner";
 import { toUploadItems, filterByWhitelist, isJunkPath } from "@/utils/upload";
@@ -368,6 +369,10 @@ export default function DataSources() {
   const [branchError, setBranchError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [fetchedBranches, setFetchedBranches] = useState<string[]>([]);
+  // #16 Simple Mode:仓库发现结果(只读预览;采用推荐策略才写入表单字段)
+  const [discovery, setDiscovery] = useState<RepoDiscoveryResult | null>(null);
+  const [discoveryLoading, setDiscoveryLoading] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   const [syncCustom, setSyncCustom] = useState(false);
   const [pickedFiles, setPickedFiles] = useState<File[]>([]);
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(
@@ -409,6 +414,8 @@ export default function DataSources() {
     setPickedFiles([]);
     setUploadProgress(null);
     setShowAdvanced(false);
+    setDiscovery(null);
+    setDiscoveryError(null);
     setShowForm(true);
   };
 
@@ -422,6 +429,8 @@ export default function DataSources() {
     setPickedFiles([]);
     setUploadProgress(null);
     setShowAdvanced(false);
+    setDiscovery(null);
+    setDiscoveryError(null);
     setShowForm(true);
   };
 
@@ -575,20 +584,40 @@ export default function DataSources() {
       if ((!current || current === "main") && branches.includes(defaultBranch)) {
         setValue("branches", defaultBranch, { shouldDirty: true });
       }
-      // C10 增补:仓库出现的全部文件后缀默认全列,用户按需删
-      try {
-        const ft = await fetchPreviewFileTypes(parsed.owner, parsed.repo, defaultBranch);
-        if (ft.extensions.length) {
-          setValue("file_types", ft.extensions.join(", "), { shouldDirty: true });
-        }
-      } catch {
-        // 文件类型拉取失败不打断分支流程(用户仍可手填)
-      }
+      // #16:不再把仓库全部后缀预填进 file_types(「检测到什么就纳入什么」已废除);
+      // 纳入策略由「扫描并推荐策略」的发现流程给出,用户确认后写入。
     } catch (err) {
       setBranchError(err instanceof Error ? err.message : "拉取分支失败");
     } finally {
       setBranchLoading(false);
     }
+  };
+
+  /** #16 Simple Mode:扫描仓库内容并获取推荐纳入/排除策略(只读,不落盘)。 */
+  const handleDiscoverRepo = async () => {
+    const repoUrl = getValues("repo_url") || "";
+    if (!parseRepoUrl(repoUrl)) {
+      setDiscoveryError("请先填写合法 repo_url(如 https://github.com/camthink-ai/ne301.git)");
+      return;
+    }
+    setDiscoveryLoading(true);
+    setDiscoveryError(null);
+    try {
+      const branch = selectedBranches[0] ?? null;
+      const result = await fetchRepoDiscovery(repoUrl, branch);
+      setDiscovery(result);
+    } catch (err) {
+      setDiscovery(null);
+      setDiscoveryError(err instanceof Error ? err.message : "仓库扫描失败");
+    } finally {
+      setDiscoveryLoading(false);
+    }
+  };
+
+  /** 采用推荐策略:后端编译产物原样写入既有 config 字段(文件类型/排除目录)。 */
+  const handleApplyDiscovery = (config: { file_types: string[]; exclude_dirs: string[] }) => {
+    setValue("file_types", config.file_types.join(", "), { shouldDirty: true });
+    setValue("exclude_dirs", config.exclude_dirs.join(", "), { shouldDirty: true });
   };
 
   const toggleBranch = (b: string) => {
@@ -781,22 +810,35 @@ export default function DataSources() {
                   placeholder="https://github.com/camthink-ai/ne301.git"
                 />
               </div>
-              <div className="space-y-1">
-                <Label>Clone 路径 (可选,默认 ~/ask-ai-corpus/仓库名)</Label>
-                <Input {...register("clone_path")} placeholder="~/ask-ai-corpus/ne301" />
-              </div>
+              <p className="text-xs text-muted-foreground">
+                本地缓存路径:
+                {watch("clone_path")?.trim()
+                  ? `${watch("clone_path")}(高级选项可修改)`
+                  : "自动管理(默认 ~/ask-ai-corpus/仓库名;如需覆盖见高级选项)"}
+              </p>
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
                   <Label>分支</Label>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={handlePullBranches}
-                    disabled={branchLoading}
-                  >
-                    {branchLoading ? "拉取中..." : "拉取分支"}
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={handlePullBranches}
+                      disabled={branchLoading}
+                    >
+                      {branchLoading ? "拉取中..." : "拉取分支"}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={handleDiscoverRepo}
+                      disabled={discoveryLoading}
+                    >
+                      {discoveryLoading ? "扫描中..." : "扫描并推荐策略"}
+                    </Button>
+                  </div>
                 </div>
                 {fetchedBranches.length > 0 ? (
                   <div className="max-h-48 overflow-y-auto rounded-md border p-2">
@@ -818,16 +860,19 @@ export default function DataSources() {
                 )}
                 {branchError && <p className="text-xs text-destructive">{branchError}</p>}
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label>文件类型 (逗号分隔,留空=全部)</Label>
-                  <Input {...register("file_types")} placeholder=".md, .py" />
-                </div>
-                <div className="space-y-1">
-                  <Label>排除目录 (逗号分隔)</Label>
-                  <Input {...register("exclude_dirs")} placeholder=".git, node_modules" />
-                </div>
-              </div>
+              {discoveryError && <p className="text-xs text-destructive">{discoveryError}</p>}
+              {discovery && (
+                <RepoDiscoveryPanel result={discovery} onApply={handleApplyDiscovery} />
+              )}
+              <PolicyChips
+                fileTypes={splitComma(watch("file_types"))}
+                excludeDirs={splitComma(watch("exclude_dirs"))}
+                onChange={handleApplyDiscovery}
+              />
+              <p className="text-xs text-muted-foreground">
+                文件类型与排除目录建议使用「扫描并推荐策略」生成;系统默认排除测试、构建产物、
+                依赖目录与密钥文件,且技术安全边界不因白名单放宽而失效。
+              </p>
             </div>
           )}
 
@@ -1000,16 +1045,38 @@ export default function DataSources() {
                 className="text-xs text-muted-foreground hover:text-foreground"
                 onClick={() => setShowAdvanced((v) => !v)}
               >
-                {showAdvanced ? "▾ 隐藏高级选项" : "▸ 高级选项(排除正则 / 最大文件大小)"}
+                {showAdvanced
+                  ? "▾ 隐藏高级选项"
+                  : type === "github"
+                    ? "▸ 高级选项(Clone 路径 / 文件类型 / 排除目录 / 排除正则 / 最大文件大小)"
+                    : "▸ 高级选项(排除正则 / 最大文件大小)"}
               </button>
-              <div className={showAdvanced ? "grid grid-cols-2 gap-3" : "hidden"}>
-                <div className="space-y-1">
-                  <Label>排除正则</Label>
-                  <Input {...register("exclude_regex")} placeholder="(test|spec)_" />
-                </div>
-                <div className="space-y-1">
-                  <Label>最大文件大小 (字节)</Label>
-                  <Input type="number" {...register("max_file_size")} placeholder="1048576" />
+              <div className={showAdvanced ? "space-y-3" : "hidden"}>
+                {type === "github" && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label>Clone 路径 (高级/运维选项,默认自动管理)</Label>
+                      <Input {...register("clone_path")} placeholder="~/ask-ai-corpus/ne301" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>文件类型 (逗号分隔白名单;留空将不纳入任何文件)</Label>
+                      <Input {...register("file_types")} placeholder=".md, .py" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>排除目录 (逗号分隔,任意层级同名目录生效)</Label>
+                      <Input {...register("exclude_dirs")} placeholder=".git, node_modules" />
+                    </div>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label>排除正则</Label>
+                    <Input {...register("exclude_regex")} placeholder="(test|spec)_" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>最大文件大小 (字节)</Label>
+                    <Input type="number" {...register("max_file_size")} placeholder="1048576" />
+                  </div>
                 </div>
               </div>
             </div>

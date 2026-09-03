@@ -7,6 +7,7 @@ import {
   useTriggerSync,
   fetchPreviewBranches,
   fetchPreviewFileTypes,
+  fetchRepoDiscovery,
   useTriggerSyncAll,
   useSourceHealth,
 } from "@/hooks/useDataSources";
@@ -41,6 +42,7 @@ vi.mock("@/hooks/useDataSources", () => ({
   usePreviewDirs: vi.fn(() => ({ data: { dirs: [] }, isLoading: false, error: null })),
   fetchPreviewBranches: vi.fn(),
   fetchPreviewFileTypes: vi.fn(),
+  fetchRepoDiscovery: vi.fn(),
 }));
 
 afterEach(() => {
@@ -545,16 +547,13 @@ describe("C9 filesystem 内容来源", () => {
   });
 });
 
-// ====================  C10 增补:拉取时自动列全仓库文件后缀  ====================
+// ====================  #16:检测到 ≠ 纳入(全量后缀预填废除)  ====================
 
 
-it("拉取分支后 file_types 自动预填仓库全部后缀,用户按需删", async () => {
+it("#16 拉取分支后不再把仓库全部后缀预填进 file_types", async () => {
   vi.mocked(fetchPreviewBranches).mockResolvedValue({
     branches: ["master"],
     defaultBranch: "master",
-  });
-  vi.mocked(fetchPreviewFileTypes).mockResolvedValue({
-    extensions: [".c", ".h", ".md"],
   });
   renderWithSources([]);
   fireEvent.click(screen.getByText("新增数据源"));
@@ -563,10 +562,131 @@ it("拉取分支后 file_types 自动预填仓库全部后缀,用户按需删", 
     { target: { value: "https://github.com/camthink-ai/demo.git" } },
   );
   fireEvent.click(screen.getByText("拉取分支"));
-  await waitFor(() => {
+  await waitFor(() => expect(screen.getByText("master")).toBeInTheDocument());
+  // 「检测到什么就纳入什么」已废除:后缀接口不再被调用,白名单保持为空
+  expect(fetchPreviewFileTypes).not.toHaveBeenCalled();
+  expect(screen.queryByDisplayValue(".c, .h, .md")).not.toBeInTheDocument();
+});
+
+// ====================  #16 Simple Mode:发现 → 推荐 → 确认 → 编译兼容 config  ====================
+
+
+const discoveryFixture = {
+  kind: "github",
+  target: { owner: "camthink-ai", repo: "demo", branch: "main" },
+  totals: { files: 5, safe_files: 4, unsafe_files: 1, total_size: 1650 },
+  by_role: {},
+  groups: [
+    { key: "(根目录)", count: 1, total_size: 200, recommendation: "include", samples: ["README.md"] },
+    { key: "src", count: 1, total_size: 1000, recommendation: "include", samples: ["src/main.py"] },
+    { key: "tests", count: 1, total_size: 300, recommendation: "exclude", samples: ["tests/test_main.py"] },
+    { key: "assets", count: 1, total_size: 100, recommendation: "review", samples: ["assets/logo.png"] },
+    { key: "deploy", count: 1, total_size: 50, recommendation: "exclude", samples: ["deploy/id_rsa"] },
+  ],
+  candidates: [
+    { path: "README.md", size: 200, technical_safe: true, technical_reason: null, knowledge_role: "technical_doc", recommendation: "include", policy_result: "not_applied", eligible: true, reason: "属于技术文档,建议纳入" },
+    { path: "src/main.py", size: 1000, technical_safe: true, technical_reason: null, knowledge_role: "source_code", recommendation: "include", policy_result: "not_applied", eligible: true, reason: "属于源代码,建议纳入" },
+    { path: "tests/test_main.py", size: 300, technical_safe: true, technical_reason: null, knowledge_role: "test", recommendation: "exclude", policy_result: "not_applied", eligible: true, reason: "知识价值低(测试代码),建议排除" },
+    { path: "assets/logo.png", size: 100, technical_safe: true, technical_reason: null, knowledge_role: "binary", recommendation: "review", policy_result: "not_applied", eligible: true, reason: "需要人工确认(二进制资产)" },
+    { path: "deploy/id_rsa", size: 50, technical_safe: false, technical_reason: "secret_file", knowledge_role: "secrets", recommendation: "exclude", policy_result: "not_applied", eligible: false, reason: "疑似密钥/凭证文件,技术安全边界禁止纳入" },
+  ],
+  recommended_config: { file_types: [".md", ".py"], exclude_dirs: ["deploy", "tests"] },
+  warnings: [],
+  capability_notes: ["图片/音视频资产:当前 ingestion 管线为文本抽取,不支持图片理解——此类文件已标记「待确认」且默认不纳入,不会因仓库中存在而默认声明支持"],
+};
+
+describe("#16 Simple Mode 发现与推荐策略", () => {
+  it("扫描后预览三段推荐(include/exclude/review)+ 冻结理由原文", async () => {
+    vi.mocked(fetchRepoDiscovery).mockResolvedValue(discoveryFixture as never);
+    renderWithSources([]);
+    fireEvent.click(screen.getByText("新增数据源"));
+    fireEvent.change(
+      screen.getByPlaceholderText("https://github.com/camthink-ai/ne301.git"),
+      { target: { value: "https://github.com/camthink-ai/demo.git" } },
+    );
+    fireEvent.click(screen.getByText("扫描并推荐策略"));
+    expect(await screen.findByLabelText("仓库内容发现")).toBeInTheDocument();
+    // 三段推荐 + 冻结文案原样(前端不重判)
+    expect(screen.getByText("建议纳入")).toBeInTheDocument();
+    expect(screen.getByText("建议排除")).toBeInTheDocument();
+    expect(screen.getByText("待人工确认")).toBeInTheDocument();
+    expect(screen.getByText("属于源代码,建议纳入")).toBeInTheDocument();
     expect(
-      (screen.getByDisplayValue(".c, .h, .md") as HTMLInputElement).value,
-    ).toBe(".c, .h, .md");
+      screen.getByText("疑似密钥/凭证文件,技术安全边界禁止纳入"),
+    ).toBeInTheDocument();
+    // 能力边界诚实:图片不支持声明可见
+    expect(screen.getByText(/不支持图片理解/)).toBeInTheDocument();
+  });
+
+  it("采用推荐策略 → file_types/exclude_dirs 写入既有 config 词表并可保存", async () => {
+    vi.mocked(fetchRepoDiscovery).mockResolvedValue(discoveryFixture as never);
+    mocks.updateMutateAsync.mockResolvedValue({});
+    renderWithSources([
+      {
+        id: "i16-src",
+        type: "github",
+        product: "demo",
+        enabled: true,
+        sync_interval: "24h",
+        config: { repo_url: "https://github.com/camthink-ai/demo.git" },
+      },
+    ]);
+    fireEvent.click(screen.getByText("编辑"));
+    fireEvent.click(screen.getByText("扫描并推荐策略"));
+    fireEvent.click(await screen.findByText("采用推荐策略"));
+    // 编译产物 = 既有 config 词表(高级输入同步回填,即表单唯一事实源)
+    expect(screen.getByDisplayValue(".md, .py")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("deploy, tests")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("保存"));
+    await waitFor(() => expect(mocks.updateMutateAsync).toHaveBeenCalled());
+    expect(mocks.updateMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "github",
+        config: expect.objectContaining({
+          file_types: [".md", ".py"],
+          exclude_dirs: ["deploy", "tests"],
+        }),
+      }),
+    );
+  });
+
+  it("已应用策略 chips 可增删(少量调整,不重判)", async () => {
+    vi.mocked(fetchRepoDiscovery).mockResolvedValue(discoveryFixture as never);
+    mocks.updateMutateAsync.mockResolvedValue({});
+    renderWithSources([
+      {
+        id: "i16-src",
+        type: "github",
+        product: "demo",
+        enabled: true,
+        sync_interval: "24h",
+        config: { repo_url: "https://github.com/camthink-ai/demo.git" },
+      },
+    ]);
+    fireEvent.click(screen.getByText("编辑"));
+    fireEvent.click(screen.getByText("扫描并推荐策略"));
+    fireEvent.click(await screen.findByText("采用推荐策略"));
+    // 移除 .md → 白名单只剩 .py(高级输入为表单事实源;面板推荐原文不受影响)
+    fireEvent.click(screen.getByLabelText("移除 .md"));
+    expect(screen.getByDisplayValue(".py")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue(".md, .py")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("保存"));
+    await waitFor(() => expect(mocks.updateMutateAsync).toHaveBeenCalled());
+    expect(mocks.updateMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({ file_types: [".py"] }),
+      }),
+    );
+  });
+
+  it("Simple Mode:clone 路径显示为自动管理,不再作为大号输入框", () => {
+    renderWithSources([]);
+    fireEvent.click(screen.getByText("新增数据源"));
+    expect(screen.getByText(/本地缓存路径:自动管理/)).toBeInTheDocument();
+    // 高级选项保留 clone 路径 override(issue 第 6 条)
+    expect(
+      screen.getByText("▸ 高级选项(Clone 路径 / 文件类型 / 排除目录 / 排除正则 / 最大文件大小)"),
+    ).toBeInTheDocument();
   });
 });
 

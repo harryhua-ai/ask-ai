@@ -65,6 +65,56 @@ export interface PreviewDir {
   children?: PreviewDir[];
 }
 
+// ==================== #16 代码仓库 Simple Mode:Discovery 契约 ====================
+// 与后端 DiscoveryResultOut(source_center_schemas)一一对应;推荐/理由均为
+// 后端冻结产物,前端只呈现,不本地重判知识价值或安全性。
+
+export type RepoRecommendation = "include" | "exclude" | "review";
+
+/** 逐候选准入结论(后端 FileAdmission + 人读冻结理由)。 */
+export interface RepoDiscoveryCandidate {
+  path: string;
+  size: number;
+  technical_safe: boolean;
+  technical_reason: string | null;
+  knowledge_role: string;
+  recommendation: RepoRecommendation;
+  policy_result: string;
+  eligible: boolean;
+  reason: string;
+}
+
+/** 候选分组(顶层目录;根目录散文件归入“(根目录)”)。 */
+export interface RepoDiscoveryGroup {
+  key: string;
+  count: number;
+  total_size: number;
+  recommendation: RepoRecommendation;
+  samples: string[];
+}
+
+/** #16/#17 preview 端点统一 envelope(S0 共享契约)。 */
+export interface RepoDiscoveryResult {
+  kind: string;
+  target: { owner: string; repo: string; branch: string };
+  totals: {
+    files: number;
+    safe_files: number;
+    unsafe_files: number;
+    total_size: number;
+  };
+  by_role: Record<string, { count: number; size: number; recommendation: string }>;
+  groups: RepoDiscoveryGroup[];
+  candidates: RepoDiscoveryCandidate[];
+  /** 推荐编译产物 = 既有 config 词表(前端原样采用,不二次推导)。 */
+  recommended_config: {
+    file_types?: string[];
+    exclude_dirs?: string[];
+  };
+  warnings: string[];
+  capability_notes: string[];
+}
+
 export interface SyncLog {
   id: string;
   source_id: string;
