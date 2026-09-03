@@ -239,6 +239,10 @@ class SyncRequest(Base):
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     failure_kind: Mapped[str | None] = mapped_column(String(20))
     next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 被中断 attempt 的执行开始时间(恢复证据锚):reconcile 安排恢复时保留,
+    # 供重试启动前的孤儿完成复检锚定——retry claim 会覆盖 picked_at,不能用它
+    # 当证据边界(Planner FINAL REVIEW CORRECTION B)。
+    attempt_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Customization(Base):

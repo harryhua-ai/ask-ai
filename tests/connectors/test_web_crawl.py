@@ -240,6 +240,10 @@ def test_fetch_deleted_diffs_state_file(tmp_path, monkeypatch):
     conn._last_run_full = True
     deleted = conn.fetch_deleted(datetime.now(UTC))
     assert deleted == ["website-camthink/gone"]
+    # 阶段⑩ W6:fetch_deleted 只报差集,快照在删除效应安全完成后由
+    # commit_membership_snapshot 推进(未 commit 前旧快照保留)
+    assert json.loads(state_path.read_text()) == ["website-camthink/keep", "website-camthink/gone"]
+    conn.commit_membership_snapshot()
     assert json.loads(state_path.read_text()) == ["website-camthink/keep"]
 
 
@@ -438,10 +442,12 @@ def test_fetch_deleted_only_after_full_crawl(tmp_path, monkeypatch):
     assert conn.fetch_deleted(datetime.now(UTC)) == []
     assert json.loads(state_path.read_text()) == ["website-camthink/keep", "website-camthink/gone"]
 
-    # 全量轮:差集删除生效
+    # 全量轮:差集删除候选生效;快照仍待删除效应完成后推进(阶段⑩ W6)
     conn._seen_urls = {"https://www.camthink.ai/keep/"}
     conn._last_run_full = True
     assert conn.fetch_deleted(datetime.now(UTC)) == ["website-camthink/gone"]
+    assert json.loads(state_path.read_text()) == ["website-camthink/keep", "website-camthink/gone"]
+    conn.commit_membership_snapshot()
     assert json.loads(state_path.read_text()) == ["website-camthink/keep"]
 
 

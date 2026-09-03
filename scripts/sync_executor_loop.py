@@ -133,14 +133,18 @@ async def _has_terminal_sync_log_after(session_factory, source_id: str, picked_a
 async def reconcile_stale_running(session_factory) -> dict[str, int]:
     """执行面启动对账:以 sync_log 执行事实分流遗留 running 行(替代一律 failed)。
 
-    - 单源且 picked_at 后已有 terminal sync_log → 本次执行实际已完成 → **done**
-      (E1 假阴性正式修复:孤儿 runner 跑完不得错标失败);
-    - 无 terminal 事实(或 sync-all 行,保守不做完成推断)→ interrupted:
-      status=pending + next_retry_at(≥ 一个恢复退避),不立即派生第二个
-      runner(降低孤儿 runner 与恢复 runner 的双跑窗口);
-    - attempt_count 不在对账时递增——它只随真实 runner 启动(claim)递增。
+    分流顺序(Planner FINAL REVIEW CORRECTION A 冻结):
+      1. 单源且 picked_at 后已有 terminal sync_log → 实际完成 → **done**
+         (事实优先;E1 假阴性修复;不受 attempt cap 影响);
+      2. 否则 attempt_count >= MAX_TOTAL_ATTEMPTS → **terminal failed**
+         (failure_kind=interrupted、next_retry_at=NULL、finished_at 落值,
+         永不再 claim —— 中断路径同样受上限约束,不得出现第 5 次启动);
+      3. 否则 → interrupted:pending + next_retry_at(≥ 一个退避),并保留
+         证据锚 ``attempt_started_at = picked_at``(被中断 attempt 的执行
+         开始时间)——retry claim 会覆盖 picked_at,孤儿完成复检必须锚定
+         本列(CORRECTION B);attempt_count 不在对账时递增。
     """
-    stats = {"finalized_done": 0, "scheduled_retry": 0}
+    stats = {"finalized_done": 0, "scheduled_retry": 0, "terminal_failed": 0}
     backoff = _backoff_seconds()
     async with session_factory() as session:
         rows = (
@@ -161,6 +165,21 @@ async def reconcile_stale_running(session_factory) -> dict[str, int]:
                     row.id,
                     row.source_id,
                 )
+            elif int(row.attempt_count or 0) >= MAX_TOTAL_ATTEMPTS:
+                row.status = "failed"
+                row.failure_kind = "interrupted"
+                row.next_retry_at = None
+                row.finished_at = func.now()
+                row.error = (
+                    f"中断检测且已达 MAX_TOTAL_ATTEMPTS={MAX_TOTAL_ATTEMPTS},"
+                    "终态失败(不再自动恢复,需人工重新触发)"
+                )
+                stats["terminal_failed"] += 1
+                logger.warning(
+                    "stale running 对账: request_id=%d attempt=%d 已达上限 → 终态失败",
+                    row.id,
+                    row.attempt_count,
+                )
             else:
                 attempt = max(int(row.attempt_count or 0), 1)
                 delay = backoff[min(attempt, len(backoff)) - 1]
@@ -168,6 +187,7 @@ async def reconcile_stale_running(session_factory) -> dict[str, int]:
                 row.status = "pending"
                 row.failure_kind = "interrupted"
                 row.next_retry_at = retry_at
+                row.attempt_started_at = row.picked_at  # 证据锚(被中断 attempt 的开始时间)
                 row.error = (
                     "中断检测(上次运行无完成事实),已安排恢复重试于 "
                     f"{retry_at.isoformat()}(attempt={attempt}/{MAX_TOTAL_ATTEMPTS})"
@@ -186,7 +206,9 @@ async def claim_next(session_factory) -> SyncRequest | None:
     """原子领用最旧的**到期** pending 请求(FOR UPDATE SKIP LOCKED,多副本安全)。
 
     - ``next_retry_at IS NULL OR next_retry_at <= now()``:未来恢复重试不可领;
-    - 领用即 ``attempt_count += 1``(语义 = 即将真实启动一次 runner)。
+    - **不在此处递增 attempt_count**:递增只随真实 runner 启动发生
+      (execute_request,Planner CORRECTION B——领用会覆盖 picked_at,
+      attempt 语义与证据锚必须分离)。
     """
     async with session_factory() as session:
         subq = (
@@ -205,11 +227,7 @@ async def claim_next(session_factory) -> SyncRequest | None:
         result = await session.execute(
             update(SyncRequest)
             .where(SyncRequest.id == subq)
-            .values(
-                status="running",
-                picked_at=func.now(),
-                attempt_count=SyncRequest.attempt_count + 1,
-            )
+            .values(status="running", picked_at=func.now())
             .returning(SyncRequest)
         )
         req = result.scalar_one_or_none()
@@ -302,37 +320,88 @@ async def _schedule_retry(session_factory, req: SyncRequest, kind: str, error: s
     return "retry-scheduled"
 
 
+async def _increment_attempt(session_factory, request_id: int) -> int:
+    """真实启动 runner 前递增 attempt_count(SQL 级 +1),返回新值。"""
+    async with session_factory() as session:
+        result = await session.execute(
+            update(SyncRequest)
+            .where(SyncRequest.id == request_id)
+            .values(attempt_count=SyncRequest.attempt_count + 1)
+            .returning(SyncRequest.attempt_count)
+        )
+        value = int(result.scalar_one())
+        await session.commit()
+        return value
+
+
 async def execute_request(
     session_factory, req: SyncRequest, *, argv: list[str] | None = None
 ) -> str:
     """执行单个已领用请求并按恢复策略落账。
 
-    - 启动前复检(interrupted 的到期重试):等待期孤儿 runner 已完成
-      → 直接 done,不二次执行(Contract §6);
+    - **启动点上限护栏**:attempt_count 已达 MAX_TOTAL_ATTEMPTS → 不递增、
+      不启动,直接终态 failed(双重防线;正常流由对账/调度先行拦截);
+    - 启动前复检(interrupted 的到期重试):证据边界锚定
+      ``attempt_started_at``(被中断 attempt 的开始时间)——retry claim 会
+      覆盖 picked_at,CORRECTION B;等待期孤儿 runner 已完成 → 直接 done,
+      不二次执行;
+    - attempt_count 在真实启动前递增(§4 冻结语义:启动后 = 1);
     - exit 0 → done;非零 → runner_failed 有界重试;spawn 失败 →
       spawn_failed 有界重试;MAX_TOTAL_ATTEMPTS 用尽 → terminal failed。
     """
-    if (
-        req.attempt_count > 1
-        and req.failure_kind == "interrupted"
-        and req.source_id is not None
-        and await _has_terminal_sync_log_after(session_factory, req.source_id, req.picked_at)
-    ):
-        logger.warning(
-            "恢复复检: request_id=%d 的源 %s 在等待期已由孤儿 runner 完成 → done(不二次执行)",
-            req.id,
-            req.source_id,
-        )
+    if int(req.attempt_count or 0) >= MAX_TOTAL_ATTEMPTS:
         async with session_factory() as session:
             await session.execute(
                 update(SyncRequest)
                 .where(SyncRequest.id == req.id)
-                .values(status="done", next_retry_at=None, error=None, finished_at=func.now())
+                .values(
+                    status="failed",
+                    failure_kind=req.failure_kind or "interrupted",
+                    next_retry_at=None,
+                    finished_at=func.now(),
+                    error=(
+                        f"已达 MAX_TOTAL_ATTEMPTS={MAX_TOTAL_ATTEMPTS},"
+                        "拒绝再次启动 runner(终态失败)"
+                    ),
+                )
             )
             await session.commit()
-        return "done"
+        logger.warning(
+            "启动点上限护栏: request_id=%d attempt=%d 已达上限,拒绝启动",
+            req.id,
+            req.attempt_count,
+        )
+        return "failed"
 
-    recovery = req.attempt_count > 1
+    if req.failure_kind == "interrupted" and req.source_id is not None:
+        # 复检证据边界 = 被中断 attempt 的开始时间(旧数据无锚时回退 picked_at)。
+        # 首启即中断(attempt=1)同样在等待期可能被孤儿 runner 完成,CORRECTION B。
+        boundary = req.attempt_started_at or req.picked_at
+        if await _has_terminal_sync_log_after(session_factory, req.source_id, boundary):
+            logger.warning(
+                "恢复复检: request_id=%d 的源 %s 在等待期已由孤儿 runner 完成 → done(不二次执行)",
+                req.id,
+                req.source_id,
+            )
+            async with session_factory() as session:
+                await session.execute(
+                    update(SyncRequest)
+                    .where(SyncRequest.id == req.id)
+                    .values(status="done", next_retry_at=None, error=None, finished_at=func.now())
+                )
+                await session.commit()
+            return "done"
+
+    # 中断恢复(含首启即中断 attempt=1)必须带 F16 旁路:clone 可能已前进
+    recovery = req.attempt_count > 1 or req.failure_kind == "interrupted"
+    attempt = await _increment_attempt(session_factory, req.id)
+    req.attempt_count = attempt  # 同步内存对象:_schedule_retry 的上限判断必须看到新值
+    logger.warning(
+        "启动 sync runner(attempt=%d/%d) recovery=%s",
+        attempt,
+        MAX_TOTAL_ATTEMPTS,
+        recovery,
+    )
     try:
         exit_code = await run_runner(
             req.source_id, req.triggered_by or "manual", argv=argv, recovery=recovery

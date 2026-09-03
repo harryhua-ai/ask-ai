@@ -85,6 +85,7 @@ async def ensure_recovery_columns(engine: AsyncEngine) -> None:
         "ALTER TABLE sync_requests ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE sync_requests ADD COLUMN IF NOT EXISTS failure_kind VARCHAR(20)",
         "ALTER TABLE sync_requests ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ",
+        "ALTER TABLE sync_requests ADD COLUMN IF NOT EXISTS attempt_started_at TIMESTAMPTZ",
     )
     async with engine.begin() as conn:
         for stmt in statements:

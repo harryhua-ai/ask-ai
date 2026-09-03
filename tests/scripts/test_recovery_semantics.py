@@ -18,8 +18,9 @@ import pytest_asyncio
 from sqlalchemy import select
 
 from backend.config import load_settings
-from backend.db.models import SyncRequest
+from backend.db.models import SyncLog, SyncRequest
 from backend.db.session import get_engine, get_session_factory, init_db
+from scripts.sync_executor_loop import reconcile_stale_running
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -41,12 +42,21 @@ async def _db():
 
 @pytest_asyncio.fixture(autouse=True, loop_scope="session")
 async def _clean_table(_db):
+    # B1-B3 会给固定 source_id 播种 sync_log(完成事实证据);跨 run 残留会被
+    # reconcile 的完成事实分支误吸收,必须与 SyncRequest 一并清理。
+    _recover_sources = ["b1-src", "b2-src", "b3-src"]
     async with _db() as session:
         await session.execute(SyncRequest.__table__.delete())
+        await session.execute(
+            SyncLog.__table__.delete().where(SyncLog.source_id.in_(_recover_sources))
+        )
         await session.commit()
     yield
     async with _db() as session:
         await session.execute(SyncRequest.__table__.delete())
+        await session.execute(
+            SyncLog.__table__.delete().where(SyncLog.source_id.in_(_recover_sources))
+        )
         await session.commit()
 
 
@@ -111,7 +121,7 @@ async def test_ensure_recovery_columns_idempotent(_db):
 async def test_claim_skips_future_retry_and_claims_when_due(_db):
     from scripts.sync_executor_loop import claim_next
 
-    future = await _add(
+    await _add(
         _db,
         source_id="fut-src",
         status="pending",
@@ -130,10 +140,9 @@ async def test_claim_skips_future_retry_and_claims_when_due(_db):
     claimed = await claim_next(_db)
     assert claimed is not None and claimed.id == due.id  # 未来重试不可领,到期可领
     row = await _get(_db, claimed.id)
-    assert row.attempt_count == 2  # 领用即递增(recovery runner 将启动)
+    assert row.attempt_count == 1  # 领用不递增;递增只随真实 runner 启动(Planner 修正)
     again = await claim_next(_db)
-    assert again is None or again.id == future.id  # future 未到齐不允许被领
-    assert again is None
+    assert again is None  # future 未到齐不允许被领
 
 
 async def test_claim_increments_attempt_on_first_run(_db):
@@ -142,7 +151,7 @@ async def test_claim_increments_attempt_on_first_run(_db):
     row = await _add(_db, source_id="first-src", status="pending")
     claimed = await claim_next(_db)
     assert claimed.id == row.id
-    assert (await _get(_db, row.id)).attempt_count == 1  # 首次启动后 = 1
+    assert (await _get(_db, row.id)).attempt_count == 0  # 领用不递增;启动后才 = 1
 
 
 # --------------------------------------------------------------------------- #
@@ -246,9 +255,10 @@ async def test_runner_failure_schedules_retry_with_backoff(_db):
     after = await _get(_db, row.id)
     assert after.status == "pending"
     assert after.failure_kind == "runner_failed"
+    assert after.attempt_count == 2  # 本次 runner 实际已启动
     assert after.next_retry_at is not None
     delta = after.next_retry_at - datetime.now(UTC)
-    assert timedelta(seconds=25) < delta <= timedelta(seconds=31)  # 默认退避 #1 = 30s
+    assert timedelta(seconds=110) < delta <= timedelta(seconds=125)  # run2 失败 → 退避 #2 = 120s
 
 
 async def test_spawn_failure_schedules_retry_with_kind(_db):
@@ -260,8 +270,9 @@ async def test_spawn_failure_schedules_retry_with_kind(_db):
     assert status == "retry-scheduled"
     after = await _get(_db, row.id)
     assert after.failure_kind == "spawn_failed"
+    assert after.attempt_count == 3  # 本次启动尝试已计入
     delta = after.next_retry_at - datetime.now(UTC)
-    assert timedelta(seconds=110) < delta <= timedelta(seconds=125)  # 退避 #2 = 120s
+    assert timedelta(seconds=590) < delta <= timedelta(seconds=605)  # run3 失败 → 退避 #3 = 600s
 
 
 async def test_attempts_exhausted_terminal_failed(_db):
@@ -271,10 +282,11 @@ async def test_attempts_exhausted_terminal_failed(_db):
     row = await _add(_db, source_id="term-src", status="running", attempt_count=4)
     req = await _get(_db, row.id)
     status = await execute_request(_db, req, argv=["/bin/sh", "-c", "exit 3"])
-    assert status == "failed"
+    assert status == "failed"  # 启动点护栏拒绝启动
     after = await _get(_db, row.id)
     assert after.status == "failed"
-    assert after.failure_kind == "runner_failed"
+    assert after.attempt_count == 4  # 启动点护栏:未递增(runner 从未启动)
+    assert after.runner_exit_code is None
     assert after.next_retry_at is None
     claimed = await __import__("scripts.sync_executor_loop", fromlist=["claim_next"]).claim_next(
         _db
@@ -369,3 +381,186 @@ async def test_retry_wait_blocks_duplicate_trigger(_db):
     async with _db() as session:
         active = await find_active_request(session, "dedupe-src")
     assert active is not None  # retry 等待期仍是在途 → Admin 新触发必须 already-running
+
+
+# --------------------------------------------------------------------------- #
+# Planner FINAL REVIEW CORRECTION A:interrupted 路径同样受 MAX_TOTAL_ATTEMPTS 约束
+# --------------------------------------------------------------------------- #
+
+
+async def _seed_running(factory, source_id, attempt, picked_at=None):
+    row = await _add(
+        factory,
+        source_id=source_id,
+        status="running",
+        attempt_count=attempt,
+        picked_at=picked_at or datetime.now(UTC) - timedelta(minutes=5),
+    )
+    return row.id
+
+
+async def test_a1_attempt4_with_success_fact_finalizes_done(_db):
+    """A1:attempt=4 stale running + 本次执行 terminal success 事实 → done(事实优先)。"""
+    from scripts.sync_executor_loop import reconcile_stale_running
+
+    picked = datetime.now(UTC) - timedelta(minutes=5)
+    rid = await _seed_running(_db, "a1-src", attempt=4, picked_at=picked)
+    await _seed_log(_db, "a1-src", "success", datetime.now(UTC))
+    await reconcile_stale_running(_db)
+    after = await _get(_db, rid)
+    assert after.status == "done"  # 事实优先,不因 attempt cap 误判失败
+
+
+async def test_a2_attempt4_no_fact_terminal_failed_never_claimed(_db):
+    """A2:attempt=4 stale running + 无完成事实 → terminal failed;
+    next_retry_at=NULL、finished_at 落值、claim_next 永不领取(不得第 5 次)。"""
+    from scripts.sync_executor_loop import claim_next, reconcile_stale_running
+
+    picked = datetime.now(UTC) - timedelta(minutes=5)
+    rid = await _seed_running(_db, "a2-src", attempt=4, picked_at=picked)
+    await reconcile_stale_running(_db)
+    after = await _get(_db, rid)
+    assert after.status == "failed"
+    assert after.failure_kind == "interrupted"
+    assert after.next_retry_at is None
+    assert after.finished_at is not None
+    assert await claim_next(_db) is None  # 永不再启动
+
+
+async def test_a3_attempt3_gets_final_recovery_run_then_cap(_db):
+    """A3:attempt=3 stale running + 无事实 → 延迟恢复到期 → claim+执行 = 第 4 次
+    (允许的最后一次);其后再中断 → 不得第 5 次。"""
+    from scripts.sync_executor_loop import claim_next, reconcile_stale_running
+
+    picked = datetime.now(UTC) - timedelta(minutes=5)
+    rid = await _seed_running(_db, "a3-src", attempt=3, picked_at=picked)
+    await reconcile_stale_running(_db)
+    row = await _get(_db, rid)
+    assert row.status == "pending" and row.failure_kind == "interrupted"
+    # 强制到期 → 真实 claim + 执行第 4 次(允许的最后一次),再次失败
+    async with _db() as session:
+        r = await session.get(SyncRequest, rid)
+        r.next_retry_at = datetime.now(UTC)
+        await session.commit()
+    from scripts.sync_executor_loop import execute_request
+
+    claimed = await claim_next(_db)
+    assert claimed is not None and claimed.id == rid
+    status = await execute_request(_db, claimed, argv=["/bin/sh", "-c", "exit 1"])
+    assert status == "failed"
+    after = await _get(_db, rid)
+    assert after.attempt_count == 4  # 恰好 4 次启动
+    assert after.next_retry_at is None
+    assert await claim_next(_db) is None  # 永不 attempt=5
+
+
+async def test_a4_recovery_crash_again_never_attempt5(_db):
+    """A4:attempt=4 恢复执行再次 crash → 重启对账 → terminal failed;
+    再次重启/轮询 attempt 恒为 4。"""
+    from scripts.sync_executor_loop import claim_next, drain_once, reconcile_stale_running
+
+    # 构造:attempt=4 的恢复执行正在运行时被中断
+    rid = await _seed_running(_db, "a4-src", attempt=4)
+    await reconcile_stale_running(_db)  # 第一次重启:对账
+    row = await _get(_db, rid)
+    if row.attempt_count >= 4:
+        # attempt=4 + 无事实 → 必须 terminal,不进 pending
+        assert row.status == "failed"
+    # 再次重启对账 + 轮询
+    await reconcile_stale_running(_db)
+    assert await drain_once(_db, argv=["/bin/sh", "-c", "exit 0"]) is False
+    after = await _get(_db, rid)
+    assert after.attempt_count == 4  # 永不 5
+    assert after.status == "failed"
+    assert await claim_next(_db) is None
+
+
+# --------------------------------------------------------------------------- #
+# Planner FINAL REVIEW CORRECTION B:孤儿复检必须锚定被中断 attempt 的开始时间
+# (真实 claim/drain 路径,不再绕过 claim_next)
+# --------------------------------------------------------------------------- #
+
+
+async def test_b1_orphan_completed_during_wait_absorbed_via_real_drain(_db, monkeypatch):
+    """B1:原始 picked_at=T0 → 对账安排延迟恢复 → T0 后孤儿成功落 sync_log →
+    到期经真实 drain_once 领取 → 复检吸收为 done,runner 执行次数 = 0。"""
+    import scripts.sync_executor_loop as loop_mod
+    from scripts.sync_executor_loop import drain_once
+
+    t0 = datetime.now(UTC) - timedelta(minutes=10)
+    rid = await _seed_running(_db, "b1-src", attempt=1, picked_at=t0)
+    await reconcile_stale_running(_db)  # interrupted → pending(next_retry_at≈+30s,保留 T0 证据锚)
+    row = await _get(_db, rid)
+    boundary = row.attempt_started_at
+    assert boundary is not None and boundary >= t0 - timedelta(seconds=5)
+    # 等待期:孤儿 runner 完成(finished_at 在 T0 之后、retry 到期之前)
+    await _seed_log(_db, "b1-src", "success", t0 + timedelta(minutes=5))
+    # 到期
+    async with _db() as session:
+        r = await session.get(SyncRequest, rid)
+        r.next_retry_at = datetime.now(UTC)
+        await session.commit()
+    calls = {"n": 0}
+
+    async def spy_runner(*a, **k):
+        calls["n"] += 1
+        return 0
+
+    monkeypatch.setattr(loop_mod, "run_runner", spy_runner)
+    assert await drain_once(_db, argv=["/bin/sh", "-c", "exit 0"]) is True
+    assert calls["n"] == 0, "复检吸收后不得启动 recovery runner"
+    after = await _get(_db, rid)
+    assert after.status == "done"
+    assert after.runner_exit_code is None
+
+
+async def test_b2_no_new_log_spawns_recovery_runner_and_increments(_db, monkeypatch):
+    """B2:同样路径但无新 terminal log → 恢复 runner 正常 spawn,attempt 递增正确。"""
+    import scripts.sync_executor_loop as loop_mod
+    from scripts.sync_executor_loop import drain_once
+
+    t0 = datetime.now(UTC) - timedelta(minutes=10)
+    rid = await _seed_running(_db, "b2-src", attempt=1, picked_at=t0)
+    await reconcile_stale_running(_db)
+    async with _db() as session:
+        r = await session.get(SyncRequest, rid)
+        r.next_retry_at = datetime.now(UTC)
+        await session.commit()
+    calls = {"n": 0}
+
+    async def spy_runner(*a, **k):
+        calls["n"] += 1
+        return 0
+
+    monkeypatch.setattr(loop_mod, "run_runner", spy_runner)
+    assert await drain_once(_db, argv=["/bin/sh", "-c", "exit 0"]) is True
+    assert calls["n"] == 1, "无完成事实必须真实启动恢复 runner"
+    after = await _get(_db, rid)
+    assert after.status == "done"
+    assert after.attempt_count == 2
+
+
+async def test_b3_old_log_before_original_start_not_counted(_db, monkeypatch):
+    """B3:发生在原始 T0 之前的旧 sync_log 不得被当作本次孤儿完成。"""
+    import scripts.sync_executor_loop as loop_mod
+    from scripts.sync_executor_loop import drain_once
+
+    t0 = datetime.now(UTC) - timedelta(minutes=10)
+    rid = await _seed_running(_db, "b3-src", attempt=1, picked_at=t0)
+    await reconcile_stale_running(_db)
+    await _seed_log(_db, "b3-src", "success", t0 - timedelta(minutes=5))  # T0 之前的旧 log
+    async with _db() as session:
+        r = await session.get(SyncRequest, rid)
+        r.next_retry_at = datetime.now(UTC)
+        await session.commit()
+    calls = {"n": 0}
+
+    async def spy_runner(*a, **k):
+        calls["n"] += 1
+        return 0
+
+    monkeypatch.setattr(loop_mod, "run_runner", spy_runner)
+    assert await drain_once(_db, argv=["/bin/sh", "-c", "exit 0"]) is True
+    assert calls["n"] == 1, "旧 log 不得吸收本次恢复"
+    after = await _get(_db, rid)
+    assert after.attempt_count == 2

@@ -174,7 +174,7 @@ async def test_new_execution_plane_keeps_real_backend_responsive(
     marker = tmp_path / "burn"
 
     # 执行面的 runner argv 指向受控 burn 子进程(claim/drain/落账逻辑全真实)
-    def _fake_argv(source_id, triggered_by):
+    def _fake_argv(source_id, triggered_by, *, recovery=False):
         return [sys.executable, "-c", _BURN_CHILD, str(_BURN_SECONDS), str(marker)]
 
     monkeypatch.setattr(loop_mod, "build_runner_argv", _fake_argv)
