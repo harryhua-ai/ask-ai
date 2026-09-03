@@ -136,17 +136,17 @@ def test_6_expected_state_resolution():
 
 
 def test_7_overall_aggregation_matrix():
-    base = dict(
-        expected_state="REQUIRED",
-        recovering=False,
-        document_count=10,
-        has_success=True,
-        connectivity="ok",
-        sync_state="healthy",
-        coverage="ok",
-        freshness="fresh",
-        consistency="ok",
-    )
+    base = {
+        "expected_state": "REQUIRED",
+        "recovering": False,
+        "document_count": 10,
+        "has_success": True,
+        "connectivity": "ok",
+        "sync_state": "healthy",
+        "coverage": "ok",
+        "freshness": "fresh",
+        "consistency": "ok",
+    }
     assert _overall_health(**base) == "HEALTHY"
     # EXCLUDED 最权威:任何 overlay 不可改写
     assert (
@@ -176,3 +176,91 @@ def test_7_overall_aggregation_matrix():
         _overall_health(**{**base, "sync_state": "insufficient_data", "freshness": "fresh"})
         == "INSUFFICIENT_DATA"
     )
+
+
+def test_8_repair_facts_make_consistency_actionable():
+    """Correction Gate(#13→#11):修复事实进 Consistency 维度,不再被 ok 吞掉。"""
+    base = {
+        "expected_state": "REQUIRED",
+        "recovering": False,
+        "document_count": 10,
+        "has_success": True,
+        "connectivity": "ok",
+        "sync_state": "healthy",
+        "coverage": "ok",
+        "freshness": "fresh",
+        "consistency": "ok",
+    }
+    # A:污染+待修(missing/orphan 全零)→ degraded → overall ACTION_REQUIRED
+    polluted = _run(
+        consistency={
+            "missing": 0,
+            "orphan_count": 0,
+            "polluted_artifact_chunks": 3,
+            "repair_required": True,
+            "duplicate_doc_count": 2,
+            "retired_chunks": 0,
+            "repaired_ledger_rows": 0,
+            "expected_chunks": 10,
+            "actual_chunks": 10,
+        }
+    )
+    dim = _consistency_dim(polluted)
+    assert dim.state == "degraded"
+    assert "polluted_artifact_chunks=3" in dim.evidence
+    assert "repair_required=True" in dim.evidence
+    assert _overall_health(**{**base, "consistency": dim.state}) == "ACTION_REQUIRED"
+
+    # B:仅 duplicate(合法共存,无待修)→ ok;信息事实如实入 evidence
+    dup_only = _run(
+        consistency={
+            "missing": 0,
+            "orphan_count": 0,
+            "polluted_artifact_chunks": 0,
+            "repair_required": False,
+            "duplicate_doc_count": 4,
+            "expected_chunks": 10,
+            "actual_chunks": 10,
+        }
+    )
+    dim = _consistency_dim(dup_only)
+    assert dim.state == "ok"
+    assert "duplicate_doc_count=4" in dim.evidence
+    assert _overall_health(**{**base, "consistency": dim.state}) == "HEALTHY"
+
+    # C:无 #13 键的既有 facts → ok 行为逐字不变(evidence 不增不删)
+    legacy = _run(
+        consistency={"missing": 0, "orphan_count": 0, "expected_chunks": 5, "actual_chunks": 5}
+    )
+    dim = _consistency_dim(legacy)
+    assert dim.state == "ok"
+    assert dim.evidence == "missing=0, extra_orphan=0 (expected=5, actual=5)"
+
+    # D:verification_failed 优先级不变——污染事实在场也不改判 unknown
+    failed_verify = _run(
+        consistency={
+            "verification_failed": "boom",
+            "polluted_artifact_chunks": 3,
+            "repair_required": True,
+        }
+    )
+    dim = _consistency_dim(failed_verify)
+    assert dim.state == "unknown"
+    assert dim.evidence == "verification_failed: boom"
+
+    # 边界:repair_required 单独为真(无 polluted 键,防御旧写方)同样 degraded
+    repair_only = _run(consistency={"missing": 0, "orphan_count": 0, "repair_required": True})
+    assert _consistency_dim(repair_only).state == "degraded"
+
+    # 边界:本轮已处置量(retired/repaired)是补救计数,不参与判定
+    remediated = _run(
+        consistency={
+            "missing": 0,
+            "orphan_count": 0,
+            "polluted_artifact_chunks": 0,
+            "repair_required": False,
+            "retired_chunks": 7,
+            "repaired_ledger_rows": 2,
+        }
+    )
+    assert _consistency_dim(remediated).state == "ok"

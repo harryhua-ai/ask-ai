@@ -144,3 +144,64 @@ async def test_2_health_expected_state_config_override(health_env):
     assert items[H_EMPTY]["expected_state"] == "DISCOVERY"
     # DISCOVERY×0 文档 → EMPTY_EXPECTED
     assert items[H_EMPTY]["overall"] == "EMPTY_EXPECTED"
+
+
+async def test_3_polluted_facts_drive_action_required(health_env):
+    """Correction Gate(#13→#11):账本污染事实 → Consistency degraded → overall ACTION_REQUIRED。
+
+    端到端链路:SyncRun.consistency(#13 facts v2)→ /sync-health 读时派生 →
+    既有 overall precedence(consistency==degraded → ACTION_REQUIRED)。
+    同源 fresh 成功记录在场,证明升级不依赖 STALE/其他维度。
+    """
+    factory = app.state.session_factory
+    sid = "w2h-polluted"
+    async with factory() as session:
+        session.add(
+            DataSource(
+                id=sid, type="github", product="p", enabled=True, config={}, sync_interval="1h"
+            )
+        )
+        session.add(
+            SyncLog(
+                source_id=sid,
+                source_type="github",
+                status="success",
+                started_at=NOW,
+                finished_at=NOW,
+            )
+        )
+        session.add(
+            SyncRun(
+                source_id=sid,
+                status="completed",
+                stage="DONE",
+                consistency={
+                    "missing": 0,
+                    "orphan_count": 0,
+                    "polluted_artifact_chunks": 3,
+                    "repair_required": True,
+                    "duplicate_doc_count": 2,
+                    "expected_chunks": 10,
+                    "actual_chunks": 10,
+                },
+                started_at=NOW - timedelta(minutes=5),
+                finished_at=NOW,
+            )
+        )
+        await session.commit()
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/admin/sync-health", headers=health_env)
+        assert resp.status_code == 200, resp.text
+        item = next(i for i in resp.json()["items"] if i["source_id"] == sid)
+        assert item["consistency"]["state"] == "degraded"
+        assert "polluted_artifact_chunks=3" in item["consistency"]["evidence"]
+        assert item["freshness"]["state"] == "fresh"  # 升级不依赖 STALE
+        assert item["overall"] == "ACTION_REQUIRED"
+    finally:
+        async with factory() as session:
+            await session.execute(SyncLog.__table__.delete().where(SyncLog.source_id == sid))
+            await session.execute(SyncRun.__table__.delete().where(SyncRun.source_id == sid))
+            await session.execute(DataSource.__table__.delete().where(DataSource.id == sid))
+            await session.commit()

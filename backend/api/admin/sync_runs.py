@@ -320,7 +320,18 @@ def _freshness_dim(
 
 
 def _consistency_dim(latest: SyncRun | None) -> HealthDimension:
-    """Consistency:missing 与 extra/orphan 是**不同事实**,分别呈现、任一>0 即 degraded。"""
+    """Consistency:missing/orphan 分别呈现、任一>0 即 degraded;#13 修复事实同维消费。
+
+    Correction Gate(#13→#11):账本身份面事实进同一读时派生——
+    - verification_failed 仍最优先(校验不可用 ≠ 判定健康/不健康);
+    - missing/orphan 语义不变(degraded);
+    - polluted_artifact_chunks>0 或 repair_required=true → degraded:
+      历史 unsafe artifact 待修是可见的可行动状态,经既有 overall
+      precedence(consistency==degraded → ACTION_REQUIRED)升级;
+    - duplicate_doc_count 单独>0 不判不健康(#13 D2:同内容不同合法路径
+      为合法共存),仅作信息事实入 evidence;
+    - retired/repaired 是本轮已处置量(补救计数),非未决问题,不参与判定。
+    """
     if latest is None or not latest.consistency:
         return _dim("unknown", "no consistency evidence")
     facts = latest.consistency
@@ -334,12 +345,23 @@ def _consistency_dim(latest: SyncRun | None) -> HealthDimension:
             f"missing={missing} (账本有/向量缺), extra_orphan={orphan} (向量有/账本无)",
             latest.finished_at or latest.started_at,
         )
-    return _dim(
-        "ok",
+    polluted = facts.get("polluted_artifact_chunks") or 0
+    repair_required = bool(facts.get("repair_required"))
+    if polluted or repair_required:
+        evidence = (
+            f"polluted_artifact_chunks={polluted} (历史 unsafe artifact 待修), "
+            f"repair_required={repair_required}"
+        )
+        if "duplicate_doc_count" in facts:
+            evidence += f", duplicate_doc_count={facts['duplicate_doc_count']} (信息事实,合法共存)"
+        return _dim("degraded", evidence, latest.finished_at or latest.started_at)
+    evidence = (
         f"missing=0, extra_orphan=0 (expected={facts.get('expected_chunks')},"
-        f" actual={facts.get('actual_chunks')})",
-        latest.finished_at or latest.started_at,
+        f" actual={facts.get('actual_chunks')})"
     )
+    if "duplicate_doc_count" in facts:
+        evidence += f", duplicate_doc_count={facts['duplicate_doc_count']} (信息事实,合法共存)"
+    return _dim("ok", evidence, latest.finished_at or latest.started_at)
 
 
 def _expected_state_of(source: DataSource) -> str:
