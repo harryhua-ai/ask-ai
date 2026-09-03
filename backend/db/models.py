@@ -245,6 +245,47 @@ class SyncRequest(Base):
     attempt_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class SyncRun(Base):
+    """同步运行可观测性(⑪+⑫ Wave-0 共享核心)。
+
+    一行 = **ONE SOURCE × ONE ATTEMPT** 的运行真相,由 sync.py 业务进程
+    单写者维护(executor 只在对账时把孤儿 running 行盖章为 interrupted/
+    completed——服从而非复刻阶段⑩恢复裁决):
+
+    - ``sync_requests`` 仍是执行交接/恢复权威(阶段⑨/⑩谓词零改动);
+    - ``sync_log`` 仍是业务历史结局(SyncRun 不参与任何恢复判定);
+    - ``sync_runs`` 只承担运行期遥测:attempt start / stage / progress /
+      terminal outcome,供读时派生 Health 与 Progress(Wave-0 不做派生 UI)。
+
+    进度语义:``stage_total IS NULL`` 表示分母未知(如增量抓取未 materialize),
+    此时**禁止**计算百分比,只允许呈现真实计数(stage_current)。
+    """
+
+    __tablename__ = "sync_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    source_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    attempt: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    recovery: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    triggered_by: Mapped[str] = mapped_column(String(20), default="cron", nullable=False)
+    # running / completed / failed / interrupted(QUEUED/WAITING/RECOVERING/IDLE
+    # 是由 sync_requests + 本表派生的呈现态,不持久化虚假行)
+    status: Mapped[str] = mapped_column(String(20), default="running", index=True)
+    stage: Mapped[str | None] = mapped_column(String(20))
+    stage_current: Mapped[int | None] = mapped_column(Integer)
+    stage_total: Mapped[int | None] = mapped_column(Integer)
+    counters: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    consistency: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    error_summary: Mapped[str | None] = mapped_column(Text)
+    sync_log_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Customization(Base):
     __tablename__ = "customizations"
 
