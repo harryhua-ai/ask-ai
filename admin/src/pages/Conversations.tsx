@@ -17,6 +17,7 @@ import { fetchTraces, type TraceData } from "@/lib/api/traces";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import ToggleFilter from "@/components/observability/ToggleFilter";
+import { deriveOutcome } from "@/utils/outcome";
 
 const INTENT_LABELS: Record<string, string> = {
   commercial: "商务咨询",
@@ -215,7 +216,8 @@ export default function Conversations() {
           >
             <option value="">全部状态</option>
             <option value="true">已回答</option>
-            <option value="false">拒答</option>
+            {/* 阶段⑯:is_answered=false 含 拒答/生成失败/服务繁忙,不再统称「拒答」 */}
+            <option value="false">未回答(拒答/失败/繁忙)</option>
           </select>
           <select
             className="h-9 rounded-md border px-3 text-sm"
@@ -358,9 +360,17 @@ export default function Conversations() {
                     </div>
                     <div className="flex flex-col items-end gap-1 text-sm shrink-0">
                       <div className="flex items-center gap-1">
-                        <Badge variant={conv.is_answered ? "success" : "warning"}>
-                          {conv.is_answered ? "已回答" : "拒答"}
-                        </Badge>
+                        {(() => {
+                          const outcome = deriveOutcome(
+                            conv.is_answered,
+                            conv.trace_summary?.type,
+                          );
+                          return (
+                            <Badge variant={outcome.tone} data-outcome={outcome.label}>
+                              {outcome.label}
+                            </Badge>
+                          );
+                        })()}
                         {conv.feedback === "up" && (
                           <ThumbsUp
                             className="h-3.5 w-3.5 text-[var(--ok)]"
@@ -430,9 +440,14 @@ export default function Conversations() {
             </Button>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Badge variant={detail.is_answered ? "success" : "warning"}>
-              {detail.is_answered ? "已回答" : "拒答"}
-            </Badge>
+            {(() => {
+              const outcome = deriveOutcome(detail.is_answered, detail.trace_type);
+              return (
+                <Badge variant={outcome.tone} data-outcome={outcome.label}>
+                  {outcome.label}
+                </Badge>
+              );
+            })()}
             {detail.intent_tag && (
               <Badge variant="outline">
                 {INTENT_LABELS[detail.intent_tag] ?? detail.intent_tag}

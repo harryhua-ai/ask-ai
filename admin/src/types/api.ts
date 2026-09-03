@@ -125,6 +125,8 @@ export interface TraceSummary {
   total_ms: number | null;
   confidence: number | null;
   markers?: TraceMarkers | null;
+  /** 阶段⑯:generation_error 时的失败类别(additive) */
+  failure_kind?: string | null;
 }
 
 export interface Conversation {

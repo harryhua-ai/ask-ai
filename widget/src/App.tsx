@@ -38,7 +38,6 @@ export function App({ config }: { config: WidgetConfig }) {
   // MSW:站点体验配置(启动时按 siteId 拉取;失败 fail-safe 回退默认体验,
   // site_id 仍随 ask 发送,由服务端裁决 → SSE 层可见「站点未授权」失败)
   const [siteConfig, setSiteConfig] = useState<SiteExperienceConfig | null>(null);
-  const { ask, uploadFiles } = useSSE(config.apiUrl);
 
   // ML 闭环:UI_LANGUAGE 与 ANSWER_LANGUAGE 分离。
   // 解析链(冻结):宿主显式配置 → <html lang> → 站点默认语言 → 浏览器语言 → en。
@@ -61,6 +60,11 @@ export function App({ config }: { config: WidgetConfig }) {
         typeof navigator !== "undefined" ? readBrowserLanguage(navigator) : null,
     }),
   );
+  // 阶段⑯:UI 语言对应的客户端兜底文案(服务端 message 恒为主显示)
+  const { ask, uploadFiles } = useSSE(config.apiUrl, {
+    serviceUnavailable: uiStrings(uiLang).serviceUnavailable,
+    budgetDeclined: uiStrings(uiLang).serviceBusy,
+  });
 
   // 站点体验配置按当前 UI 语言拉取本地化 welcome/starters(G-L5);
   // UI 语言变化(页内热切换)时重新拉取。

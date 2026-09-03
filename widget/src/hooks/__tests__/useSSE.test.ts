@@ -80,8 +80,79 @@ describe("consumeSSE — 失败信号可见(REL-G001/002/003)", () => {
       sse("done", { conversation_id: "c2" }),
     ]);
     await consumeSSE(resp, cb);
-    expect(cb.onError).toHaveBeenCalledWith("服务繁忙,请稍后再试");
+    // 阶段⑯:declined 回调恒带 meta(旧调用方按位置参数消费,兼容);reason 缺失回落中文常量
+    expect(cb.onError).toHaveBeenCalledWith("服务繁忙,请稍后再试", {
+      messageKey: undefined,
+    });
     expect(cb.onDone).toHaveBeenCalledWith("c2");
+  });
+});
+
+describe("consumeSSE — 阶段⑯:本地化与 message_key 兼容", () => {
+  it("error 事件透传 message_key(message 恒为主显示,旧字段不缺位)", async () => {
+    const cb = makeCallbacks();
+    const resp = sseResponse([
+      sse("error", {
+        conversation_id: "c1",
+        kind: "provider_error",
+        message: "The service is temporarily unavailable. Please try again later.",
+        message_key: "service_unavailable",
+      }),
+      sse("done", { conversation_id: "c1" }),
+    ]);
+    await consumeSSE(resp, cb);
+    expect(cb.onError).toHaveBeenCalledWith(
+      "The service is temporarily unavailable. Please try again later.",
+      { kind: "provider_error", messageKey: "service_unavailable" },
+    );
+  });
+
+  it("message 缺失时回落注入的双语兜底(而非固定中文)", async () => {
+    const cb = makeCallbacks();
+    const resp = sseResponse([
+      sse("error", { conversation_id: "c1", kind: "empty_generation" }),
+      sse("done", { conversation_id: "c1" }),
+    ]);
+    await consumeSSE(resp, cb, {
+      messages: {
+        serviceUnavailable: "EN fallback",
+        budgetDeclined: "EN busy",
+      },
+    });
+    expect(cb.onError).toHaveBeenCalledWith("EN fallback", {
+      kind: "empty_generation",
+      messageKey: undefined,
+    });
+  });
+
+  it("不传 messages 时保持既有中文兜底(向后兼容)", async () => {
+    const cb = makeCallbacks();
+    const resp = sseResponse([
+      sse("error", { conversation_id: "c1", kind: "provider_error" }),
+      sse("done", { conversation_id: "c1" }),
+    ]);
+    await consumeSSE(resp, cb);
+    expect(cb.onError).toHaveBeenCalledWith("服务暂时不可用,请稍后再试。", {
+      kind: "provider_error",
+      messageKey: undefined,
+    });
+  });
+
+  it("declined 透传 message_key 并回落注入的 busy 文案", async () => {
+    const cb = makeCallbacks();
+    const resp = sseResponse([
+      sse("declined", {
+        reason: "The service is busy right now. Please try again shortly.",
+        message_key: "budget_declined",
+        conversation_id: "c9",
+      }),
+      sse("done", { conversation_id: "c9" }),
+    ]);
+    await consumeSSE(resp, cb);
+    expect(cb.onError).toHaveBeenCalledWith(
+      "The service is busy right now. Please try again shortly.",
+      { messageKey: "budget_declined" },
+    );
   });
 });
 

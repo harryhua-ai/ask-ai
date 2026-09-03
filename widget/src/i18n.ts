@@ -9,6 +9,8 @@ export interface UiStrings {
   placeholder: string;
   send: string;
   serviceUnavailable: string;
+  /** 预算熔断/服务繁忙(阶段⑯,与后端 budget_declined 冻结文案对齐) */
+  serviceBusy: string;
   uploadFailed: string;
   attachTitle: string;
 }
@@ -18,6 +20,7 @@ const EN: UiStrings = {
   placeholder: "Type your question...",
   send: "Send",
   serviceUnavailable: "Service temporarily unavailable. Please try again later.",
+  serviceBusy: "The service is busy right now. Please try again shortly.",
   uploadFailed: "Upload failed",
   attachTitle: "Attach .txt or .log",
 };
@@ -28,6 +31,8 @@ const ZH: UiStrings = {
   send: "发送",
   // 与后端 SERVICE_UNAVAILABLE_MSG 逐字一致(PC-01 客户端最后防线文案)
   serviceUnavailable: "服务暂时不可用,请稍后再试。",
+  // 与后端 budget_declined 冻结文案逐字一致
+  serviceBusy: "服务繁忙,请稍后再试。",
   uploadFailed: "上传失败",
   attachTitle: "附加 .txt 或 .log 文件",
 };

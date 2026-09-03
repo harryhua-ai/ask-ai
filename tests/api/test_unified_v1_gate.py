@@ -253,8 +253,10 @@ async def test_int_v1_g003_authorized_site_zero_generation_fails_explicitly():
     assert captured["site_name"] == "CamThink Store"
     assert captured["page_context"]["product"] == "ne503"
     assert captured["channel"] == "widget"
-    # 显式可恢复失败,绝不静默空白
-    assert json.loads(events[1]["data"])["content"] == SERVICE_UNAVAILABLE
+    # 显式可恢复失败,绝不静默空白(阶段⑯:EN query → 英文冻结文案)
+    assert json.loads(events[1]["data"])["content"] == (
+        "The service is temporarily unavailable. Please try again later."
+    )
     assert json.loads(events[2]["data"])["kind"] == "empty_generation"
     # 持久化如实:is_answered=False + site_id 落值 + Trace=generation_error
     persisted = [call.args[0] for call in session.add.call_args_list]
