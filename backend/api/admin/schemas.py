@@ -57,6 +57,10 @@ class DataSourceOut(BaseModel):
     last_sync: str | None = None
     last_sync_status: str | None = None
     last_sync_error: str | None = None
+    # #18 删除生命周期(NULL = ACTIVE):状态持久化在行上,刷新即恢复
+    lifecycle_state: str | None = None
+    lifecycle_since: str | None = None
+    lifecycle_error: str | None = None
 
 
 class DataSourceCreate(BaseModel):

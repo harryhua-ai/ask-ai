@@ -417,12 +417,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             strict=os.environ.get("APP_MODE", "dev") == "prod",
         )
 
+        # #18:非阻塞删除 worker(durable lifecycle 执行面)。启动即 sweep
+        # 一轮 = 崩溃恢复(重驱在途 DELETE_REQUESTED / 孤儿 DELETING,
+        # purge 幂等);此后事件唤醒 + 周期 sweep 兜底。
+        from backend.services.source_deletion import SourceDeletionWorker
+
+        deletion_worker = SourceDeletionWorker(
+            app.state.session_factory,
+            settings.weaviate_url,
+            settings.weaviate_class_name,
+        )
+        deletion_worker.start()
+        app.state.deletion_worker = deletion_worker
+
         logger.info("Ask AI 后端就绪")
         yield
     finally:
         # 资源释放:每步独立 guard,确保单个关闭失败不阻塞后续清理。
         # 覆盖两种场景:(1) 启动中途抛异常 → 已建立的连接仍能释放;
         #             (2) 正常关闭时 weaviate/engine 抛异常互不影响。
+        _deletion_worker = getattr(app.state, "deletion_worker", None)
+        if _deletion_worker is not None:
+            try:
+                await _deletion_worker.stop()
+            except Exception:
+                logger.exception("删除 worker 停止失败")
         try:
             weaviate_client.close()
         except Exception:

@@ -52,6 +52,23 @@ export interface DataSource {
   last_sync_status: string | null;
   /** 最近一次同步失败时的错误明细(无记录或成功时为 null)。 */
   last_sync_error: string | null;
+  /**
+   * #18 删除生命周期(NULL = active 正常态)。持久化在数据源行上,
+   * 刷新页面即可恢复;delete_failed 时附 lifecycle_error。
+   */
+  lifecycle_state: string | null;
+  lifecycle_since: string | null;
+  lifecycle_error: string | null;
+}
+
+/** #18:删除是否在途(已受理未终态;此时禁止同步/重复删除)。 */
+export function isDeletionInFlight(ds: DataSource): boolean {
+  return ds.lifecycle_state === "delete_requested" || ds.lifecycle_state === "deleting";
+}
+
+/** #18:是否允许发起新同步(deny-by-default,仅正常态可同步)。 */
+export function isSyncEligible(ds: DataSource): boolean {
+  return !ds.lifecycle_state; // NULL = active
 }
 
 /** preview-dirs 返回的目录项(供目录选择器渲染)。 */

@@ -87,13 +87,13 @@ def _build_objects():
 
 
 def test_delete_source_a_document_local_and_siblings_survive():
-    from backend.api.admin import data_sources as ds
+    from backend.services import source_deletion as sd
 
     ledger, objects, sibling_uuids, orphan_u = _build_objects()
     client, collection = _fake_client(objects)
 
-    with patch.object(ds.weaviate, "connect_to_local", lambda host, port, **k: client):
-        stats = ds._purge_source_corpus_sync("http://localhost:8080", "Document", _PREFIX_A, ledger)
+    with patch.object(sd.weaviate, "connect_to_local", lambda host, port, **k: client):
+        stats = sd.purge_source_corpus_sync("http://localhost:8080", "Document", _PREFIX_A, ledger)
 
     own_uuids = {_deterministic_uuid(sid, i) for sid, cc in ledger for i in range(cc)}
     # Phase 1:每个账本 UUID 都被 by_id 过滤器点名,且不夹带任何兄弟源 UUID
@@ -118,7 +118,7 @@ def test_delete_source_a_document_local_and_siblings_survive():
 
 def test_purge_verifies_residue_zero_and_raises_on_leftover():
     """验证段:残留 > 0 必须 raise(调用方转 502,不假报成功)。"""
-    from backend.api.admin import data_sources as ds
+    from backend.services import source_deletion as sd
 
     ledger = [(_PREFIX_A + "/doc1", 1)]
     client, collection = _fake_client(
@@ -128,18 +128,18 @@ def test_purge_verifies_residue_zero_and_raises_on_leftover():
     collection.iterator.side_effect = lambda return_properties=None: iter(
         [_FakeItem("x", _PREFIX_A + "/doc1")]
     )
-    with patch.object(ds.weaviate, "connect_to_local", lambda host, port, **k: client):
+    with patch.object(sd.weaviate, "connect_to_local", lambda host, port, **k: client):
         with pytest.raises(RuntimeError, match="残留"):
-            ds._purge_source_corpus_sync("http://localhost:8080", "Document", _PREFIX_A, ledger)
+            sd.purge_source_corpus_sync("http://localhost:8080", "Document", _PREFIX_A, ledger)
 
 
 def test_no_text_property_filter_primitive_in_delete_path():
     """静态禁令:Admin 删除路径源码不得再出现 TEXT 属性过滤删除(G2/AC8)。"""
     import inspect
 
-    from backend.api.admin import data_sources as ds
+    from backend.services import source_deletion as sd
 
-    src = inspect.getsource(ds._purge_source_corpus_sync)
+    src = inspect.getsource(sd.purge_source_corpus_sync)
     for banned in (
         'by_property("source_id").equal',
         "by_property('source_id').equal",
@@ -162,7 +162,7 @@ def test_real_weaviate_delete_document_local():
     except Exception:
         pytest.skip("local Weaviate 1.28 不可达(P0A_WEAVIATE_PORT)")
     try:
-        from backend.api.admin import data_sources as ds
+        from backend.services import source_deletion as sd
 
         coll_name = f"DelSafety{uuid_mod.uuid4().hex[:8]}"
         from weaviate.classes.config import Configure, DataType, Property
@@ -190,7 +190,7 @@ def test_real_weaviate_delete_document_local():
         coll.data.insert_many(objs)
 
         ledger = [("src-a/d1", 2)]
-        stats = ds._purge_source_corpus_sync("http://localhost:8080", coll_name, "src-a", ledger)
+        stats = sd.purge_source_corpus_sync("http://localhost:8080", coll_name, "src-a", ledger)
         residue_a = sum(
             1
             for it in coll.iterator(return_properties=["source_id"])

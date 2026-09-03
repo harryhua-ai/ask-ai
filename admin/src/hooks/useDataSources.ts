@@ -5,7 +5,12 @@ import { fetchSourceHealth } from "@/lib/api/techInsight";
 import { splitIntoBatches } from "@/utils/upload";
 import type { DataSource, PreviewDir } from "@/types/api";
 
-export function useDataSources(options?: { refetchInterval?: number | false }) {
+export function useDataSources(options?: {
+  refetchInterval?:
+    | number
+    | false
+    | ((query: { state: { data?: DataSource[] } }) => number | false | undefined);
+}) {
   return useQuery({
     queryKey: ["data-sources"],
     queryFn: () => apiFetch<DataSource[]>("/data-sources"),
@@ -44,10 +49,30 @@ export function useUpdateDataSource() {
   });
 }
 
+/**
+ * #18 非阻塞删除:受理即返回 202({status, source_id, accepted}),
+ * 行不消失、后台 purge 完成后才移除;列表轮询按 lifecycle_state 呈现进度。
+ */
 export function useDeleteDataSource() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => apiFetch<void>(`/data-sources/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) =>
+      apiFetch<{ status: string; source_id: string; accepted: boolean }>(`/data-sources/${id}`, {
+        method: "DELETE",
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["data-sources"] }),
+  });
+}
+
+/** #18:DELETE_FAILED → 重新入队删除(同一受理管道,碰撞校验后执行)。 */
+export function useRetryDeleteDataSource() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<{ status: string; source_id: string; accepted: boolean }>(
+        `/data-sources/${id}/delete/retry`,
+        { method: "POST" },
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["data-sources"] }),
   });
 }

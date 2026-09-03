@@ -3,22 +3,21 @@
 import logging
 import os
 import re
-from urllib.parse import urlparse
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
 from uuid import uuid4
 
 import httpx
-import weaviate
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from weaviate.classes.query import Filter
 
 from backend.api.admin.schemas import DataSourceCreate, DataSourceOut, DataSourceUpdate
 from backend.auth.dependencies import CurrentUser, require_role
-from backend.db.models import DataSource, Document, SyncLog
+from backend.db.models import DataSource, SyncLog
+from backend.services import source_lifecycle
+from backend.services.source_deletion import DeletionRequestError, request_deletion
+from backend.services.source_lifecycle import DELETE_FAILED
 
 router = APIRouter(prefix="/data-sources", tags=["数据源管理"])
 logger = logging.getLogger(__name__)
@@ -270,6 +269,9 @@ def _to_out(
         last_sync=last_sync,
         last_sync_status=last_sync_status,
         last_sync_error=last_sync_error,
+        lifecycle_state=ds.lifecycle_state,
+        lifecycle_since=ds.lifecycle_since.isoformat() if ds.lifecycle_since else None,
+        lifecycle_error=ds.lifecycle_error,
     )
 
 
@@ -382,139 +384,61 @@ async def update_data_source(
     return _to_out(ds)
 
 
-def _purge_source_corpus_sync(
-    weaviate_url: str, class_name: str, prefix: str, ledger: list[tuple[str, int]]
-) -> dict:
-    """清除某数据源名下的全部向量语料(G2 重写:PRUNE IS DOCUMENT-LOCAL)。
+def _kick_deletion_worker(request: Request) -> None:
+    """受理后即时唤醒删除 worker(未接线/测试环境静默跳过,sweep 兜底)。"""
+    worker = getattr(request.app.state, "deletion_worker", None)
+    if worker is not None:
+        worker.kick()
 
-    三段式,前缀边界严格为 ``prefix + "/"``,**全路径无任何 TEXT 属性过滤
-    删除原语**(P0-A/G2 冻结禁令:Weaviate 对 TEXT 的 equal/like 是分词
-    语义,``equal("a/b")`` 会命中共享 token 的兄弟文档,生产实证可跨源
-    误删):
 
-        1. 账本段:对 PG documents 已知的每个 source_id,按该文档自己的
-           确定性 UUID(uuid5(source_id, 0..chunk_count-1))批量点删——
-           与 ingest._prune_stale_chunks/delete_document 同一文档局部保证;
-        2. 孤儿段:迭代器全扫 + 客户端前缀边界过滤,收集**实际存量对象
-           UUID** 后逐个删除(读侧允许 TEXT 前缀判断,删侧只点名对象 UUID);
-        3. 验证段:再次边界扫描,残留 > 0 则 raise——调用方转 502,配置与
-           账本原样保留可重试(不假报成功)。
+# DELETE 端点可受理的来源状态:ACTIVE 正常删除;DELETE_FAILED 再点删除 =
+# 安全 retry(碰撞校验后重新入队,清空旧错误)。已在途状态幂等返回。
+_DELETE_ALLOWED_FROM = frozenset({source_lifecycle.ACTIVE, DELETE_FAILED})
+_RETRY_ALLOWED_FROM = frozenset({DELETE_FAILED})
 
-    Returns:
-        ``{"ledger_docs": N, "orphans": M, "residue": 0}`` 供日志观察。
 
-    Raises:
-        RuntimeError: 验证段发现残留(删除未收敛)。
+@router.delete("/{source_id}", status_code=202)
+async def delete_data_source(source_id: str, _: EditorDep, request: Request) -> dict[str, Any]:
+    """删除数据源（admin / editor）—— #18 非阻塞 durable 异步删除。
+
+    **202 = 删除已受理并持久进入生命周期(DELETE_REQUESTED)≠ 删除完成**。
+    本端点不做任何 Weaviate purge,立即返回;后台 worker
+    (``SourceDeletionWorker``)完成 purge 收敛后才在同一事务删配置行与
+    账本行(先 purge 后删行,不产生「配置行已删但 purge 未知」的静默半态)。
+
+    语义:
+    - 幂等:已在途(DELETE_REQUESTED/DELETING)→ 202 原样返回当前状态;
+    - DELETE_FAILED 再点删除 = 安全 retry;
+    - 在途同步碰撞(pending/running 交接请求,含 sync-all 批量;running
+      SyncRun)→ 409,状态零改变;
+    - DELETING/DELETE_FAILED 源的同步资格由 lifecycle deny-by-default 拒绝;
+    - 失败 → DELETE_FAILED + lifecycle_error,刷新页面可见,可 retry。
     """
-    from backend.pipeline.ingest import _deterministic_uuid
-
-    parsed = urlparse(weaviate_url)
-    host = parsed.hostname or "localhost"
-    port = parsed.port or 8080
-    client = weaviate.connect_to_local(host=host, port=port)
-    try:
-        collection = client.collections.get(class_name)
-
-        # 1) 账本段:文档局部确定性 UUID 点删
-        purge_uuids: list[str] = []
-        for sid, cc in ledger:
-            purge_uuids.extend(_deterministic_uuid(sid, i) for i in range(int(cc or 0)))
-        for start in range(0, len(purge_uuids), 500):
-            collection.data.delete_many(
-                where=Filter.by_id().contains_any(purge_uuids[start : start + 500])
-            )
-
-        # 2) 孤儿段:实际存量扫描 → 对象 UUID 点删
-        stale_uuids: list[str] = []
-        for item in collection.iterator(return_properties=["source_id"]):
-            sid = item.properties.get("source_id")
-            if isinstance(sid, str) and sid.startswith(prefix + "/"):
-                stale_uuids.append(str(item.uuid))
-        for u in stale_uuids:
-            collection.data.delete_by_id(u)
-
-        # 3) 验证段:残留必须为 0
-        residue = 0
-        for item in collection.iterator(return_properties=["source_id"]):
-            sid = item.properties.get("source_id")
-            if isinstance(sid, str) and sid.startswith(prefix + "/"):
-                residue += 1
-        if residue:
-            raise RuntimeError(
-                f"purge 后仍有 {residue} 个残留向量对象(source={prefix}),保留状态可重试"
-            )
-
-        logger.info(
-            "语料清理完成: 账本 %d 篇(UUID 点删 %d), 孤儿 %d chunks, 残留 0",
-            len(ledger),
-            len(purge_uuids),
-            len(stale_uuids),
-        )
-        return {"ledger_docs": len(ledger), "orphans": len(stale_uuids), "residue": 0}
-    finally:
-        client.close()
-
-
-@router.delete("/{source_id}", status_code=204)
-async def delete_data_source(source_id: str, _: EditorDep, request: Request) -> None:
-    """删除数据源（admin / editor）。
-
-    AFP-001 生命周期契约:删除源 ⇒ 其独占知识退出访客检索。
-    顺序(失败安全,绝不假报成功):
-        1. 枚举账本内该源文档(source_id 前缀);
-        2. 清理 Weaviate 向量(账本 Equal 精确删 + 前缀边界孤儿兜底删);
-           失败 → 502,配置与账本原样保留(可重试);
-        3. 同一事务删除 documents 账本行 + 配置行。
-    """
-    settings = request.app.state.settings
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
-        result = await session.execute(select(DataSource).where(DataSource.id == source_id))
-        ds = result.scalar_one_or_none()
-        if ds is None:
-            raise HTTPException(status_code=404, detail="数据源不存在")
-        ledger = (
-            await session.execute(
-                select(Document.source_id, Document.chunk_count).where(
-                    # AC-FIX-01:源 ID 是字面标识符,不是 LIKE 模式 ——
-                    # autoescape 转义 %/_ ,杜绝通配符越界吸走他源账本
-                    Document.source_id.startswith(f"{source_id}/", autoescape=True)
-                )
-            )
-        ).all()
+        try:
+            req = await request_deletion(session, source_id, allowed_from=_DELETE_ALLOWED_FROM)
+        except DeletionRequestError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    _kick_deletion_worker(request)
+    return {"status": req.state, "source_id": source_id, "accepted": req.accepted}
 
-    try:
-        stats = await run_in_threadpool(
-            _purge_source_corpus_sync,
-            settings.weaviate_url,
-            settings.weaviate_class_name,
-            source_id,
-            [(sid, int(cc or 0)) for sid, cc in ledger],
-        )
-    except Exception as exc:  # noqa: BLE001 - 清理失败必须可观察,保留全部状态可重试
-        logger.error("数据源 %s 向量语料清理失败: %s", source_id, exc)
-        raise HTTPException(
-            status_code=502,
-            detail=f"向量语料清理失败,已保留数据源与账本以便重试: {exc}",
-        ) from exc
-    logger.info(
-        "数据源 %s 语料清理完成: 账本 %d 篇, 孤儿 %d chunks",
-        source_id,
-        stats.get("ledger_docs", 0),
-        stats.get("orphans", 0),
-    )
 
+@router.post("/{source_id}/delete/retry", status_code=202)
+async def retry_delete_data_source(source_id: str, _: EditorDep, request: Request) -> dict[str, Any]:
+    """重试失败的数据源删除(仅 DELETE_FAILED 可进入;其余状态 409)。
+
+    与 DELETE 端点同一受理管道(碰撞校验 + 持久化 DELETE_REQUESTED),
+    清空 ``lifecycle_error`` 后交由后台 worker 重新执行(purge 幂等)。
+    """
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
-        result = await session.execute(select(DataSource).where(DataSource.id == source_id))
-        ds = result.scalar_one_or_none()
-        if ds is not None:
-            await session.delete(ds)
-        await session.execute(
-            delete(Document).where(
-                Document.source_id.startswith(f"{source_id}/", autoescape=True)
-            )
-        )
-        await session.commit()
+        try:
+            req = await request_deletion(session, source_id, allowed_from=_RETRY_ALLOWED_FROM)
+        except DeletionRequestError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    _kick_deletion_worker(request)
+    return {"status": req.state, "source_id": source_id, "accepted": req.accepted}
 
 
 @router.get("/preview-dirs")
@@ -630,6 +554,14 @@ async def trigger_sync(source_id: str, _: EditorDep, request: Request) -> dict[s
             raise HTTPException(status_code=404, detail="数据源不存在")
         if not ds.enabled:
             raise HTTPException(status_code=400, detail="数据源已禁用")
+        if not source_lifecycle.is_sync_eligible(ds.lifecycle_state):
+            # deny-by-default:删除在途/删除失败(含未来未知状态)一律
+            # 拒绝新同步——同步 deleting 源会复活已清理语料
+            raise HTTPException(
+                status_code=409,
+                detail="数据源处于删除流程,不能同步"
+                f"(当前状态: {source_lifecycle.normalize(ds.lifecycle_state)})",
+            )
         if ds.type == "github":
             await _validate_github_branches(ds.config)
 
@@ -661,7 +593,12 @@ async def trigger_sync_all(_: EditorDep, request: Request) -> dict[str, Any]:
         result = await session.execute(
             select(DataSource).where(DataSource.enabled.is_(True)).order_by(DataSource.id)
         )
-        sources = result.scalars().all()
+        # 批量同步同样尊重 lifecycle deny-by-default:删除在途/失败源不进
+        # 本批(执行面 WHERE 过滤是第二道防线,这里保证返回的 source_ids
+        # 不含不可同步源,前端轮询不空等)
+        sources = [
+            s for s in result.scalars().all() if source_lifecycle.is_sync_eligible(s.lifecycle_state)
+        ]
         if not sources:
             return {"status": "noop", "source_ids": [], "count": 0}
 

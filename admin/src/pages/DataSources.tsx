@@ -9,6 +9,7 @@ import {
   useCreateDataSource,
   useUpdateDataSource,
   useDeleteDataSource,
+  useRetryDeleteDataSource,
   useToggleDataSource,
   useTriggerSync,
   useTriggerSyncAll,
@@ -23,6 +24,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { DirPicker } from "@/components/DirPicker";
+import { isDeletionInFlight, isSyncEligible } from "@/types/api";
 import type { DataSource } from "@/types/api";
 import type { SourceHealthItem } from "@/lib/api/techInsight";
 import { toast } from "sonner";
@@ -344,8 +346,14 @@ function dsToForm(ds: DataSource): FormValues {
 export default function DataSources() {
   const [syncingIds, setSyncingIds] = useState<Set<string>>(() => new Set());
   const [triggeredAt, setTriggeredAt] = useState<Record<string, number>>(() => ({}));
+  // #18:删除在途(delete_requested/deleting)期间同样保持 5s 轮询,
+  // 让 lifecycle 推进可见(完成 → 行自动消失;失败 → DELETE_FAILED 徽章)。
   const { data: sources, isLoading, isError, error, refetch } = useDataSources({
-    refetchInterval: syncingIds.size > 0 ? 5000 : false,
+    refetchInterval: (query) => {
+      const list = query.state.data as DataSource[] | undefined;
+      const deleting = list?.some((s) => isDeletionInFlight(s)) ?? false;
+      return syncingIds.size > 0 || deleting ? 5000 : false;
+    },
   });
   // DSH-02:数据源健康的主展示位。窗口 30 天历史可靠性按 source_id join 当前列表;
   // 同步进行中与列表同节奏 5s 轮询,同步完成后健康态即时跟进。
@@ -359,6 +367,7 @@ export default function DataSources() {
   const createDs = useCreateDataSource();
   const updateDs = useUpdateDataSource();
   const deleteDs = useDeleteDataSource();
+  const retryDeleteDs = useRetryDeleteDataSource();
   const toggleDs = useToggleDataSource();
   const triggerSync = useTriggerSync();
   const triggerSyncAll = useTriggerSyncAll();
@@ -600,8 +609,27 @@ export default function DataSources() {
 
   const { user } = useAuth();
   const handleDelete = async (id: string) => {
-    if (!window.confirm(`确定删除数据源 ${id} 吗?`)) return;
-    await deleteDs.mutateAsync(id);
+    if (
+      !window.confirm(
+        `确定删除数据源 ${id} 吗?\n删除受理后将在后台清理向量语料,期间该源暂停同步;完成后此行自动消失。`,
+      )
+    )
+      return;
+    try {
+      await deleteDs.mutateAsync(id);
+      toast.success(`删除已受理:${id}(后台清理中,完成后自动从列表移除)`);
+    } catch (err) {
+      toast.error(`删除受理失败:${err instanceof Error ? err.message : "未知错误"}`);
+    }
+  };
+
+  const handleRetryDelete = async (id: string) => {
+    try {
+      await retryDeleteDs.mutateAsync(id);
+      toast.success(`删除重试已受理:${id}(后台清理中)`);
+    } catch (err) {
+      toast.error(`删除重试失败:${err instanceof Error ? err.message : "未知错误"}`);
+    }
   };
 
   const handleSync = (ds: DataSource) => {
@@ -1074,13 +1102,42 @@ export default function DataSources() {
               </TableCell>
               <TableCell>{TYPE_LABELS[ds.type] ?? ds.type}</TableCell>
               <TableCell>
-                <Badge
-                  variant={ds.enabled ? "success" : "destructive"}
-                  className="cursor-pointer"
-                  onClick={() => toggleDs.mutate({ id: ds.id, enabled: !ds.enabled })}
-                >
-                  {ds.enabled ? "启用" : "禁用"}
-                </Badge>
+                <div className="flex flex-col items-start gap-1">
+                  <Badge
+                    variant={ds.enabled ? "success" : "destructive"}
+                    className="cursor-pointer"
+                    onClick={() => toggleDs.mutate({ id: ds.id, enabled: !ds.enabled })}
+                  >
+                    {ds.enabled ? "启用" : "禁用"}
+                  </Badge>
+                  {/* #18 删除生命周期:状态持久化在行上,刷新后仍可见 */}
+                  {ds.lifecycle_state === "delete_requested" && (
+                    <Badge variant="warning" title="删除已受理,等待后台清理">
+                      待删除
+                    </Badge>
+                  )}
+                  {ds.lifecycle_state === "deleting" && (
+                    <Badge variant="warning" title="正在清理向量语料,完成后自动移除">
+                      删除中…
+                    </Badge>
+                  )}
+                  {ds.lifecycle_state === "delete_failed" && (
+                    <Badge
+                      variant="destructive"
+                      title={ds.lifecycle_error ?? "删除失败,可重试"}
+                    >
+                      删除失败
+                    </Badge>
+                  )}
+                  {ds.lifecycle_state === "delete_failed" && ds.lifecycle_error && (
+                    <div
+                      className="max-w-[180px] truncate text-xs text-destructive"
+                      title={ds.lifecycle_error}
+                    >
+                      {ds.lifecycle_error}
+                    </div>
+                  )}
+                </div>
               </TableCell>
               <TableCell>
                 {healthMeta && health ? (
@@ -1141,7 +1198,8 @@ export default function DataSources() {
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={syncingIds.has(ds.id) || !ds.enabled}
+                  disabled={syncingIds.has(ds.id) || !ds.enabled || !isSyncEligible(ds)}
+                  title={isSyncEligible(ds) ? undefined : "该源处于删除流程,不能同步"}
                   onClick={() => handleSync(ds)}
                 >
                   {syncingIds.has(ds.id) ? "同步中..." : "同步"}
@@ -1149,16 +1207,31 @@ export default function DataSources() {
                 )}
                 {canWrite && (
                 <>
-                <Button size="sm" variant="outline" onClick={() => openEdit(ds)}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={isDeletionInFlight(ds)}
+                  onClick={() => openEdit(ds)}
+                >
                   编辑
                 </Button>
+                {ds.lifecycle_state === "delete_failed" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={retryDeleteDs.isPending}
+                    onClick={() => handleRetryDelete(ds.id)}
+                  >
+                    重试删除
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant="destructive"
-                  disabled={deleteDs.isPending}
+                  disabled={deleteDs.isPending || isDeletionInFlight(ds)}
                   onClick={() => handleDelete(ds.id)}
                 >
-                  删除
+                  {isDeletionInFlight(ds) ? "删除中…" : "删除"}
                 </Button>
                 </>
                 )}
