@@ -79,3 +79,51 @@ Widget:`widget/src/i18n.ts`(+serviceBusy)、`widget/src/hooks/useSSE.ts`、`widg
 - CODE_MUTATION 范围:仅上述 18 文件;无 acceptance 改动让测试通过(改的 4 处既有断言全部是「EN query 期望中文」的过时期望,替换为契约冻结英文文案,语义强化而非放松);
 - 无生产接触、未合并 main、未部署;.env 为物理拷贝且未入库;node_modules 为软链(便于前端测试)不入库;
 - 最终状态:**CANDIDATE READY**(待 Planner FINAL REVIEW)。
+
+---
+
+## 8. FINAL_REVIEW_CORRECTION(2026-09-03,Planner PARTIAL → 修正)
+
+- CORRECTION_BASELINE:7912ccc(原实现提交,未 squash,线性追加)
+- **CORRECTION_COMMIT:65e57eb**(已推 origin 同分支)
+- 范围纪律:仅修两个 Blocker,零重构、零扩项,Stage⑯ 全部既有行为(EN/ZH 六类、Admin 分类、SSE 兼容、message_key、site_denied OUT、无历史迁移)保持。
+
+### BLOCKER_A_RESOLUTION(Budget Declined 幽灵 conversation_id)
+
+- 根因:原实现持久化失败仅记日志,仍以该 UUID 下发 declined/done → 客户端拿到未持久化的身份。
+- 修法(routes.py):引入 `declined_persisted` 成功标志——**仅当 Conversation+Trace commit 成功才把 conversation_id 放入 declined/done payload**;持久化失败 → declined/done **完全不含 conversation_id 键**(诚实缺省,绝不伪造已持久化身份),本地化繁忙文案 + message_key 照常,declined→done 事件序列与「无 error 事件」不变(DECLINED ≠ FAILURE 不破)。
+- 契约不变量:「凡下发的 declined Conversation 身份必对应一次成功持久化」由测试强制(见下);widget 对 done 缺 id 的行为 = conversationId 置空 → feedback 静默 no-op,与旧幽灵 id 的实际效果等价但语义诚实。
+
+### BLOCKER_B_RESOLUTION(complete 缺 language 覆写权威语言)
+
+- 根因:`language = data.get("language", "en")` 在 complete 缺 language 时把前置权威解析值重置为硬编码 en。
+- 修法(routes.py):`language = data.get("language") or language`——前置 `resolve_answer_language` 结果保持为唯一回退真相;complete 有值时与前置值恒等(同一 resolver 同输入),语言算法仍单一,无第二套实现。
+- 兼容:complete.language 若有值,经既有 `conversation_language()` 归一后落库,冻结 zh/en 规则不受影响。
+
+### NEW_REGRESSION_TESTS(tests/api/test_failure_localization.py,+4,TDD 先红后绿)
+
+1. `test_budget_declined_persistence_failure_emits_no_ghost_identity` — commit 强制抛错 → declined/done 均无 conversation_id,reason/message_key 保留,无 error 事件,且持久化尝试确实发生(语义不弱化);
+2. `test_budget_declined_success_still_emits_real_id` — 成功路径护栏:真实 id 照常下发(防修过头);
+3. `test_complete_without_language_keeps_authoritative_zh` — 中文 query + complete 缺 language + 零内容 → 兜底 token/error 文案仍中文 + Conversation.language=zh;
+4. `test_complete_without_language_keeps_authoritative_en` — 英文等价(兜底英文 + language=en)。
+
+### FINAL_TEST_RESULTS
+
+| 套件 | 结果 |
+|---|---|
+| test_failure_localization.py | **17 passed**(13+4) |
+| targeted(reliability/routes/admin conversations) | 全绿 |
+| **全量 backend** | **1083 passed / 6 skipped / 0 failed,82.78s** |
+| widget vitest | 72 passed |
+| admin vitest | 190 passed |
+| black/ruff(本轮文件) | clean(routes.py 剩余 B008 为基线既有、未触碰代码) |
+
+### REGRESSIONS
+
+零失败;修正未触碰 rag/admin UI/widget/Admin 分类,SSE 旧客户端兼容与全部既有断言保持。
+
+### CORRECTION_COMMIT
+
+`65e57eb`(`fix(stage16-correction)`,origin/worktree-exec/generation-localization-20260903)
+
+**最终状态:CANDIDATE READY。**
