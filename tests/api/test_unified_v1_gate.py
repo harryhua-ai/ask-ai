@@ -42,10 +42,13 @@ UNKNOWN_SR = _make_sr(
     product="ne301",
 )
 
+# 页面产品与语料目标对齐(ne301):本组测试冻结意图 =「页面上下文只作提示,
+# 不解锁内部源、不成为引用来源」(契约 §2 下页面 product 同时确立目标域,
+# 语料标签须与之同域,否则断言测的是收窄而非原意图)
 PAGE_CONTEXT = {
-    "url": f"{STORE_ORIGIN}/products/ne503",
-    "title": "NE503 产品页 · 内部升级门户",
-    "product": "ne503",
+    "url": f"{STORE_ORIGIN}/products/ne301",
+    "title": "NE301 产品页 · 内部升级门户",
+    "product": "ne301",
     "page_type": "product",
 }
 
@@ -251,7 +254,7 @@ async def test_int_v1_g003_authorized_site_zero_generation_fails_explicitly():
     assert [e["event"] for e in events] == ["sources", "token", "error", "done"]
     # 站点/页面上下文已贯通 rag(site_name + page_context + channel=widget)
     assert captured["site_name"] == "CamThink Store"
-    assert captured["page_context"]["product"] == "ne503"
+    assert captured["page_context"]["product"] == "ne301"
     assert captured["channel"] == "widget"
     # 显式可恢复失败,绝不静默空白(阶段⑯:EN query → 英文冻结文案)
     assert json.loads(events[1]["data"])["content"] == (

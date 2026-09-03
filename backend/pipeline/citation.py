@@ -27,8 +27,12 @@ CIT-01(引用索引完整性)与 CIT-02(主张↔证据完整性)的确定性执
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from backend.retrieval.search import SearchResult
+
+if TYPE_CHECKING:
+    from backend.product_taxonomy import Taxonomy
 
 # --------------------------------------------------------------------------- #
 # 权威可见性 / 展示常量(自 rag.py 迁入:citation 是唯一定义点,rag 反向引用)
@@ -84,17 +88,21 @@ class CitationContext:
     Attributes:
         context: 拼装好的 LLM 上下文文本(可引用段 + 可选背景段)。
         source_texts: 编号(1-based)→ 该源全部 chunk 文本,数值支持校验的数据基础。
+        source_products: 编号(1-based)→ 该源 chunk 的原始 product 标签
+            (CIT-03 产品资格校验 + 逐证据归属展示的数据基础)。
         stats: 构建统计(写入 trace 供审查)。
     """
 
     context: str
     source_texts: dict[int, list[str]] = field(default_factory=dict)
+    source_products: dict[int, str] = field(default_factory=dict)
     stats: dict = field(default_factory=dict)
 
 
 def build_citation_context(
     reranked: list[SearchResult],
     sources: list[dict],
+    taxonomy: "Taxonomy | None" = None,
 ) -> CitationContext:
     """以访客可见 ``sources`` 为唯一权威编号集合拼装 LLM 上下文。
 
@@ -102,12 +110,18 @@ def build_citation_context(
         reranked: 重排(或降级 fused)后的 SearchResult 列表。
         sources: ``RAGOrchestrator._extract_sources`` 的输出——访客可见
             来源列表(公开白名单 + 归一化去重 + 截 5),编号即列表序。
+        taxonomy: 产品 taxonomy(缺省取进程默认);用于逐证据产品归属
+            展示(Issue #5 契约 §6)与 CIT-03 资格校验数据。
 
     Returns:
         :class:`CitationContext`。公开源 chunk 按其所属源的编号归组;
         第 5 个公开页之外的 chunk 从上下文丢弃(否则可被引用但访客不可见);
         非公开但参与生成的 chunk(filesystem 内部案例等)进背景资料段。
     """
+    if taxonomy is None:
+        from backend.product_taxonomy import get_taxonomy
+
+        taxonomy = get_taxonomy()
     url_to_idx: dict[str, int] = {}
     for i, s in enumerate(sources):
         url_to_idx[normalize_source_path(s["url"])] = i + 1
@@ -118,6 +132,7 @@ def build_citation_context(
         if provenance:
             url_to_idx.setdefault(normalize_source_path(provenance), i + 1)
     source_texts: dict[int, list[str]] = defaultdict(list)
+    source_products: dict[int, str] = {}
     background_chunks: list[str] = []
     dropped_public_chunks = 0
 
@@ -125,6 +140,7 @@ def build_citation_context(
         idx = url_to_idx.get(normalize_source_path(r.url))
         if idx is not None:
             source_texts[idx].append(r.text or "")
+            source_products.setdefault(idx, r.product or "")
         elif r.source_type in PUBLIC_SOURCE_TYPES:
             # 公开但排在可见集合之外:保留即可被引用 → 不可见引用,丢弃
             dropped_public_chunks += 1
@@ -138,9 +154,11 @@ def build_citation_context(
         if not chunks:
             continue
         label = SOURCE_LABELS.get(s.get("type", ""), f"[{s.get('type', '?')}]")
+        product_attribution = taxonomy.display_name(source_products.get(i, ""))
         body = "\n\n".join(chunks)
         citable_parts.append(
-            f"[{i}] {label} {s.get('title', '')}\nURL: {s.get('url', '')}\n\n{body}"
+            f"[{i}] {label} {s.get('title', '')}\nURL: {s.get('url', '')}"
+            f"\n产品: {product_attribution}\n\n{body}"
         )
 
     if citable_parts:
@@ -158,7 +176,12 @@ def build_citation_context(
         "background_chunks": len(background_chunks),
         "dropped_public_chunks": dropped_public_chunks,
     }
-    return CitationContext(context=context, source_texts=dict(source_texts), stats=stats)
+    return CitationContext(
+        context=context,
+        source_texts=dict(source_texts),
+        source_products=dict(source_products),
+        stats=stats,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -232,15 +255,32 @@ class CitationStreamFilter:
       逐段归因(CIT-G007 多源映射保持)。
     """
 
-    def __init__(self, n_sources: int, source_texts: dict[int, list[str]] | None = None) -> None:
+    def __init__(
+        self,
+        n_sources: int,
+        source_texts: dict[int, list[str]] | None = None,
+        source_products: dict[int, str] | None = None,
+        eligible_slugs: frozenset[str] | set[str] | None = None,
+    ) -> None:
+        """CIT-03:``source_products`` + ``eligible_slugs`` 同时提供时启用
+        产品资格校验(编号所属产品不在资格集 → 剔除标记);两者缺省时
+        行为与 CIT-01/02 基线逐字节一致。
+        """
         self._n = n_sources
         self._texts = source_texts or {}
+        self._products = source_products or {}
+        self._eligible = eligible_slugs
         self._pending = ""  # holdback:"[" + 若干数字(未决标记)
         self._candidate = ""  # 已成形 "[N]",等待下一个字符排除链接形态
         self._in_fence = False
         self._backtick_run = 0
         self._window = ""  # 当前段的已下发文本(数值归因窗口)
-        self.stats = {"markers_seen": 0, "dangling_dropped": 0, "unsupported_dropped": 0}
+        self.stats = {
+            "markers_seen": 0,
+            "dangling_dropped": 0,
+            "unsupported_dropped": 0,
+            "ineligible_product_dropped": 0,
+        }
 
     # -- 内部工具 ---------------------------------------------------------- #
 
@@ -253,7 +293,7 @@ class CitationStreamFilter:
             self._window = self._window[idx + 2 :]
 
     def _resolve_marker(self, out: list[str], marker: str) -> None:
-        """解析合法形状的 ``[N]``:范围校验 + 数值支持校验。"""
+        """解析合法形状的 ``[N]``:范围 → 产品资格(CIT-03)→ 数值支持。"""
         n = int(marker[1:-1])
         self.stats["markers_seen"] += 1
         window = self._window
@@ -261,6 +301,15 @@ class CitationStreamFilter:
         if not (1 <= n <= self._n):
             self.stats["dangling_dropped"] += 1
             return
+        if self._eligible is not None:
+            from backend.product_taxonomy import get_taxonomy
+
+            product_slug = get_taxonomy().canonicalize(self._products.get(n, ""))
+            if product_slug is None or product_slug not in self._eligible:
+                # sibling 编号不支持 target-specific claim:剔除引用权威,
+                # 不改写主张文本(与 CIT-01/02 同语义)。
+                self.stats["ineligible_product_dropped"] += 1
+                return
         texts = self._texts.get(n, [])
         if texts and not numbers_supported(window, texts):
             self.stats["unsupported_dropped"] += 1
@@ -331,13 +380,23 @@ def validate_citations(
     answer: str,
     n_sources: int,
     source_texts: dict[int, list[str]] | None = None,
+    source_products: dict[int, str] | None = None,
+    eligible_slugs: frozenset[str] | set[str] | None = None,
 ) -> tuple[str, dict]:
     """对完整答案做幂等引用终验(同步路径 / complete 事件防御纵深)。
 
+    CIT-03:提供 ``source_products`` + ``eligible_slugs`` 时同步执行产品
+    资格校验;缺省时行为与基线一致。
+
     Returns:
-        (校验后的答案, stats)——只剔除悬空/无据标记,不改写其他文本。
+        (校验后的答案, stats)——只剔除悬空/无据/产品不合格标记,不改写其他文本。
     """
-    f = CitationStreamFilter(n_sources=n_sources, source_texts=source_texts)
+    f = CitationStreamFilter(
+        n_sources=n_sources,
+        source_texts=source_texts,
+        source_products=source_products,
+        eligible_slugs=eligible_slugs,
+    )
     out = f.feed(answer)
     out += f.finish()
     return out, dict(f.stats)

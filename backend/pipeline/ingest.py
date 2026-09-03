@@ -76,6 +76,19 @@ def _is_code(doc: RawDocument) -> bool:
     return ext in _CODE_LANG_MAP
 
 
+def _derived_product(doc: RawDocument) -> str:
+    """文档级 canonical 产品推导(Issue #5 契约 §3)。
+
+    DataSource.product 是**源级出处标签**,不等于文档产品身份:混合源
+    (wiki/website)按 taxonomy 路径/URL 规则推导,历史标签 canonicalize,
+    不可判定 = ``unknown``(诚实;禁止猜)。ingest 与 migration 共用同一
+    taxonomy 代码路径,保证迁移前后语义一致。
+    """
+    from backend.product_taxonomy import get_taxonomy
+
+    return get_taxonomy().derive_product(doc.product, doc.source_id, doc.url).slug
+
+
 def _build_props(chunk: "Any", doc: RawDocument) -> dict:
     """从 Chunk + RawDocument 构造 Weaviate properties(消除 3 处重复构造)。
 
@@ -88,12 +101,13 @@ def _build_props(chunk: "Any", doc: RawDocument) -> dict:
 
     Returns:
         Weaviate object properties dict(含 source_id / product / text /
-        channel_visibility / branch / symbol_* 等全部字段)。
+        channel_visibility / branch / symbol_* 等全部字段;``product`` 为
+        文档级推导 canonical 值,见 :func:`_derived_product`)。
     """
     return {
         "source_id": doc.source_id,
         "source_type": doc.source_type,
-        "product": doc.product,
+        "product": _derived_product(doc),
         "title": doc.title,
         "text": chunk.text,
         "url": doc.url,
@@ -694,7 +708,7 @@ class IngestionPipeline:
                         content_hash=doc.content_hash,
                         source_id=doc.source_id,
                         source_type=doc.source_type,
-                        product=doc.product,
+                        product=_derived_product(doc),
                         title=doc.title,
                         url=doc.url,
                         metadata_=doc.metadata,
@@ -705,7 +719,7 @@ class IngestionPipeline:
             else:
                 existing.source_id = doc.source_id
                 existing.source_type = doc.source_type
-                existing.product = doc.product
+                existing.product = _derived_product(doc)
                 existing.title = doc.title
                 existing.url = doc.url
                 existing.metadata_ = doc.metadata

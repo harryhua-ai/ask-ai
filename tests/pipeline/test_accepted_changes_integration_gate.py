@@ -235,7 +235,7 @@ async def test_int_g005_qualified_commercial_answer_then_invite():
 
     events = await _collect(
         rag,
-        "We need 500 NE503 units for a project and need a quotation.",
+        "We need 500 NE301 units for a project and need a quotation.",
         lead_ctx=LeadTurnContext(session_id="s"),
     )
 
@@ -342,7 +342,7 @@ async def test_int_g008_citation_canonical_and_lead_coexist():
     rag = _make_rag(llm, results)
 
     events = await _collect(
-        rag, "我们要采购 500 台 NE503,请报价并说明规格", lead_ctx=LeadTurnContext(session_id="s")
+        rag, "我们要采购 500 台 NE301,请报价并说明规格", lead_ctx=LeadTurnContext(session_id="s")
     )
 
     sources_evt = next(e for e in events if e["type"] == "sources")

@@ -45,6 +45,20 @@ def _visibility_probe_channel(channel: str | None) -> str | None:
     return _VISIBILITY_CHANNEL_ALIAS.get(channel, channel)
 
 
+def _product_labels_filter(labels: list[str] | None):
+    """产品资格标签集 → any_of(equal) 过滤(Issue #5 契约 §5)。
+
+    TEXT 标量属性沿用既有约定:``equal`` + ``Filter.any_of`` 合并多值
+    (避免 contains_any 对多 token 值分词静默失效)。调用方传入的集合
+    来自 taxonomy ``eligible_labels``(目标产品 + 适用共享/平台 + 历史标签)。
+    """
+    if not labels:
+        return None
+    from weaviate.classes.query import Filter
+
+    return Filter.any_of([Filter.by_property("product").equal(label) for label in labels])
+
+
 @dataclass(frozen=True)
 class SearchResult:
     """单条 hybrid 检索结果(不可变)。
@@ -122,6 +136,7 @@ class HybridSearcher:
         limit: int = 50,
         product_filter: str | None = None,
         channel: str | None = None,
+        product_labels: list[str] | None = None,
     ) -> list[SearchResult]:
         """执行 hybrid 检索。
 
@@ -129,8 +144,8 @@ class HybridSearcher:
             1. 空 query 直接返回 ``[]``,不调用 embedder / Weaviate。
             2. ``embedder.embed([query])`` 生成 query 向量;返回为空时抛
                ``RuntimeError``,避免后续 ``[0]`` 索引掩盖根因。
-            3. 构造 hybrid 参数;``product_filter`` / ``channel`` 非空时组合
-               ``Filter``(AND 语义)附加到查询。
+            3. 构造 hybrid 参数;``product_filter`` / ``product_labels`` /
+               ``channel`` 非空时组合 ``Filter``(AND 语义)附加到查询。
             4. Weaviate 异常向上传播(不吞);空结果集合返回 ``[]``。
             5. ``distance`` → ``score`` 转换;``metadata`` 为 ``None`` 时 score 退化为 0.0。
 
@@ -175,10 +190,13 @@ class HybridSearcher:
             "return_metadata": MetadataQuery(distance=True),
         }
 
-        # 组合 filter:product + channel(AND 语义)
+        # 组合 filter:product + product_labels + channel(AND 语义)
         filters_list: list = []
         if product_filter:
             filters_list.append(Filter.by_property("product").equal(product_filter))
+        labels_filter = _product_labels_filter(product_labels)
+        if labels_filter is not None:
+            filters_list.append(labels_filter)
         probe = _visibility_probe_channel(channel)
         if probe:
             filters_list.append(Filter.by_property("channel_visibility").contains_any([probe]))
@@ -198,6 +216,7 @@ class HybridSearcher:
         limit: int = 30,
         product_filter: str | None = None,
         channel: str = "widget",
+        product_labels: list[str] | None = None,
     ) -> list[SearchResult]:
         """独立符号 BM25 召回(对 ``symbol_tokens``,用原始 query 绕过 rewrite)。
 
@@ -230,6 +249,9 @@ class HybridSearcher:
         ]
         if product_filter:
             filters_list.append(Filter.by_property("product").equal(product_filter))
+        labels_filter = _product_labels_filter(product_labels)
+        if labels_filter is not None:
+            filters_list.append(labels_filter)
         filters = filters_list[0] if len(filters_list) == 1 else Filter.all_of(filters_list)
 
         resp = collection.query.bm25(
@@ -263,6 +285,7 @@ class HybridSearcher:
         limit: int = 30,
         product_filter: str | None = None,
         channel: str | None = None,
+        product_labels: list[str] | None = None,
     ) -> list[SearchResult]:
         """BM25 召回(对 text 字段),按 source_type / chunk_type 过滤(boost 桶)。
 
@@ -307,6 +330,9 @@ class HybridSearcher:
             )
         if product_filter:
             filters_list.append(Filter.by_property("product").equal(product_filter))
+        labels_filter = _product_labels_filter(product_labels)
+        if labels_filter is not None:
+            filters_list.append(labels_filter)
         probe = _visibility_probe_channel(channel)
         if probe:
             filters_list.append(Filter.by_property("channel_visibility").contains_any([probe]))

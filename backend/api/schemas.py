@@ -114,6 +114,15 @@ class AskRequest(BaseModel):
     site_id: str | None = Field(default=None, max_length=100)
     # MSW:宿主页面上下文(非信任语义提示;消毒规则见 PageContext)
     page_context: PageContext | None = None
+    # Issue #5 契约 §2:结构化目标产品提示(显式、最高优先级;消毒规则同
+    # page_context 产品字段;不可 canonicalize → PRODUCT_NOT_SUPPORTED,不猜测)。
+    # 可选字段,旧请求体零变化(向后兼容)。
+    product: str | None = Field(default=None, max_length=100)
+
+    @field_validator("product")
+    @classmethod
+    def _clean_explicit_product(cls, v: str | None) -> str | None:
+        return _clean_hint_text(v, 100)
 
     @field_validator("site_id")
     @classmethod
