@@ -10,6 +10,9 @@ import {
   fetchRepoDiscovery,
   useTriggerSyncAll,
   useSourceHealth,
+  useSyncHealth,
+  useSyncRuns,
+  useSyncStatus,
 } from "@/hooks/useDataSources";
 
 vi.mock("@/hooks/useAuth", () => ({
@@ -39,6 +42,14 @@ vi.mock("@/hooks/useDataSources", () => ({
   useTriggerSync: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useTriggerSyncAll: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   useSourceHealth: vi.fn(() => ({ data: undefined, isLoading: false })),
+  useSyncHealth: vi.fn(() => ({ data: undefined, isLoading: false })),
+  useSyncStatus: vi.fn(() => ({ data: { items: [] }, isLoading: false })),
+  useSyncRuns: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  })),
   usePreviewDirs: vi.fn(() => ({ data: { dirs: [] }, isLoading: false, error: null })),
   fetchPreviewBranches: vi.fn(),
   fetchPreviewFileTypes: vi.fn(),
@@ -47,11 +58,19 @@ vi.mock("@/hooks/useDataSources", () => ({
   useRetryDeleteDataSource: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
-afterEach(() => {
+beforeEach(() => {
   vi.mocked(useDataSources).mockReturnValue({ data: [], isLoading: false });
-  vi.mocked(useTriggerSync).mockReset();
-  vi.mocked(useTriggerSyncAll).mockReset();
+  vi.mocked(useTriggerSync).mockReturnValue({ mutate: vi.fn(), isPending: false });
+  vi.mocked(useTriggerSyncAll).mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   vi.mocked(useSourceHealth).mockReturnValue({ data: undefined, isLoading: false });
+  vi.mocked(useSyncHealth).mockReturnValue({ data: undefined, isLoading: false });
+  vi.mocked(useSyncStatus).mockReturnValue({ data: { items: [] }, isLoading: false });
+  vi.mocked(useSyncRuns).mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  });
 });
 
 function renderWithSources(sources: unknown[]) {
@@ -279,7 +298,7 @@ describe("DataSources", () => {
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });
 
-  it("#44 点击某行「同步」:仅触发该源,仅该行进入同步中状态", () => {
+  it("点击某行同步只提交该源，后端没有 active 证据时不伪造同步中", () => {
     const dsA = {
       id: "neomind-docs",
       type: "github",
@@ -311,9 +330,8 @@ describe("DataSources", () => {
     fireEvent.click(syncButtons[0]);
 
     expect(mutate).toHaveBeenCalledWith("neomind-docs");
-    // 仅该行进入"同步中...", 另一行保持"同步"可独立操作
-    expect(screen.getByText("同步中...")).toBeInTheDocument();
-    expect(screen.getAllByText("同步")).toHaveLength(1);
+    expect(screen.queryByText("同步中...")).not.toBeInTheDocument();
+    expect(screen.getAllByText("同步")).toHaveLength(2);
   });
 
   it("#44 禁用源:同步按钮不可点击", () => {
@@ -338,95 +356,73 @@ describe("DataSources", () => {
     expect(mutate).not.toHaveBeenCalled();
   });
 
-  it("#44 后台同步完成(last_sync 推进):提示完成且按钮恢复为「同步」", () => {
-    const ds = {
+  it("挂载即恢复后端 active 状态，并按源隔离动作与阶段进度", () => {
+    const dsA = {
       id: "ne301-docs",
       type: "github",
       product: "ne301",
       enabled: true,
       config: {},
       sync_interval: "24h",
-      last_sync: null,
-      created_at: "2026-07-01T00:00:00Z",
-      updated_at: "2026-07-01T00:00:00Z",
-    };
-    const mutate = vi.fn();
-    vi.mocked(useTriggerSync).mockReturnValue({ mutate, isPending: false });
-    vi.mocked(useDataSources).mockReturnValue({ data: [ds], isLoading: false });
-    const qc = new QueryClient();
-    const view = render(
-      <QueryClientProvider client={qc}>
-        <DataSources />
-      </QueryClientProvider>,
-    );
-
-    fireEvent.click(screen.getByText("同步"));
-    expect(screen.getByText("同步中...")).toBeInTheDocument();
-
-    // 模拟 5s 轮询返回:后台 _sync_one 写入 SyncLog → list 聚合 last_sync 推进到触发时刻之后
-    const updated = {
-      ...ds,
-      last_sync: new Date(Date.now() + 60000).toISOString(),
-    };
-    vi.mocked(useDataSources).mockReturnValue({ data: [updated], isLoading: false });
-    view.rerender(
-      <QueryClientProvider client={qc}>
-        <DataSources />
-      </QueryClientProvider>,
-    );
-
-    expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("同步完成"));
-    expect(screen.getByText("同步")).toBeInTheDocument();
-    expect(screen.queryByText("同步中...")).not.toBeInTheDocument();
-  });
-
-  it("#B 后台同步失败(last_sync 推进但 status=failed):提示同步失败,不误报完成", () => {
-    const ds = {
-      id: "ne301-local",
-      type: "github",
-      product: "ne301",
-      enabled: true,
-      config: { repo_url: "https://github.com/camthink-ai/ne301.git" },
-      sync_interval: "24h",
-      last_sync: null,
-      last_sync_status: null,
+      last_sync: "2026-09-03T01:00:00Z",
+      last_sync_status: "success",
       last_sync_error: null,
       created_at: "2026-07-01T00:00:00Z",
       updated_at: "2026-07-01T00:00:00Z",
     };
-    const mutate = vi.fn();
-    vi.mocked(useTriggerSync).mockReturnValue({ mutate, isPending: false });
-    vi.mocked(useDataSources).mockReturnValue({ data: [ds], isLoading: false });
-    const qc = new QueryClient();
-    const view = render(
-      <QueryClientProvider client={qc}>
-        <DataSources />
-      </QueryClientProvider>,
-    );
+    const dsB = { ...dsA, id: "ne503-docs", product: "ne503" };
+    vi.mocked(useSyncStatus).mockReturnValue({
+      data: {
+        items: [{
+          source_id: "ne301-docs",
+          state: "RUNNING",
+          request_id: 42,
+          attempt: 1,
+          recovering: false,
+          stage: "EMBED",
+          stage_current: 3,
+          stage_total: 12,
+          counters: { docs_total: 12, chunks_written: 8 },
+          execution_device: "cuda:0",
+          started_at: "2026-09-03T02:00:00Z",
+          updated_at: "2026-09-03T02:00:05Z",
+        }],
+      },
+      isLoading: false,
+    });
 
-    fireEvent.click(screen.getByText("同步"));
-    expect(screen.getByText("同步中...")).toBeInTheDocument();
+    renderWithSources([dsA, dsB]);
 
-    // 模拟轮询返回:后台同步失败,sync_log 仍写了一行(started_at 推进,status=failed,error_detail='local_git')
-    const updated = {
-      ...ds,
-      last_sync: new Date(Date.now() + 60000).toISOString(),
-      last_sync_status: "failed",
-      last_sync_error: "local_git",
-    };
-    vi.mocked(useDataSources).mockReturnValue({ data: [updated], isLoading: false });
-    view.rerender(
-      <QueryClientProvider client={qc}>
-        <DataSources />
-      </QueryClientProvider>,
-    );
-
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("同步失败"));
-    expect(toast.success).not.toHaveBeenCalledWith(expect.stringContaining("同步完成"));
-    expect(screen.getByText("同步")).toBeInTheDocument();
+    expect(useSyncStatus).toHaveBeenCalledWith({ refetchInterval: 5000 });
+    expect(screen.getByText("同步中...")).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: "同步" })).toHaveLength(1);
+    expect(screen.getByText("当前同步")).toBeInTheDocument();
+    expect(screen.getByText("生成向量")).toBeInTheDocument();
+    expect(screen.getByText("3/12 · 25%")).toBeInTheDocument();
+    expect(screen.getByText("执行设备：GPU")).toBeInTheDocument();
   });
 
-  it("同步全部:触发后端顺序同步,把返回 source_ids 批量入 syncingIds", async () => {
+  it("成功的 last_sync 不能在 /sync-status 无 active 证据时保持同步中", () => {
+    renderWithSources([{
+      id: "ne301-docs",
+      type: "github",
+      product: "ne301",
+      enabled: true,
+      config: {},
+      sync_interval: "24h",
+      last_sync: new Date(Date.now() + 60000).toISOString(),
+      last_sync_status: "success",
+      last_sync_error: null,
+      created_at: "2026-07-01T00:00:00Z",
+      updated_at: "2026-07-01T00:00:00Z",
+    }]);
+
+    expect(screen.queryByText("同步中...")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "同步" })).toBeEnabled();
+    expect(toast.success).not.toHaveBeenCalledWith(expect.stringContaining("同步完成"));
+  });
+
+  it("同步全部只提交请求，行状态随后仅由后端 active items 恢复", async () => {
     const dsA = {
       id: "ne301-docs",
       type: "github",
@@ -458,13 +454,44 @@ describe("DataSources", () => {
       mutateAsync: mutateAllAsync,
       isPending: false,
     });
-    renderWithSources([dsA, dsB]);
+    vi.mocked(useDataSources).mockReturnValue({ data: [dsA, dsB], isLoading: false });
+    const qc = new QueryClient();
+    const view = render(
+      <QueryClientProvider client={qc}>
+        <DataSources />
+      </QueryClientProvider>,
+    );
 
     fireEvent.click(screen.getByText("同步全部"));
     await waitFor(() => expect(mutateAllAsync).toHaveBeenCalled());
-    // 两行均进入"同步中..."
-    expect(await screen.findAllByText("同步中...")).toHaveLength(2);
-    // syncingIds>0 时「同步全部」按钮禁用,避免并发触发
+    expect(screen.queryByText("同步中...")).not.toBeInTheDocument();
+
+    vi.mocked(useSyncStatus).mockReturnValue({
+      data: {
+        items: ["ne301-docs", "ne503-docs"].map((source_id) => ({
+          source_id,
+          state: "WAITING" as const,
+          request_id: 77,
+          attempt: 1,
+          recovering: false,
+          stage: "DISCOVER" as const,
+          stage_current: null,
+          stage_total: null,
+          counters: null,
+          execution_device: null,
+          started_at: null,
+          updated_at: "2026-09-03T02:00:05Z",
+        })),
+      },
+      isLoading: false,
+    });
+    view.rerender(
+      <QueryClientProvider client={qc}>
+        <DataSources />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getAllByText("同步中...")).toHaveLength(2);
     expect(screen.getByText("同步全部")).toBeDisabled();
   });
 });
@@ -896,10 +923,14 @@ const dshHealth = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-function renderWithHealth(sources: unknown[], items: unknown[] | undefined) {
+function renderWithHealth(sources: unknown[], items: unknown[] | undefined, syncHealthItems?: unknown[]) {
   vi.mocked(useDataSources).mockReturnValue({ data: sources as never, isLoading: false });
   vi.mocked(useSourceHealth).mockReturnValue({
     data: items ? { items: items as never, days: 30 } : undefined,
+    isLoading: false,
+  });
+  vi.mocked(useSyncHealth).mockReturnValue({
+    data: syncHealthItems ? { items: syncHealthItems as never } : undefined,
     isLoading: false,
   });
   const qc = new QueryClient();
@@ -911,6 +942,122 @@ function renderWithHealth(sources: unknown[], items: unknown[] | undefined) {
 }
 
 describe("DSH 数据源健康语义", () => {
+  it("按源懒加载 exact sync-runs 契约，并展开历史与五维健康", () => {
+    vi.mocked(useSyncRuns).mockImplementation((_sourceId, options) => ({
+      data: options?.enabled ? {
+        items: [{
+          id: 8,
+          source_id: "website-camthink",
+          triggered_by: "manual",
+          request_id: 42,
+          attempt: 2,
+          recovery: true,
+          status: "completed",
+          started_at: "2026-09-03T01:00:00Z",
+          finished_at: "2026-09-03T01:02:03Z",
+          duration_seconds: 123,
+          stage: "DONE",
+          counters: { docs_total: 12, chunks_deleted: 2 },
+          consistency: { missing: 2, orphan_count: 3 },
+          execution_device: "cpu",
+          fallback_reason: "CUDA unavailable",
+          fallback_detail: "CUDAOutOfMemoryError",
+          error_summary: null,
+          sync_log: {
+            status: "success",
+            items_new: 2,
+            chunks_written: 42,
+            items_deleted: 1,
+            items_unchanged: 9,
+            error_detail: null,
+          },
+        }],
+        total: 1,
+        page: 1,
+        size: 20,
+      } : undefined,
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    }));
+
+    const syncHealthItem = {
+      source_id: "website-camthink",
+      source_type: "web_crawl",
+      enabled: true,
+      expected_state: "REQUIRED",
+      overall: "HEALTHY",
+      recovering: false,
+      document_count: 12,
+      connectivity: { state: "ok", evidence: "latest run #8 completed@DONE", as_of: null },
+      sync: { state: "healthy", evidence: "24/25 syncs succeeded in 30d", as_of: null },
+      coverage: { state: "ok", evidence: "extracted=50/50 accepted", as_of: null },
+      freshness: { state: "fresh", evidence: "last success 3600s ago", as_of: null },
+      consistency: { state: "ok", evidence: "missing=0, extra_orphan=0", as_of: null },
+    };
+    renderWithHealth(
+      [dshSource({ last_sync: "2026-09-03T01:02:03Z", last_sync_status: "success" })],
+      [dshHealth({ last_sync: "2026-09-03T01:02:03Z" })],
+      [syncHealthItem],
+    );
+
+    expect(useSyncRuns).toHaveBeenCalledWith("website-camthink", { enabled: false });
+    fireEvent.click(screen.getByRole("button", { name: "查看可观测性" }));
+
+    expect(useSyncRuns).toHaveBeenCalledWith("website-camthink", { enabled: true });
+    expect(screen.getByText("最近同步")).toBeInTheDocument();
+    expect(screen.getByText("新增文档 2")).toBeInTheDocument();
+    expect(screen.getByText("删除文档 1")).toBeInTheDocument();
+    expect(screen.getByText("未变更文档 9")).toBeInTheDocument();
+    expect(screen.getByText("分块 42")).toBeInTheDocument();
+    expect(screen.getByText("已删除分块 2")).toBeInTheDocument();
+    expect(screen.getByText("CPU")).toBeInTheDocument();
+    expect(screen.getByText("降级原因：CUDA unavailable")).toBeInTheDocument();
+    expect(screen.getByText("数据源健康")).toBeInTheDocument();
+    for (const label of ["连接", "同步", "覆盖", "新鲜度", "一致性"]) {
+      expect(screen.getByRole("heading", { name: label })).toBeInTheDocument();
+    }
+    expect(screen.getAllByText("缺失 2").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("孤儿 3").length).toBeGreaterThan(0);
+  });
+
+  it("#11 Health Authority:五维面板由 /sync-health 驱动,前端不重判状态", () => {
+    const syncHealthItem = {
+      source_id: "website-camthink",
+      source_type: "web_crawl",
+      enabled: true,
+      expected_state: "REQUIRED",
+      overall: "STALE",
+      recovering: false,
+      document_count: 12,
+      connectivity: { state: "ok", evidence: "latest run #8 completed@DONE", as_of: "2026-09-03T01:00:00Z" },
+      sync: { state: "insufficient_data", evidence: "1/1 syncs in 30d (<3)", as_of: null },
+      coverage: { state: "unknown", evidence: "no sync_runs evidence", as_of: null },
+      freshness: { state: "stale", evidence: "no successful sync on record", as_of: null },
+      consistency: { state: "ok", evidence: "missing=0, extra_orphan=0", as_of: null },
+    };
+    renderWithHealth(
+      [dshSource({ last_sync: "2026-09-03T01:02:03Z", last_sync_status: "success" })],
+      [dshHealth({ last_sync: "2026-09-03T01:02:03Z" })],
+      [syncHealthItem],
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看可观测性" }));
+
+    // overall 由后端给:STALE → 过期(前端只本地化)
+    expect(screen.getByText("数据源健康")).toBeInTheDocument();
+    expect(screen.getAllByText("过期").length).toBe(2); // overall + freshness
+    // 后端词表逐维本地化,UNKNOWN 不被改判
+    expect(screen.getByText("未知")).toBeInTheDocument();          // coverage unknown
+    expect(screen.getByText("证据不足")).toBeInTheDocument();      // sync insufficient_data
+    // evidence 原文直呈
+    expect(screen.getByText("no successful sync on record")).toBeInTheDocument();
+    expect(screen.getByText("no sync_runs evidence")).toBeInTheDocument();
+    // 前端不再派生:旧的本地推导文案不得出现
+    expect(screen.queryByText("阈值 2小时")).not.toBeInTheDocument();
+    expect(screen.queryByText("文档 75，分块 1200")).not.toBeInTheDocument();
+  });
+
   it("G001 健康:当前成功 + 历史 96%(窗口/分母可见)+ 内容数", () => {
     renderWithHealth(
       [dshSource({ last_sync: "2026-09-01T02:00:00Z", last_sync_status: "success" })],

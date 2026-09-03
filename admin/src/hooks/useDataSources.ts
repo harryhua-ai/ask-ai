@@ -3,7 +3,71 @@ import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { fetchSourceHealth } from "@/lib/api/techInsight";
 import { splitIntoBatches } from "@/utils/upload";
-import type { DataSource, PreviewDir, RepoDiscoveryResult } from "@/types/api";
+import type {
+  DataSource,
+  PreviewDir,
+  RepoDiscoveryResult,
+  SyncHealthResponse,
+  SyncRunList,
+  SyncStatusResponse,
+} from "@/types/api";
+
+export interface SyncRunParams {
+  status?: string;
+  page?: number;
+  size?: number;
+}
+
+export function fetchSyncStatus(): Promise<SyncStatusResponse> {
+  return apiFetch<SyncStatusResponse>("/sync-status");
+}
+
+/** #11 Health Authority:W2 /sync-health 是五维健康唯一权威读模型。 */
+export function fetchSyncHealth(): Promise<SyncHealthResponse> {
+  return apiFetch<SyncHealthResponse>("/sync-health");
+}
+
+export function useSyncHealth(options?: { refetchInterval?: number | false }) {
+  return useQuery({
+    queryKey: ["sync-health"],
+    queryFn: fetchSyncHealth,
+    refetchInterval: options?.refetchInterval,
+  });
+}
+
+export function fetchSyncRuns(sourceId: string, params: SyncRunParams = {}): Promise<SyncRunList> {
+  const search = new URLSearchParams({ source_id: sourceId });
+  if (params.status !== undefined) search.set("status", params.status);
+  if (params.page !== undefined) search.set("page", String(params.page));
+  if (params.size !== undefined) search.set("size", String(params.size));
+  return apiFetch<SyncRunList>(`/sync-runs?${search.toString()}`);
+}
+
+export function useSyncStatus(options?: { refetchInterval?: number | false }) {
+  return useQuery({
+    queryKey: ["sync-status"],
+    queryFn: fetchSyncStatus,
+    refetchInterval: (query) => {
+      const interval = options?.refetchInterval;
+      if (interval === undefined || interval === false) return false;
+      const data = query.state.data as SyncStatusResponse | undefined;
+      return data?.items.length ? interval : false;
+    },
+  });
+}
+
+export function useSyncRuns(
+  sourceId: string,
+  options?: SyncRunParams & { enabled?: boolean; refetchInterval?: number | false },
+) {
+  const { enabled = true, refetchInterval, status, page, size } = options ?? {};
+  return useQuery({
+    queryKey: ["sync-runs", sourceId, { status, page, size }],
+    queryFn: () => fetchSyncRuns(sourceId, { status, page, size }),
+    enabled: enabled && !!sourceId,
+    refetchInterval,
+  });
+}
 
 export function useDataSources(options?: {
   refetchInterval?:
@@ -92,7 +156,9 @@ export function useTriggerSync() {
     mutationFn: (id: string) =>
       apiFetch<{ status: string; source_id: string }>(`/data-sources/${id}/sync`, { method: "POST" }),
     onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: ["sync-status"] });
       qc.invalidateQueries({ queryKey: ["data-sources"] });
+      qc.invalidateQueries({ queryKey: ["source-health"] });
       toast.success(`已触发同步:${id}(后台进行中,完成后「最新同步」列自动刷新)`);
     },
     onError: (err) => {
@@ -110,7 +176,9 @@ export function useTriggerSyncAll() {
         method: "POST",
       }),
     onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["sync-status"] });
       qc.invalidateQueries({ queryKey: ["data-sources"] });
+      qc.invalidateQueries({ queryKey: ["source-health"] });
       if (data.count === 0) {
         toast.warning("没有可同步的启用数据源");
       } else {
