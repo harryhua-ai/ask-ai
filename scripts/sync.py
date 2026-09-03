@@ -872,9 +872,7 @@ async def _sync_one(
     runtime_handle = getattr(pipeline, "_embedder", None)
     if not isinstance(runtime_handle, SyncEmbedderHandle):
         runtime_handle = None
-    runtime_snapshot = (
-        runtime_handle.activity_snapshot() if runtime_handle is not None else None
-    )
+    runtime_snapshot = runtime_handle.activity_snapshot() if runtime_handle is not None else None
 
     async def _record_runtime_facts() -> None:
         """Write facts produced by this source's real embedding activity.
