@@ -24,12 +24,23 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
-from backend.connectors.web_crawl import canonical_url, parse_sitemap_index, parse_urlset
+from backend.connectors.safety import FileAdmission, KnowledgeRole
+from backend.connectors.web_crawl import (
+    DEFAULT_EXCLUDE_PATTERNS,
+    canonical_url,
+    parse_sitemap_index,
+    parse_urlset,
+)
+from backend.services.source_discovery import DiscoveryResult, build_discovery_result
 
 FetchFn = Callable[[str], "str | None"]
 
 # robots.txt Sitemap: 指令(组无关——规范定义 Sitemap 不隶属任何 user-agent 组)
 _ROBOTS_SITEMAP_RE = re.compile(r"^sitemap\s*:\s*(\S+)\s*$", re.IGNORECASE)
+
+# 合法但为空的 urlset 识别(parse_urlset 无法区分「空 urlset」与「非 sitemap」,
+# 两者都返回 {};证据纪律要求二者分开记账,不得把合法空集标成 not_sitemap)
+_URLSET_ROOT_RE = re.compile(r"<(?:[\w.-]+:)?urlset(?:\s|>)", re.IGNORECASE)
 
 
 def parse_robots_sitemaps(text: str) -> list[str]:
@@ -70,6 +81,9 @@ class SitemapDiscovery:
     resolved: list[SitemapSource] = field(default_factory=list)
     entries: dict[str, str | None] = field(default_factory=dict)  # {canonical_url: lastmod}
     errors: list[str] = field(default_factory=list)  # fetch_failed:<url> / not_sitemap:<url>
+    # entries 实际来源层(explicit|robots|generic|none;#17 诚实呈现用,
+    # robots 声明但失败的候选不冒充来源)
+    entry_source: str = "none"
 
     @property
     def zero_discovery(self) -> bool:
@@ -117,13 +131,26 @@ def discover_sitemap_entries(
     seen: set[str] = set()
 
     def _drain(urls: list[str], *, stop_on_entries: bool) -> None:
-        """处理同一层级的一组 sitemap 候选(index 子表在同层继续入队)。"""
-        queue = [u for u in urls if not (u in seen or seen.add(u))]
-        while queue and len(result.resolved) < max_sitemaps and len(result.entries) < max_entries:
-            # 回退层语义:已有任何发现即停止(有界试探,不重复请求)
-            if stop_on_entries and result.entries:
-                return
-            url = queue.pop(0)
+        """处理同一层级的一组 sitemap 候选(index 子表在同层继续入队)。
+
+        回退层语义(#17 修正):「已有任何发现即停止」只作用于**根候选**
+        (有界试探,不重复请求);已被解析 index 收录的**子表**不受停止
+        规则约束——index 既已解析,其子表就是本次发现的承诺范围,在根
+        候选出条目后被抛弃会造成「index 解析成功、子表静默丢失」。
+        """
+        roots = [u for u in urls if not (u in seen or seen.add(u))]
+        children: list[str] = []
+        while (
+            (roots or children)
+            and len(result.resolved) < max_sitemaps
+            and len(result.entries) < max_entries
+        ):
+            if children:
+                url = children.pop(0)
+            else:
+                if stop_on_entries and result.entries:
+                    return
+                url = roots.pop(0)
             text = fetch_fn(url)
             if text is None:
                 result.errors.append(f"fetch_failed:{url}")
@@ -140,7 +167,7 @@ def discover_sitemap_entries(
                         sub = f"https:{sub}"
                     if _same_host(sub):
                         seen.add(sub)
-                        queue.append(sub)
+                        children.append(sub)
                 continue
             urlset = parse_urlset(text)
             if urlset:
@@ -150,11 +177,15 @@ def discover_sitemap_entries(
                     if canon is None:  # 外域/非法 URL
                         continue
                     result.entries.setdefault(canon, lastmod)
+            elif _URLSET_ROOT_RE.search(text[:2048]):
+                # 合法但为空的 urlset:计入 resolved,零 entries,无错误证据
+                result.resolved.append(SitemapSource(url=url, kind="urlset"))
             else:
                 result.errors.append(f"not_sitemap:{url}")
 
     if sitemap_url:
         _drain([sitemap_url], stop_on_entries=False)
+        result.entry_source = "explicit" if result.entries else "none"
     else:
         robots = fetch_fn(f"{base}/robots.txt")
         if robots:
@@ -165,9 +196,15 @@ def discover_sitemap_entries(
                     result.robots_sitemaps.append(url)
                 else:
                     result.errors.append(f"cross_domain_skipped:{url}")
-        # ① robots 指令(声明的同域 sitemap 全取)② 通用回退(成功即停)
+        # ① robots 指令(声明的同域 sitemap 全取)② 通用回退(根候选成功即停)
         _drain(result.robots_sitemaps, stop_on_entries=False)
+        if result.entries:
+            result.entry_source = "robots"
         _drain(fallback_sitemap_candidates(base), stop_on_entries=True)
+        if result.entries and not result.robots_sitemaps:
+            result.entry_source = "generic"
+        elif result.entries and result.entry_source == "none":
+            result.entry_source = "generic"
     return result
 
 
@@ -177,7 +214,9 @@ def discover_sitemap_entries(
 # ---------------------------------------------------------------------------
 
 # 低价值默认排除(PD-3:login/register/account/search/cart/checkout/
-# user center/tag/category/archive;query 变体由 canonical 归一剥离)
+# user center/tag/category/archive;query 变体由 canonical 归一剥离)。
+# ``/store/`` 为 C8 商城分离契约对齐:预览排除必须与 crawl 排除(连接器
+# 默认清单含 /store/)同视野,否则「预览说排除、同步却抓入」。
 URL_EXCLUDE_PATTERNS: tuple[str, ...] = (
     "/login",
     "/signin",
@@ -188,6 +227,7 @@ URL_EXCLUDE_PATTERNS: tuple[str, ...] = (
     "/cart",
     "/checkout",
     "/search",
+    "/store/",
     "/tag/",
     "/tags/",
     "/category/",
@@ -228,3 +268,156 @@ def classify_url(path: str) -> tuple[str, str]:
         if any(h in p for h in hints):
             return (role, "include")
     return ("technical_doc", "review")
+
+
+# ---------------------------------------------------------------------------
+# #17 Website Simple Mode:preview / recommendation 组装(纯函数,IO 仍注入)
+# ---------------------------------------------------------------------------
+
+# 大型下载/二进制资产后缀:V1 文本管线(HTML→Markdown)不消费,sitemap 里
+# 出现即预览排除(与 web_crawl 页内链接发现的资产跳过后缀同词表 + 文档类)。
+BINARY_ASSET_SUFFIXES: frozenset[str] = frozenset(
+    {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".webp",
+        ".svg",
+        ".css",
+        ".js",
+        ".zip",
+        ".gz",
+        ".tar",
+        ".mp4",
+        ".mp3",
+        ".ico",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".ppt",
+        ".pptx",
+        ".dmg",
+        ".exe",
+        ".apk",
+    }
+)
+
+# V1 能力边界(冻结文案;preview 必须让管理员知道系统没做什么)
+CAPABILITY_NOTES_WEBSITE: tuple[str, ...] = (
+    "V1 仅静态 HTML 与 sitemap 发现:需要 JavaScript 渲染的页面无法被发现",
+    "仅采集与站点同域的 URL;跨域 sitemap 与链接一律跳过,不会自动跟随",
+    "同步阶段会从页面链接做同域受控扩展发现(有上限);预览仅呈现 sitemap 发现结果",
+    "正文质量在抓取后仍由薄内容阈值二次过滤;预览推荐不等于最终入库",
+)
+
+
+def url_group_key(url: str) -> str:
+    """URL → 首层路径段分组键(确认 UI 的主视图;根页归 ``(root)``)。"""
+    path = urlparse(url).path.strip("/")
+    first = path.split("/", 1)[0] if path else ""
+    return first or "(root)"
+
+
+def build_website_preview(
+    base_url: str,
+    fetch_fn: FetchFn,
+    *,
+    sitemap_url: str | None = None,
+    max_sitemaps: int = 25,
+    max_entries: int = 5000,
+) -> DiscoveryResult:
+    """Website Simple Mode 发现 → 统一 DiscoveryResult(source_discovery envelope)。
+
+    组合:PD-3 冻结顺序的 :func:`discover_sitemap_entries` → 逐 URL 走
+    ``classify_url`` + 二进制资产排除(复用 FileAdmission 单候选模型,
+    Technical Safety / Knowledge filtering 语义不另起一套)→
+    :func:`build_discovery_result` 聚合。零发现不伪装成功:entries 为空时
+    warnings 保留冻结告警,candidates/totals 为空,由调用方(UI)显式呈现。
+
+    ``recommended_config`` 编译产物 = 既有 web_crawl config JSONB 词表:
+    ``base_url`` + 排除清单(连接器默认 ∪ 预览排除,保证「预览=同步视野」);
+    sitemap 地址默认自动管理,**不**钉死解析结果(站点迁移 sitemap 后
+    下轮同步自动跟随;显式 override 走 Advanced 配置)。
+    """
+    discovery = discover_sitemap_entries(
+        base_url,
+        fetch_fn,
+        sitemap_url=sitemap_url,
+        max_sitemaps=max_sitemaps,
+        max_entries=max_entries,
+    )
+    base = base_url.rstrip("/")
+
+    candidates: list[FileAdmission] = []
+    for url in sorted(discovery.entries):
+        # canonical_url 统一补尾斜杠,后缀判定须先剥掉(如 /a.pdf/ → .pdf)
+        path = urlparse(url).path.rstrip("/")
+        last_dot = path.rsplit(".", 1)
+        ext = f".{last_dot[1].lower()}" if len(last_dot) == 2 and last_dot[1] else ""
+        if ext in BINARY_ASSET_SUFFIXES:
+            candidates.append(
+                FileAdmission(
+                    path=url,
+                    size=0,
+                    technical_safe=False,
+                    technical_reason="binary_content",
+                    knowledge_role=KnowledgeRole.BINARY.value,
+                    recommendation="exclude",
+                )
+            )
+            continue
+        role, rec = classify_url(urlparse(url).path)
+        candidates.append(
+            FileAdmission(
+                path=url,
+                size=0,
+                technical_safe=True,
+                technical_reason=None,
+                knowledge_role=role,
+                recommendation=rec,
+            )
+        )
+
+    # 发现方式(诚实呈现 sitemap 实际从哪一层解析而来:显式指定 / robots
+    # 声明 / 通用回退 / 无)。由发现层记账(entry_source),声明但失败的
+    # 候选不冒充来源——失败证据已进 warnings。
+    if sitemap_url:
+        mode = "explicit"
+    else:
+        mode = discovery.entry_source
+
+    warnings = list(discovery.warnings())
+    if len(discovery.entries) >= max_entries:
+        warnings.append(f"发现 URL 数达到预览上限 {max_entries},预览已截断(不影响同步范围)")
+
+    target = {
+        "base_url": base,
+        "requested_sitemap_url": sitemap_url,
+        "discovery_mode": mode,
+        "resolved_sitemaps": [s.url for s in discovery.resolved],
+        "robots_declared": list(discovery.robots_sitemaps),
+        "cross_domain_skipped": [
+            e.partition(":")[2] for e in discovery.errors if e.startswith("cross_domain_skipped:")
+        ],
+    }
+
+    return build_discovery_result(
+        "web_crawl",
+        target,
+        candidates,
+        group_key=url_group_key,
+        recommended_config={
+            "base_url": base,
+            # 连接器默认清单 ∪ 预览排除清单:写入 config 后 crawl 视野与预览一致
+            # (含 C8 /store/ 商城分离,不会因整体替换而丢失)。
+            "exclude_patterns": sorted(set(DEFAULT_EXCLUDE_PATTERNS) | set(URL_EXCLUDE_PATTERNS)),
+        },
+        warnings=warnings,
+        capability_notes=list(CAPABILITY_NOTES_WEBSITE),
+    )

@@ -205,3 +205,164 @@ def test_classify_url_low_value_excluded():
 
 def test_classify_url_unknown_is_review_not_silent_include():
     assert classify_url("/some-random-page/") == ("technical_doc", "review")
+
+
+# ------------------------------------------------------- #17 preview 组装
+
+from backend.services.source_discovery import reason_text
+from backend.services.website_discovery import (  # noqa: E402
+    build_website_preview,
+    url_group_key,
+)
+
+
+def _rec_counts(result):
+    counts = {"include": 0, "exclude": 0, "review": 0}
+    for c in result.candidates:
+        counts[c.recommendation] += 1
+    return counts
+
+
+def test_preview_recommendation_counts_and_modes():
+    """robots 模式:发现→分类→推荐计数;target 呈现发现方式与解析结果。"""
+    fetch = _fetch_map(
+        {
+            f"{BASE}/robots.txt": ROBOTS,
+            f"{BASE}/sitemap_index.xml": INDEX_XML,
+            f"{BASE}/pages-1.xml": PAGES_XML,
+            f"{BASE}/products.xml": PRODUCTS_XML,
+        }
+    )
+    result = build_website_preview(BASE, fetch)
+    assert result.kind == "web_crawl"
+    # login=exclude;docs/quickstart、products/ne301=include;根页=review
+    assert _rec_counts(result) == {"include": 2, "exclude": 1, "review": 1}
+    assert result.totals["files"] == 4
+    assert result.target["discovery_mode"] == "robots"
+    assert f"{BASE}/sitemap_index.xml" in result.target["robots_declared"]
+    assert result.target["resolved_sitemaps"] == [
+        f"{BASE}/sitemap_index.xml",
+        f"{BASE}/pages-1.xml",
+        f"{BASE}/products.xml",
+    ]
+
+
+def test_preview_reasons_are_frozen_copy_not_generated():
+    """逐候选带人读理由(枚举映射,与 wire 层 reason_text 同一冻结文案)。"""
+    fetch = _fetch_map(
+        {
+            f"{BASE}/robots.txt": ROBOTS,
+            f"{BASE}/sitemap_index.xml": INDEX_XML,
+            f"{BASE}/pages-1.xml": PAGES_XML,
+            f"{BASE}/products.xml": PRODUCTS_XML,
+        }
+    )
+    result = build_website_preview(BASE, fetch)
+    by_rec = {}
+    for c in result.candidates:
+        by_rec[(c.recommendation, c.path)] = reason_text(c)
+    assert by_rec[("include", f"{BASE}/products/ne301/")] == "属于产品文档,建议纳入"
+    assert by_rec[("include", f"{BASE}/docs/quickstart/")] == "属于技术文档,建议纳入"
+    assert by_rec[("exclude", f"{BASE}/login/")] == "知识价值低(技术文档),建议排除"
+    assert by_rec[("review", f"{BASE}/")] == "需要人工确认(技术文档)"
+
+
+def test_preview_binary_asset_url_excluded_with_reason():
+    """下载/二进制资产 URL:technical_safe=False,推荐排除(文本管线不消费)。"""
+    assets_xml = """<?xml version="1.0"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url><loc>{base}/downloads/datasheet.pdf</loc></url>
+      <url><loc>{base}/products/ne301</loc></url>
+    </urlset>
+    """.format(base=BASE)
+    fetch = _fetch_map(
+        {
+            f"{BASE}/robots.txt": f"Sitemap: {BASE}/sitemap.xml\n",
+            f"{BASE}/sitemap.xml": assets_xml,
+        }
+    )
+    result = build_website_preview(BASE, fetch)
+    pdf = next(c for c in result.candidates if "datasheet.pdf" in c.path)
+    assert pdf.technical_safe is False
+    assert pdf.technical_reason == "binary_content"
+    assert pdf.recommendation == "exclude"
+    assert reason_text(pdf) == "二进制内容,不可作为文本知识"
+    assert result.totals["unsafe_files"] == 1
+
+
+def test_preview_recommended_config_unifies_preview_and_crawl_scope():
+    """推荐配置 = 连接器词表;排除清单必须含 /store/(C8)与预览排除词表
+    (预览=同步视野,不出现「预览说排除、同步却抓入」)。"""
+    fetch = _fetch_map(
+        {
+            f"{BASE}/robots.txt": ROBOTS,
+            f"{BASE}/sitemap_index.xml": INDEX_XML,
+            f"{BASE}/pages-1.xml": PAGES_XML,
+            f"{BASE}/products.xml": PRODUCTS_XML,
+        }
+    )
+    result = build_website_preview(BASE, fetch)
+    cfg = result.recommended_config
+    assert cfg["base_url"] == BASE
+    pats = set(cfg["exclude_patterns"])
+    assert "/store/" in pats  # C8 商城分离
+    assert "/search" in pats and "/tag/" in pats  # 预览排除词表
+    # sitemap 地址不钉死:默认自动管理(下轮同步自动跟随站点)
+    assert "sitemap_url" not in cfg
+
+
+def test_preview_zero_discovery_is_explicit_not_success():
+    """零发现:200 语义但 totals=0 + 冻结告警(禁止伪装成功)。"""
+    fetch = _fetch_map({f"{BASE}/robots.txt": None})
+    result = build_website_preview(BASE, fetch)
+    assert result.totals["files"] == 0
+    assert result.candidates == []
+    assert result.target["discovery_mode"] == "none"
+    assert any("未发现任何 sitemap" in w for w in result.warnings)
+    assert result.capability_notes  # 能力边界必须随结果呈现
+
+
+def test_preview_generic_mode_and_cross_domain_reason():
+    """通用回退命中 → discovery_mode=generic;跨域 sitemap 跳过带原因。"""
+    fetch = _fetch_map(
+        {
+            f"{BASE}/robots.txt": ROBOTS,  # 含跨域声明 cdn.example.com
+            f"{BASE}/sitemap_index.xml": None,  # 404
+            f"{BASE}/sitemap.xml": GENERIC_SITEMAP_XML,
+        }
+    )
+    result = build_website_preview(BASE, fetch)
+    assert result.target["discovery_mode"] == "generic"
+    assert result.target["cross_domain_skipped"] == ["https://cdn.example.com/external.xml"]
+    assert any("跨域" in w for w in result.warnings)
+
+
+def test_preview_groups_by_first_path_segment():
+    """分组 = 首层路径段;混合推荐组保守给 review(共享聚合规则)。"""
+    fetch = _fetch_map(
+        {
+            f"{BASE}/robots.txt": ROBOTS,
+            f"{BASE}/sitemap_index.xml": INDEX_XML,
+            f"{BASE}/pages-1.xml": PAGES_XML,
+            f"{BASE}/products.xml": PRODUCTS_XML,
+        }
+    )
+    result = build_website_preview(BASE, fetch)
+    keys = {g.key for g in result.groups}
+    assert keys == {"(root)", "docs", "login", "products"}
+    for g in result.groups:
+        assert g.count >= 1 and g.samples
+
+
+def test_url_group_key():
+    assert url_group_key(f"{BASE}/docs/api/auth/") == "docs"
+    assert url_group_key(f"{BASE}/") == "(root)"
+
+
+def test_preview_explicit_sitemap_mode():
+    """显式 sitemap_url → discovery_mode=explicit(Advanced override 可用)。"""
+    fetch = _fetch_map({f"{BASE}/custom.xml": PRODUCTS_XML})
+    result = build_website_preview(BASE, fetch, sitemap_url=f"{BASE}/custom.xml")
+    assert result.target["discovery_mode"] == "explicit"
+    assert result.target["requested_sitemap_url"] == f"{BASE}/custom.xml"
+    assert _rec_counts(result) == {"include": 1, "exclude": 0, "review": 0}

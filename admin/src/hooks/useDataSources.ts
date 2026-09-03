@@ -170,6 +170,66 @@ export async function fetchPreviewBranches(
   return { branches: data.branches, defaultBranch: data.default_branch };
 }
 
+/** #17 Website Simple Mode:逐候选准入结论(wire 形态 = FileAdmission + 人读理由)。 */
+export interface WebsiteDiscoveryCandidate {
+  path: string;
+  size: number;
+  technical_safe: boolean;
+  technical_reason: string | null;
+  knowledge_role: string;
+  recommendation: "include" | "exclude" | "review";
+  policy_result: string;
+  eligible: boolean;
+  reason: string;
+}
+
+/** #17 发现结果分组(首层路径段;样本 URL)。 */
+export interface WebsiteDiscoveryGroup {
+  key: string;
+  count: number;
+  total_size: number;
+  recommendation: "include" | "exclude" | "review";
+  samples: string[];
+}
+
+/** #17 Website 自动发现预览响应(后端 DiscoveryResultOut)。 */
+export interface WebsiteDiscoveryResult {
+  kind: string;
+  target: {
+    base_url: string;
+    requested_sitemap_url: string | null;
+    discovery_mode: "explicit" | "robots" | "generic" | "none";
+    resolved_sitemaps: string[];
+    robots_declared: string[];
+    cross_domain_skipped: string[];
+  };
+  totals: { files: number; safe_files: number; unsafe_files: number; total_size: number };
+  by_role: Record<string, { count: number; size: number; recommendation: string }>;
+  groups: WebsiteDiscoveryGroup[];
+  candidates: WebsiteDiscoveryCandidate[];
+  recommended_config: Record<string, unknown>;
+  warnings: string[];
+  capability_notes: string[];
+}
+
+/**
+ * #17 Website Simple Mode 自动发现:输入站点 URL(+可选 sitemap override)
+ * → sitemap 发现 → 逐 URL 知识分类推荐。零发现返回 200 空结果(显式呈现),
+ * 只有非法入参才 4xx。
+ */
+export async function fetchWebsiteDiscovery(
+  baseUrl: string,
+  sitemapUrl?: string,
+): Promise<WebsiteDiscoveryResult> {
+  return apiFetch<WebsiteDiscoveryResult>("/data-sources/preview-website", {
+    method: "POST",
+    body: JSON.stringify({
+      base_url: baseUrl,
+      ...(sitemapUrl?.trim() ? { sitemap_url: sitemapUrl.trim() } : {}),
+    }),
+  });
+}
+
 /**
  * 预览本地 root_path 下子目录树(供目录选择器勾选 include_dirs)。
  * rootPath 为空时不发请求(前端先填 root_path 才拉)。

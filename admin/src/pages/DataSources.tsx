@@ -15,6 +15,9 @@ import {
   useSourceHealth,
   fetchPreviewBranches,
   fetchRepoDiscovery,
+  fetchPreviewFileTypes,
+  fetchWebsiteDiscovery,
+  type WebsiteDiscoveryResult,
   uploadSourceFiles,
 } from "@/hooks/useDataSources";
 import { Button } from "@/components/ui/button";
@@ -113,6 +116,20 @@ function splitComma(s: string | undefined): string[] {
 
 /** 上传落盘根目录(与后端 _upload_root 同语义)。 */
 const uploadRootOf = (sourceId: string) => `data/uploads/data-sources/${sourceId}`;
+
+// #17 Website Simple Mode:发现方式与推荐结论的展示文案(后端冻结语义)
+const DISCOVERY_MODE_LABELS: Record<string, string> = {
+  explicit: "已使用手动指定的 Sitemap",
+  robots: "已自动检测 Sitemap(robots.txt 声明)",
+  generic: "已自动检测 Sitemap(标准地址)",
+  none: "未检测到 Sitemap",
+};
+
+const REC_META: Record<string, { label: string; className: string }> = {
+  include: { label: "建议纳入", className: "text-green-600" },
+  exclude: { label: "排除", className: "text-destructive" },
+  review: { label: "待确认", className: "text-amber-600" },
+};
 
 /** 上传完成后取上传根目录下全部顶层子目录,作为 include_dirs 默认全选;失败返回空数组(不阻断流程)。 */
 async function fetchTopDirPaths(rootPath: string): Promise<string[]> {
@@ -283,8 +300,10 @@ function buildConfig(v: FormValues): Record<string, unknown> {
         consumer_secret: v.consumer_secret || "",
       };
     case "web_crawl": {
-      // 与 connectors/web_crawl.py 约定一致:可选键留空即不写 config(用 connector 默认:
-      // sitemap={base_url}/sitemap_index.xml、默认排清单、delay=500ms)
+      // 与 connectors/web_crawl.py 约定一致:可选键留空即不写 config。
+      // #17:sitemap_url 缺省 = 自动发现(robots 指令 → 通用回退),不再
+      // 钉死 {base_url}/sitemap_index.xml;exclude_patterns 提供时替换默认
+      // 排除清单(自动发现后由推荐清单回填,保证「预览=同步视野」)。
       const delay = Number(v.crawl_delay_ms);
       return {
         base_url: (v.base_url || "").trim(),
@@ -378,6 +397,11 @@ export default function DataSources() {
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(
     null,
   );
+  // #17 Website Simple Mode:自动发现预览(结果 / 加载 / 错误 / 推荐清单是否已回填)
+  const [websiteDiscovery, setWebsiteDiscovery] = useState<WebsiteDiscoveryResult | null>(null);
+  const [websiteDiscovering, setWebsiteDiscovering] = useState(false);
+  const [websiteDiscoveryError, setWebsiteDiscoveryError] = useState<string | null>(null);
+  const [websiteExcludeApplied, setWebsiteExcludeApplied] = useState<boolean | null>(null);
 
   const {
     register,
@@ -404,6 +428,14 @@ export default function DataSources() {
     () => filterByWhitelist(toUploadItems(pickedFiles), splitComma(watchedFileTypes)),
     [pickedFiles, watchedFileTypes],
   );
+  // #17:发现结果的纳入/排除/待确认计数(推荐结论摘要行)
+  const discoveryRecCounts = useMemo(() => {
+    const counts = { include: 0, exclude: 0, review: 0 };
+    websiteDiscovery?.candidates.forEach((c) => {
+      counts[c.recommendation] += 1;
+    });
+    return counts;
+  }, [websiteDiscovery]);
 
   const openCreate = () => {
     reset(EMPTY_FORM);
@@ -416,6 +448,9 @@ export default function DataSources() {
     setShowAdvanced(false);
     setDiscovery(null);
     setDiscoveryError(null);
+    setWebsiteDiscovery(null);
+    setWebsiteDiscoveryError(null);
+    setWebsiteExcludeApplied(null);
     setShowForm(true);
   };
 
@@ -431,6 +466,9 @@ export default function DataSources() {
     setShowAdvanced(false);
     setDiscovery(null);
     setDiscoveryError(null);
+    setWebsiteDiscovery(null);
+    setWebsiteDiscoveryError(null);
+    setWebsiteExcludeApplied(null);
     setShowForm(true);
   };
 
@@ -567,8 +605,46 @@ export default function DataSources() {
     closeForm();
   };
 
-  const handlePullBranches = async () => {
-    const repoUrl = getValues("repo_url") || "";
+  /**
+   * #17 Website Simple Mode:按站点地址自动发现,呈现 Preview/Recommendation。
+   * 成功后把推荐排除清单回填进高级选项(仅当该字段为空,不覆盖用户自定义);
+   * 零发现不伪装成功——由面板显式呈现告警与下一步建议。
+   */
+  const handleWebsiteDiscover = async () => {
+    const baseUrl = (getValues("base_url") || "").trim();
+    if (!baseUrl) {
+      setWebsiteDiscoveryError("请先填写网站地址");
+      return;
+    }
+    setWebsiteDiscovering(true);
+    setWebsiteDiscoveryError(null);
+    try {
+      const result = await fetchWebsiteDiscovery(baseUrl, getValues("sitemap_url"));
+      setWebsiteDiscovery(result);
+      const rec = result.recommended_config as { exclude_patterns?: unknown };
+      if (Array.isArray(rec?.exclude_patterns) && rec.exclude_patterns.length > 0) {
+        const current = (getValues("exclude_patterns") || "").trim();
+        if (!current) {
+          setValue("exclude_patterns", (rec.exclude_patterns as string[]).join(", "), {
+            shouldDirty: true,
+          });
+          setWebsiteExcludeApplied(true);
+        } else {
+          setWebsiteExcludeApplied(false);
+        }
+      } else {
+        setWebsiteExcludeApplied(null);
+      }
+    } catch (err) {
+      setWebsiteDiscovery(null);
+      setWebsiteExcludeApplied(null);
+      setWebsiteDiscoveryError(err instanceof Error ? err.message : "检测失败");
+    } finally {
+      setWebsiteDiscovering(false);
+    }
+  };
+
+  const handlePullBranches = async () => {    const repoUrl = getValues("repo_url") || "";
     const parsed = parseRepoUrl(repoUrl);
     if (!parsed) {
       setBranchError("请先填写合法 repo_url(如 https://github.com/camthink-ai/ne301.git)");
@@ -1009,30 +1085,125 @@ export default function DataSources() {
           {type === "web_crawl" && (
             <div className="space-y-3 border-t pt-3">
               <div className="space-y-1">
-                <Label>站点地址 (base_url)</Label>
-                <Input {...register("base_url")} placeholder="https://www.camthink.ai" />
+                <Label>网站地址</Label>
+                <div className="flex gap-2">
+                  <Input {...register("base_url")} placeholder="https://www.camthink.ai" />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={websiteDiscovering}
+                    onClick={handleWebsiteDiscover}
+                  >
+                    {websiteDiscovering ? "检测中…" : "检测站点内容"}
+                  </Button>
+                </div>
                 {errors.base_url && (
                   <p className="text-xs text-destructive">{errors.base_url.message}</p>
                 )}
+                <p className="text-xs text-muted-foreground">
+                  输入官网地址即可:系统自动发现 Sitemap 并给出采集范围建议;专业参数在下方高级选项。
+                </p>
               </div>
-              <p className="text-xs text-muted-foreground">
-                按 sitemap 增量爬取;Sitemap 与排除路径留空时使用站点默认值与默认排除清单。
-              </p>
-              <div className="space-y-1">
-                <Label>Sitemap 地址 (可选,默认 base_url/sitemap_index.xml)</Label>
-                <Input
-                  {...register("sitemap_url")}
-                  placeholder="https://www.camthink.ai/sitemap_index.xml"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label>排除路径 (逗号分隔,留空=默认排清单)</Label>
-                  <Input {...register("exclude_patterns")} placeholder="/store/, /tmp" />
+
+              {websiteDiscoveryError && (
+                <p className="text-xs text-destructive">检测失败:{websiteDiscoveryError}</p>
+              )}
+
+              {websiteDiscovery && websiteDiscovery.totals.files === 0 && (
+                <div className="space-y-1 rounded-md border border-destructive/50 bg-destructive/10 p-3">
+                  <p className="text-sm font-medium text-destructive">
+                    未发现任何可采集页面(本次不建立有效采集范围)
+                  </p>
+                  {websiteDiscovery.warnings.map((w) => (
+                    <p key={w} className="text-xs text-muted-foreground">· {w}</p>
+                  ))}
+                  <p className="text-xs">
+                    请核对网站地址是否正确;若站点使用了非标准位置的 sitemap,可展开高级选项手动填写。
+                  </p>
                 </div>
+              )}
+
+              {websiteDiscovery && websiteDiscovery.totals.files > 0 && (
+                <div className="space-y-2 rounded-md border bg-muted/40 p-3">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                    <span className="font-medium">
+                      {DISCOVERY_MODE_LABELS[websiteDiscovery.target.discovery_mode] ??
+                        websiteDiscovery.target.discovery_mode}
+                    </span>
+                    <span>发现 {websiteDiscovery.totals.files} 页</span>
+                    <span className={REC_META.include.className}>
+                      建议纳入 {discoveryRecCounts.include}
+                    </span>
+                    <span className={REC_META.exclude.className}>
+                      自动排除 {discoveryRecCounts.exclude}
+                    </span>
+                    <span className={REC_META.review.className}>
+                      待确认 {discoveryRecCounts.review}
+                    </span>
+                  </div>
+                  {websiteDiscovery.target.resolved_sitemaps.length > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      Sitemap: {websiteDiscovery.target.resolved_sitemaps.join(", ")}
+                    </p>
+                  )}
+                  {websiteDiscovery.warnings.map((w) => (
+                    <p key={w} className="text-xs text-amber-600">⚠ {w}</p>
+                  ))}
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-muted-foreground">按目录分组:</p>
+                    {websiteDiscovery.groups.slice(0, 10).map((g) => (
+                      <div key={g.key} className="flex items-center gap-2 text-xs">
+                        <span className={REC_META[g.recommendation]?.className ?? ""}>
+                          {REC_META[g.recommendation]?.label ?? g.recommendation}
+                        </span>
+                        <span className="font-mono">/{g.key === "(root)" ? "" : g.key}</span>
+                        <span className="text-muted-foreground">{g.count} 页</span>
+                        <span className="truncate text-muted-foreground" title={g.samples.join(" | ")}>
+                          如 {g.samples[0]}
+                        </span>
+                      </div>
+                    ))}
+                    {websiteDiscovery.groups.length > 10 && (
+                      <p className="text-xs text-muted-foreground">
+                        仅显示前 10 组,其余 {websiteDiscovery.groups.length - 10} 组同规则处理
+                      </p>
+                    )}
+                  </div>
+                  {websiteDiscovery.capability_notes.map((n) => (
+                    <p key={n} className="text-xs text-muted-foreground">· {n}</p>
+                  ))}
+                  <p className="text-xs text-muted-foreground">
+                    {websiteExcludeApplied === false
+                      ? "已保留高级选项中的自定义排除清单(未覆盖)。"
+                      : "推荐排除清单已写入高级选项,可按需微调;确认无误后点「创建/保存」生效。"}
+                  </p>
+                </div>
+              )}
+
+              <button
+                type="button"
+                className="text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => setShowAdvanced((v) => !v)}
+              >
+                {showAdvanced ? "▾ 隐藏高级选项" : "▸ 高级选项(Sitemap / 排除路径 / 抓取速率)"}
+              </button>
+              <div className={showAdvanced ? "space-y-3" : "hidden"}>
                 <div className="space-y-1">
-                  <Label>抓取间隔 (毫秒,留空默认 500)</Label>
-                  <Input type="number" {...register("crawl_delay_ms")} placeholder="500" />
+                  <Label>Sitemap 地址 (可选,留空 = 自动发现:robots 声明 → 标准地址)</Label>
+                  <Input
+                    {...register("sitemap_url")}
+                    placeholder="https://www.camthink.ai/sitemap_index.xml"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label>排除路径 (逗号分隔,留空 = 默认排除清单)</Label>
+                    <Input {...register("exclude_patterns")} placeholder="/store/, /tmp" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>抓取间隔 (毫秒,留空默认 500)</Label>
+                    <Input type="number" {...register("crawl_delay_ms")} placeholder="500" />
+                  </div>
                 </div>
               </div>
             </div>
