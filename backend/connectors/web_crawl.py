@@ -1,7 +1,9 @@
 """web_crawl connector(C8 + WEB 覆盖修正):官网 sitemap 爬取数据源。
 
-流程:robots.txt 校验(Disallow 前缀,允许清单优先)→ sitemap 索引发现
-(Yoast post/page/product 三子表,URL 规范化合并去重)→ 排除规则过滤
+流程:robots.txt 校验(Disallow 前缀,允许清单优先)→ sitemap 发现
+(#17 起通用组合:robots ``Sitemap:`` 指令 → 显式 sitemap_url 配置 →
+通用回退 → index 全部同域子表,URL 规范化合并去重;Yoast 三子表命名
+过滤已按 S0 冻结方向退役)→ 排除规则过滤
 (`/store/`、登录/隐私等非知识页)→ 纯 HTTP 抓取(UA + 超时重试 + 延时
 限速)→ stdlib HTML 清洗为 Markdown(剥导航/页脚/脚本/cookie 提示,优先
 main/article 正文)→ 薄内容过滤 → RawDocument(product=website,
@@ -62,10 +64,6 @@ DEFAULT_EXCLUDE_PATTERNS: list[str] = [
 # 薄内容阈值:提取正文低于该字符数的页面视为非知识页(模板/跳转/挑战页),
 # 不入语料并计入 rejected.low_content。config.min_content_chars 可覆盖。
 MIN_CONTENT_CHARS = 200
-
-# Yoast SEO sitemap 索引:仅取知识类三子表(post/page/product)
-_SITEMAP_KIND_RE = re.compile(r"(post|page|product)-sitemap")
-_SM_NS = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
 
 # 抓取 UA:标识爬虫 + 指向目标站,便于站点方识别与限流
 USER_AGENT = "ask-ai-crawler/0.1 (+camthink-ai knowledge indexer)"
@@ -364,7 +362,9 @@ class WebCrawlConnector:
 
     config:
         - ``base_url`` (str, 必填): 站点根,如 ``https://www.camthink.ai``
-        - ``sitemap_url`` (str, 可选): 缺省 ``{base_url}/sitemap_index.xml``
+        - ``sitemap_url`` (str, 可选): 显式 sitemap 地址(Advanced override);
+          缺省自动发现(robots.txt ``Sitemap:`` 指令 → 通用回退
+          ``/sitemap_index.xml`` → ``/sitemap.xml``,#17 Simple Mode 语义)
         - ``exclude_patterns`` (list[str], 可选): 提供时替换默认排除清单
         - ``crawl_delay_ms`` (int, 可选): 页面抓取间隔,默认 500(勿压站点)
         - ``min_content_chars`` (int, 可选): 薄内容阈值,默认 200
@@ -379,8 +379,11 @@ class WebCrawlConnector:
         self._id = config.id
         self._product = config.product or "website"
         self._base_url = str(config.config["base_url"]).rstrip("/")
-        self._sitemap_url = str(
-            config.config.get("sitemap_url") or f"{self._base_url}/sitemap_index.xml"
+        # None = 自动发现(robots 指令 → 通用回退);显式字符串 = Advanced override
+        self._sitemap_url: str | None = (
+            str(config.config.get("sitemap_url")).strip()
+            if str(config.config.get("sitemap_url") or "").strip()
+            else None
         )
         self._excludes = list(config.config.get("exclude_patterns", DEFAULT_EXCLUDE_PATTERNS))
         self._delay_s = int(config.config.get("crawl_delay_ms", 500)) / 1000
@@ -466,24 +469,61 @@ class WebCrawlConnector:
             "rejected_urls": {"exclude": [], "robots": [], "low_content": []},
         }
 
+    def _discovery_fetch(self, url: str) -> str | None:
+        """sitemap 发现用抓取:任何失败返回 None(证据由发现层 errors 记账,不抛异常)。
+
+        复用 ``_http_get``(UA/超时/重试);每次抓取后按 ``crawl_delay_ms``
+        限速(与旧版子表间限速同语义,礼貌优先)。
+        """
+        text: str | None = None
+        try:
+            text = self._http_get(url)
+        except RuntimeError as exc:
+            logger.info("sitemap 发现抓取失败: %s: %s", url, str(exc)[:120])
+        time.sleep(self._delay_s)
+        return text
+
     def _sitemap_entries(self) -> dict[str, str | None]:
-        """sitemap 索引 → 三子表(post/page/product)规范化合并去重 {url: lastmod}。"""
+        """sitemap 发现 → 规范化合并去重 {url: lastmod}(排除规则照常生效)。
+
+        #17:Yoast 三子表命名过滤(``_SITEMAP_KIND_RE``)按 S0 冻结方向退役,
+        统一走 ``website_discovery.discover_sitemap_entries`` 组合原语——
+        robots.txt ``Sitemap:`` 指令 → 显式 ``sitemap_url`` 配置 → 通用回退
+        (``/sitemap_index.xml`` → ``/sitemap.xml``)→ index 全部同域子表,
+        无任何命名偏好。canonical 归一与同域边界由发现层完成;此处仅叠加
+        默认/配置排除。发现层零条目且有失败证据(全部候选抓取失败/非
+        sitemap)→ RuntimeError 显式失败(零发现不伪装成功);urlset 合法
+        但为空 → 空集照常完成(与旧语义一致)。
+
+        惰性导入:website_discovery 复用本模块解析原语(canonical_url 等),
+        模块级互相导入会成环。
+        """
         if self._entries_cache is not None:
             return self._entries_cache
-        index_xml = self._http_get(self._sitemap_url)
+        from backend.services.website_discovery import discover_sitemap_entries
+
+        discovery = discover_sitemap_entries(
+            self._base_url,
+            self._discovery_fetch,
+            sitemap_url=self._sitemap_url,
+        )
         entries: dict[str, str | None] = {}
-        for sub in parse_sitemap_index(index_xml):
-            if not _SITEMAP_KIND_RE.search(sub):
+        for canon, lastmod in discovery.entries.items():
+            if self._excluded(canon):
+                self._stats_reject("exclude", canon)
                 continue
-            for url, lastmod in parse_urlset(self._http_get(sub)).items():
-                canon = canonical_url(self._base_url, url)
-                if canon is None or self._excluded(canon):
-                    if canon is not None:
-                        self._stats_reject("exclude", canon)
-                    continue
-                entries.setdefault(canon, lastmod)
-            time.sleep(self._delay_s)  # 子表请求间限速
-        logger.info("web_crawl %s: sitemap 共 %d 个 URL(排除后)", self._id, len(entries))
+            entries[canon] = lastmod
+        if not discovery.entries and discovery.errors:
+            raise RuntimeError(
+                "sitemap 自动发现失败(零 URL,证据: " + "; ".join(discovery.errors[:5]) + ")"
+            )
+        logger.info(
+            "web_crawl %s: sitemap 自动发现(%s)共 %d 个 URL(排除后 %d)",
+            self._id,
+            self._sitemap_url or "robots/通用回退",
+            len(discovery.entries),
+            len(entries),
+        )
         self._entries_cache = entries
         return entries
 

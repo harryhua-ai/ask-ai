@@ -3,9 +3,9 @@
 import logging
 import os
 import re
-from urllib.parse import urlparse
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
@@ -17,8 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from weaviate.classes.query import Filter
 
 from backend.api.admin.schemas import DataSourceCreate, DataSourceOut, DataSourceUpdate
+from backend.api.admin.source_center_schemas import (
+    DiscoveryResultOut,
+    WebsiteDiscoveryRequest,
+)
 from backend.auth.dependencies import CurrentUser, require_role
 from backend.db.models import DataSource, Document, SyncLog
+from backend.services.website_discovery import build_website_preview
 
 router = APIRouter(prefix="/data-sources", tags=["数据源管理"])
 logger = logging.getLogger(__name__)
@@ -77,9 +82,7 @@ async def upload_source_files(
     if len(files) != len(paths):
         raise HTTPException(status_code=400, detail="files 与 paths 数量不一致")
     whitelist = {
-        t.strip().lower()
-        for t in (ds.config or {}).get("file_types", []) or []
-        if str(t).strip()
+        t.strip().lower() for t in (ds.config or {}).get("file_types", []) or [] if str(t).strip()
     }
     base = _upload_root(source_id)
     saved = 0
@@ -98,6 +101,7 @@ async def upload_source_files(
         target.write_bytes(content)
         saved += 1
     return {"saved": saved, "root": f"data/uploads/data-sources/{source_id}"}
+
 
 # 系统目录/构建产物:预览子目录时一律过滤,避免噪音与深层爆炸。
 SYSTEM_DIRS = frozenset(
@@ -236,11 +240,7 @@ async def _check_clone_path_conflict(
 
 def _is_listable_dir(entry: Path) -> bool:
     """目录是否可列:是目录 + 非系统目录 + 非隐藏目录。"""
-    return (
-        entry.is_dir()
-        and entry.name not in SYSTEM_DIRS
-        and not entry.name.startswith(".")
-    )
+    return entry.is_dir() and entry.name not in SYSTEM_DIRS and not entry.name.startswith(".")
 
 
 def _count_listable_subdirs(path: Path) -> int:
@@ -300,8 +300,7 @@ async def list_data_sources(
                     SyncLog.status,
                     SyncLog.error_detail,
                     SyncLog.started_at,
-                )
-                .join(
+                ).join(
                     latest_sub,
                     (SyncLog.source_id == latest_sub.c.source_id)
                     & (SyncLog.started_at == latest_sub.c.max_started),
@@ -309,8 +308,7 @@ async def list_data_sources(
             )
         ).all()
         latest_by_source = {
-            row[0]: {"started_at": row[3], "status": row[1], "error_detail": row[2]}
-            for row in rows
+            row[0]: {"started_at": row[3], "status": row[1], "error_detail": row[2]} for row in rows
         }
     return [
         _to_out(
@@ -324,9 +322,7 @@ async def list_data_sources(
                 latest_by_source[s.id]["status"] if s.id in latest_by_source else None
             ),
             last_sync_error=(
-                latest_by_source[s.id]["error_detail"]
-                if s.id in latest_by_source
-                else None
+                latest_by_source[s.id]["error_detail"] if s.id in latest_by_source else None
             ),
         )
         for s in sources
@@ -510,9 +506,7 @@ async def delete_data_source(source_id: str, _: EditorDep, request: Request) -> 
         if ds is not None:
             await session.delete(ds)
         await session.execute(
-            delete(Document).where(
-                Document.source_id.startswith(f"{source_id}/", autoescape=True)
-            )
+            delete(Document).where(Document.source_id.startswith(f"{source_id}/", autoescape=True))
         )
         await session.commit()
 
@@ -564,9 +558,7 @@ async def preview_dirs(root_path: str, _: EditorDep) -> dict[str, list[dict]]:
 
 
 @router.get("/preview-branches")
-async def preview_branches(
-    owner: str, repo: str, _: EditorDep
-) -> dict[str, Any]:
+async def preview_branches(owner: str, repo: str, _: EditorDep) -> dict[str, Any]:
     """预览 GitHub 仓库分支列表与默认分支(供前端多选与默认勾选)。
 
     GITHUB_TOKEN 从环境变量读取(可选,匿名调用有速率限制)。
@@ -576,9 +568,7 @@ async def preview_branches(
 
 
 @router.get("/preview-file-types")
-async def preview_file_types(
-    owner: str, repo: str, branch: str, _: EditorDep
-) -> dict[str, Any]:
+async def preview_file_types(owner: str, repo: str, branch: str, _: EditorDep) -> dict[str, Any]:
     """预览仓库内出现的全部文件后缀(C10 增补:默认全列,用户按需删)。
 
     GitHub trees API 递归列举指定分支文件树;点开头的文件名(如 .gitignore)
@@ -605,6 +595,58 @@ async def preview_file_types(
         if ext:
             extensions.add(ext)
     return {"extensions": sorted(extensions)}
+
+
+# #17 Website Simple Mode:预览抓取 UA(标识用途;与 connector 同一爬虫身份)
+_WEBSITE_DISCOVERY_UA = "ask-ai-crawler/0.1 (+camthink-ai knowledge indexer)"
+
+
+def _website_fetch_text(url: str) -> str | None:
+    """Discovery 预览用同步抓取:非 200/任何异常 → None(证据由发现层记账)。
+
+    阻塞 IO,**必须**经 ``run_in_threadpool`` 调用(504 事故回归防线:
+    禁止在事件循环内做网络等待)。
+    """
+    try:
+        resp = httpx.get(
+            url,
+            headers={"User-Agent": _WEBSITE_DISCOVERY_UA},
+            timeout=15,
+            follow_redirects=True,
+        )
+        if resp.status_code != 200:
+            return None
+        return resp.text
+    except Exception:  # noqa: BLE001 - 预览抓取失败属正常发现路径,不抛
+        return None
+
+
+@router.post("/preview-website", response_model=DiscoveryResultOut)
+async def preview_website(req: WebsiteDiscoveryRequest, _: EditorDep) -> DiscoveryResultOut:
+    """Website Simple Mode 自动发现预览(#17)。
+
+    输入站点 URL(普通用户只需这一个字段)→ 按 PD-3 冻结顺序发现 sitemap
+    (robots 指令 → 显式 sitemap_url → 通用回退 → index 全子表)→ 逐 URL
+    知识分类推荐(include/exclude/review + 人读理由)→ 统一 DiscoveryResult。
+
+    - 零发现不伪装成功:200 + 空 candidates + 冻结告警,由 UI 显式呈现
+    - 同域边界:跨域 sitemap/URL 显式跳过并在结果中给出原因
+    - Advanced 的 sitemap override 经同一端点验证(sitemap_url 可选传入)
+    """
+    parsed = urlparse(req.base_url.strip())
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="站点地址必须是合法的 http(s) URL")
+    if req.sitemap_url:
+        sp = urlparse(req.sitemap_url.strip())
+        if sp.scheme not in ("http", "https") or not sp.netloc:
+            raise HTTPException(status_code=400, detail="sitemap 地址必须是合法的 http(s) URL")
+    result = await run_in_threadpool(
+        build_website_preview,
+        req.base_url.strip().rstrip("/"),
+        _website_fetch_text,
+        sitemap_url=req.sitemap_url.strip() if req.sitemap_url else None,
+    )
+    return DiscoveryResultOut.from_result(result)
 
 
 @router.post("/{source_id}/sync", status_code=202)

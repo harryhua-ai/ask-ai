@@ -111,12 +111,15 @@ def _patch_http(monkeypatch, pages: dict[str, str]) -> list[str]:
     return requested
 
 
-def test_sitemap_discovers_three_tables_excludes_store_and_privacy(tmp_path, monkeypatch):
-    """三子表合并去重;/store/ 与隐私页排除;category 子表不抓。"""
+def test_sitemap_discovers_all_tables_excludes_store_and_privacy(tmp_path, monkeypatch):
+    """#17 通用发现:robots 无指令 → 通用回退 index → 全部子表(无命名过滤,
+    Yoast 正则退役);/store/ 与隐私页排除;无 lastmod 的保留。"""
     fetched = []
 
     def _get(url, **kwargs):
         fetched.append(url)
+        if url.endswith("robots.txt"):
+            return _FakeText("User-agent: *\nAllow: /")
         if url.endswith("sitemap_index.xml"):
             return _FakeText(INDEX_XML)
         return _FakeText(PAGE_URLSET)
@@ -125,15 +128,16 @@ def test_sitemap_discovers_three_tables_excludes_store_and_privacy(tmp_path, mon
     conn = _make_connector(tmp_path)
     entries = conn._sitemap_entries()
 
-    # 只有 page 子表内容(测试桩简化);/store/ 与 privacy 被排除;无 lastmod 的保留
+    # /store/ 与 privacy 被排除;无 lastmod 的保留
     assert entries == {
         "https://www.camthink.ai/products/neoeyes-503/": "2026-08-20",
         "https://www.camthink.ai/solutions/security-monitoring/": None,
     }
-    # category 子表未被请求(只抓 post/page/product 三类)
-    assert not any("category-sitemap" in u for u in fetched)
-    # 索引 + 三子表 = 4 次请求(排除发生在 URL 集,不省子表请求)
-    assert len([u for u in fetched if u.endswith(".xml")]) == 4
+    # 全部子表均被请求(category 不再被 Yoast 正则过滤掉)
+    for sub in ("post-", "page-", "product-", "category-"):
+        assert any(sub + "sitemap" in u for u in fetched), sub
+    # 索引 + 四子表 = 5 次 .xml 请求(排除发生在 URL 集,不省子表请求)
+    assert len([u for u in fetched if u.endswith(".xml")]) == 5
 
 
 def test_same_domain_links_excludes_wp_json(tmp_path):
@@ -312,7 +316,12 @@ def test_same_content_different_paths_get_distinct_hashes(tmp_path, monkeypatch)
       <url><loc>https://www.camthink.ai/a/</loc></url>
       <url><loc>https://www.camthink.ai/b/</loc></url>
     </urlset>"""
-    for k in ("post-sitemap.xml", "page-sitemap.xml", "product-sitemap.xml"):
+    for k in (
+        "post-sitemap.xml",
+        "page-sitemap.xml",
+        "product-sitemap.xml",
+        "category-sitemap.xml",
+    ):
         pages[f"https://www.camthink.ai/{k}"] = urlset
     _patch_http(monkeypatch, pages)
     conn = _make_connector(tmp_path)
@@ -340,7 +349,12 @@ def test_min_content_pages_rejected_and_counted(tmp_path, monkeypatch):
       <url><loc>https://www.camthink.ai/thin/</loc></url>
       <url><loc>https://www.camthink.ai/rich/</loc></url>
     </urlset>"""
-    for k in ("post-sitemap.xml", "page-sitemap.xml", "product-sitemap.xml"):
+    for k in (
+        "post-sitemap.xml",
+        "page-sitemap.xml",
+        "product-sitemap.xml",
+        "category-sitemap.xml",
+    ):
         pages[f"https://www.camthink.ai/{k}"] = urlset
     _patch_http(monkeypatch, pages)
     conn = _make_connector(tmp_path)
@@ -368,7 +382,12 @@ def test_robots_disallow_blocks_crawl_and_counts(tmp_path, monkeypatch):
       <url><loc>https://www.camthink.ai/private/secret/</loc></url>
       <url><loc>https://www.camthink.ai/rich/</loc></url>
     </urlset>"""
-    for k in ("post-sitemap.xml", "page-sitemap.xml", "product-sitemap.xml"):
+    for k in (
+        "post-sitemap.xml",
+        "page-sitemap.xml",
+        "product-sitemap.xml",
+        "category-sitemap.xml",
+    ):
         pages[f"https://www.camthink.ai/{k}"] = urlset
     requested = _patch_http(monkeypatch, pages)
     conn = _make_connector(tmp_path)
@@ -396,7 +415,12 @@ def test_run_stats_reports_failures_without_breaking_crawl(tmp_path, monkeypatch
       <url><loc>https://www.camthink.ai/products/neoeyes-503/</loc></url>
       <url><loc>https://www.camthink.ai/rich/</loc></url>
     </urlset>"""
-    for k in ("post-sitemap.xml", "page-sitemap.xml", "product-sitemap.xml"):
+    for k in (
+        "post-sitemap.xml",
+        "page-sitemap.xml",
+        "product-sitemap.xml",
+        "category-sitemap.xml",
+    ):
         pages[f"https://www.camthink.ai/{k}"] = urlset
     real_get = None
 
@@ -501,6 +525,7 @@ def test_excluded_links_counted_once_across_pages(tmp_path, monkeypatch):
         "https://www.camthink.ai/post-sitemap.xml": urlset,
         "https://www.camthink.ai/page-sitemap.xml": urlset,
         "https://www.camthink.ai/product-sitemap.xml": urlset,
+        "https://www.camthink.ai/category-sitemap.xml": urlset,
         "https://www.camthink.ai/rich/": page_html,
     }
     _patch_http(monkeypatch, pages)
@@ -576,3 +601,131 @@ def test_authoritative_source_ids_none_on_incremental_round(tmp_path, monkeypatc
     """增量轮(fetch_changes)无权威成员集证据 → 返回 None。"""
     connector = _make_connector(tmp_path)
     assert connector.authoritative_source_ids() is None
+
+
+# --------------------------------------------------------------------------- #
+# #17 Website Simple Mode:连接器侧自动发现(robots 指令 / 通用回退 / 显式 override)
+# --------------------------------------------------------------------------- #
+
+
+ROBOTS_WITH_SITEMAP = (
+    "User-agent: *\nDisallow: /private/\nSitemap: https://www.camthink.ai/sitemap.xml\n"
+)
+
+PLAIN_SITEMAP = """<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://www.camthink.ai/docs/quickstart/</loc></url>
+  <url><loc>https://www.camthink.ai/products/ne301/</loc></url>
+</urlset>"""
+
+
+def test_sitemap_auto_discovery_via_robots_directive(tmp_path, monkeypatch):
+    """robots.txt Sitemap: 指令优先于通用回退(声明的 /sitemap.xml 直接命中)。"""
+    fetched = []
+
+    def _get(url, **kwargs):
+        fetched.append(url)
+        if url.endswith("robots.txt"):
+            return _FakeText(ROBOTS_WITH_SITEMAP)
+        if url.endswith("sitemap.xml"):
+            return _FakeText(PLAIN_SITEMAP)
+        raise AssertionError(f"不应请求其它地址: {url}")
+
+    monkeypatch.setattr(wc.requests, "get", _get)
+    conn = _make_connector(tmp_path)
+    entries = conn._sitemap_entries()
+    assert entries == {
+        "https://www.camthink.ai/docs/quickstart/": None,
+        "https://www.camthink.ai/products/ne301/": None,
+    }
+    # robots 指令命中 → 不再请求 /sitemap_index.xml 通用回退
+    assert not any("sitemap_index.xml" in u for u in fetched)
+
+
+def test_sitemap_auto_discovery_generic_fallback(tmp_path, monkeypatch):
+    """robots 无指令且 index 缺席 → /sitemap.xml 通用回退(非 Yoast 站可用)。"""
+    fetched = []
+
+    def _get(url, **kwargs):
+        fetched.append(url)
+        if url.endswith("robots.txt"):
+            return _FakeText("User-agent: *\nAllow: /\n")
+        if url.endswith("sitemap_index.xml"):
+            return _FakeText("<html>404</html>")  # 非 sitemap → not_sitemap 记录
+        if url.endswith("sitemap.xml"):
+            return _FakeText(PLAIN_SITEMAP)
+        raise AssertionError(f"不应请求其它地址: {url}")
+
+    _fake_crawl_time(monkeypatch)
+    monkeypatch.setattr(wc.requests, "get", _get)
+    conn = _make_connector(tmp_path)
+    entries = conn._sitemap_entries()
+    assert "https://www.camthink.ai/docs/quickstart/" in entries
+    assert any(u.endswith("/sitemap.xml") for u in fetched)
+
+
+def test_sitemap_explicit_config_override_skips_robots(tmp_path, monkeypatch):
+    """config 显式 sitemap_url = Advanced override:直接使用,不请求 robots/回退。"""
+    fetched = []
+
+    def _get(url, **kwargs):
+        fetched.append(url)
+        if url.endswith("custom.xml"):
+            return _FakeText(PLAIN_SITEMAP)
+        raise AssertionError(f"显式 override 下不应请求其它地址: {url}")
+
+    monkeypatch.setattr(wc.requests, "get", _get)
+    conn = _make_connector(tmp_path, extra={"sitemap_url": "https://www.camthink.ai/custom.xml"})
+    entries = conn._sitemap_entries()
+    assert entries == {
+        "https://www.camthink.ai/docs/quickstart/": None,
+        "https://www.camthink.ai/products/ne301/": None,
+    }
+    assert fetched == ["https://www.camthink.ai/custom.xml"]
+
+
+def test_sitemap_zero_discovery_with_evidence_fails_loudly(tmp_path, monkeypatch):
+    """全部候选失败 → RuntimeError 显式失败(零发现不伪装成功,证据进消息)。"""
+
+    def _get_404(url, **kwargs):
+        class _R:
+            status_code = 404
+
+            def raise_for_status(self):
+                import requests as _rq
+
+                raise _rq.HTTPError(f"404 for {url}")
+
+        return _R()
+
+    sleeps = _fake_crawl_time(monkeypatch)
+    monkeypatch.setattr(wc.requests, "get", _get_404)
+    conn = _make_connector(tmp_path)
+    try:
+        conn._sitemap_entries()
+        raise AssertionError("零发现必须显式失败")
+    except RuntimeError as exc:
+        assert "零 URL" in str(exc)
+        assert "fetch_failed" in str(exc)  # 证据可读
+
+
+def test_sitemap_empty_urlset_without_errors_completes(tmp_path, monkeypatch):
+    """urlset 合法但为空(无失败证据)→ 空集照常完成(与旧语义一致,不误伤)。
+
+    注:空 urlset 不产生 entries,发现层会继续尝试下一个通用回退候选
+    (/sitemap.xml)——两次都合法为空才得到空集,属诚实有界试探。
+    """
+    empty = """<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+</urlset>"""
+
+    def _get(url, **kwargs):
+        if url.endswith("robots.txt"):
+            return _FakeText("User-agent: *\nAllow: /")
+        if url.endswith(("sitemap_index.xml", "sitemap.xml")):
+            return _FakeText(empty)
+        raise AssertionError(f"不应请求其它地址: {url}")
+
+    monkeypatch.setattr(wc.requests, "get", _get)
+    conn = _make_connector(tmp_path)
+    assert conn._sitemap_entries() == {}
