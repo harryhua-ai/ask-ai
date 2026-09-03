@@ -35,6 +35,7 @@
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import sys
 import time
@@ -86,16 +87,9 @@ from backend.services.sync_runs import (
     STAGE_INDEX,
     STAGE_PARSE,
     STAGE_SAFETY_FILTER,
+    record_device,
 )
 from backend.services.vector_consistency import verify_source_vectors
-
-try:
-    # W2 owns this function and may not yet be present in the W1 worktree.
-    # This nullable import is only an adapter around the frozen contract; W1
-    # does not create a competing persistence or API implementation.
-    from backend.services.sync_runs import record_device
-except ImportError:  # pragma: no cover - exercised before W2 is integrated
-    record_device = None
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +190,11 @@ MAX_INCREMENTAL_LOOKBACK = timedelta(days=30)
 # ≥80% 候选页成功抽取 → success(coverage 行仍记录失败明细);
 # <80% → partial(窗口不推进,下轮重试);0 抽取 → failed。
 COVERAGE_PARTIAL_RATIO = 0.8
+
+# ⑫ 实时进度落笔防抖间隔(秒):ingest 在工作线程执行,批界回调只更新内存
+# 最新值;事件循环侧 flush 任务以该间隔摊销写 DB——批界粒度真实、又不做
+# 每 chunk DB storm。进程中断时,已持久化的最后一条批界事实保留。
+SYNC_PROGRESS_FLUSH_INTERVAL_SECONDS = 1.0
 
 
 def _consistency_facts(
@@ -357,10 +356,16 @@ class _RunTelemetry:
         fallback_reason: str | None = None,
         fallback_detail: str | None = None,
     ) -> None:
-        """Consume W2's frozen ``record_device`` interface best-effort."""
-        if record_device is None:
-            logger.debug("W2 record_device unavailable; skipping device telemetry")
-            return
+        """W2 冻结写入通道:execution_device/fallback 遥测(W1 消费)。
+
+        execution_device ∈ {gpu, cpu, gpu_to_cpu}(受控词表,越界由
+        record_device 拒绝);fallback_reason 为机器可读原因码;
+        fallback_detail 为人类可读补充。best-effort,失败不阻断业务。
+
+        集成注:经模块级 ``record_device`` 绑定调用——W2 已合入,适配器
+        降级分支退役;模块级名保留 #14 测试对 ``scripts.sync.record_device``
+        的 monkeypatch 接缝(调用期全局解析,不绕过)。
+        """
         await self._do(
             record_device(
                 session_factory,
@@ -501,6 +506,11 @@ async def _handle_no_change(
         log_entry.items_new = 0
         log_entry.items_updated = 0
         log_entry.items_unchanged = existing
+        if telemetry is not None:
+            # ⑫ short-circuit 机器事实(run-local 可证明):本轮无上游变更、
+            # 零灌入——UI 据此呈现「无上游变更,跳过灌入」,绝不暗示完整
+            # ingestion;与 refill/孤儿处置等真实灌入路径严格区分。
+            await telemetry.counters(session_factory, ingestion_skipped=1)
     else:
         # 有缺口:先按 refill(整篇缺失 ∪ chunk 集合不一致)定向补灌(embed 仅
         # 缺口文档);孤儿向量走独立 reconciliation(§P1 生命周期):
@@ -967,17 +977,44 @@ async def _sync_one(
         # CORRECTION A:SAFETY_FILTER 边界可观测(真实过滤发生在 ingest 内部;
         # 批界计数由回调如实提供,无分母时不伪造 total)
         await tel.progress(session_factory, STAGE_SAFETY_FILTER, None, None)
-        _ingest_seen: dict[str, int] = {}
+        # ⑫ 实时进度(W2):ingest 全程在工作线程执行(asyncio.to_thread),
+        # 不再阻塞事件循环——同进程内 API/健康检查照常响应,批界进度可被
+        # 并发读者(refresh/轮询)从 sync_runs 真实读取。回调(线程侧)只
+        # 更新内存最新值(单生产者,赋值原子);DB 落笔由事件循环侧 flush
+        # 任务按 SYNC_PROGRESS_FLUSH_INTERVAL_SECONDS 防抖摊销,进程中断时
+        # 已持久化的最后一条批界事实保留。
+        _ingest_live: dict[str, int] = {}
+        _ingest_seq: list[str] = []
 
         def _ingest_progress(stage: str, done: int) -> None:
-            # 同步回调(ingest 阻塞事件循环期间无法 await DB):仅缓冲,
-            # 批界之后由 _sync_one 统一落笔——语义等价,行为零改变
-            _ingest_seen[stage] = done
+            if stage not in _ingest_live:
+                _ingest_seq.append(stage)  # 记录 stage 首现顺序(取当前相位用)
+            _ingest_live[stage] = done
 
-        results = pipeline.ingest_all(docs, progress=_ingest_progress)
+        async def _flush_ingest_progress() -> None:
+            last_write = 0.0
+            while True:
+                await asyncio.sleep(0.2)
+                if not _ingest_seq or time.monotonic() - last_write < (
+                    SYNC_PROGRESS_FLUSH_INTERVAL_SECONDS
+                ):
+                    continue
+                stage = _ingest_seq[-1]
+                await tel.progress(session_factory, stage, _ingest_live[stage], _docs_total)
+                last_write = time.monotonic()
+
+        flusher = asyncio.create_task(_flush_ingest_progress())
+        try:
+            results = await asyncio.to_thread(pipeline.ingest_all, docs, progress=_ingest_progress)
+        finally:
+            flusher.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await flusher
+        # 终笔与既有语义一致:四 stage 批界终值按序落笔(结束态=INDEX);
+        # 实时 flush 只是中途快照,终值以此为准。
         for _st in (STAGE_SAFETY_FILTER, STAGE_CHUNK, STAGE_EMBED, STAGE_INDEX):
-            if _st in _ingest_seen:
-                await tel.progress(session_factory, _st, _ingest_seen[_st], _docs_total)
+            if _st in _ingest_live:
+                await tel.progress(session_factory, _st, _ingest_live[_st], _docs_total)
         await tel.counters(session_factory, docs_total=_docs_total, docs_done=len(results))
         deleted = connector.fetch_deleted(since)
         for doc_id in deleted:

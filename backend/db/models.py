@@ -288,6 +288,14 @@ class SyncRun(Base):
     consistency: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     error_summary: Mapped[str | None] = mapped_column(Text)
     sync_log_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    # W2 运行时事实(全部可空,NULL=未知,读侧禁止推断):
+    #   execution_device ∈ {gpu, cpu, gpu_to_cpu}(词表见 sync_runs 服务;
+    #   gpu_to_cpu = 本次运行发生过自动降级且最终以 CPU 完成);
+    #   fallback_reason = 机器可读原因码(cuda_init_failure / cuda_oom …,
+    #   由 W1 写入);fallback_detail = 人类可读补充,绝不作为状态判断依据。
+    execution_device: Mapped[str | None] = mapped_column(String(16))
+    fallback_reason: Mapped[str | None] = mapped_column(String(32))
+    fallback_detail: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

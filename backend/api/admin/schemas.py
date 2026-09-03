@@ -95,8 +95,113 @@ class SyncLogOut(BaseModel):
     items_new: int
     items_updated: int
     items_deleted: int
+    items_unchanged: int = 0
     error_detail: str | None
     triggered_by: str
+
+
+# --------------------------------------------------------------------------- #
+# ⑫ Sync Truth 读侧 schema(W2;Frozen Discovery §19 contract)
+# --------------------------------------------------------------------------- #
+
+
+class SyncStatusItem(BaseModel):
+    """单数据源当前运行态(bulk;由 request + latest run 读时派生)。"""
+
+    source_id: str
+    state: str
+    request_id: int | None = None
+    attempt: int | None = None
+    recovering: bool = False
+    stage: str | None = None
+    stage_current: int | None = None
+    stage_total: int | None = None
+    counters: dict = Field(default_factory=dict)
+    execution_device: str | None = None
+    started_at: str | None = None
+    updated_at: str | None = None
+
+
+class SyncStatusResponse(BaseModel):
+    """GET /sync-status 响应:全部相关源的运行态快照。"""
+
+    items: list[SyncStatusItem]
+
+
+class SyncRunLogSummary(BaseModel):
+    """运行历史关联的业务结局(sync_log;真实语义命名)。"""
+
+    id: str
+    status: str
+    items_new: int
+    chunks_written: int  # = sync_log.items_updated:写入 chunk 总数,非"更新文档数"
+    items_deleted: int
+    items_unchanged: int
+    error_detail: str | None = None
+
+
+class SyncRunHistoryItem(BaseModel):
+    """单条运行历史(ONE SOURCE × ONE ATTEMPT + 关联业务结局)。"""
+
+    id: int
+    source_id: str
+    triggered_by: str
+    request_id: int | None = None
+    attempt: int
+    recovery: bool
+    status: str
+    started_at: str
+    finished_at: str | None = None
+    duration_seconds: float | None = None
+    stage: str | None = None
+    counters: dict = Field(default_factory=dict)
+    consistency: dict | None = None
+    execution_device: str | None = None
+    fallback_reason: str | None = None
+    fallback_detail: str | None = None
+    error_summary: str | None = None
+    ingestion_skipped: bool = False
+    sync_log: SyncRunLogSummary | None = None
+
+
+class SyncRunsResponse(BaseModel):
+    """GET /sync-runs 响应:分页运行历史。"""
+
+    items: list[SyncRunHistoryItem]
+    total: int
+    page: int
+    size: int
+
+
+class HealthDimension(BaseModel):
+    """单健康维度:{state, evidence, as_of};无证据 → UNKNOWN/INSUFFICIENT_DATA。"""
+
+    state: str
+    evidence: str | None = None
+    as_of: str | None = None
+
+
+class SourceHealthItem(BaseModel):
+    """单数据源五维健康(读时派生,无 SourceHealthSnapshot)。"""
+
+    source_id: str
+    source_type: str
+    enabled: bool
+    expected_state: str
+    overall: str
+    recovering: bool = False
+    document_count: int | None = None
+    connectivity: HealthDimension
+    sync: HealthDimension
+    coverage: HealthDimension
+    freshness: HealthDimension
+    consistency: HealthDimension
+
+
+class SourceHealthResponse(BaseModel):
+    """GET /sync-health 响应:全部数据源五维健康快照。"""
+
+    items: list[SourceHealthItem]
 
 
 class PaginatedResponse(BaseModel):
