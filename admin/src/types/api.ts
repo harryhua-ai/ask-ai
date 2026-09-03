@@ -16,6 +16,95 @@ export interface LoginResponse {
 
 export type DataSourceType = "github" | "filesystem";
 
+export type SyncState =
+  | "QUEUED"
+  | "WAITING"
+  | "RUNNING"
+  | "RECOVERING"
+  | "COMPLETED"
+  | "FAILED"
+  | "INTERRUPTED"
+  | "IDLE";
+
+export type SyncStage =
+  | "DISCOVER"
+  | "SAFETY_FILTER"
+  | "FETCH"
+  | "PARSE"
+  | "CHUNK"
+  | "EMBED"
+  | "INDEX"
+  | "CONSISTENCY"
+  | "DONE";
+
+export type ExecutionDevice = "GPU" | "CPU" | "UNKNOWN" | string;
+
+export interface SyncCounters {
+  docs_total?: number | null;
+  docs_processed?: number | null;
+  docs_new?: number | null;
+  docs_updated?: number | null;
+  docs_deleted?: number | null;
+  items_unchanged?: number | null;
+  chunks_written?: number | null;
+  chunks_deleted?: number | null;
+  [key: string]: number | null | undefined;
+}
+
+export interface SyncConsistency {
+  missing?: number | null;
+  missing_count?: number | null;
+  orphan_count?: number | null;
+  orphan?: number | null;
+  [key: string]: number | null | undefined;
+}
+
+export interface SyncStatusItem {
+  source_id: string;
+  state: SyncState;
+  stage: SyncStage | null;
+  stage_current?: number | null;
+  stage_total?: number | null;
+  counters?: SyncCounters | null;
+  device?: ExecutionDevice | null;
+  fallback_reason?: string | null;
+  request_id?: number | null;
+  run_id?: number | null;
+  started_at?: string | null;
+  updated_at?: string | null;
+  finished_at?: string | null;
+  error_summary?: string | null;
+}
+
+export interface SyncStatusResponse {
+  items: SyncStatusItem[];
+}
+
+export interface SyncRun extends SyncStatusItem {
+  id: number;
+  status: "running" | "completed" | "failed" | "interrupted" | string;
+  consistency?: SyncConsistency | null;
+  error_summary?: string | null;
+  triggered_by?: string | null;
+  attempt?: number | null;
+  recovery?: boolean | null;
+}
+
+export interface SyncRunList {
+  items: SyncRun[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export type SourceHealthState = "HEALTHY" | "DEGRADED" | "CRITICAL" | "DISABLED" | "UNKNOWN" | "INSUFFICIENT_DATA";
+
+export interface SourceHealthDimension {
+  state: SourceHealthState;
+  evidence: string | null;
+  as_of: string | null;
+}
+
 /** GitHub 数据源 config 形状(统一 git 类型:clone + fetch+reset + API SHA 感知)。 */
 export interface GithubSourceConfig {
   repo_url?: string;

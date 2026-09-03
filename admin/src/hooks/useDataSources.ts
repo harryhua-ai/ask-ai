@@ -3,7 +3,46 @@ import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { fetchSourceHealth } from "@/lib/api/techInsight";
 import { splitIntoBatches } from "@/utils/upload";
-import type { DataSource, PreviewDir } from "@/types/api";
+import type { DataSource, PreviewDir, SyncRunList, SyncStatusResponse } from "@/types/api";
+
+export interface SyncRunParams {
+  status?: string;
+  page?: number;
+  size?: number;
+}
+
+export function fetchSyncStatus(): Promise<SyncStatusResponse> {
+  return apiFetch<SyncStatusResponse>("/sync-status");
+}
+
+export function fetchSyncRuns(sourceId: string, params: SyncRunParams = {}): Promise<SyncRunList> {
+  const search = new URLSearchParams({ source_id: sourceId });
+  if (params.status !== undefined) search.set("status", params.status);
+  if (params.page !== undefined) search.set("page", String(params.page));
+  if (params.size !== undefined) search.set("size", String(params.size));
+  return apiFetch<SyncRunList>(`/sync-runs?${search.toString()}`);
+}
+
+export function useSyncStatus(options?: { refetchInterval?: number | false }) {
+  return useQuery({
+    queryKey: ["sync-status"],
+    queryFn: fetchSyncStatus,
+    refetchInterval: options?.refetchInterval,
+  });
+}
+
+export function useSyncRuns(
+  sourceId: string,
+  options?: SyncRunParams & { enabled?: boolean; refetchInterval?: number | false },
+) {
+  const { enabled = true, refetchInterval, status, page, size } = options ?? {};
+  return useQuery({
+    queryKey: ["sync-runs", sourceId, { status, page, size }],
+    queryFn: () => fetchSyncRuns(sourceId, { status, page, size }),
+    enabled: enabled && !!sourceId,
+    refetchInterval,
+  });
+}
 
 export function useDataSources(options?: { refetchInterval?: number | false }) {
   return useQuery({
