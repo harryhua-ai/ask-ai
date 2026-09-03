@@ -16,7 +16,6 @@ import {
   useSourceHealth,
   fetchPreviewBranches,
   fetchRepoDiscovery,
-  fetchPreviewFileTypes,
   fetchWebsiteDiscovery,
   type WebsiteDiscoveryResult,
   uploadSourceFiles,
@@ -668,15 +667,6 @@ export default function DataSources() {
       const current = getValues("branches")?.trim() ?? "";
       if ((!current || current === "main") && branches.includes(defaultBranch)) {
         setValue("branches", defaultBranch, { shouldDirty: true });
-      }
-      // C10 增补:仓库出现的全部文件后缀默认全列,用户按需删
-      try {
-        const ft = await fetchPreviewFileTypes(parsed.owner, parsed.repo, defaultBranch);
-        if (ft.extensions.length) {
-          setValue("file_types", ft.extensions.join(", "), { shouldDirty: true });
-        }
-      } catch {
-        // 文件类型拉取失败不打断分支流程(用户仍可手填)
       }
       // #16:不再把仓库全部后缀预填进 file_types(「检测到什么就纳入什么」已废除);
       // 纳入策略由「扫描并推荐策略」的发现流程给出,用户确认后写入。

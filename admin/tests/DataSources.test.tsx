@@ -43,6 +43,8 @@ vi.mock("@/hooks/useDataSources", () => ({
   fetchPreviewBranches: vi.fn(),
   fetchPreviewFileTypes: vi.fn(),
   fetchRepoDiscovery: vi.fn(),
+  fetchWebsiteDiscovery: vi.fn(),
+  useRetryDeleteDataSource: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 afterEach(() => {
