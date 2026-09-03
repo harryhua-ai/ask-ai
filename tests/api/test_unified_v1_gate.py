@@ -21,7 +21,10 @@ from backend.utils.budget import BudgetConfig, BudgetLimiter
 from tests.api.test_routes import _parse_sse_events
 from tests.pipeline.test_rag import _make_llm_response, _make_sr
 
-STORE_ORIGIN = "https://store.camthink.ai"
+# Issue #8 冻结真相:Store 页面 Origin = https://www.camthink.ai(/store/ 是 path
+# 不属于 Origin);store.camthink.ai 已废弃。此常量兼作 store 产品页 URL 样例
+# (可见性过滤断言:store 域内容不得进入 sources)。
+STORE_ORIGIN = "https://www.camthink.ai"
 
 PUBLIC_SR = _make_sr(
     text="NE301 工作温度为 -20°C 至 +50°C。",

@@ -69,7 +69,7 @@ class TestResolveSite:
     async def test_unknown_site_denied(self, db_engine):
         factory = get_session_factory(db_engine)
         with pytest.raises(SiteDenied):
-            await resolve_site(factory, "camthink-store", "https://store.camthink.ai")
+            await resolve_site(factory, "camthink-store", "https://www.camthink.ai")
 
     async def test_missing_origin_denied(self, db_engine):
         factory = get_session_factory(db_engine)
@@ -80,7 +80,7 @@ class TestResolveSite:
     async def test_authorized_origin_resolved(self, db_engine):
         factory = get_session_factory(db_engine)
         await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
-        site = await resolve_site(factory, "camthink-store", "https://Store.CamThink.ai")
+        site = await resolve_site(factory, "camthink-store", "https://WWW.CamThink.ai")
         assert isinstance(site, ResolvedSite)
         assert site.site_id == "camthink-store"
         assert site.display_name
@@ -130,19 +130,49 @@ class TestResolveSite:
                     await resolve_site(factory, site_id, origin)
 
     async def test_official_origins_remain_authorized(self, db_engine):
-        """既有官方 origins 零回归(A8):bare-IP 三站镜像不挤掉任何既有授权。"""
+        """既有官方 origins 零回归(A8 + Issue #8):bare-IP 三站镜像不挤掉任何既有授权;
+        store 官方 origin = https://www.camthink.ai(正式 Store 在 www.camthink.ai/store/);
+        website apex https://camthink.ai 按 Issue #8 既有契约保留(REDIRECT ONLY 不动)。"""
         factory = get_session_factory(db_engine)
         await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
         authorized = {
             "camthink-website": ("https://www.camthink.ai", "https://camthink.ai"),
             "camthink-wiki": ("https://wiki.camthink.ai",),
-            "camthink-store": ("https://store.camthink.ai",),
+            "camthink-store": ("https://www.camthink.ai",),
         }
         for site_id, origins in authorized.items():
             for origin in origins:
                 site = await resolve_site(factory, site_id, origin)
                 assert isinstance(site, ResolvedSite)
                 assert site.site_id == site_id
+
+    async def test_store_production_origin_authorized(self, db_engine):
+        """Issue #8:生产故障场景回归钉 —— /store/neoeyes-503/ 页面的真实浏览器
+        Origin = https://www.camthink.ai 必须通过 camthink-store 授权(修复前 403)。"""
+        factory = get_session_factory(db_engine)
+        await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
+        site = await resolve_site(factory, "camthink-store", "https://www.camthink.ai")
+        assert isinstance(site, ResolvedSite)
+        assert site.site_id == "camthink-store"
+
+    async def test_store_url_path_not_part_of_authorization(self, db_engine):
+        """Issue #8:/store/ 是 path 不属于 Origin;授权只依据 Origin ——
+        带路径的 Referer 归一化剥路径后精确命中 scheme://host,与无路径等价。"""
+        factory = get_session_factory(db_engine)
+        await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
+        site = await resolve_site(
+            factory, "camthink-store", "https://www.camthink.ai/store/neoeyes-503/"
+        )
+        assert isinstance(site, ResolvedSite)
+        assert site.site_id == "camthink-store"
+
+    async def test_obsolete_store_subdomain_origin_denied(self, db_engine):
+        """Issue #8:store.camthink.ai 为 OBSOLETE 非权威 origin,必须拒绝
+        (修复回归钉:修复前该 origin 曾被错误列入 camthink-store 授权)。"""
+        factory = get_session_factory(db_engine)
+        await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
+        with pytest.raises(SiteDenied):
+            await resolve_site(factory, "camthink-store", "https://store.camthink.ai")
 
     async def test_suffix_spoofed_origin_denied(self, db_engine):
         """store.camthink.ai.evil.com 含授权串但不是授权 origin(精确匹配)。"""
@@ -159,7 +189,7 @@ class TestResolveSite:
             row.enabled = False
             await session.commit()
         with pytest.raises(SiteDenied):
-            await resolve_site(factory, "camthink-store", "https://store.camthink.ai")
+            await resolve_site(factory, "camthink-store", "https://www.camthink.ai")
 
 
 # --------------------------------------------------------------------------- #
@@ -226,6 +256,25 @@ class TestLoadSitesConfig:
         sites = {s["site_id"]: s for s in load_sites_config(REPO_ROOT / "config" / "sites.yaml")}
         for site_id in ("camthink-website", "camthink-wiki", "camthink-store"):
             assert "http://42.194.138.11" in sites[site_id]["allowed_origins"], site_id
+
+    def test_store_origin_frozen_truth_issue8(self):
+        """Issue #8 冻结产品事实(配置面回归钉):
+        - store 授权 origin 必须含 https://www.camthink.ai(正式 Store 在
+          www.camthink.ai/store/,/store/ 是 path 不属于 Origin);
+        - store.camthink.ai 为 OBSOLETE 非权威 origin,必须缺席;
+        - 通配符禁止(与全局面 test_no_wildcard_or_path_origins_anywhere 双保险)。"""
+        sites = {s["site_id"]: s for s in load_sites_config(REPO_ROOT / "config" / "sites.yaml")}
+        store_origins = sites["camthink-store"]["allowed_origins"]
+        assert "https://www.camthink.ai" in store_origins
+        assert "https://store.camthink.ai" not in store_origins
+        assert not any("*" in o for o in store_origins)
+        # 相邻站点行为不变:website 含 www + apex(Issue #8 REDIRECT 契约),wiki 独占子域。
+        assert "https://www.camthink.ai" in sites["camthink-website"]["allowed_origins"]
+        assert "https://camthink.ai" in sites["camthink-website"]["allowed_origins"]
+        assert sites["camthink-wiki"]["allowed_origins"] == [
+            "https://wiki.camthink.ai",
+            "http://42.194.138.11",
+        ]
 
     def test_no_wildcard_or_path_origins_anywhere(self):
         """A10:配置面禁止通配符/带路径/裸 host 形式(canonical 不变量的显式安全面)。"""

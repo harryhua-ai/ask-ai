@@ -17,7 +17,9 @@ from backend.main import app
 from backend.utils.budget import BudgetConfig, BudgetLimiter
 from tests.api.test_routes import _parse_sse_events
 
-STORE_ORIGIN = "https://store.camthink.ai"
+# Issue #8 冻结真相:正式 Store 位于 https://www.camthink.ai/store/,页面 Origin
+# = https://www.camthink.ai;store.camthink.ai 已废弃不授权(仅作端点逻辑测试样例)。
+STORE_ORIGIN = "https://www.camthink.ai"
 
 
 def _make_site_row(

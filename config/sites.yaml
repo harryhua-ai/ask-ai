@@ -65,7 +65,10 @@ sites:
   - site_id: camthink-store
     display_name: CamThink Store
     allowed_origins:
-      - https://store.camthink.ai
+      # Issue #8 冻结产品事实:正式 Store 位于 https://www.camthink.ai/store/ ——
+      # /store/ 是 path 不属于 Origin,故授权 origin = https://www.camthink.ai;
+      # store.camthink.ai 为 OBSOLETE 非权威 origin,不再授权。
+      - https://www.camthink.ai
       # 外部 Widget 对接测试页 /store/(同一 Origin;路径不进授权,精确命中 scheme://host)。
       - http://42.194.138.11
     welcome: "Shopping for a CamThink device? Ask me before you order."
