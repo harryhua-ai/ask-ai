@@ -95,4 +95,35 @@ review 与 findings 修复由本会话执行代理完成,未假设任何未完�
 
 ---
 
+## 8. REVIEW CORRECTION(Planner)#11 Health Authority——已闭环(6ad0cdd)
+
+Planner 指正:五维健康不得由前端自派生(legacy source-health + sync-runs 本地推导)
+构成第二健康权威;W2 `/sync-health` 是 #11 唯一权威读模型。修正提交 `6ad0cdd`(同分支):
+
+1. **消费权威**:`fetchSyncHealth/useSyncHealth`(GET `/sync-health`)+ `SyncHealthItem/
+   SyncHealthDimension/SyncHealthResponse` 契约类型;页面 5s 轮询(与活跃同步同节奏),
+   `SourceHealthPanel` 改为接收后端条目直呈:五维卡片 + overall 徽章均来自后端
+   (state 词表本地化、evidence/as_of 原样)。
+2. **删除前端推导**(净 −152 行):connectivity 错误文案 regex 分类、freshness
+   2×interval 阈值派生、coverage/consistency 本地分类、legacy 30 天健康导入五维
+   (`deriveSourceHealth` 及其辅助函数整体移除);`withEvidenceState` 状态覆盖与
+   从 /sync-status 注入 RECOVERING 的 overlay 一并删除——恢复中只能来自后端
+   overall/state 表达。
+3. **前端只本地化不重判**:`healthStateLabel` 已知词表(W2 维度级小写 10 个 +
+   overall 大写 10 个)→ 中文;未知词表**原文透传**(测试锁定 vendor_future_state);
+   空 evidence 仅「证据不足」占位提示,状态徽章不改写。
+4. **30 天 source-health 降级为既有徽章**:主表健康列/内容数/tooltip 保留原用途,
+   不再进五维面板。
+5. **保持不变**:/sync-status 轮询、/sync-runs 懒加载历史、真实进度(未知分母不显
+   百分比)、SHA 短路文案、设备/降级证据、FAILED/INTERRUPTED 呈现;后端/schema 零触碰。
+6. **测试证明**:`SourceHealthPanel` 重写 6 例(五维+overall 按后端原文渲染;UNKNOWN
+   不改判;RECOVERING 不合成;未知词表透传;STALE 只本地化不重算;空数据诚实态)+
+   DSH 集成例(展开后五维由 /sync-health fixture 驱动,断言旧本地推导文案不存在)+
+   hook 契约路径例(`/sync-health`)。
+
+**验证**:admin vitest 41 files / **227 passed**;admin build(`tsc -b && vite build`)
+通过;`git diff --check` 通过。FINAL_COMMIT 更新为 `6ad0cdd`。
+
+---
+
 *等待 Planner 独立 FINAL REVIEW;不自动合 main、不自动部署。*
