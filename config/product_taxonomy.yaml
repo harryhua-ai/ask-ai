@@ -97,15 +97,15 @@ legacy_labels:
 document_derivation:
   - label: wiki
     rules:
-      - {path_any: ["docs/6-neoeyes-ne503-series"], product: ne503}
-      - {path_any: ["docs/5-neoeyes-ne301-series"], product: ne301}
-      - {path_any: ["docs/8-neoeyes-ne302-series"], product: ne302}
-      - {path_any: ["docs/2-neoeyes-ne101-series"], product: ne101}
-      - {path_any: ["docs/1-neoedge-ng4500-series"], product: ng4500}
-      - {path_any: ["docs/0-neomind"], product: neomind}
-      - {path_any: ["docs/3-hardware-dev-resources"], product: hardware-common}
-      - {path_any: ["docs/4-ai-application"], product: ai-common}
-      - {path_any: ["docs/7-release-notes"], product: release-notes}
+      - {path_any: ["docs/6-neoeyes-ne503-series", "i18n/en/docusaurus-plugin-content-docs/current/6-neoeyes-ne503-series"], product: ne503}
+      - {path_any: ["docs/5-neoeyes-ne301-series", "i18n/en/docusaurus-plugin-content-docs/current/5-neoeyes-ne301-series"], product: ne301}
+      - {path_any: ["docs/8-neoeyes-ne302-series", "i18n/en/docusaurus-plugin-content-docs/current/8-neoeyes-ne302-series"], product: ne302}
+      - {path_any: ["docs/2-neoeyes-ne101-series", "i18n/en/docusaurus-plugin-content-docs/current/2-neoeyes-ne101-series"], product: ne101}
+      - {path_any: ["docs/1-neoedge-ng4500-series", "i18n/en/docusaurus-plugin-content-docs/current/1-neoedge-ng4500-series"], product: ng4500}
+      - {path_any: ["docs/0-neomind", "i18n/en/docusaurus-plugin-content-docs/current/0-neomind"], product: neomind}
+      - {path_any: ["docs/3-hardware-dev-resources", "i18n/en/docusaurus-plugin-content-docs/current/3-hardware-dev-resources"], product: hardware-common}
+      - {path_any: ["docs/4-ai-application", "i18n/en/docusaurus-plugin-content-docs/current/4-ai-application"], product: ai-common}
+      - {path_any: ["docs/7-release-notes", "i18n/en/docusaurus-plugin-content-docs/current/7-release-notes"], product: release-notes}
   - label: website
     rules:
       # 官网产品页 URL 模式(生产 366 chunk 全量 URL 清单实证,Discovery 实现 §PD-5)
@@ -115,6 +115,9 @@ document_derivation:
       - {url_any: ["ne302"], product: ne302}
       - {url_any: ["ng4500"], product: ng4500}
       - {url_any: ["/product/neomind", "product-category/neomind"], product: neomind}
+      # Unknown Closure(#5,2026-09-03):AI ToolStack 官方工具页 = 平台身份
+      # (URL 显式路径 + taxonomy 别名身份,非兄弟页推断;工具族其余页面不命中)
+      - {url_any: ["/tools/ai-tool-stack"], product: aitoolstack}
 
 # 设备指代词(歧义检测):出现指代且无法解析出目标产品 → PRODUCT_AMBIGUOUS(文本澄清)
 ambiguity:

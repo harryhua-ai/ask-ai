@@ -190,6 +190,65 @@ class TestDeriveProduct:
         )
         assert d == DerivedProduct(slug="unknown", reason="none")
 
+    def test_wiki_i18n_mirror_tree_follows_primary_series(self, taxonomy):
+        """Unknown Closure(#5):i18n 镜像树翻译文档与主树同系列 → 同产品。
+
+        `i18n/en/docusaurus-plugin-content-docs/current/<系列>/…` 是主树
+        `docs/<系列>/…` 的翻译镜像;系列 token 相同,确定性规则(纯追加,
+        既有冻结 token 不动)。UI 字符串/目录标签/镜像索引页不命中,留 unknown。
+        """
+        mirror = "wiki-documents-local/main/i18n/en/docusaurus-plugin-content-docs/current"
+        cases = [
+            (f"{mirror}/6-neoeyes-ne503-series/3-software-guide/0-system-architecture.md", "ne503"),
+            (f"{mirror}/5-neoeyes-ne301-series/0-overview.md", "ne301"),
+            (f"{mirror}/8-neoeyes-ne302-series/1-quick-start.md", "ne302"),
+            (f"{mirror}/2-neoeyes-ne101-series/1-quick-start.md", "ne101"),
+            (f"{mirror}/1-neoedge-ng4500-series/4-FAQs.md", "ng4500"),
+            (f"{mirror}/0-neomind/developer-guide/1-overview.md", "neomind"),
+            (f"{mirror}/3-hardware-dev-resources/1-ssd.md", "hardware-common"),
+            (f"{mirror}/4-ai-application/0-cinfer-ai-Inference-service/0-quick-start.md", "ai-common"),
+            (f"{mirror}/7-release-notes/0-firmware.md", "release-notes"),
+        ]
+        for path, expected in cases:
+            d = taxonomy.derive_product("wiki", path, "")
+            assert d.slug == expected, path
+            assert d.reason == "rule", path
+
+    def test_wiki_i18n_site_chrome_stays_unknown(self, taxonomy):
+        """Unknown Closure(#5):镜像树的站点附件(UI 串/目录标签/索引)不命中规则。"""
+        mirror = "wiki-documents-local/main/i18n/en/docusaurus-plugin-content-docs/current"
+        for path in (
+            "wiki-documents-local/main/i18n/en/code.json",
+            "wiki-documents-local/main/i18n/en/docusaurus-theme-classic/navbar.json",
+            f"{mirror}.json",
+            f"{mirror}/index.md",
+            f"{mirror}/sidebars.js",
+        ):
+            d = taxonomy.derive_product("wiki", path, "")
+            assert d.slug == "unknown", path
+
+    def test_website_ai_tool_stack_page_is_aitoolstack(self, taxonomy):
+        """Unknown Closure(#5):/tools/ai-tool-stack 官方页 = aitoolstack 平台身份。
+
+        与既有 ``/product/neomind`` 规则同类:URL 显式路径 + 平台别名身份,
+        确定性规则,非兄弟页推断。工具族其它页面(battery-calculator、
+        tools 索引)不因同前缀被过匹配,保持 unknown(非产品事实来源)。
+        """
+        hit = taxonomy.derive_product(
+            "website", "website-camthink/tools/ai-tool-stack",
+            "https://www.camthink.ai/tools/ai-tool-stack/",
+        )
+        assert hit == DerivedProduct(slug="aitoolstack", reason="rule")
+        # 防过匹配:同前缀工具页不受该规则影响
+        assert taxonomy.derive_product(
+            "website", "website-camthink/tools/battery-calculator",
+            "https://www.camthink.ai/tools/battery-calculator/",
+        ).slug == "unknown"
+        assert taxonomy.derive_product(
+            "website", "website-camthink/tools",
+            "https://www.camthink.ai/tools/",
+        ).slug == "unknown"
+
     def test_woocommerce_labels_pass_through_canonical(self, taxonomy):
         assert taxonomy.derive_product("ne503", "woocommerce-mall/0", "").slug == "ne503"
         assert taxonomy.derive_product("accessories", "woocommerce-mall/1", "").slug == "commercial"
