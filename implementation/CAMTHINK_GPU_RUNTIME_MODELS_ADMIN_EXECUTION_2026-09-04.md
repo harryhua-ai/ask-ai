@@ -334,3 +334,81 @@ Playwright 实测:登录 → 「模型配置」:
 | PRODUCTION_MUTATIONS | **NONE**(未部署生产;未打 tag;未关 issue) |
 
 **STOP。等待 Planner 复审。**
+
+---
+
+# REV2 — 最终阻断修复(2026-09-04 追加)
+
+- **REV2_BASELINE**: 1e58dbd(REV1 候选)
+- **REV2_COMMIT**: **72cdcbf**(@origin/v1.1/gpu-runtime-models-admin)
+- **STATUS**: **CANDIDATE READY**;PRODUCTION_MUTATIONS=**NONE**;无 merge main/无 tag/release
+- 架构/Admin UX/瞬态重排策略:**零重设计**(按 REV2 契约约束)
+
+## A1. R2-1 — 查询侧不再自动降级 CPU(UNSAFE fail-closed)
+
+**授权边界修正**:`gpu_insufficient` 计划下,REV1 曾把配置为 GPU 的查询侧
+workload 自动转为 CPU —— 超出产品授权。REV2 语义:
+
+| 工作负载 | UNSAFE 计划下行为 | 授权依据 |
+|---|---|---|
+| 查询嵌入 | **零实例构造**(不上 GPU 冒险、不建 CPU 替身);`embed()`/`dimension` 抛 `UnsafeRuntimePlanError`(含可操作指引);status=`unsafe_no_safe_plan`;effective **不谎报为 CPU**(保持 configured GPU) | R2-1 冻结语义:查询嵌入默认 GPU;CPU 仅管理员可选;自动查询 CPU 回退未授权 |
+| 查询重排 | 同上:`rerank()` 拒绝执行 | 同上(查询重排默认 GPU) |
+| 同步嵌入 | 按既有授权 CPU 路径继续执行;status=`cpu_by_capacity_plan` 显式标注(非静默) | R2-1 明确仅禁止查询侧;#14 谱系的 sync CPU 路径既有授权;后台同步不因误配置中断 |
+
+- **防不安全 GPU 执行**:GPU 侧零装配(先拒载后如实报告,B4 语义延续);
+- **Admin 可达**:后端正常启动,仅查询请求显式失败;快照新增
+  `runtime_plan.action_required`,UNSAFE 徽标/状态文案/行动提示(增量,零重设计);
+- **不新增动态自动调度器**(fail-closed 是静态计划语义,非运行时调度)。
+
+**回归测试(按 REV2 要求逐字)**:
+- `test_r2_1_insufficient_budget_query_side_fail_closed_never_cpu`:配置查询 GPU +
+  预算不足 → configured=effective=**gpu**(≠ CPU 执行)、status=unsafe_no_safe_plan、
+  `_query_embedder is None`、`_reranker is None`、created 无任何 cuda 实例、
+  embed/rerank 抛 UnsafeRuntimePlanError、capacity=UNSAFE、action_required=True;
+- `test_r2_1_insufficient_budget_sync_background_continues_on_cpu_loud`:
+  sync effective=cpu + cpu_by_capacity_plan 显式标注且真实执行;
+- Admin 测试:UNSAFE 徽标 + 「无安全运行计划,已拒绝执行(未自动降级 CPU)」+ 行动提示。
+
+## A2. R2-2 — 查询优先 + 有界公平(无 sync 永久饥饿)
+
+`_GpuGate` 增加**配额让路**算法(有界公平,exact HOW 归执行方):
+
+- 查询优先保留:有查询等待时(`query_waiting>0`),sync 新批次不得启动;
+- **饥饿账本**:每个查询空档被占用时,若存在 sync 等待者则
+  `starvation_credit += 1`;计满 `SYNC_FAIRNESS_QUOTA`(=4,模块常量)后
+  闸转入公平窗口(`sync_priority=True`):新到查询在窗口内排队;
+- **一次一批**:下一个空档让给已等待的 sync;执行后配额清零、窗口关闭,
+  查询优先恢复;sync 最坏延迟 = QUOTA 个查询批次(嵌入批次毫秒级,有界);
+- sync 单元仍有界(≤ EMBEDDER_BATCH_SIZE);无无界队列(闸不创建调用方之外的
+  排队);无未受控并发 GPU 推理(互斥不变);
+- 等待者消失时公平状态自动复位(防窗口悬挂)。
+
+**确定性飢饿测试** `test_r2_2_waiting_sync_eventually_executes_under_query_pressure`:
+持续查询压力(q2..q5 逐个排队→获取,credit 计满 4)+ 等待中的 s1 → 公平窗口开启,
+第 6 个查询被拦,s1 获执行权;随后配额清零,q6 才执行;ends 顺序确定性断言
+`q1..q5, s1, q6`。全部事件+闸状态轮询驱动,零 sleep 竞态(5× 复跑稳定)。
+
+## A3. REV2 验证结果
+
+| 项 | 结果 |
+|---|---|
+| 聚焦 runtime(含 R2-1×2、R2-2×1 新用例) | **25 passed(×5 复跑稳定)** |
+| 聚焦 内部端点+Admin API+embedder+sync | 102 passed |
+| **后端全量离线回归** | **1657 passed / 6 skipped / 0 failed** |
+| Admin vitest(含 UNSAFE 标注新用例) | **274 passed / 0 failed** |
+| Admin 生产构建(tsc -b + vite) | 绿 |
+| ruff / black | clean |
+
+## A4. REV2 交付字段
+
+| 字段 | 值 |
+|---|---|
+| STATUS | **CANDIDATE READY** |
+| BASELINE | 1e58dbd |
+| **REV2_COMMIT(新候选 SHA)** | **72cdcbf**(origin/v1.1/gpu-runtime-models-admin) |
+| TEST_RESULTS | A3(全量 1657/6/0;admin 274/0;双构建绿) |
+| REPORT_PATH | docs/implementation/CAMTHINK_GPU_RUNTIME_MODELS_ADMIN_EXECUTION_2026-09-04.md(REV2 追加节) |
+| REPORT_COMMIT | docs 仓本提交 |
+| PRODUCTION_MUTATIONS | **NONE**(无生产变更/无 merge main/无 tag/release) |
+
+**STOP。等待 Planner 复审。**
