@@ -14,7 +14,9 @@ import { uiStrings } from "./i18n";
 import { ChatPanel } from "./components/ChatPanel";
 import { Launcher } from "./launcher/Launcher";
 import {
-  resolveLauncherStyle,
+  legacyStyleToIcon,
+  resolveLauncherIcon,
+  resolveLauncherShape,
   resolveLauncherThemePref,
   useResolvedTheme,
 } from "./launcher/registry";
@@ -93,10 +95,21 @@ export function App({ config }: { config: WidgetConfig }) {
   const welcome = messages.length === 0 ? siteConfig?.welcome : undefined;
   const strings = uiStrings(uiLang);
 
-  // Issue #24:launcher 外观解析。优先级 = data-launcher-*(Admin 预览/测试覆写)
-  // > site-config(持久权威,服务端已归一化)> 兼容默认(current|auto)。
+  // Issue #24 REV1:launcher 统一外观解析(icon × shape × theme)。
+  // 优先级(Amendment #2 §3)= 显式嵌入覆写(data-launcher-icon/shape/theme,
+  // Admin 预览/高级集成)> site-config 持久权威(服务端已归一化+遗留桥)>
+  // 兼容默认(current | rounded-square | auto)。遗留 data-launcher-style /
+  // launcher_style 值经 legacyStyleToIcon 退役为 current,且仍压过 site-config。
   // 未知/非法值在 registry 中 fail-safe 回落,不破坏 bootstrap。
-  const launcherStyle = resolveLauncherStyle(config.launcherStyle ?? siteConfig?.launcher_style);
+  const launcherIcon = resolveLauncherIcon(
+    config.launcherIcon ??
+      legacyStyleToIcon(config.launcherStyle) ??
+      siteConfig?.launcher_icon ??
+      legacyStyleToIcon(siteConfig?.launcher_style),
+  );
+  const launcherShape = resolveLauncherShape(
+    config.launcherShape ?? siteConfig?.launcher_shape,
+  );
   const launcherThemePref = resolveLauncherThemePref(
     config.launcherTheme ?? siteConfig?.launcher_theme,
   );
@@ -193,7 +206,8 @@ export function App({ config }: { config: WidgetConfig }) {
     <>
       {!isOpen && (
         <Launcher
-          style={launcherStyle}
+          icon={launcherIcon}
+          shape={launcherShape}
           theme={launcherTheme}
           label={strings.launcherOpen}
           onOpen={openPanel}

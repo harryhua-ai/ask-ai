@@ -5,8 +5,11 @@
   z-index: 99999;
   font-family: Manrope, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
-/* Issue #24:launcher 外观令牌(作用域锁在按钮;theme 由 data-ask-ai-theme 驱动)。
-   `current` 风格的几何/配色与 v1.1 之前逐字节一致(兼容默认,升级零外观变化)。 */
+/* Issue #24 REV1:launcher 统一外观(icon × shape × theme)。
+   `current` 的几何/配色与 v1.1 之前逐字节一致(兼容默认,升级零外观变化)。
+   REV1 矢量图标采用权威设计 token:品牌橙 #f24a00 表面 + 白色图标 + 内嵌
+   高光/深度 + 外发光;hover 仅增强辉光(无位移/缩放);theme 只影响阴影、
+   边缘与对峙对比,品牌橙识别在明暗两种环境下保持(T8)。 */
 .ask-ai-fab {
   position: fixed;
   bottom: 24px;
@@ -22,17 +25,9 @@
   justify-content: center;
   overflow: hidden;
   background: #000000;
-  --ask-ai-launcher-fg: #ffffff;
-  --ask-ai-launcher-surface: #111111;
-  --ask-ai-launcher-accent: #f24a00;
-}
-.ask-ai-fab[data-ask-ai-theme="dark"] {
-  --ask-ai-launcher-fg: #101418;
-  --ask-ai-launcher-surface: #f5f5f5;
-  --ask-ai-launcher-accent: #ff6a33;
 }
 .ask-ai-fab:focus-visible {
-  outline: 2px solid var(--ask-ai-launcher-accent);
+  outline: 2px solid #f24a00;
   outline-offset: 2px;
 }
 .ask-ai-fab-icon {
@@ -40,27 +35,58 @@
   height: 100%;
   object-fit: cover;
 }
-/* 内联矢量风格:图标占满按钮;各风格自带 curated 背景(呈现细节,非配置面)。 */
+/* 内联矢量图标:非 current 时应用权威设计处理(current 不命中以下任何规则)。 */
 .ask-ai-fab-glyph {
   width: 100%;
   height: 100%;
   display: block;
 }
-.ask-ai-fab[data-launcher-style="assistant-spark"] {
-  background: transparent;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+.ask-ai-fab[data-launcher-icon]:not([data-launcher-icon="current"]) {
+  background: #f24a00;
+  color: #ffffff;
+  /* 权威设计圆角 20px@72 展示网格 → 等比 52px 生产尺寸 ≈ 14px */
+  border-radius: 14px;
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.3),
+    inset 0 -6px 12px rgba(0, 0, 0, 0.15),
+    0 8px 24px -6px rgba(194, 59, 0, 0.6);
 }
-.ask-ai-fab[data-launcher-style="chat-bubble"] {
+.ask-ai-fab[data-launcher-shape="round"]:not([data-launcher-icon="current"]) {
   border-radius: 50%;
-  background: var(--ask-ai-launcher-surface);
-  color: var(--ask-ai-launcher-fg);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
 }
-.ask-ai-fab[data-launcher-style="orbit-neural"] {
-  border-radius: 50%;
-  background: var(--ask-ai-launcher-surface);
-  color: var(--ask-ai-launcher-fg);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+/* 图标占比 = 权威设计 40px@72 → 52px 生产尺寸 ≈ 29px;悬浮投影随设计。 */
+.ask-ai-fab[data-launcher-icon]:not([data-launcher-icon="current"]) .ask-ai-fab-glyph {
+  width: 29px;
+  height: 29px;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+}
+.ask-ai-fab[data-launcher-icon]:not([data-launcher-icon="current"]):hover {
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.3),
+    0 10px 30px -4px rgba(217, 66, 0, 0.85);
+}
+/* dark 主题:品牌橙不变;仅加深外阴影并补一道极淡受光边(小尺寸对峙对比)。 */
+.ask-ai-fab[data-ask-ai-theme="dark"][data-launcher-icon]:not([data-launcher-icon="current"]) {
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.3),
+    inset 0 -6px 12px rgba(0, 0, 0, 0.22),
+    0 10px 26px -6px rgba(0, 0, 0, 0.75),
+    0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.ask-ai-fab[data-ask-ai-theme="dark"][data-launcher-icon]:not([data-launcher-icon="current"]):hover {
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.3),
+    0 12px 30px -6px rgba(0, 0, 0, 0.85),
+    0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+/* focus-visible:权威设计 4px 橙色光环;置于末尾且特异性 ≥ hover,键盘焦点
+   与悬停同时发生时光环仍可见。 */
+.ask-ai-fab[data-launcher-icon][data-launcher-shape]:not([data-launcher-icon="current"]):focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.3),
+    0 8px 24px -6px rgba(194, 59, 0, 0.6),
+    0 0 0 4px rgba(255, 106, 31, 0.4);
 }
 .ask-ai-panel {
   position: fixed;

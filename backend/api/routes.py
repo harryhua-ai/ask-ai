@@ -444,6 +444,11 @@ async def widget_site_config(
     Issue #24:响应增 ``launcher_style`` / ``launcher_theme``(归一化后的
     有效值;未配置/非法持久值回落 current|auto)。授权路径零变化——字段
     只出现在已通过 Origin 授权的响应体,不触碰 resolve_site/allowed_origins。
+
+    Issue #24 REV1:统一外观语义 ``launcher_icon`` / ``launcher_shape`` /
+    ``launcher_theme``(icon×shape×theme;服务端已完成遗留桥与归一化)。
+    ``launcher_style`` 降级为遗留回显(兼容缓存中的旧 Widget),不再是
+    集成契约面。
     """
     try:
         site = await resolve_site(session_factory, site_id, extract_request_origin(request))
@@ -456,6 +461,8 @@ async def widget_site_config(
         "welcome": site.localized_welcome(normalized_language),
         "language": site.language,
         "starters": list(site.localized_starters(normalized_language)),
+        "launcher_icon": site.launcher_icon,
+        "launcher_shape": site.launcher_shape,
         "launcher_style": site.launcher_style,
         "launcher_theme": site.launcher_theme,
     }

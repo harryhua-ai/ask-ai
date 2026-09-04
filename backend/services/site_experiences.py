@@ -34,25 +34,62 @@ DEFAULT_SITES_CONFIG = Path("config/sites.yaml")
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 # ---------------------------------------------------------------------------
-# Issue #24:Launcher 外观(per-site 语义身份;语义 id 稳定,SVG 实现可重构)
-# NULL = 未配置 → 兼容默认(current | auto);未知/非法持久值 → 服务端归一化
-# 回落默认(fail-safe,不得破坏 Widget bootstrap)。
+# Issue #24 REV1:launcher 统一外观模型 = icon × shape × theme(per-site)。
+# 语义 id 是产品契约(冻结);SVG 几何/存储列是实现 HOW。
+# NULL = 未配置 → 兼容默认(current | rounded-square | auto);未知/非法持久值
+# → 服务端归一化回落默认(fail-safe,不得破坏 Widget bootstrap)。
+# REV0 兼容:launcher_style 列冻结为遗留(旧应用回滚只读它);REV0 发明的
+# 风格 id 已被权威视觉设计取代 → 遗留非 current 值退役回落 current(不静默
+# 迁移到新图稿,§6E:无 Admin 显式选择不得获得新设计)。
 # ---------------------------------------------------------------------------
 
-LAUNCHER_STYLES: tuple[str, ...] = ("current", "assistant-spark", "chat-bubble", "orbit-neural")
+LAUNCHER_ICONS: tuple[str, ...] = (
+    "current",
+    "bot-sparkle",
+    "bubble-sparkle-fill",
+    "robot-smile",
+    "bubble-sparkle-outline",
+)
+LAUNCHER_SHAPES: tuple[str, ...] = ("round", "rounded-square")
 LAUNCHER_THEMES: tuple[str, ...] = ("auto", "light", "dark")
-DEFAULT_LAUNCHER_STYLE = "current"
+DEFAULT_LAUNCHER_ICON = "current"
+DEFAULT_LAUNCHER_SHAPE = "rounded-square"
 DEFAULT_LAUNCHER_THEME = "auto"
 
+#: REV0 遗留风格 id(已被权威视觉设计取代;仅用于识别遗留持久值,不再可写)
+LEGACY_LAUNCHER_STYLES: tuple[str, ...] = ("current", "assistant-spark", "chat-bubble", "orbit-neural")
 
-def normalize_launcher_style(value: object) -> str:
-    """持久值 → 有效 launcher_style(非法/缺失回落 ``current``)。"""
-    return value if value in LAUNCHER_STYLES else DEFAULT_LAUNCHER_STYLE
+
+def normalize_launcher_icon(value: object) -> str:
+    """持久值 → 有效 launcher_icon(非法/缺失回落 ``current``)。"""
+    return value if value in LAUNCHER_ICONS else DEFAULT_LAUNCHER_ICON
+
+
+def normalize_launcher_shape(value: object) -> str:
+    """持久值 → 有效 launcher_shape(非法/缺失回落 ``rounded-square``)。"""
+    return value if value in LAUNCHER_SHAPES else DEFAULT_LAUNCHER_SHAPE
 
 
 def normalize_launcher_theme(value: object) -> str:
     """持久值 → 有效 launcher_theme(auto|light|dark;非法/缺失回落 ``auto``)。"""
     return value if value in LAUNCHER_THEMES else DEFAULT_LAUNCHER_THEME
+
+
+def normalize_launcher_style(value: object) -> str:
+    """遗留 launcher_style 归一化(仅用于 REV0 兼容回显;非法回落 current)。"""
+    return value if value in LEGACY_LAUNCHER_STYLES else DEFAULT_LAUNCHER_ICON
+
+
+def legacy_style_to_icon(value: object) -> str | None:
+    """遗留 launcher_style → 有效 icon(遗留桥)。
+
+    REV0 的 ``current``/退役风格值/非法值一律解析为 ``current`` —— 退役风格
+    不静默映射到新图稿;None(未配置)返回 None 表示「未设置」,交给
+    launcher_icon / 默认值链。
+    """
+    if value is None or value == "":
+        return None
+    return DEFAULT_LAUNCHER_ICON
 
 
 class SiteDenied(Exception):
@@ -77,8 +114,11 @@ class ResolvedSite:
     starters: tuple[str, ...]
     welcome_i18n: dict | None = None
     starters_i18n: dict | None = None
-    # Issue #24:launcher 外观(归一化后的有效值;NULL 行值已在解析时回落默认)
-    launcher_style: str = DEFAULT_LAUNCHER_STYLE
+    # Issue #24 REV1:launcher 统一外观(归一化后的有效值;NULL 行值已在解析时回落默认)。
+    # launcher_style 保留为遗留回显(兼容缓存中的旧 Widget;新 Widget 读 icon/shape)。
+    launcher_icon: str = DEFAULT_LAUNCHER_ICON
+    launcher_shape: str = DEFAULT_LAUNCHER_SHAPE
+    launcher_style: str = DEFAULT_LAUNCHER_ICON
     launcher_theme: str = DEFAULT_LAUNCHER_THEME
 
     def localized_welcome(self, language: str | None) -> str | None:
@@ -168,6 +208,15 @@ async def resolve_site(
     allowed.discard(None)
     if origin not in allowed:
         raise SiteDenied("origin not allowed for site")
+    # REV1 有效外观:icon 列优先,遗留 launcher_style 桥接(退役值 → current);
+    # shape 缺失/非法回落默认;theme 语义不变。
+    legacy_style = getattr(row, "launcher_style", None)
+    stored_icon = getattr(row, "launcher_icon", None)
+    effective_icon = (
+        normalize_launcher_icon(stored_icon)
+        if stored_icon is not None
+        else (legacy_style_to_icon(legacy_style) or DEFAULT_LAUNCHER_ICON)
+    )
     return ResolvedSite(
         site_id=row.site_id,
         display_name=row.display_name,
@@ -176,7 +225,9 @@ async def resolve_site(
         welcome_i18n=dict(row.welcome_i18n) if row.welcome_i18n else None,
         starters_i18n=dict(row.starters_i18n) if row.starters_i18n else None,
         starters=tuple(row.starters or []),
-        launcher_style=normalize_launcher_style(getattr(row, "launcher_style", None)),
+        launcher_icon=effective_icon,
+        launcher_shape=normalize_launcher_shape(getattr(row, "launcher_shape", None)),
+        launcher_style=normalize_launcher_style(legacy_style),
         launcher_theme=normalize_launcher_theme(getattr(row, "launcher_theme", None)),
     )
 

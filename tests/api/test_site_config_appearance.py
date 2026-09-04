@@ -1,6 +1,9 @@
-"""Issue #24:site-config 外观字段(授权 Origin 下的响应体增量)。
+"""Issue #24 REV1:site-config 统一外观字段(授权 Origin 下的响应体增量)。
 
-- 已授权站点返回归一化 launcher_style/launcher_theme(未配置 = current|auto);
+- 已授权站点返回统一语义 launcher_icon/launcher_shape/launcher_theme
+  (未配置 = current|rounded-square|auto);
+- 遗留 REV0 launcher_style 桥接:退役风格 → current(不静默迁移新图稿),
+  launcher_style 同时作遗留回显(兼容缓存中的旧 Widget);
 - 非法持久值服务端回落(P6);授权路径零变化(G1/G2:403 行为不因外观改变)。
 """
 
@@ -23,6 +26,8 @@ def _make_site_row(**overrides) -> MagicMock:
     row.display_name = "CamThink Store"
     row.welcome = "Shopping for a CamThink device?"
     row.language = "en"
+    row.launcher_icon = overrides.get("launcher_icon")
+    row.launcher_shape = overrides.get("launcher_shape")
     row.launcher_style = overrides.get("launcher_style")
     row.launcher_theme = overrides.get("launcher_theme")
     return row
@@ -53,19 +58,36 @@ async def test_site_config_returns_default_appearance_when_unconfigured():
     resp = await _fetch(factory)
     assert resp.status_code == 200
     body = resp.json()
-    assert body["launcher_style"] == "current"
+    assert body["launcher_icon"] == "current"
+    assert body["launcher_shape"] == "rounded-square"
     assert body["launcher_theme"] == "auto"
+    assert body["launcher_style"] == "current"  # 遗留回显同步归一
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_site_config_returns_saved_appearance():
+async def test_site_config_returns_saved_rev1_appearance():
     factory = _make_site_factory(
-        _make_site_row(launcher_style="assistant-spark", launcher_theme="dark")
+        _make_site_row(launcher_icon="bot-sparkle", launcher_shape="round", launcher_theme="dark")
     )
     resp = await _fetch(factory)
     assert resp.status_code == 200
     body = resp.json()
-    assert body["launcher_style"] == "assistant-spark"
+    assert body["launcher_icon"] == "bot-sparkle"
+    assert body["launcher_shape"] == "round"
+    assert body["launcher_theme"] == "dark"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_site_config_legacy_style_bridges_to_current():
+    """C1/C3/C4:REV0 遗留选择 → 有效 icon=current(不静默迁移);遗留回显保留。"""
+    factory = _make_site_factory(
+        _make_site_row(launcher_style="chat-bubble", launcher_theme="dark")
+    )
+    resp = await _fetch(factory)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["launcher_icon"] == "current"
+    assert body["launcher_style"] == "chat-bubble"  # 遗留回显(缓存旧 Widget 兼容)
     assert body["launcher_theme"] == "dark"
 
 
@@ -73,19 +95,20 @@ async def test_site_config_returns_saved_appearance():
 async def test_site_config_invalid_persisted_values_fallback_server_side():
     """P6:非法持久值 → 服务端归一化回落(Widget 端无需猜测)。"""
     factory = _make_site_factory(
-        _make_site_row(launcher_style="logo1.svg", launcher_theme="sometimes")
+        _make_site_row(launcher_icon="logo1.svg", launcher_shape="sometimes", launcher_theme="sometimes")
     )
     resp = await _fetch(factory)
     assert resp.status_code == 200
     body = resp.json()
-    assert body["launcher_style"] == "current"
+    assert body["launcher_icon"] == "current"
+    assert body["launcher_shape"] == "rounded-square"
     assert body["launcher_theme"] == "auto"
 
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_site_config_denied_origin_stays_denied_with_appearance_fields_absent():
     """G1/G2:未授权 Origin 仍 403;外观不改变授权行为。"""
-    factory = _make_site_factory(_make_site_row(launcher_style="chat-bubble"))
+    factory = _make_site_factory(_make_site_row(launcher_icon="robot-smile"))
     resp = await _fetch(factory, origin="https://evil.test")
     assert resp.status_code == 403
-    assert "launcher_style" not in resp.json()
+    assert "launcher_icon" not in resp.json()

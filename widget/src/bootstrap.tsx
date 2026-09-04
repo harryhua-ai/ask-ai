@@ -27,9 +27,12 @@ declare global {
       primaryColor?: string;
       /** MSW:站点体验标识;pageContext 见 utils/pageContext.ts */
       siteId?: string;
-      /** Issue #24 预览/测试覆写(Admin 实时预览通道;真实站点由 site-config 承载) */
-      launcherStyle?: string;
+      /** Issue #24 REV1 统一外观覆写(icon/shape/theme;Admin 实时预览与高级嵌入通道) */
+      launcherIcon?: string;
+      launcherShape?: string;
       launcherTheme?: string;
+      /** @deprecated REV0 遗留(data-launcher-style);退役为 current */
+      launcherStyle?: string;
     };
   }
 }
@@ -39,8 +42,10 @@ type ConfigOverrides = {
   language?: string;
   primaryColor?: string;
   siteId?: string;
-  launcherStyle?: string;
+  launcherIcon?: string;
+  launcherShape?: string;
   launcherTheme?: string;
+  launcherStyle?: string;
 };
 
 function readDataset(el: HTMLElement | null | undefined): ConfigOverrides {
@@ -51,8 +56,10 @@ function readDataset(el: HTMLElement | null | undefined): ConfigOverrides {
     language: d.language || undefined,
     primaryColor: d.primaryColor || undefined,
     siteId: d.siteId || undefined,
-    launcherStyle: d.launcherStyle || undefined,
+    launcherIcon: d.launcherIcon || undefined,
+    launcherShape: d.launcherShape || undefined,
     launcherTheme: d.launcherTheme || undefined,
+    launcherStyle: d.launcherStyle || undefined,
   };
 }
 
@@ -63,6 +70,8 @@ function readDataset(el: HTMLElement | null | undefined): ConfigOverrides {
  * 3. window.AskAIConfig(旧路径,兼容保留)
  * 4. 默认值
  * MSW:data-site-id 走同一条链(缺省 undefined = legacy 公共 widget)。
+ * REV1 外观:launcherIcon 规范属性优先于遗留 launcherStyle(同源内);
+ * 跨源优先级 = 显式嵌入覆写 > site-config 持久值 > 兼容默认(App 消解)。
  */
 export function resolveConfig(
   script: HTMLScriptElement | null | undefined,
@@ -84,12 +93,16 @@ export function resolveConfig(
       DEFAULT_PRIMARY_COLOR,
     siteId:
       fromScript.siteId ?? fromPreset.siteId ?? fromGlobal.siteId ?? undefined,
-    // Issue #24:预览/测试覆写(Admin 实时预览);真实站点外观由 site-config 承载。
-    // 覆写优先级高于 site-config(预览必须即时反映未保存的选择)。
-    launcherStyle:
-      fromScript.launcherStyle ?? fromPreset.launcherStyle ?? fromGlobal.launcherStyle ?? undefined,
+    // REV1 统一外观覆写(Admin 实时预览/高级嵌入);真实站点外观由 site-config 承载。
+    launcherIcon:
+      fromScript.launcherIcon ?? fromPreset.launcherIcon ?? fromGlobal.launcherIcon ?? undefined,
+    launcherShape:
+      fromScript.launcherShape ?? fromPreset.launcherShape ?? fromGlobal.launcherShape ?? undefined,
     launcherTheme:
       fromScript.launcherTheme ?? fromPreset.launcherTheme ?? fromGlobal.launcherTheme ?? undefined,
+    // @deprecated REV0 遗留通道:仅当规范属性缺位时才生效(App 侧退役为 current)
+    launcherStyle:
+      fromScript.launcherStyle ?? fromPreset.launcherStyle ?? fromGlobal.launcherStyle ?? undefined,
   };
 }
 

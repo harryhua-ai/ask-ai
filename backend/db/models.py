@@ -430,6 +430,11 @@ class SiteExperience(Base):
     # 种子(seed_default_sites)不写这两列:Admin 独立持久值跨 YAML 重启存续。
     launcher_style: Mapped[str | None] = mapped_column(String(50), nullable=True)
     launcher_theme: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # Issue #24 REV1:统一外观模型 icon × shape × theme 持久列(加列、零回填)。
+    # launcher_style 冻结为 REV0 遗留(回滚保真:旧应用只读它,不受 REV1 写入影响);
+    # 有效图标 = launcher_icon 优先,遗留 launcher_style 值退役回落 current。
+    launcher_icon: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    launcher_shape: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
