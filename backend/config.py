@@ -117,6 +117,32 @@ def _expand_env(value: Any) -> Any:
     return value
 
 
+def resolve_migration_dsn(settings: "Settings | None" = None) -> str:
+    """迁移工具 DSN 解析(Issue #20:生产迁移绝不静默选择测试库)。
+
+    规则:
+    - ``APP_MODE=prod`` 且环境带 ``TEST_DATABASE_URL`` → **硬失败**:
+      生产迁移指向测试库是最高危误路由,拒绝执行优于任何静默回退;
+      恢复手段 = 取消该环境变量(生产运行时不应携带测试专用 DSN);
+    - 非 prod 沿用既有测试惯例(测试库 schema 对齐迁移);
+    - 未设置时回落 load_settings() 的权威生产 DSN。
+
+    所有 ``scripts/migrate_*.py`` 对 ``TEST_DATABASE_URL`` 的读取必须
+    经由本函数(由 tests/scripts/test_migration_dsn_guard.py 强制)。
+    """
+    test_dsn = os.environ.get("TEST_DATABASE_URL")
+    if test_dsn and os.environ.get("APP_MODE", "dev") == "prod":
+        raise RuntimeError(
+            "TEST_DATABASE_URL is set but APP_MODE=prod: refusing to run a "
+            "production migration against a test database. Unset "
+            "TEST_DATABASE_URL (production runtime must not carry test-only "
+            "DSN overrides) and re-run."
+        )
+    if test_dsn:
+        return test_dsn
+    return (settings or load_settings()).postgres_dsn
+
+
 def load_yaml_config(path: Path) -> dict:
     """加载 YAML 配置文件,并展开其中的 ${VAR} 环境变量占位符。"""
     with path.open(encoding="utf-8") as config_file:

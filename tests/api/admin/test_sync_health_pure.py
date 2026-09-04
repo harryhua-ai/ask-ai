@@ -50,9 +50,10 @@ def test_2_connectivity_from_failure_phase():
     assert _connectivity_dim(failed_at_fetch).state == "failed"
     failed_at_parse = _run(status="failed", stage="PARSE")
     assert _connectivity_dim(failed_at_parse).state == "degraded"
-    # 资源/内容期失败不属于 Connectivity 维度(由 Sync/设备遥测承载)
+    # Issue #21:非连接相位失败(如 EMBED 资源失败)同样是最新当前事实 →
+    # degraded 呈现(细分原因由 fallback_reason/error_summary 承载)
     failed_at_embed = _run(status="failed", stage="EMBED")
-    assert _connectivity_dim(failed_at_embed).state == "ok"
+    assert _connectivity_dim(failed_at_embed).state == "degraded"
     completed = _run(status="completed", stage="DONE")
     assert _connectivity_dim(completed).state == "ok"
 
@@ -165,9 +166,11 @@ def test_7_overall_aggregation_matrix():
     # worst-of 有序:ACTION_REQUIRED > STALE > DEGRADED > PARTIAL
     assert _overall_health(**{**base, "connectivity": "failed"}) == "ACTION_REQUIRED"
     assert _overall_health(**{**base, "consistency": "degraded"}) == "ACTION_REQUIRED"
-    assert _overall_health(**{**base, "sync_state": "critical"}) == "ACTION_REQUIRED"
+    # Issue #21:历史 30 天成功率(critical)不再驱动 ACTION_REQUIRED ——
+    # 当前事实(connectivity/consistency/freshness/coverage)才是权威
+    assert _overall_health(**{**base, "sync_state": "critical"}) == "HEALTHY"
     assert _overall_health(**{**base, "freshness": "stale"}) == "STALE"
-    assert _overall_health(**{**base, "sync_state": "degraded"}) == "DEGRADED"
+    assert _overall_health(**{**base, "sync_state": "degraded"}) == "HEALTHY"
     assert _overall_health(**{**base, "coverage": "partial"}) == "PARTIAL"
     # unknown 维度不拖低;仅证据不足时 INSUFFICIENT_DATA
     unknown = {**base, "connectivity": "unknown", "coverage": "unknown", "consistency": "unknown"}
