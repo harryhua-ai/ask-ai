@@ -40,7 +40,13 @@ from backend.db.models import ModelRuntimePolicy, ModelRuntimeSetting
 from backend.embedder.base import Embedder, Reranker
 from backend.embedder.bge import BGEEmbedder, BGEReranker
 from backend.embedder.fallback import CpuFallbackError, classify_cuda_failure
-from backend.runtime.hardware import GpuMemorySnapshot, discover_cpu, discover_gpus, read_gpu_memory
+from backend.runtime.hardware import (
+    GpuMemorySnapshot,
+    discover_cpu,
+    discover_gpus,
+    normalize_gpu_uuid,
+    read_gpu_memory,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -331,7 +337,9 @@ class ModelRuntimeManager:
     async def _read_policies(self, session: AsyncSession) -> dict[str, tuple[str, str | None, str]]:
         rows = (await session.execute(select(ModelRuntimePolicy))).scalars().all()
         return {
-            r.workload: (r.device_kind, r.gpu_uuid, r.model_name)
+            # REV3:历史行可能存有 torch 裸形 uuid(规范化前写入)——读取期归一化
+            # 为规范形,与 discover_gpus 的身份表示对齐(向后兼容,§3 身份契约)。
+            r.workload: (r.device_kind, normalize_gpu_uuid(r.gpu_uuid), r.model_name)
             for r in rows
             if r.workload in WORKLOADS
         }
