@@ -198,4 +198,69 @@ describe("ModelRuntimeTab(§35 模型运行)", () => {
     expect(screen.queryByRole("button", { name: /保存设备/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /保存容量策略/ })).toBeNull();
   });
+
+  it("REV1 B3/B4:瞬态驻留徽标 + 运行计划真相行(预算变化→待重启提示)", async () => {
+    const transientRuntime = {
+      ...RUNTIME,
+      policies: RUNTIME.policies.map((p) =>
+        p.workload === "query_reranker"
+          ? {
+              ...p,
+              configured: {
+                kind: "gpu",
+                gpu_uuid: "GPU-3caad314",
+                label: "NVIDIA Tesla T4 · GPU 0",
+              },
+              effective: {
+                kind: "gpu",
+                gpu_uuid: "GPU-3caad314",
+                label: "NVIDIA Tesla T4 · GPU 0",
+              },
+              residency: "transient",
+            }
+          : p,
+      ),
+      runtime_plan: {
+        mode: "reranker_transient",
+        budget_mb: 4096,
+        reason: "预算仅可容纳嵌入常驻;重排瞬态驻留",
+        pending_mode: "gpu_insufficient",
+        restart_required: true,
+      },
+    };
+    apiFetch.mockImplementation((path: string) => {
+      if (path === "/model-runtime") return Promise.resolve(transientRuntime);
+      return Promise.reject(new Error(`unexpected ${path}`));
+    });
+    renderTab();
+    await waitFor(() =>
+      expect(screen.getByTestId("transient-residency-badge")).toBeInTheDocument(),
+    );
+    expect(screen.getByText("瞬态驻留")).toBeInTheDocument();
+    const plan = screen.getByTestId("runtime-plan");
+    expect(plan).toHaveTextContent(/运行计划:重排瞬态驻留/);
+    expect(plan).toHaveTextContent(/重启后将变为:GPU 容量不足/);
+  });
+
+  it("REV1 B4:按容量计划落 CPU 的 workload 显式标注(非静默降级)", async () => {
+    const plannedCpu = {
+      ...RUNTIME,
+      policies: RUNTIME.policies.map((p) => ({
+        ...p,
+        status: "cpu_by_capacity_plan",
+      })),
+      runtime_plan: { mode: "gpu_insufficient", budget_mb: 3800, restart_required: false },
+    };
+    apiFetch.mockImplementation((path: string) => {
+      if (path === "/model-runtime") return Promise.resolve(plannedCpu);
+      return Promise.reject(new Error(`unexpected ${path}`));
+    });
+    renderTab();
+    await waitFor(() =>
+      expect(screen.getByTestId("status-query_embedding")).toHaveTextContent(
+        "按容量计划以 CPU 运行",
+      ),
+    );
+    expect(screen.getAllByText("按容量计划以 CPU 运行").length).toBeGreaterThanOrEqual(3);
+  });
 });

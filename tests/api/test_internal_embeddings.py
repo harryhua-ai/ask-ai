@@ -48,8 +48,10 @@ async def runtime_setup():
         settings,
         embedder_factory=lambda device="cpu", **kwargs: _FakeEmbedder(device=device),
         reranker_factory=lambda **kwargs: _FakeReranker(),
+        # free 9000 → auto 预算 9000 ≥ 双驻留下限 → sync 以 GPU 计划装配,
+        # 服务端单向回退路径才能被本测试触达(REV1 B3/B4 计划语义)。
         gpu_memory_reader=lambda uuid: GpuMemorySnapshot(
-            used_mb=11600, free_mb=3960, total_mb=15564
+            used_mb=6564, free_mb=9000, total_mb=15564
         ),
     )
     manager._build({})

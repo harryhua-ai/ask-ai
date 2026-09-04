@@ -33,6 +33,7 @@ export interface RuntimePolicyState {
   effective: { kind: string; gpu_uuid: string | null; label: string };
   status: string;
   shared: boolean;
+  residency?: string;
   fallback_reason: string | null;
   fallback_detail: string | null;
   restart_required?: boolean;
@@ -42,6 +43,13 @@ export interface ModelRuntimeState {
   devices: RuntimeDevice[];
   policies: RuntimePolicyState[];
   shared_embedding_runtime: boolean;
+  runtime_plan?: {
+    mode: string | null;
+    budget_mb: number | null;
+    reason?: string;
+    pending_mode?: string | null;
+    restart_required?: boolean;
+  };
   capacity: {
     state: string;
     budget_mode: string;
@@ -59,6 +67,16 @@ const WORKLOAD_META: Record<string, { title: string; role: string }> = {
   query_embedding: { title: "查询嵌入", role: "在线问答的向量召回" },
   sync_embedding: { title: "同步嵌入", role: "后台知识同步的向量化" },
   query_reranker: { title: "查询重排", role: "检索结果精排" },
+};
+
+// REV1 B3/B4:驻留计划真相(预算驱动的装配模式,非展示性字段)
+const PLAN_META: Record<string, string> = {
+  dual_resident: "双模型常驻 GPU",
+  reranker_transient: "重排瞬态驻留(预算驱动,重排步骤按需上卡)",
+  embedder_only: "仅嵌入常驻 GPU",
+  gpu_insufficient: "GPU 容量不足,已按计划以 CPU 运行(未硬载 GPU)",
+  undecided: "维持当前驻留(预算不可读)",
+  cpu_only: "无 GPU 工作负载",
 };
 
 const CAPACITY_META: Record<string, { label: string; tone: string; advice: string }> = {
@@ -280,8 +298,16 @@ export default function ModelRuntimeTab({ canWrite }: { canWrite: boolean }) {
                       共享模型运行实例
                     </Badge>
                   )}
+                  {p.residency === "transient" && (
+                    <Badge variant="secondary" data-testid="transient-residency-badge">
+                      瞬态驻留
+                    </Badge>
+                  )}
                   {p.status === "fallback_gpu_to_cpu" && (
                     <Badge variant="warning">已回退 CPU</Badge>
+                  )}
+                  {p.status === "cpu_by_capacity_plan" && (
+                    <Badge variant="warning">按容量计划以 CPU 运行</Badge>
                   )}
                   {p.restart_required && (
                     <Badge variant="outline" className="text-amber-700">
@@ -308,9 +334,11 @@ export default function ModelRuntimeTab({ canWrite }: { canWrite: boolean }) {
                     <span className="ml-1" data-testid={`status-${p.workload}`}>
                       {p.status === "fallback_gpu_to_cpu"
                         ? "GPU 故障后已回退 CPU"
-                        : p.restart_required
-                          ? "已保存,待重启生效"
-                          : "运行中"}
+                        : p.status === "cpu_by_capacity_plan"
+                          ? "按容量计划以 CPU 运行"
+                          : p.restart_required
+                            ? "已保存,待重启生效"
+                            : "运行中"}
                     </span>
                   </div>
                 </div>
@@ -435,6 +463,19 @@ export default function ModelRuntimeTab({ canWrite }: { canWrite: boolean }) {
             </span>
             <span>ASK-AI 驻留:{gb(capacity?.askai_resident_mb ?? null)}</span>
           </div>
+          {state.runtime_plan?.mode && (
+            <div className="text-xs text-muted-foreground" data-testid="runtime-plan">
+              运行计划:{PLAN_META[state.runtime_plan.mode] ?? state.runtime_plan.mode}
+              {state.runtime_plan.restart_required && state.runtime_plan.pending_mode && (
+                <span className="ml-1 text-amber-700 dark:text-amber-400">
+                  (预算变化,重启后将变为:
+                  {PLAN_META[state.runtime_plan.pending_mode] ??
+                    state.runtime_plan.pending_mode}
+                  )
+                </span>
+              )}
+            </div>
+          )}
           <p className="text-xs text-muted-foreground">{capacityMeta.advice}</p>
         </CardContent>
       </Card>

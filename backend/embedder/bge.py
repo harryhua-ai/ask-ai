@@ -149,7 +149,37 @@ class BGEReranker(Reranker):
             # 同 BGEEmbedder:显式传设备,防 FlagEmbedding 自选 GPU
             devices=[self._device],
         )
+        # 权重实际驻留设备:from_pretrained 落主机内存;GPU 上卡发生在首次
+        # compute(compute_score_single_gpu 自带 .half()+.to(device))或显式
+        # gpu_residency_materialize。瞬态驻留(B3)依赖此真相。
+        self._resident_device = "cpu"
         logger.info("bge-reranker 加载完成")
+
+    @property
+    def gpu_residency_state(self) -> str:
+        """权重当前驻留设备("gpu" | "cpu" | 原始 device 串;真相面,不臆造)。"""
+        return self._resident_device
+
+    def gpu_residency_materialize(self, device: str = "cuda") -> None:
+        """瞬态驻留(B3):显式把权重上卡(模型实例/打分语义零变化)。"""
+        import torch
+
+        target = detect_device(device)
+        if self._model.use_fp16:
+            self._model.model.half()
+        self._model.model.to(torch.device(target))
+        self._resident_device = target
+
+    def gpu_residency_offload(self) -> None:
+        """瞬态驻留(B3):权重回主机内存并释放 CUDA 缓存(仅 .to,语义不变)。"""
+        import torch
+
+        try:
+            self._model.model.to("cpu")
+        finally:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        self._resident_device = "cpu"
 
     def rerank(self, query: str, documents: list[str]) -> list[float]:
         """对每个文档相对 query 计算相关性分数。
