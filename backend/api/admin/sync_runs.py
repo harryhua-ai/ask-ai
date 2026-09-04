@@ -263,6 +263,15 @@ def _connectivity_dim(latest: SyncRun | None) -> HealthDimension:
             f"run #{latest.id} failed at PARSE(fetch/extract 异常)",
             latest.finished_at or latest.started_at,
         )
+    if latest.status == RUN_FAILED:
+        # Issue #21:非连接相位的失败(如 EMBED 资源失败)同样是最新的
+        # 当前事实 —— degraded 呈现,绝不把「最新一次运行失败」读成 ok
+        # (资源类失败交由 fallback_reason/error_summary 提供细分证据)。
+        return _dim(
+            "degraded",
+            f"run #{latest.id} failed at {latest.stage or '-'}",
+            latest.finished_at or latest.started_at,
+        )
     return _dim(
         "ok", f"latest run #{latest.id} {latest.status}@{latest.stage or '-'}", latest.started_at
     )
@@ -281,7 +290,10 @@ def _sync_dim(rows: list[Any], days: int) -> HealthDimension:
         )
     rate = success / total
     state = "healthy" if rate >= 0.9 else ("degraded" if rate >= 0.5 else "critical")
-    return _dim(state, f"{success}/{total} syncs succeeded in {days}d", as_of)
+    # Issue #21:30 天窗口是**历史可靠性**(参考维度),不再驱动 overall
+    # 严重度 —— 当前健康以 latest-run 事实(connectivity/consistency/
+    # freshness/coverage)为权威。
+    return _dim(state, f"{success}/{total} syncs succeeded in {days}d (历史参考)", as_of)
 
 
 def _coverage_dim(latest: SyncRun | None) -> HealthDimension:
@@ -394,7 +406,12 @@ def _overall_health(
     - EXCLUDED(禁用/显式排除)不被任何 overlay 改写——排除语义最权威;
     - RECOVERING 是 active-run overlay:在途恢复期间不因旧成功记录显示 HEALTHY;
     - EMPTY_* 由 Coverage×expected_state 派生(0 文档 × 从未成功 = 意外空);
-    - unknown 维度不参与 worst-of(缺证据 ≠ 不健康,单维如实呈现 unknown)。
+    - unknown 维度不参与 worst-of(缺证据 ≠ 不健康,单维如实呈现 unknown);
+    - Issue #21:CURRENT Health ≠ Historical Reliability —— 30 天历史成功率
+      (sync_state)是**参考维度**,不再驱动 ACTION_REQUIRED/DEGRADED;
+      「数据已恢复、最新运行成功」的源不得仅因历史失败记录保持 Severe;
+      GPU→CPU 成功回退的业务成功运行同理不影响当前健康。当前性失败仍由
+      connectivity(latest run)与 consistency(latest facts)如实呈现。
     """
     if expected_state == "EXCLUDED":
         return "EXCLUDED"
@@ -404,12 +421,10 @@ def _overall_health(
         return "EMPTY_UNEXPECTED"
     if expected_state in ("OPTIONAL", "DISCOVERY") and document_count == 0:
         return "EMPTY_EXPECTED"
-    if connectivity == "failed" or consistency == "degraded" or sync_state == "critical":
+    if connectivity == "failed" or consistency == "degraded":
         return "ACTION_REQUIRED"
     if freshness == "stale":
         return "STALE"
-    if sync_state == "degraded":
-        return "DEGRADED"
     if coverage == "partial":
         return "PARTIAL"
     if sync_state == "insufficient_data":

@@ -23,12 +23,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import inspect, text
 
-from backend.config import load_settings
+from backend.config import load_settings, resolve_migration_dsn
 from backend.db.session import get_engine
 
 COLUMN_DDL = (
     "ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS lifecycle_state VARCHAR(20)",
-    "ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS lifecycle_since " "TIMESTAMP WITH TIME ZONE",
+    ("ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS lifecycle_since " "TIMESTAMP WITH TIME ZONE"),
     "ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS lifecycle_error TEXT",
 )
 
@@ -70,7 +70,9 @@ async def _main() -> None:
     # TEST_DATABASE_URL 覆盖(与 tests/conftest.py 同惯例):ask_ai_test 的
     # data_sources 表由首次 create_all 定型且 create_all 不补列,测试库
     # schema 漂移同样靠本脚本对齐(先例:i18n 迁移对齐 ask_ai_test)。
-    dsn = os.environ.get("TEST_DATABASE_URL") or load_settings().postgres_dsn
+    # Issue #20:经 resolve_migration_dsn 统一守卫 —— APP_MODE=prod 时
+    # 携带 TEST_DATABASE_URL 直接拒绝,绝不静默把生产迁移指向测试库。
+    dsn = resolve_migration_dsn(load_settings())
     engine = get_engine(dsn)
     try:
         await migrate(engine)
