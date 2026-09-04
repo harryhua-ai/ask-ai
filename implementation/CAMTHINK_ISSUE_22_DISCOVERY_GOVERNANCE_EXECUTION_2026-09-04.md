@@ -1,9 +1,37 @@
 # Issue #22 — Source Center 统一发现治理 执行报告
 
-- **日期**:2026-09-04
+- **日期**:2026-09-04(REV2 修订,响应 Planner PARTIAL 评审)
 - **执行身份**:Engineering Executor(契约:ASK-AI v1.1 — Issue #22 Execution Contract,AUTHORIZED FOR ENGINEERING EXECUTION)
 - **SoT**:docs/implementation/CAMTHINK_V1_1_SOURCE_CENTER_SHARED_DISCOVERY_2026-09-04.md(origin/docs/v11-shared-discovery-20260904 @ 20ac091,含 Planner Review REV 1;PD-1 APPROVED WITH MODIFICATION / PD-2/3/4 APPROVED)
-- **STATUS**:CANDIDATE READY(Executor 不宣告 FINAL PASS,等 Planner 独立评审)
+- **STATUS**:CANDIDATE READY(Executor 不宣告 FINAL PASS,等 Planner 复审)
+
+## 0. REV 2 — Planner PARTIAL 修正(2026-09-04)
+
+**评审缺陷(阻断)**:L3 应用边界——采用推荐策略不得把任何未决 L3 范围编译进生效摄取策略;多数决组内的 L3 成员必须显式可见。
+
+**修正内容(FINAL_COMMIT = 698e727b743e65a13e5ba3a7b61de07c21ac470b)**:
+
+1. **compile 组界门控**:`compile_recommended_config` 改为组级裁决语义——
+   扩展名编译条件 = **所属组已安全判定 include ∧ 成员自身推荐 include ∧ 技术安全**。
+   未决 review 组**零编译**(成员扩展名不进白名单、目录不进排除),组内
+   成员级 include 证据仅用于呈现,不再经成员级收集或扩展名碰撞进入生效
+   范围;混合组的排除少数派仍由成员级推荐保护(L1 资产不会因组 include
+   被白名单化)。
+2. **组级规则裁决**:`apply_discovery_rules` 在规则命中决策一致时解除组歧义
+   (规则是对模式族的管理员裁决,不被组内 L1 排除成员造成的平票架空;
+   L1 成员保持排除并计入 member_excluded);命中决策冲突(如
+   /mix/alpha=include 与 /mix/beta=exclude)则不覆盖,维持真歧义呈现。
+   规则裁决经 **§11.1 通道**(`admin_decision` → compile `group_decisions`
+   参数)进入编译词表——「既有 admin 规则编译进持久化词表」由此显式闭环。
+3. **member_review 暴露**:`CandidateGroup`/`DiscoveryGroupOut`/前端类型
+   增 `member_review`(组内 L3 未决成员数);多数决组含 L3 成员时 UI 显式
+   呈现「n 个待确认」(双面板),聚合不再隐藏歧义。
+4. **新增测试(Planner 指定三类全覆盖)**:
+   - review 组部分消费防护:`test_r7_apply_strategy_does_not_consume_unresolved_review`(组界门控后 `.md` 不进白名单、目录不进排除);
+   - 多数组含 L3 成员:`test_rev2_majority_group_with_l3_member_visible_not_compiled`(member_review=1 可见;L3 成员扩展名 `.bin` 零编译)+ `test_rev2_scope_confirmed_gates_on_majority_group_l3_member`;
+   - 决议后编译恢复:`test_rev2_admin_include_resolution_compiles_review_group`(组决策 include → docs 进范围)、`test_rev2_admin_exclude_resolution_compiles_review_group`(组决策 exclude → 目录排除且零 include 编译)、`test_rev2_rule_exclude_resolution_on_tie_group`(规则 exclude 决议:组翻转 + 目录进排除 + admin_decision 呈现)、`test_compile_with_group_decisions_override`(组界门控语义下的决议矩阵 + L1 不可覆盖)。
+
+**保持不变(评审要求守护面)**:components 验收案件(组 include → 编译/scope_confirmed 全过)、L1 安全优先(compile 白名单仍要求 technical_safe;L1 压过规则)、discovery_rules 形态与匹配、零 schema/零端点边界、既有回归全绿。
 
 ## 1. BASELINE_COMMIT / FINAL_COMMIT
 
@@ -11,8 +39,9 @@
 BASELINE_COMMIT = ba904501bd171ed318c637ae07109174d65505ef(= v1.0.1 已验收工程 RC = 生产运行版)
 WORKTREE        = .worktrees/v11-issue22-discovery-governance(专用单 worktree,未复用任何 v1.0.1 worktree)
 BRANCH          = v1.1/issue22-discovery-governance
-FINAL_COMMIT    = 2ba83d69fd4327889d3d1beaac3eacc2f806f66f(已推 origin,远端核验一致)
-DIFF            = 13 files, +1511/−73
+FINAL_COMMIT    = 698e727b743e65a13e5ba3a7b61de07c21ac470b(已推 origin,远端核验一致;REV2)
+LINEAGE         = 2ba83d6(REV1 候选)→ 698e727(REV2 L3 应用边界修正)
+DIFF            = REV2 增量 8 files +185/−42(累计 14 files)
 ```
 
 ## 2. CHANGED_FILES(授权矩阵内核验)
@@ -56,8 +85,9 @@ DIFF            = 13 files, +1511/−73
 - **R4** 平票组 → review;全 review 组 → review ✅
 - **R5** components 案件(13×.tsx + preview.png)→ 组直呈「建议纳入」,member_excluded=1,scope_confirmed=true ✅
 - **R6** 采用推荐策略 → `.tsx` 进 file_types、components 不进 exclude_dirs、逐成员 member_in_scope 全真 ✅
-- **R7** L3 平票组不被静默吞:组级保持 review、目录不进排除;成员级安全决策保持强(逐项 include 进白名单,v1.0.0 同语义)✅
-- **R8** 持久规则 → 二次发现继承:admin_decision=include/排除目录生效/inherited_rules=1;API 级端到端(端点按 repo_url 归一化匹配既有源,含 .git 差异归一)✅
+- **R7** L3 未决组**零编译**(Planner REV2 组界门控):组级保持 review;组内成员级 include 证据仅用于呈现,扩展名不进白名单、目录不进排除——review 组**部分消费**成为不可通过测试的缺陷 ✅
+- **R8** 持久规则 → 二次发现继承:admin_decision=include/排除目录生效/inherited_rules=1;API 级端到端(端点按 repo_url 归一化匹配既有源,含 .git 差异归一)✅;规则 include/exclude 两条决议路径均验证(组级规则裁决解除平票歧义后编译)✅
+- **REV2 新增**:多数组含 L3 成员(member_review 可见 + L3 扩展名零编译)、admin 组决策 include/exclude 两路决议编译、规则 exclude 决议 ✅
 - L1 压过规则:规则说 include、id_rsa unsafe → 仍 exclude,且规则不盖章 ✅
 - compile 第二参:缺省 None 向后兼容逐位相等;组决策覆盖生效;unsafe 成员即使决策 include 也不进白名单 ✅
 
@@ -95,8 +125,8 @@ DIFF            = 13 files, +1511/−73
 
 | 层 | 结果 |
 |---|---|
-| focused(services discovery ×4 + admin discovery) | 86 passed ✅ |
-| 全量离线(`HF_HUB_OFFLINE=1` + 隔离 `TEST_DATABASE_URL`) | **1598 passed / 6 skipped / 0 failed**(41.7s;较 ba90450 基线 1568 净增 30 = 新增验收用例) |
+| focused(services discovery ×4 + admin discovery) | 86 passed ✅(REV2 后) |
+| 全量离线(`HF_HUB_OFFLINE=1` + 隔离 `TEST_DATABASE_URL`) | **1603 passed / 6 skipped / 0 failed**(41.2s;REV2 后) |
 | admin build | tsc -b + vite build 绿 ✅ |
 | admin vitest | 255/255 ✅ |
 
@@ -118,7 +148,7 @@ DIFF            = 13 files, +1511/−73
 
 ```
 BRANCH        = v1.1/issue22-discovery-governance
-FINAL_COMMIT  = 2ba83d69fd4327889d3d1beaac3eacc2f806f66f(origin 已核验)
+FINAL_COMMIT  = 698e727b743e65a13e5ba3a7b61de07c21ac470b(origin 已核验;REV2)
 REPORT_PATH   = docs/implementation/CAMTHINK_ISSUE_22_DISCOVERY_GOVERNANCE_EXECUTION_2026-09-04.md
 REPORT_COMMIT = 见 docs 本地仓(本文件所在提交)
 ```
