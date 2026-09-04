@@ -247,3 +247,90 @@ Playwright 实测:登录 → 「模型配置」:
 | 未授权动作 | 无 tag、无 release、无 issue 关闭、无 roadmap 变更、无生产触碰 |
 
 **STOP。等待 Planner 验收。**
+
+---
+
+# REV1 — Planner 阻断项修复(2026-09-04 追加)
+
+- **REV1_BASELINE**: 35785a4(REV0 候选)
+- **REV1_COMMIT**: **1e58dbd**(@origin/v1.1/gpu-runtime-models-admin,基线上单提交)
+- **STATUS**: **CANDIDATE READY**;PRODUCTION_MUTATIONS=**NONE**;无 tag/release
+
+## R1. 阻断项矩阵(Planner 五项 → 逐项处置)
+
+| 阻断项 | 处置 | 关键证据 |
+|---|---|---|
+| **B1 非共享查询嵌入器** | `_query_embedder` 属性**始终构造并持有**(原缺陷:非共享分支 query 实例构造后被丢弃,`_shared_embedder=None`);`_embedder_for(query)` 恒返回有效实例;sync 解析序=CPU 回退实例 → 独立 override → 共享查询实例 | 双混合设备回归**真执行**:query GPU+sync CPU → query embed() 返回 2×4 维向量且打中 GPU 实例;query CPU+sync GPU → query embed() 返回 1×4 维、sync 独立 GPU 实例亦执行 |
+| **B2 查询优先/GPU 执行协调** | 新增 `_GpuGate`(条件变量闸):同卡嵌入批次**互斥**(并发峰恒 1);**严格在线优先**=查询等待中(`_query_waiting>0`)sync 新批次不得启动;在飞 sync 批次有界(≤EMBEDDER_BATCH_SIZE),查询至多等待一个在飞批次 → sync 无法垄断;CPU 执行不入闸(无显存峰,不过度串行化) | 确定性并发测试×3:①8 线程混合 query/sync → max 并发=1;②脚本化批次:在飞 s1+排队 s2+后到 q → 释放后顺序确定性为 s1→q→s2(`query_waiting==1` 轮询去 sleep 竞态);③CPU 双批 Barrier 汇合(未被闸串行化) |
+| **B3 后端 GPU 容量** | `compute_residency_plan` 驻留计划器(纯函数):`dual_resident` / `reranker_transient` / `gpu_insufficient` / `undecided`(预算不可读→维持现状)/ `cpu_only` / `embedder_only`。**瞬态驻留**:重排权重驻留主机内存,仅重排步骤上卡,完成即卸载(BGEReranker 新增 `gpu_residency_state/materialize/offload`;FlagEmbedding compute 自带 .half()+.to(device),代理负责卸载+empty_cache);瞬态模式与嵌入共用 B2 闸(query 优先级)→ **瞬态显存峰构造性有界 = max(嵌入步 3412, 重排步 4050) = 4050 ≤ 4096** | 计划阶梯测试;瞬态构建断言:reranker 装配为瞬态代理、residency=transient、effective 仍 GPU(不静默降级)、启动时未上卡;rerank 调用→offload 计数=1/次、权重回主机内存 |
+| **B4 预算必须驱动计划** | 预算解析(Auto=空闲+ASK-AI 驻留实况;Manual=min(手动,实况),规划上限非 cgroup)→ **先计划后构造**;`gpu_insufficient` ⇒ **GPU 侧零装配**(嵌入+重排全部按计划落 CPU,status=`cpu_by_capacity_plan` 显式标注,非静默)再如实报 UNSAFE;预算变化 → `runtime_plan.restart_required`(已执行计划 vs 当前预算重算计划)| 预算 5000→dual / 4096→transient / 3800→insufficient(同硬件形态纯函数级);insufficient 集成测试:created 全无 cuda 设备、capacity=UNSAFE、查询 CPU 仍可执行;改预算→pending_mode=transient+restart_required=True 而已执行模式不变 |
+| **B5 测试缺口** | 假阳性 different-device 测试改为**双侧真执行**断言(输出向量+实例调用记录,非 identity);四阻断项各配焦点回归;REV1 全套复跑 | 见 R3 |
+
+## R2. 运行时架构增量(RUNTIME_ARCHITECTURE_DELTA)
+
+```
+装配期(lifespan / _build):
+  budget = Auto(空闲+驻留实况) | min(Manual, 实况)     # B4,不可读→None
+  plan  = compute_residency_plan(budget, embedder_gpu, reranker_gpu)
+  ├─ undecided      → 双驻留(v1.1 现状;容量如实 unknown)
+  ├─ dual_resident  → embedder+reranker 均 GPU 常驻(预算 ≥4562)
+  ├─ reranker_transient → embedder GPU 常驻;reranker 权重驻留主机内存,
+  │    经 _TransientGpuReranker 代理:入闸(query 优先)→ 上卡 compute
+  │    → 卸载(host RAM + empty_cache)                 # B3,峰=4050 有界
+  └─ gpu_insufficient → GPU 侧零装配;全部按计划 CPU(status 显式)→ UNSAFE 如实
+运行期:
+  query embed → [GPU? 入闸.query] → 查询实例(B1 恒有)
+  sync  embed → [GPU? 入闸.sync(query 优先, 批粒度让路)] → CUDA 失败单向回退(#14)
+  rerank      → 双驻留直呼 | 瞬态代理(入闸.query + 上卡/卸载)
+```
+
+- 模型身份/检索与重排语义:**零变化**(同一模型实例,仅 .to(device));
+- 重排未移 CPU:瞬态模式执行设备仍 GPU(effective=gpu + residency=transient 双字段如实);
+- 吞吐取舍(如实声明):瞬态计划下并发 Ask 的重排步骤排队(与嵌入互斥);
+  生产有效预算 4096 下双驻留已被 Discovery 实测证伪(4044 稳态+490 峰>4096),
+  此为最小安全解;真 GPU 验证归 §34 生产容量验收门。
+
+## R3. REV1 验证结果(TEST_RESULTS)
+
+| 项 | 结果 |
+|---|---|
+| 聚焦 runtime(23 用例:B1×2/B2×3/B3·B4×5/回退×3/容量×4/真相面×3…) | 23 passed(3× 复跑防 flake) |
+| 聚焦 内部端点+Admin API+embedder+test_sync | 72 passed |
+| **后端全量离线回归** | **1655 passed / 6 skipped / 0 failed(×2 轮,45s)** |
+| Admin vitest(含 REV1 徽标/计划行/计划 CPU 标注×2 新用例) | **273 passed / 0 failed** |
+| Admin 生产构建(tsc -b + vite) | 绿 |
+| ruff / black(REV1 改动面) | clean |
+
+测试文件增量:`tests/runtime/test_manager.py` 重写(B1-B5 全覆盖);
+`tests/api/test_internal_embeddings.py` fixture 快照对齐计划语义(free 9000→双驻留,
+使服务端回退路径可触达——旧 3960 快照在新计划下如实判 insufficient,属语义修正非放松)。
+
+## R4. GPU 容量推理(GPU_CAPACITY_REASONING)
+
+- 证据链(Discovery E1-E10 + 2026-09-03/04 生产实测):双模型稳态 4044MiB;
+  重排 fp16 权重 ≈1150MiB → 嵌入常驻份额 ≈2900MiB(常量内含各自工作区/上下文份额);
+  查询峰值 +490MiB(保留 512);外部常驻 ≈11.59GiB → 有效预算 ≈4096MiB。
+- 双驻留 + 查询峰 = 4044+490 ≈ 4534 > 4096 → **现状结构性不安全**( Discovery 结论);
+- 瞬态计划把「同时驻留」改为「按步驻留」:嵌入步峰 = 2900+512 = 3412;
+  重排步峰 = 2900+1150 = 4050;跨 Ask 并发由 B2 闸串行 → **峰恒 ≤4050 < 4096**,
+  后端 repeated-Ask 在冻结容量约束下可行;
+- 常量是可调证据值而非产品硬编码:同一公式在 8GB/24GB 卡自动给出更宽计划
+  (代码全库无 4GB 硬编码,`compute_residency_plan` 纯函数可验);
+- 残余边界(如实):瞬态模式下 rerank 上卡瞬间若恰逢 embed 峰由闸互斥排除;
+  观测通道不可用时计划退化为 undecided(维持现状,不臆造)。
+
+## R5. §40 REV1 交付字段
+
+| 字段 | 值 |
+|---|---|
+| STATUS | **CANDIDATE READY** |
+| BASELINE | 35785a4 |
+| REV1_COMMIT | **1e58dbd**(origin/v1.1/gpu-runtime-models-admin) |
+| BLOCKER_MATRIX | R1(5/5 修复,各附测试证据) |
+| RUNTIME_ARCHITECTURE_DELTA | R2 |
+| TEST_RESULTS | R3(1655/6/0 ×2;admin 273/0;双构建绿) |
+| GPU_CAPACITY_REASONING | R4 |
+| REPORT_PATH | docs/implementation/CAMTHINK_GPU_RUNTIME_MODELS_ADMIN_EXECUTION_2026-09-04.md(本文件 REV1 追加节) |
+| PRODUCTION_MUTATIONS | **NONE**(未部署生产;未打 tag;未关 issue) |
+
+**STOP。等待 Planner 复审。**
