@@ -189,7 +189,8 @@ def test_discover_builds_s0_envelope_with_recommended_config():
         ]
     )
     assert result.kind == "github"
-    assert result.target == {"owner": "o", "repo": "r", "branch": "main"}
+    # #22 有意更新:wire 增量字段 inherited_rules(无规则时为 0,§9.5)
+    assert result.target == {"owner": "o", "repo": "r", "branch": "main", "inherited_rules": 0}
     assert result.totals["files"] == 5
     assert result.totals["unsafe_files"] == 1
     group_by_key = {g.key: g for g in result.groups}

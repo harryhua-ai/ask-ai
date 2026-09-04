@@ -29,7 +29,12 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { DirPicker } from "@/components/DirPicker";
-import { PolicyChips, RepoDiscoveryPanel } from "@/components/dataSources/RepoDiscoveryPanel";
+import {
+  applyRepoDecisions,
+  PolicyChips,
+  RepoDiscoveryPanel,
+  type DiscoveryDecision,
+} from "@/components/dataSources/RepoDiscoveryPanel";
 import { SourceHealthPanel } from "@/components/dataSources/SourceHealthPanel";
 import { SyncHistoryPanel } from "@/components/dataSources/SyncHistoryPanel";
 import { SyncStatusPanel } from "@/components/dataSources/SyncStatusPanel";
@@ -75,6 +80,20 @@ const formSchema = z
     sitemap_url: z.string().optional(),
     exclude_patterns: z.string().optional(),
     crawl_delay_ms: z.string().optional(),
+    // #22 持久发现策略(治理记忆):组/家族决定落此键,随 config 保存,
+    // 后续发现自动继承;非表单输入字段,由组决策控件维护。
+    discovery_rules: z
+      .array(
+        z.object({
+          pattern: z.string(),
+          decision: z.enum(["include", "exclude"]),
+          kind: z.string().nullable().optional(),
+          origin: z.string().nullable().optional(),
+          decided_at: z.string().nullable().optional(),
+          note: z.string().nullable().optional(),
+        }),
+      )
+      .optional(),
   })
   .superRefine((v, ctx) => {
     if (v.type === "web_crawl" && !(v.base_url ?? "").trim()) {
@@ -116,6 +135,7 @@ const EMPTY_FORM: FormValues = {
   sitemap_url: "",
   exclude_patterns: "",
   crawl_delay_ms: "",
+  discovery_rules: [],
 };
 
 function splitComma(s: string | undefined): string[] {
@@ -124,6 +144,31 @@ function splitComma(s: string | undefined): string[] {
     .split(",")
     .map((t) => t.trim())
     .filter(Boolean);
+}
+
+/**
+ * #22:组决策 → config.discovery_rules 治理记忆(同 pattern+kind 先删后插;
+ * decision=null 表示恢复推荐 = 删除该规则)。decided_at 记录决策时间。
+ */
+function upsertDiscoveryRule(
+  rules: NonNullable<FormValues["discovery_rules"]>,
+  kind: "github" | "web_crawl",
+  pattern: string,
+  decision: DiscoveryDecision | null,
+): NonNullable<FormValues["discovery_rules"]> {
+  const rest = rules.filter((r) => !(r.pattern === pattern && (r.kind ?? null) === kind));
+  if (!decision) return rest;
+  return [
+    ...rest,
+    {
+      pattern,
+      decision,
+      kind,
+      origin: "admin",
+      decided_at: new Date().toISOString(),
+      note: null,
+    },
+  ];
 }
 
 /** 上传落盘根目录(与后端 _upload_root 同语义)。 */
@@ -294,6 +339,7 @@ function buildConfig(v: FormValues): Record<string, unknown> {
         exclude_dirs: splitComma(v.exclude_dirs),
         exclude_regex: v.exclude_regex || "",
         max_file_size: v.max_file_size ? Number(v.max_file_size) : undefined,
+        ...(v.discovery_rules?.length ? { discovery_rules: v.discovery_rules } : {}),
       };
     case "filesystem":
       return {
@@ -324,6 +370,7 @@ function buildConfig(v: FormValues): Record<string, unknown> {
           ? { exclude_patterns: splitComma(v.exclude_patterns) }
           : {}),
         ...(v.crawl_delay_ms && Number.isFinite(delay) ? { crawl_delay_ms: delay } : {}),
+        ...(v.discovery_rules?.length ? { discovery_rules: v.discovery_rules } : {}),
       };
     }
     default:
@@ -370,6 +417,9 @@ function dsToForm(ds: DataSource): FormValues {
     sitemap_url: toStr(cfg.sitemap_url),
     exclude_patterns: toStr(cfg.exclude_patterns),
     crawl_delay_ms: cfg.crawl_delay_ms != null ? String(cfg.crawl_delay_ms) : "",
+    discovery_rules: Array.isArray(cfg.discovery_rules)
+      ? (cfg.discovery_rules as FormValues["discovery_rules"])
+      : [],
   };
 }
 
@@ -478,6 +528,9 @@ export default function DataSources() {
   const [discovery, setDiscovery] = useState<RepoDiscoveryResult | null>(null);
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  // #22 会话内组决策(预览会话作用域;持久记忆经 discovery_rules 随 config 保存)
+  const [repoDecisions, setRepoDecisions] = useState<Record<string, DiscoveryDecision>>({});
+  const [siteDecisions, setSiteDecisions] = useState<Record<string, DiscoveryDecision>>({});
   const [syncCustom, setSyncCustom] = useState(false);
   const [pickedFiles, setPickedFiles] = useState<File[]>([]);
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(
@@ -537,6 +590,8 @@ export default function DataSources() {
     setWebsiteDiscovery(null);
     setWebsiteDiscoveryError(null);
     setWebsiteExcludeApplied(null);
+    setRepoDecisions({});
+    setSiteDecisions({});
     setShowForm(true);
   };
 
@@ -555,6 +610,8 @@ export default function DataSources() {
     setWebsiteDiscovery(null);
     setWebsiteDiscoveryError(null);
     setWebsiteExcludeApplied(null);
+    setRepoDecisions({});
+    setSiteDecisions({});
     setShowForm(true);
   };
 
@@ -707,6 +764,7 @@ export default function DataSources() {
     try {
       const result = await fetchWebsiteDiscovery(baseUrl, getValues("sitemap_url"));
       setWebsiteDiscovery(result);
+      setSiteDecisions({}); // 新预览=新会话(持久决策由服务端继承,见 admin_decision)
       const rec = result.recommended_config as { exclude_patterns?: unknown };
       if (Array.isArray(rec?.exclude_patterns) && rec.exclude_patterns.length > 0) {
         const current = (getValues("exclude_patterns") || "").trim();
@@ -768,12 +826,67 @@ export default function DataSources() {
       const branch = selectedBranches[0] ?? null;
       const result = await fetchRepoDiscovery(repoUrl, branch);
       setDiscovery(result);
+      setRepoDecisions({}); // 新预览=新会话(持久决策由服务端继承,见 admin_decision)
     } catch (err) {
       setDiscovery(null);
       setDiscoveryError(err instanceof Error ? err.message : "仓库扫描失败");
     } finally {
       setDiscoveryLoading(false);
     }
+  };
+
+  /**
+   * #22 组决策(仓库):纳入/排除/恢复推荐。
+   * 生效策略 = 表单 file_types/exclude_dirs(基线推荐 ⊕ 会话决策,单一权威;
+   * connector 语义保证 exclude_dirs 胜过白名单,排除组成员机械不进范围);
+   * 同时写入 config.discovery_rules(治理记忆,保存后后续发现自动继承)。
+   */
+  const handleRepoDecide = (groupKey: string, decision: DiscoveryDecision | null) => {
+    if (!discovery) return;
+    const next = { ...repoDecisions };
+    if (decision) next[groupKey] = decision;
+    else delete next[groupKey];
+    setRepoDecisions(next);
+    const chips = applyRepoDecisions(discovery, next);
+    setValue("file_types", chips.file_types.join(", "), { shouldDirty: true });
+    setValue("exclude_dirs", chips.exclude_dirs.join(", "), { shouldDirty: true });
+    setValue(
+      "discovery_rules",
+      upsertDiscoveryRule(getValues("discovery_rules") ?? [], "github", groupKey, decision),
+      { shouldDirty: true },
+    );
+  };
+
+  /**
+   * #22 组决策(网站):排除 = 家族前缀写入 exclude_patterns(预览=同步视野);
+   * 纳入 = 移除该家族排除 + 记录策略记忆;恢复推荐 = 删决策并按基线重算。
+   */
+  const handleSiteDecide = (groupKey: string, decision: DiscoveryDecision | null) => {
+    if (!websiteDiscovery || groupKey === "(root)") return;
+    const next = { ...siteDecisions };
+    if (decision) next[groupKey] = decision;
+    else delete next[groupKey];
+    setSiteDecisions(next);
+    const baseline =
+      ((websiteDiscovery.recommended_config as { exclude_patterns?: string[] })
+        .exclude_patterns) ?? [];
+    const patterns = new Set(baseline);
+    for (const [key, d] of Object.entries(next)) {
+      const pat = `/${key}/`;
+      if (d === "exclude") patterns.add(pat);
+      else patterns.delete(pat);
+    }
+    setValue("exclude_patterns", [...patterns].sort().join(", "), { shouldDirty: true });
+    setValue(
+      "discovery_rules",
+      upsertDiscoveryRule(
+        getValues("discovery_rules") ?? [],
+        "web_crawl",
+        `/${groupKey}/`,
+        decision,
+      ),
+      { shouldDirty: true },
+    );
   };
 
   /** 采用推荐策略:后端编译产物原样写入既有 config 字段(文件类型/排除目录)。 */
@@ -972,7 +1085,12 @@ export default function DataSources() {
               </div>
               {discoveryError && <p className="text-xs text-destructive">{discoveryError}</p>}
               {discovery && (
-                <RepoDiscoveryPanel result={discovery} onApply={handleApplyDiscovery} />
+                <RepoDiscoveryPanel
+                  result={discovery}
+                  decisions={repoDecisions}
+                  onDecide={handleRepoDecide}
+                  onApply={handleApplyDiscovery}
+                />
               )}
               <PolicyChips
                 fileTypes={splitComma(watch("file_types"))}
@@ -1185,23 +1303,75 @@ export default function DataSources() {
                   ))}
                   <div className="space-y-1">
                     <p className="text-xs font-medium text-muted-foreground">按目录分组:</p>
-                    {websiteDiscovery.groups.slice(0, 10).map((g) => (
-                      <div key={g.key} className="flex items-center gap-2 text-xs">
-                        <span className={REC_META[g.recommendation]?.className ?? ""}>
-                          {REC_META[g.recommendation]?.label ?? g.recommendation}
-                        </span>
-                        <span className="font-mono">/{g.key === "(root)" ? "" : g.key}</span>
-                        <span className="text-muted-foreground">{g.count} 页</span>
-                        <span className="truncate text-muted-foreground" title={g.samples.join(" | ")}>
-                          如 {g.samples[0]}
-                        </span>
-                      </div>
-                    ))}
+                    {websiteDiscovery.groups.slice(0, 10).map((g) => {
+                      const decided = siteDecisions[g.key];
+                      return (
+                        <div key={g.key} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                          <span className={REC_META[g.recommendation]?.className ?? ""}>
+                            {REC_META[g.recommendation]?.label ?? g.recommendation}
+                          </span>
+                          <span className="font-mono">/{g.key === "(root)" ? "" : g.key}</span>
+                          <span className="text-muted-foreground">{g.count} 页</span>
+                          {g.admin_decision && (
+                            <span className="rounded border border-blue-200 bg-blue-50 px-1 text-blue-700">
+                              已按策略
+                            </span>
+                          )}
+                          {g.recommendation === "include" && g.scope_confirmed === false && (
+                            <span className="text-amber-600" role="alert">
+                              ⚠ 有纳入页不在生效范围
+                            </span>
+                          )}
+                          <span className="truncate text-muted-foreground" title={g.samples.join(" | ")}>
+                            如 {g.samples[0]}
+                          </span>
+                          {g.key !== "(root)" && (
+                            <span className="ml-auto flex items-center gap-1">
+                              {decided ? (
+                                <>
+                                  <span className="text-blue-700">
+                                    已决定:{decided === "include" ? "纳入" : "排除"}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="text-muted-foreground underline hover:text-foreground"
+                                    onClick={() => handleSiteDecide(g.key, null)}
+                                  >
+                                    恢复推荐
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="text-green-700 underline hover:text-green-900"
+                                    onClick={() => handleSiteDecide(g.key, "include")}
+                                  >
+                                    纳入
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="text-muted-foreground underline hover:text-foreground"
+                                    onClick={() => handleSiteDecide(g.key, "exclude")}
+                                  >
+                                    排除
+                                  </button>
+                                </>
+                              )}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
                     {websiteDiscovery.groups.length > 10 && (
                       <p className="text-xs text-muted-foreground">
                         仅显示前 10 组,其余 {websiteDiscovery.groups.length - 10} 组同规则处理
                       </p>
                     )}
+                    <p className="text-xs text-muted-foreground">
+                      组决定会实时写入高级选项的排除清单(即生效采集策略),并按策略记忆保存——
+                      下次检测同族页面不再重复询问;决定后点「创建/保存」生效。
+                    </p>
                   </div>
                   {websiteDiscovery.capability_notes.map((n) => (
                     <p key={n} className="text-xs text-muted-foreground">· {n}</p>

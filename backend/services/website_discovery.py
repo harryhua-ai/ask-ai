@@ -31,7 +31,15 @@ from backend.connectors.web_crawl import (
     parse_sitemap_index,
     parse_urlset,
 )
-from backend.services.source_discovery import DiscoveryResult, build_discovery_result
+from backend.services.source_discovery import (
+    DiscoveryResult,
+    ORIGIN_FAMILY_CONFLICT,
+    annotate_scope,
+    apply_discovery_rules,
+    build_discovery_result,
+    parse_discovery_rules,
+    rules_matching,
+)
 
 FetchFn = Callable[[str], "str | None"]
 
@@ -324,6 +332,57 @@ def url_group_key(url: str) -> str:
     return first or "(root)"
 
 
+def apply_family_evidence(result: DiscoveryResult) -> DiscoveryResult:
+    """族群证据分类(Planner REV 1 §2;#22 网站侧 L2 证据通道)。
+
+    同前缀家族(首层路径段)内**已判定成员**的归票:
+    - 投票来源 = 持久规则继承成员(``rule:*`` 印章)+ 优先类别 hint 命中成员
+      (recommendation=include 且无印章)。L1 成员(二进制/URL 排除清单,
+      ``l1:*`` 印章)基于自身证据排除,**不参与投票**;
+    - 族内票**完全一致** → 未判定成员(兜底 review)继承该决策为 L2,
+      盖 ``family:*`` 印章(frozen 文案「同族路径已有一致判定」);
+    - 族内票**冲突** → 未判定成员维持 review 并盖 ``family_conflict`` 印章
+      (真歧义如实暴露,不得用默认值美化);
+    - 无票 → 兜底 review 原样保留(unknown path 本身永远不是 include/review 理由)。
+
+    仅用于 Website preview:仓库侧 review 带(1MB–64MB/密钥模板)按 PD-2
+    冻结维持人工,不由族群证据自动翻转。
+    """
+    if result.group_key is None:
+        return result
+    origins = dict(result.decision_origins)
+    families: dict[str, list] = {}
+    for a in result.candidates:
+        families.setdefault(result.group_key(a.path), []).append(a)
+    for _key, members in families.items():
+        votes: set[str] = set()
+        for m in members:
+            origin = origins.get(m.path, "")
+            if origin.startswith("rule:"):
+                votes.add(origin.split(":", 1)[1])
+            elif origin.startswith(("l1:", ORIGIN_FAMILY_CONFLICT)):
+                continue
+            elif m.recommendation == "include":
+                votes.add("include")
+        if len(votes) > 1:
+            for m in members:
+                if m.recommendation == "review" and not origins.get(m.path):
+                    origins[m.path] = ORIGIN_FAMILY_CONFLICT
+            continue
+        if not votes:
+            continue
+        decision = next(iter(votes))
+        for m in members:
+            if m.recommendation == "review" and not origins.get(m.path):
+                m.recommendation = decision
+                origins[m.path] = f"family:{decision}"
+    result.decision_origins = origins
+    from backend.services.source_discovery import _rebuild_views
+
+    _rebuild_views(result)
+    return result
+
+
 def build_website_preview(
     base_url: str,
     fetch_fn: FetchFn,
@@ -331,6 +390,7 @@ def build_website_preview(
     sitemap_url: str | None = None,
     max_sitemaps: int = 25,
     max_entries: int = 5000,
+    discovery_rules: list[dict] | None = None,
 ) -> DiscoveryResult:
     """Website Simple Mode 发现 → 统一 DiscoveryResult(source_discovery envelope)。
 
@@ -344,6 +404,10 @@ def build_website_preview(
     ``base_url`` + 排除清单(连接器默认 ∪ 预览排除,保证「预览=同步视野」);
     sitemap 地址默认自动管理,**不**钉死解析结果(站点迁移 sitemap 后
     下轮同步自动跟随;显式 override 走 Advanced 配置)。
+
+    #22 治理增量:``discovery_rules``(既有源持久策略,治理记忆)→ 规则继承
+    → 族群证据分类(unknown path 靠证据而非默认值)→ 规则排除项并入编译
+    exclude_patterns(预览=同步视野)→ 逐 include 组 scope_confirmed。
     """
     discovery = discover_sitemap_entries(
         base_url,
@@ -355,12 +419,14 @@ def build_website_preview(
     base = base_url.rstrip("/")
 
     candidates: list[FileAdmission] = []
+    decision_origins: dict[str, str] = {}
     for url in sorted(discovery.entries):
         # canonical_url 统一补尾斜杠,后缀判定须先剥掉(如 /a.pdf/ → .pdf)
         path = urlparse(url).path.rstrip("/")
         last_dot = path.rsplit(".", 1)
         ext = f".{last_dot[1].lower()}" if len(last_dot) == 2 and last_dot[1] else ""
         if ext in BINARY_ASSET_SUFFIXES:
+            decision_origins[url] = "l1:binary"
             candidates.append(
                 FileAdmission(
                     path=url,
@@ -373,6 +439,8 @@ def build_website_preview(
             )
             continue
         role, rec = classify_url(urlparse(url).path)
+        if rec == "exclude":
+            decision_origins[url] = "l1:exclude"  # URL 排除清单=L1,规则不可翻转
         candidates.append(
             FileAdmission(
                 path=url,
@@ -407,7 +475,7 @@ def build_website_preview(
         ],
     }
 
-    return build_discovery_result(
+    result = build_discovery_result(
         "web_crawl",
         target,
         candidates,
@@ -421,3 +489,21 @@ def build_website_preview(
         warnings=warnings,
         capability_notes=list(CAPABILITY_NOTES_WEBSITE),
     )
+    result.decision_origins = decision_origins
+
+    # #22 治理链:规则继承 → 族群证据(unknown path 证据化,兜底 review 保留)
+    # → 规则排除项并入编译清单(预览=同步视野)→ 逐 include 组 scope 确认。
+    rules = parse_discovery_rules(discovery_rules)
+    result = apply_discovery_rules(result, rules)
+    result = apply_family_evidence(result)
+    matched = rules_matching(result, rules)
+    rule_exclude = sorted({r["pattern"] for r in matched if r["decision"] == "exclude"})
+    if rule_exclude:
+        result.recommended_config = {
+            **result.recommended_config,
+            "exclude_patterns": sorted(
+                set(result.recommended_config.get("exclude_patterns") or []) | set(rule_exclude)
+            ),
+        }
+    result.warnings = list(result.warnings) + annotate_scope(result)
+    return result

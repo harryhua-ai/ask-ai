@@ -6,7 +6,11 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
-import { RepoDiscoveryPanel, PolicyChips } from "@/components/dataSources/RepoDiscoveryPanel";
+import {
+  applyRepoDecisions,
+  RepoDiscoveryPanel,
+  PolicyChips,
+} from "@/components/dataSources/RepoDiscoveryPanel";
 import type { RepoDiscoveryResult } from "@/types/api";
 
 afterEach(cleanup);
@@ -92,7 +96,9 @@ describe("RepoDiscoveryPanel", () => {
       recommended_config: { file_types: [".md", ".py"], exclude_dirs: [] },
     };
     render(<RepoDiscoveryPanel result={thin} onApply={vi.fn()} />);
-    expect(screen.getByText(/待确认项默认不纳入/)).toBeInTheDocument();
+    // #22 有意更新:review 组提示改为「可就地决策 + 策略记忆」语义(旧文案
+    // 「待确认项默认不纳入」是 #22 之前的常态评审语义,已被冻结契约替换)
+    expect(screen.getByText(/仅真正无法安全判定的组需要决定/)).toBeInTheDocument();
     expect(screen.getAllByText("无").length).toBeGreaterThanOrEqual(1);
   });
 });
@@ -132,5 +138,95 @@ describe("PolicyChips", () => {
     fireEvent.change(input, { target: { value: ".CSV" } });
     fireEvent.blur(input);
     expect(onChange).toHaveBeenCalledWith({ file_types: [".md", ".csv"], exclude_dirs: [] });
+  });
+});
+
+describe("#22 组决策合成(applyRepoDecisions)", () => {
+  it("include 决策并入该组安全成员扩展名并移出排除;exclude 决策目录进排除", () => {
+    // assets 组(binary → producer L1 排除后若决策纳入)与 misc 组决策演示:
+    const decisions = { assets: "include" as const };
+    const out = applyRepoDecisions(fixture, decisions);
+    // assets/logo.png 技术安全 → .png 进白名单;assets 移出排除(本就不在)
+    expect(out.file_types).toContain(".png");
+    expect(out.file_types).toEqual([".md", ".png", ".py"]);
+    // deploy 仍排除;决策未触碰 deploy
+    expect(out.exclude_dirs).toEqual(["deploy", "tests"]);
+  });
+
+  it("exclude 决策把目录写入排除(connector 语义:排除目录胜过白名单)", () => {
+    const out = applyRepoDecisions(fixture, { src: "exclude" as const });
+    expect(out.exclude_dirs).toContain("src");
+    expect(out.file_types).toContain(".py"); // 白名单仍含 .py,但 src 目录整体被排除
+  });
+
+  it("恢复推荐(删除决策)按基线重算,幂等可逆", () => {
+    const withDecision = applyRepoDecisions(fixture, { assets: "include" as const });
+    const reverted = applyRepoDecisions(fixture, {});
+    expect(reverted.file_types).toEqual(fixture.recommended_config.file_types);
+    expect(reverted.exclude_dirs).toEqual(fixture.recommended_config.exclude_dirs);
+    expect(withDecision.file_types).not.toEqual(reverted.file_types);
+  });
+
+  it("include 决策不并入技术不安全成员的扩展名(L1 不可覆盖)", () => {
+    const result = {
+      ...fixture,
+      candidates: fixture.candidates.map((c) =>
+        c.path === "assets/logo.png" ? { ...c, technical_safe: false } : c,
+      ),
+    };
+    const out = applyRepoDecisions(result, { assets: "include" as const });
+    expect(out.file_types).toEqual([".md", ".py"]);
+  });
+});
+
+describe("#22 组决策控件(UI)", () => {
+  it("待人工确认组提供纳入/排除控件;点击回传组决策;已决定后可恢复推荐", () => {
+    const onDecide = vi.fn();
+    render(
+      <RepoDiscoveryPanel
+        result={fixture}
+        decisions={{}}
+        onDecide={onDecide}
+        onApply={vi.fn()}
+      />,
+    );
+    // review 组(assets)行内出现决策控件;纳入可点击
+    const includeButtons = screen.getAllByText("纳入");
+    expect(includeButtons.length).toBeGreaterThanOrEqual(1);
+    // 点击第一个「纳入」回传对应组(排序首组 = "(根目录)")
+    fireEvent.click(includeButtons[0]);
+    expect(onDecide).toHaveBeenCalledWith("(根目录)", "include");
+    // 排除控件存在
+    expect(screen.getAllByText("排除").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("已决定组显示已决定 + 恢复推荐;规则继承组显示「已按策略」徽章", () => {
+    const decided: RepoDiscoveryResult = {
+      ...fixture,
+      groups: fixture.groups.map((g) =>
+        g.key === "assets" ? { ...g, admin_decision: "include" as const } : g,
+      ),
+    };
+    render(
+      <RepoDiscoveryPanel
+        result={decided}
+        decisions={{ assets: "include" }}
+        onDecide={vi.fn()}
+        onApply={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByText("已按策略").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/恢复推荐/).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("scope_confirmed=false 的 include 组显示范围未确认告警", () => {
+    const unconfirmed: RepoDiscoveryResult = {
+      ...fixture,
+      groups: fixture.groups.map((g) =>
+        g.key === "src" ? { ...g, scope_confirmed: false } : g,
+      ),
+    };
+    render(<RepoDiscoveryPanel result={unconfirmed} onApply={vi.fn()} />);
+    expect(screen.getByTitle(/该组有建议纳入文件不在生效策略范围内/)).toBeInTheDocument();
   });
 });

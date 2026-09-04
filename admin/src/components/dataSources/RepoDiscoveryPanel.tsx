@@ -122,6 +122,43 @@ export interface RepoDiscoveryPanelProps {
   result: RepoDiscoveryResult;
   /** 采用推荐策略(后端编译产物原样上送表单,前端不二次推导)。 */
   onApply: (config: { file_types: string[]; exclude_dirs: string[] }) => void;
+  /** #22 会话内组决策(键 = 组键);与 onDecide 成对提供。 */
+  decisions?: Record<string, DiscoveryDecision>;
+  /** #22 组决策:纳入/排除/恢复推荐(null = 清除决策)。 */
+  onDecide?: (groupKey: string, decision: DiscoveryDecision | null) => void;
+}
+
+export type DiscoveryDecision = "include" | "exclude";
+
+/**
+ * #22:推荐基线 ⊕ 会话组决策 → 生效策略字段(纯函数,可单测)。
+ *
+ * 单一权威仍是表单的 file_types/exclude_dirs(sync 唯一消费源);决策
+ * 只是「 sugar」:include = 该组技术安全成员的扩展名并入白名单 + 目录
+ * 移出排除;exclude = 目录进排除(connector 语义:exclude_dirs 胜过
+ * 白名单,少数派机械不进范围)。恢复推荐 = 删除决策后按基线重算。
+ */
+export function applyRepoDecisions(
+  result: RepoDiscoveryResult,
+  decisions: Record<string, DiscoveryDecision> = {},
+): { file_types: string[]; exclude_dirs: string[] } {
+  const fileTypes = new Set(result.recommended_config.file_types ?? []);
+  const excludeDirs = new Set(result.recommended_config.exclude_dirs ?? []);
+  for (const [key, decision] of Object.entries(decisions)) {
+    if (decision === "include") {
+      for (const c of result.candidates) {
+        if (groupOf(c.path) !== key || !c.technical_safe) continue;
+        const lastDot = c.path.lastIndexOf(".");
+        if (lastDot > -1 && lastDot > c.path.lastIndexOf("/")) {
+          fileTypes.add(c.path.slice(lastDot).toLowerCase());
+        }
+      }
+      excludeDirs.delete(key);
+    } else if (decision === "exclude") {
+      excludeDirs.add(key);
+    }
+  }
+  return { file_types: [...fileTypes].sort(), exclude_dirs: [...excludeDirs].sort() };
 }
 
 const REC_META: Record<
@@ -149,21 +186,99 @@ function groupReasons(result: RepoDiscoveryResult, key: string): string[] {
   return reasons;
 }
 
-function GroupSection({ groups, result }: { groups: RepoDiscoveryGroup[]; result: RepoDiscoveryResult }) {
+function GroupSection({
+  groups,
+  result,
+  decisions,
+  onDecide,
+}: {
+  groups: RepoDiscoveryGroup[];
+  result: RepoDiscoveryResult;
+  decisions?: Record<string, DiscoveryDecision>;
+  onDecide?: (groupKey: string, decision: DiscoveryDecision | null) => void;
+}) {
   if (groups.length === 0) return null;
   return (
     <div className="space-y-1">
       {groups.map((g) => {
         const reasons = groupReasons(result, g.key);
+        const decided = decisions?.[g.key];
         return (
-          <div key={g.key} className="flex flex-wrap items-baseline gap-x-2 text-sm">
-            <span className="font-medium">{g.key}</span>
-            <span className="text-xs text-muted-foreground">{g.count} 个文件</span>
-            {reasons.map((r) => (
-              <span key={r} className="text-xs text-muted-foreground">
-                {r}
-              </span>
-            ))}
+          <div key={g.key} className="space-y-0.5 text-sm">
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <span className="font-medium">{g.key}</span>
+              <span className="text-xs text-muted-foreground">{g.count} 个文件</span>
+              {g.admin_decision && (
+                <span
+                  className="rounded-md border border-blue-200 bg-blue-50 px-1 text-xs text-blue-700"
+                  title="来自已保存的发现策略,后续发现自动继承"
+                >
+                  已按策略
+                </span>
+              )}
+              {g.recommendation === "include" && g.scope_confirmed === true && (
+                <span
+                  className="text-xs text-emerald-600"
+                  title="该组全部建议纳入文件都在生效策略范围内"
+                >
+                  ✓ 范围已确认
+                </span>
+              )}
+              {g.recommendation === "include" && g.scope_confirmed === false && (
+                <span
+                  className="text-xs text-amber-600"
+                  role="alert"
+                  title="该组有建议纳入文件不在生效策略范围内,请核对文件类型/排除清单"
+                >
+                  ⚠ 范围未确认
+                </span>
+              )}
+              {(g.member_excluded ?? 0) > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  {g.member_excluded} 个已排除
+                </span>
+              )}
+              {reasons.map((r) => (
+                <span key={r} className="text-xs text-muted-foreground">
+                  {r}
+                </span>
+              ))}
+            </div>
+            {onDecide && (
+              <div className="flex flex-wrap items-center gap-1">
+                {decided ? (
+                  <>
+                    <span className="text-xs text-muted-foreground">
+                      已决定:{decided === "include" ? "纳入" : "排除"}
+                    </span>
+                    <button
+                      type="button"
+                      className="text-xs text-muted-foreground underline hover:text-foreground"
+                      onClick={() => onDecide(g.key, null)}
+                    >
+                      恢复推荐
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="text-xs text-emerald-700 underline hover:text-emerald-900"
+                      onClick={() => onDecide(g.key, "include")}
+                    >
+                      纳入
+                    </button>
+                    <button
+                      type="button"
+                      className="text-xs text-muted-foreground underline hover:text-foreground"
+                      onClick={() => onDecide(g.key, "exclude")}
+                    >
+                      排除
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         );
       })}
@@ -176,7 +291,7 @@ function GroupSection({ groups, result }: { groups: RepoDiscoveryGroup[]; result
 推荐/理由/能力边界全部为后端冻结产物,这里只分组直呈;「采用推荐策略」
 把 recommended_config 原样写入表单的既有 config 字段,不创建第二套语义。
  */
-export function RepoDiscoveryPanel({ result, onApply }: RepoDiscoveryPanelProps) {
+export function RepoDiscoveryPanel({ result, onApply, decisions, onDecide }: RepoDiscoveryPanelProps) {
   const byRec = (rec: string) => result.groups.filter((g) => g.recommendation === rec);
   const includeGroups = byRec("include");
   const excludeGroups = byRec("exclude");
@@ -184,6 +299,7 @@ export function RepoDiscoveryPanel({ result, onApply }: RepoDiscoveryPanelProps)
   const rec = result.recommended_config;
   const fileTypes = rec.file_types ?? [];
   const excludeDirs = rec.exclude_dirs ?? [];
+  const inheritedRules = (result.target as { inherited_rules?: number }).inherited_rules ?? 0;
 
   return (
     <Card aria-label="仓库内容发现">
@@ -212,22 +328,30 @@ export function RepoDiscoveryPanel({ result, onApply }: RepoDiscoveryPanelProps)
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="space-y-2">
             <Badge variant={REC_META.include.variant}>{REC_META.include.label}</Badge>
-            <GroupSection groups={includeGroups} result={result} />
+            <GroupSection groups={includeGroups} result={result} decisions={decisions} onDecide={onDecide} />
           </div>
           <div className="space-y-2">
             <Badge variant={REC_META.exclude.variant}>{REC_META.exclude.label}</Badge>
-            <GroupSection groups={excludeGroups} result={result} />
+            <GroupSection groups={excludeGroups} result={result} decisions={decisions} onDecide={onDecide} />
           </div>
           <div className="space-y-2">
             <Badge variant={REC_META.review.variant}>{REC_META.review.label}</Badge>
-            <GroupSection groups={reviewGroups} result={result} />
+            <GroupSection groups={reviewGroups} result={result} decisions={decisions} onDecide={onDecide} />
             {reviewGroups.length > 0 && (
               <p className="text-xs text-muted-foreground">
-                待确认项默认不纳入;确需纳入请通过「已应用策略」手动添加(技术安全边界仍生效)。
+                仅真正无法安全判定的组需要决定;决定一次后按策略保存,后续发现不再重复询问。
               </p>
+            )}
+            {reviewGroups.length === 0 && (
+              <p className="text-xs text-muted-foreground">无待确认组(推荐可直接采用)</p>
             )}
           </div>
         </div>
+        {inheritedRules > 0 && (
+          <p className="text-xs text-blue-700">
+            已继承 {inheritedRules} 条已保存的发现策略(带「已按策略」标记的组不再重复询问)。
+          </p>
+        )}
 
         <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
           <span>推荐纳入类型:</span>
@@ -266,7 +390,7 @@ export function RepoDiscoveryPanel({ result, onApply }: RepoDiscoveryPanelProps)
         <Button
           type="button"
           size="sm"
-          onClick={() => onApply({ file_types: [...fileTypes], exclude_dirs: [...excludeDirs] })}
+          onClick={() => onApply(applyRepoDecisions(result, decisions))}
         >
           采用推荐策略
         </Button>

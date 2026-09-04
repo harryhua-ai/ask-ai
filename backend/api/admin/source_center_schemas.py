@@ -41,12 +41,17 @@ class DiscoveryCandidateOut(BaseModel):
     recommendation: str  # include | exclude | review
     policy_result: str = "not_applied"
     eligible: bool = True
-    reason: str  # 人读固定文案(source_discovery.reason_text)
+    reason: str  # 人读固定文案(source_discovery.reason_text / 治理印章文案)
+    decision_origin: str | None = None  # #22 决策来源印章(rule:* / family:* / l1:*)
 
     @classmethod
-    def from_admission(cls, a: FileAdmission) -> "DiscoveryCandidateOut":
-        from backend.services.source_discovery import reason_text
+    def from_admission(
+        cls, a: FileAdmission, decision_origins: dict | None = None
+    ) -> "DiscoveryCandidateOut":
+        from backend.services.source_discovery import origin_reason_text, reason_text
 
+        origin = (decision_origins or {}).get(a.path)
+        reason = origin_reason_text(a, origin) or reason_text(a)
         return cls(
             path=a.path,
             size=a.size,
@@ -56,7 +61,8 @@ class DiscoveryCandidateOut(BaseModel):
             recommendation=a.recommendation,
             policy_result=a.policy_result,
             eligible=a.eligible,
-            reason=reason_text(a),
+            reason=reason,
+            decision_origin=origin,
         )
 
 
@@ -66,6 +72,10 @@ class DiscoveryGroupOut(BaseModel):
     total_size: int
     recommendation: str
     samples: list[str] = []
+    # #22 治理增量(wire 只增字段,旧前端可忽略):
+    admin_decision: str | None = None  # 规则继承的既有决策(include|exclude|None)
+    scope_confirmed: bool | None = None  # include 组逐成员有效范围机械确认
+    member_excluded: int = 0  # 组内被排除少数派数(多数决组如实呈现)
 
     @classmethod
     def from_group(cls, g: CandidateGroup) -> "DiscoveryGroupOut":
@@ -75,6 +85,9 @@ class DiscoveryGroupOut(BaseModel):
             total_size=g.total_size,
             recommendation=g.recommendation,
             samples=g.samples,
+            admin_decision=g.admin_decision,
+            scope_confirmed=g.scope_confirmed,
+            member_excluded=g.member_excluded,
         )
 
 
@@ -103,7 +116,9 @@ class DiscoveryResultOut(BaseModel):
             totals=r.totals,
             by_role=r.by_role,
             groups=[DiscoveryGroupOut.from_group(g) for g in r.groups],
-            candidates=[DiscoveryCandidateOut.from_admission(a) for a in r.candidates],
+            candidates=[
+                DiscoveryCandidateOut.from_admission(a, r.decision_origins) for a in r.candidates
+            ],
             recommended_config=r.recommended_config,
             warnings=r.warnings,
             capability_notes=r.capability_notes,

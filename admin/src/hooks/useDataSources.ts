@@ -283,6 +283,12 @@ export interface WebsiteDiscoveryGroup {
   total_size: number;
   recommendation: "include" | "exclude" | "review";
   samples: string[];
+  /** #22 治理增量:规则继承的既有决策(include|exclude|null)。 */
+  admin_decision?: "include" | "exclude" | null;
+  /** #22:include 组逐成员有效范围机械确认(null = 非 include 组)。 */
+  scope_confirmed?: boolean | null;
+  /** #22:组内被排除少数派数(多数决组如实呈现)。 */
+  member_excluded?: number;
 }
 
 /** #17 Website 自动发现预览响应(后端 DiscoveryResultOut)。 */

@@ -24,6 +24,7 @@ from backend.auth.dependencies import CurrentUser, require_role
 from backend.db.models import DataSource, SyncLog
 from backend.services import repo_discovery, source_lifecycle
 from backend.services.source_deletion import DeletionRequestError, request_deletion
+from backend.services.source_discovery import parse_discovery_rules
 from backend.services.source_lifecycle import DELETE_FAILED
 from backend.services.website_discovery import build_website_preview
 
@@ -33,6 +34,40 @@ EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
 
 # C9 上传护栏:单文件大小上限(20MB)
 MAX_UPLOAD_FILE_BYTES = 20 * 1024 * 1024
+
+
+def _norm_discovery_target(value: object) -> str:
+    """发现目标归一化(repo_url/base_url 匹配用):trim + 去尾斜杠 + 去 .git + 小写。"""
+    v = str(value or "").strip().rstrip("/").lower()
+    return v[:-4] if v.endswith(".git") else v
+
+
+async def _load_source_discovery_rules(
+    request: Request, *, ds_type: str, config_key: str, target_value: str
+) -> list[dict]:
+    """按发现目标身份查找既有源的持久发现策略(#22 规则继承通道)。
+
+    preview 端点按 repo_url/base_url 无状态发现(请求 schema 冻结,不携带
+    source_id),规则继承由此服务端查找完成:同类型且 config 目标键归一化
+    相同的**最近创建**源,读其 ``config.discovery_rules``(治理记忆;无匹配
+    或无规则 → 空 = 全新分类)。查找只读,零配置写入。
+    """
+    want = _norm_discovery_target(target_value)
+    if not want:
+        return []
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        rows = await session.execute(
+            select(DataSource)
+            .where(DataSource.type == ds_type)
+            .order_by(DataSource.created_at.desc())
+        )
+        for ds in rows.scalars():
+            cfg = ds.config or {}
+            if _norm_discovery_target(cfg.get(config_key)) != want:
+                continue
+            return parse_discovery_rules(cfg.get("discovery_rules"))
+    return []
 
 
 def _upload_root(source_id: str) -> Path:
@@ -528,7 +563,7 @@ async def preview_file_types(owner: str, repo: str, branch: str, _: EditorDep) -
 
 @router.post("/discover-repo")
 async def discover_repo_source(
-    req: GitHubDiscoveryRequest, _: EditorDep
+    req: GitHubDiscoveryRequest, _: EditorDep, request: Request
 ) -> DiscoveryResultOut:
     """#16 Simple Mode:Repo URL(+可选分支)→ 仓库内容发现 + 推荐纳入策略。
 
@@ -538,16 +573,24 @@ async def discover_repo_source(
     (file_types/exclude_dirs),用户确认后经既有创建/更新端点保存,
     同步语义与 ingestion authority 不变(PD-2)。
 
+    #22 规则继承:同 repo_url 的既有源若持久了 ``config.discovery_rules``,
+    本次发现自动继承(命中组带 admin_decision 呈现;L1 技术安全结论不可被
+    规则翻转);无既有源/无规则 = 全新分类,行为与 v1.0.0 一致。
+
     技术安全边界:秘密文件/模型工件/超大文件在发现层即标为不可纳入,
     且内容层安全检查在同步灌入时仍会执行——任何 Admin allowlist 不可绕过。
     发现属 editor+ 操作(与既有 preview 端点同权限位)。
     """
     try:
+        rules = await _load_source_discovery_rules(
+            request, ds_type="github", config_key="repo_url", target_value=req.repo_url
+        )
         result = await run_in_threadpool(
             repo_discovery.discover_repository,
             req.repo_url,
             req.branch,
             repo_discovery.default_api_get,
+            discovery_rules=rules,
         )
     except repo_discovery.RepoDiscoveryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -578,7 +621,9 @@ def _website_fetch_text(url: str) -> str | None:
 
 
 @router.post("/preview-website", response_model=DiscoveryResultOut)
-async def preview_website(req: WebsiteDiscoveryRequest, _: EditorDep) -> DiscoveryResultOut:
+async def preview_website(
+    req: WebsiteDiscoveryRequest, _: EditorDep, request: Request
+) -> DiscoveryResultOut:
     """Website Simple Mode 自动发现预览(#17)。
 
     输入站点 URL(普通用户只需这一个字段)→ 按 PD-3 冻结顺序发现 sitemap
@@ -588,6 +633,10 @@ async def preview_website(req: WebsiteDiscoveryRequest, _: EditorDep) -> Discove
     - 零发现不伪装成功:200 + 空 candidates + 冻结告警,由 UI 显式呈现
     - 同域边界:跨域 sitemap/URL 显式跳过并在结果中给出原因
     - Advanced 的 sitemap override 经同一端点验证(sitemap_url 可选传入)
+
+    #22 规则继承:同 base_url 的既有源若持久了 ``config.discovery_rules``,
+    本次预览自动继承;未知路径经族群证据/规则继承证据化分类(兜底 review
+    保留,unknown path 本身永远不是 include/review 理由)。
     """
     parsed = urlparse(req.base_url.strip())
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
@@ -596,11 +645,15 @@ async def preview_website(req: WebsiteDiscoveryRequest, _: EditorDep) -> Discove
         sp = urlparse(req.sitemap_url.strip())
         if sp.scheme not in ("http", "https") or not sp.netloc:
             raise HTTPException(status_code=400, detail="sitemap 地址必须是合法的 http(s) URL")
+    rules = await _load_source_discovery_rules(
+        request, ds_type="web_crawl", config_key="base_url", target_value=req.base_url
+    )
     result = await run_in_threadpool(
         build_website_preview,
         req.base_url.strip().rstrip("/"),
         _website_fetch_text,
         sitemap_url=req.sitemap_url.strip() if req.sitemap_url else None,
+        discovery_rules=rules,
     )
     return DiscoveryResultOut.from_result(result)
 
