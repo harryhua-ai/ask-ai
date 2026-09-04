@@ -476,3 +476,46 @@ workload 自动转为 CPU —— 超出产品授权。REV2 语义:
 **NONE**。候选仅在候选分支(`v1.1/gpu-runtime-models-admin` @ ab0e29c);
 main 未动(仍 72cdcbf = 生产运行态);部署须待 Planner 授权后按容量门流程重验
 §9-§12/§17-§18(plan 预期 `reranker_transient` 激活 + 容量分级如实呈现)。
+
+---
+
+# REV3.1 — index-N 兜底身份兼容(2026-09-04 追加;窄修复)
+
+- **BASELINE**: ab0e29c(REV3)
+- **REV3.1_COMMIT**: **762eae3**(@origin/v1.1/gpu-runtime-models-admin;未 push main、未触碰生产)
+- **STATUS**: **CANDIDATE READY**;PRODUCTION_MUTATIONS=**NONE**
+
+## 缺陷
+
+REV3 的 `normalize_gpu_uuid` 对所有非 `GPU-` 前缀输入统一加前缀,导致
+`normalize_gpu_uuid("index-0")` 被错误改写为 `GPU-index-0`——`index-N` 是
+`discover_gpus()` 在 torch 未提供 uuid 时的**发现兜底身份**(hardware.py 常量
+`index-{index}`),持久化/读取往返必须保持稳定,否则 fail-closed 校验集合
+(发现身份)与归一化后的持久值互相失配。
+
+## 修复
+
+`normalize_gpu_uuid` 保留两类非 `GPU-` 前缀形态(与 `MIG-` 同规则,常量
+`_INDEX_FALLBACK_PREFIX = "index-"`):`index-N` → `index-N`。
+架构/其余模块零改动(仅 hardware.py + 测试)。
+
+## 不变量回归(全绿)
+
+| 输入 | 输出 |
+|---|---|
+| `GPU-<uuid>` | `GPU-<uuid>` ✓ |
+| `<裸 uuid>` | `GPU-<uuid>` ✓ |
+| `index-0` / `index-N` | 原样 ✓(新增) |
+| `MIG-…` | 原样 ✓ |
+| None / 空 | None ✓ |
+
+新增测试:
+1. `test_normalize_gpu_uuid_preserves_index_fallback_identity`(index-0/index-5/空白容忍);
+2. `test_persisted_index_fallback_identity_remains_resolvable`(持久化
+   `gpu_uuid="index-0"` → 读取归一化不变 → 与 `discover_gpus()` 兜底身份集合
+   相交,可解析);
+3. REV3 A-F 全部保持绿(runtime 38 passed;后端全量 **1665 / 6 / 0**;ruff/black clean)。
+
+## PRODUCTION_MUTATIONS
+
+**NONE**。候选仅在分支(@762eae3);main(72cdcbf)= 生产未动;无 tag/Release。
