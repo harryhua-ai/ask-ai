@@ -8,10 +8,22 @@
 
 ## 0. 速览(NOW / NEXT / LATER)
 
-- **NOW**:**T1a 契约已签发(AUTHORIZED,docs 仓 476a204)**——Phase 1 执行提示词已给,等执行端交付 CANDIDATE READY
-- **NEXT**:Phase 1 Review → push → Phase 2/3(T4 发布 + P-1 清洗)→ Phase 4 wiki 灰度(上线时刻用户确认)→ week-1 基线报告
+- **NOW**:**v1.1.0 已正式发布(2026-09-04,FINAL PRODUCTION PASS)**——tag/Release/#22/#24 关闭;GPU 运行时瞬态计划生产生效(reranker_transient,容量 HEALTHY,余量 964MiB)
+- **NEXT(当前前沿,按既定路线)**:**T1a Phase 4 wiki 灰度嵌入**(唯一挡真实访客的事项;上线窗口待用户确认)→ week-1 基线报告(L1~L3);其后按 §3 候选池既定节奏(T1a 收尾遗留、B 组评审项、D-12 恢复预案待停机窗口)
 - **LATER**:官网 → 商城波次 → T2/T3(commercial 占比数据裁决)→ T4 通用化 → T1b 标准件分发;灰度阈值冻结(week 2+,用户批)
 - **CONTINUOUS**:候选池维护、D-12 恢复预案待窗口、数据侧用户持有项跟进
+
+### 0.1 v1.1.0 交付记录(2026-09-04 发布)
+
+| 项 | 状态 |
+|---|---|
+| **#22 Shared Discovery Governance** | ✅ 已完成并关闭(S0 治理原语/deny-by-default 同步资格/repo+website Simple Mode/preview 端点;生产冒烟过) |
+| **#24 Widget Launcher Appearance** | ✅ 已完成并关闭(launcher_icon×shape×theme 统一语义+遗留桥;site-config 生产实证) |
+| **Hardware-Aware Model Runtime** | ✅ 已完成(MODEL×WORKLOAD×DEVICE;单一 GPU 所有权;GPU 闸查询优先+有界公平;容量计划 dual/transient/insufficient;瞬态重排驻留生产实测 pre1238→峰3375→post1238) |
+| **Models Admin Refactor** | ✅ 已完成(模型配置双 Tab:模型流水线/模型运行;Configured≠Effective 真相面) |
+| **v1.1.0 Production Release** | ✅ 已发布(main=生产=tag=762eae3;容量 HEALTHY/预算 4210MiB/余量 964MiB/0 OOM) |
+
+> 交付细节:`docs/implementation/CAMTHINK_V1_1_PRODUCTION_RELEASE_2026-09-04.md`(FINAL PASS 定稿)、`CAMTHINK_GPU_RUNTIME_MODELS_ADMIN_EXECUTION_2026-09-04.md`(REV0-REV3.1)。
 
 ## 1. 原始四阶段规划(2026-07-27 founding spec)
 
