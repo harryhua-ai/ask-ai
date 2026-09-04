@@ -2,12 +2,47 @@
 
 - 日期:2026-09-04
 - 角色:Engineering Executor
-- STATUS:**PARTIAL**(2026-09-04 容量门更新;原 PRODUCTION CANDIDATE READY 结论被下方「容量门」节**取代/更正**)
-- RECOMMENDED_PRODUCTION_VERDICT:**不适用**(原 FINAL PASS 建议作废;容量证据因候选缺陷不可判定,详见下方容量门节 §C/§R)
-- 执行边界:两轮门均 **STOP BEFORE TAGGING** —— 未打 tag、未建 GitHub Release、未关 #22/#24、未动 Roadmap
-- **最新节**:「== 容量门(RELEASE CANDIDATE 72cdcbf)==」(本文档下半部),含强制 RCA 更正
+- STATUS:**FINAL PRODUCTION PASS**(2026-09-04 发布定稿节授予;原 CANDIDATE READY / PARTIAL 结论依次被后续节取代,历史保留于各追加节)
+- RECOMMENDED_PRODUCTION_VERDICT:**已授予并完成发布正式化**(Release v1.1.0,详见文末「发布定稿」节)
+- Release:**v1.1.0**(annotated tag + GitHub Release,target=`762eae3b067f5adcc7c32a33996bfcaea3dab2bd` = main = 生产)
+- 执行边界:发布正式化完成——tag/Release 已发,#22/#24 已带完成注释关闭,#14 历史语义保留未动
 
 ---
+
+## == 发布定稿(2026-09-04)==
+
+| 项 | 值 |
+|---|---|
+| Release | **v1.1.0**(annotated tag;`refs/tags/v1.1.0` → tag object 7f2cf354 → commit `762eae3…`;GitHub Release 已发布,targetCommitish=762eae3) |
+| main = 生产 = tag | 三者同 SHA,逐一实证 |
+| CI | 33885620242 success(test+build-and-push,head_sha=762eae3) |
+| #22 | 已关闭(完成注释:Release/SHA/PASS/报告路径) |
+| #24 | 已关闭(完成注释:Release/SHA/PASS/报告路径) |
+| #14 | 历史已完成 issue,**未重开未改写**(保留其窄范围 Sync 回退语义) |
+
+**FINAL PRODUCTION PASS 的容量证据定稿**(全部生产实测,详见下方容量门节):
+
+- 规范 GPU UUID:`GPU-3caad314-5735-d4c2-64ce-e82bb88a11ba`(torch/策略/nvidia-smi/Admin 单一身份);
+- 数值化容量读数:total 16384 / used / free 全部实数(不再 unknown);
+- 有效预算:auto **4210 MiB**;
+- RUNTIME_PLAN = **reranker_transient**(容量证据驱动);
+- 瞬态驻留实测:pre 1238 → peak ~3375(重排物化)→ post 1238 MiB(ASK-AI 口径),
+  精确回落,7 连问首末采样恒定、零累积;
+- 最低查询窗余量:**964 MiB**(双驻留形态 596 的 1.6×;稳态余量 3100 为其 5×);
+- **CUDA OOM = 0**(三服务全量日志);
+- 单一 backend GPU 模型所有权(执行器/cron 零 GPU 模型);
+- Ask PASS(7/7 + 历史门 16/16)、Sync + Ask PASS(run 594 execution_device=gpu,sync 中 3/3 Ask);
+- #22/#24 冒烟 PASS(preview-dirs 200;site-config 统一外观字段)。
+
+原 PARTIAL 结论(容量门节)被本节取代:其不可判定项(§12 瞬态证明、§17 预算
+驱动分级)已由 REV3.1(762eae3)补齐并通过;其其余证据(验收 A-D、单一所有权、
+RCA 更正)继续有效。
+
+**STOP 状态解除:发布正式化完成(tag/Release/#22/#24/roadmap),无遗留授权缺口。**
+
+---
+
+# == 容量门(RELEASE CANDIDATE 72cdcbf)== 历史节:REV0 发布门(2026-09-04 上午;结论已被文首定稿节取代)
 
 ## TARGET_VERSION
 
