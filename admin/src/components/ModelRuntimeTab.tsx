@@ -47,6 +47,7 @@ export interface ModelRuntimeState {
     mode: string | null;
     budget_mb: number | null;
     reason?: string;
+    action_required?: boolean;
     pending_mode?: string | null;
     restart_required?: boolean;
   };
@@ -69,12 +70,12 @@ const WORKLOAD_META: Record<string, { title: string; role: string }> = {
   query_reranker: { title: "查询重排", role: "检索结果精排" },
 };
 
-// REV1 B3/B4:驻留计划真相(预算驱动的装配模式,非展示性字段)
+// REV1 B3/B4 + REV2 R2-1:驻留计划真相(预算驱动的装配模式,非展示性字段)
 const PLAN_META: Record<string, string> = {
   dual_resident: "双模型常驻 GPU",
   reranker_transient: "重排瞬态驻留(预算驱动,重排步骤按需上卡)",
   embedder_only: "仅嵌入常驻 GPU",
-  gpu_insufficient: "GPU 容量不足,已按计划以 CPU 运行(未硬载 GPU)",
+  gpu_insufficient: "GPU 容量不足:查询侧已拒绝执行(UNSAFE),需管理员调整设备策略或运行预算",
   undecided: "维持当前驻留(预算不可读)",
   cpu_only: "无 GPU 工作负载",
 };
@@ -309,6 +310,11 @@ export default function ModelRuntimeTab({ canWrite }: { canWrite: boolean }) {
                   {p.status === "cpu_by_capacity_plan" && (
                     <Badge variant="warning">按容量计划以 CPU 运行</Badge>
                   )}
+                  {p.status === "unsafe_no_safe_plan" && (
+                    <Badge variant="destructive" data-testid="unsafe-plan-badge">
+                      UNSAFE · 无安全运行计划
+                    </Badge>
+                  )}
                   {p.restart_required && (
                     <Badge variant="outline" className="text-amber-700">
                       待重启生效
@@ -336,9 +342,11 @@ export default function ModelRuntimeTab({ canWrite }: { canWrite: boolean }) {
                         ? "GPU 故障后已回退 CPU"
                         : p.status === "cpu_by_capacity_plan"
                           ? "按容量计划以 CPU 运行"
-                          : p.restart_required
-                            ? "已保存,待重启生效"
-                            : "运行中"}
+                          : p.status === "unsafe_no_safe_plan"
+                            ? "无安全运行计划,已拒绝执行(未自动降级 CPU)"
+                            : p.restart_required
+                              ? "已保存,待重启生效"
+                              : "运行中"}
                     </span>
                   </div>
                 </div>
@@ -472,6 +480,11 @@ export default function ModelRuntimeTab({ canWrite }: { canWrite: boolean }) {
                   {PLAN_META[state.runtime_plan.pending_mode] ??
                     state.runtime_plan.pending_mode}
                   )
+                </span>
+              )}
+              {state.runtime_plan.action_required && (
+                <span className="ml-1 font-medium text-red-700 dark:text-red-400">
+                  需要操作:在上方调整设备策略或提高运行预算,或释放 GPU 显存后重启。
                 </span>
               )}
             </div>

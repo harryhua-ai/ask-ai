@@ -31,11 +31,13 @@ from backend.runtime.manager import (
     PLAN_UNDECIDED,
     RESIDENCY_TRANSIENT,
     STATUS_PLAN_CPU,
+    STATUS_UNSAFE_NO_PLAN,
+    SYNC_FAIRNESS_QUOTA,
     WORKLOAD_QUERY_EMBEDDING,
     WORKLOAD_QUERY_RERANKER,
     WORKLOAD_SYNC_EMBEDDING,
-    WORKLOADS,
     ModelRuntimeManager,
+    UnsafeRuntimePlanError,
     _TransientGpuReranker,
     compute_residency_plan,
 )
@@ -372,6 +374,80 @@ def test_query_preempts_queued_sync():
     assert ends == ["s1:end", "q:end", "s2:end"]  # 确定性顺序
 
 
+def test_r2_2_waiting_sync_eventually_executes_under_query_pressure():
+    """R2-2 有界公平:持续查询压力 + 等待中的 sync → sync 终获执行。
+
+    确定性编排(全部用事件+闸状态轮询,无裸 sleep 竞态):
+    - s1 先于 q2..q6 排队等待;
+    - q2..q5 逐个占用空档(每次获取都计入饥饿账本;每一步都先确保下一个
+      查询已登记为等待者再放行前一个,杜绝 sync 提前苏醒的竞态);
+    - 计满 SYNC_FAIRNESS_QUOTA 后闸转入公平窗口:仍在排队的 q6 被拦下,
+      s1 获得一次执行权;随后配额清零、查询优先恢复, q6 才执行。
+    """
+    quota = SYNC_FAIRNESS_QUOTA
+    manager, _, _ = _make_manager("cuda")
+    manager._build({})
+    instance = manager._embedder_for(WORKLOAD_QUERY_EMBEDDING)
+
+    events = {f"q{i}": threading.Event() for i in range(1, 7)}
+    release_s1 = threading.Event()
+    script: dict = {"calls": [], "s1": release_s1, **events}
+    _patch_scripted_embed(instance, script)
+
+    def start(tag, workload):
+        t = threading.Thread(target=manager.embed, args=(workload, [tag]))
+        t.start()
+        return t
+
+    def wait_for(predicate, timeout=10):
+        deadline = time.time() + timeout
+        while not predicate():
+            assert time.time() < deadline, "等待闸状态超时"
+            time.sleep(0.005)
+
+    t_q1 = start("q1", WORKLOAD_QUERY_EMBEDDING)
+    wait_for(lambda: manager._gpu_gate.busy)  # q1 在飞
+    start("s1", WORKLOAD_SYNC_EMBEDDING)
+    wait_for(lambda: manager._gpu_gate.sync_waiting == 1)  # s1 已登记等待
+    assert script["calls"] == ["q1:start"]
+
+    # 连续查询压力:每个查询在下一个启动前已排队(credit 随每次获取递增)
+    threads = [t_q1]
+    for i in range(2, quota + 2):  # q2..q{quota+1}:quota 次获取
+        threads.append(start(f"q{i}", WORKLOAD_QUERY_EMBEDDING))
+        wait_for(lambda: manager._gpu_gate.query_waiting == 1)
+        events[f"q{i - 1}"].set()  # 放行前一个查询,让当前查询占用空档
+        wait_for(lambda tag=f"q{i}": f"{tag}:start" in script["calls"])
+    assert manager._gpu_gate.starvation_credit == quota  # 配额已计满
+    assert manager._gpu_gate.sync_priority_active  # 公平窗口开启
+
+    # 第 quota+2 个查询到得太晚:被公平窗口拦在 s1 之后
+    threads.append(start(f"q{quota + 2}", WORKLOAD_QUERY_EMBEDDING))
+    wait_for(lambda: manager._gpu_gate.query_waiting == 1)
+    events[f"q{quota + 1}"].set()  # 放行最后一个查询,腾出空档
+    wait_for(lambda: "s1:start" in script["calls"])  # ★ 等待中的 sync 终获执行
+    assert f"q{quota + 2}:start" not in script["calls"], "公平窗口必须先让已等待的 sync 执行"
+
+    release_s1.set()
+    wait_for(lambda: "s1:end" in script["calls"])
+    assert not manager._gpu_gate.sync_priority_active  # 一次性配额,用后即恢复查询优先
+    assert manager._gpu_gate.starvation_credit == 0
+
+    # 查询优先恢复:被拦的查询随后执行
+    events[f"q{quota + 2}"].set()
+    wait_for(lambda: f"q{quota + 2}:end" in script["calls"])
+    for t in threads:
+        t.join(timeout=15)
+        assert not t.is_alive()
+    ends = [c for c in script["calls"] if c.endswith(":end")]
+    assert ends == [
+        "q1:end",
+        *(f"q{i}:end" for i in range(2, quota + 2)),
+        "s1:end",
+        f"q{quota + 2}:end",
+    ]
+
+
 def test_cpu_execution_is_not_gated():
     """B2 边界:CPU 执行(无显存峰)不入闸 —— 并发 CPU 批次允许重叠。"""
     manager, _, _ = _make_manager("cpu")
@@ -469,8 +545,12 @@ def test_transient_rerank_materializes_and_offloads_per_call():
     assert underlying.offloads == 2
 
 
-def test_insufficient_budget_loads_nothing_on_gpu_and_reports_unsafe():
-    """B4:UNSAFE 配置不得先全量硬载再报告 —— GPU 侧零装配,按计划落 CPU。"""
+def test_r2_1_insufficient_budget_query_side_fail_closed_never_cpu():
+    """R2-1:配置查询 GPU + 预算不足 ≠ Effective CPU 执行。
+
+    查询嵌入/查询重排 fail-closed:不构造 CPU 替身(不自动降级)、不上 GPU
+    冒险执行;拒绝执行并给出可操作指引;effective 不谎报为 CPU。
+    """
     manager, created, created_rerankers = _make_manager(
         "cuda", gpu_snapshot=GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
     )
@@ -479,17 +559,46 @@ def test_insufficient_budget_loads_nothing_on_gpu_and_reports_unsafe():
     manager._build({})
 
     assert manager._plan.mode == PLAN_GPU_INSUFFICIENT
-    assert all(e.device != "cuda" for e in created), "GPU 侧不得构造任何模型"
-    assert all(r.device != "cuda" for r in created_rerankers)
-    assert manager.capacity()["state"] == CAPACITY_UNSAFE
-    # 如实真相:configured=gpu,effective=cpu(按计划),状态显式标注
-    for workload in WORKLOADS:
+    # 查询侧:configured=gpu 且 effective=gpu(不谎报为 CPU);状态显式 UNSAFE
+    for workload in (WORKLOAD_QUERY_EMBEDDING, WORKLOAD_QUERY_RERANKER):
         state = manager.states[workload]
-        assert state.effective.kind == "cpu"
-        assert state.status == STATUS_PLAN_CPU
-    # 查询仍可执行(CPU 按计划;计划性落位,非运行时故障回退)
-    vectors = manager.embed(WORKLOAD_QUERY_EMBEDDING, ["q"])
+        assert state.configured.kind == "gpu"
+        assert state.effective.kind == "gpu", "R2-1:禁止把查询侧 effective 谎报/改为 CPU"
+        assert state.status == STATUS_UNSAFE_NO_PLAN
+    # 未构造查询嵌入与重排的任何实例(GPU 不装配,CPU 替身不存在)
+    assert manager._query_embedder is None
+    assert manager._reranker is None
+    assert all(e.device != "cuda" for e in created), "GPU 侧不得构造任何模型"
+    assert created_rerankers == []
+    # 查询侧执行被拒绝(带可操作指引),绝不悄悄跑 CPU
+    with pytest.raises(UnsafeRuntimePlanError, match="调整设备策略"):
+        manager.embed(WORKLOAD_QUERY_EMBEDDING, ["q"])
+    with pytest.raises(UnsafeRuntimePlanError):
+        manager.rerank("q", ["d"])
+    # 真相面:UNSAFE + 行动要求;Admin 保持可用(快照完整)
+    assert manager.capacity()["state"] == CAPACITY_UNSAFE
+    snap = manager.snapshot()
+    assert snap["runtime_plan"]["action_required"] is True
+    assert len(snap["policies"]) == 3 and "devices" in snap
+
+
+def test_r2_1_insufficient_budget_sync_background_continues_on_cpu_loud():
+    """R2-1:sync 是后台工作负载 —— GPU 不可安全执行时按既有授权 CPU 路径
+    继续(显式标注,非静默);查询侧 fail-closed 不受影响。"""
+    manager, created, _ = _make_manager(
+        "cuda", gpu_snapshot=GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
+    )
+    manager._budget_mode = "manual"
+    manager._manual_budget_mb = 3800
+    manager._build({})
+
+    sync_state = manager.states[WORKLOAD_SYNC_EMBEDDING]
+    assert sync_state.effective.kind == "cpu"
+    assert sync_state.status == STATUS_PLAN_CPU  # 显式标注(非静默)
+    # sync 仍可执行(CPU;created 里唯一的嵌入实例就是 sync 的 CPU 替身)
+    vectors = manager.embed(WORKLOAD_SYNC_EMBEDDING, ["doc"])
     assert len(vectors) == 1
+    assert [e.device for e in created] == ["cpu"]
 
 
 def test_budget_change_marks_plan_restart_required():

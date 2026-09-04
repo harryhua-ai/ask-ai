@@ -263,4 +263,47 @@ describe("ModelRuntimeTab(§35 模型运行)", () => {
     );
     expect(screen.getAllByText("按容量计划以 CPU 运行").length).toBeGreaterThanOrEqual(3);
   });
+
+  it("REV2 R2-1:UNSAFE 计划下查询侧显式标注(拒绝执行,未自动降级 CPU)+行动要求", async () => {
+    const unsafeRuntime = {
+      ...RUNTIME,
+      policies: RUNTIME.policies.map((p) =>
+        p.workload === "sync_embedding"
+          ? {
+              ...p,
+              configured: {
+                kind: "gpu",
+                gpu_uuid: "GPU-3caad314",
+                label: "NVIDIA Tesla T4 · GPU 0",
+              },
+              effective: { kind: "cpu", gpu_uuid: null, label: "CPU · Intel Xeon Gold 6133" },
+              status: "cpu_by_capacity_plan",
+            }
+          : p.workload === "query_embedding"
+            ? { ...p, status: "unsafe_no_safe_plan" }
+            : p,
+      ),
+      runtime_plan: {
+        mode: "gpu_insufficient",
+        budget_mb: 3800,
+        reason: "预算低于瞬态下限:GPU 侧不装配(按计划落 CPU)",
+        action_required: true,
+        pending_mode: "gpu_insufficient",
+        restart_required: false,
+      },
+    };
+    apiFetch.mockImplementation((path: string) => {
+      if (path === "/model-runtime") return Promise.resolve(unsafeRuntime);
+      return Promise.reject(new Error(`unexpected ${path}`));
+    });
+    renderTab();
+    await waitFor(() => expect(screen.getByTestId("unsafe-plan-badge")).toBeInTheDocument());
+    expect(screen.getByText("UNSAFE · 无安全运行计划")).toBeInTheDocument();
+    expect(screen.getByTestId("status-query_embedding")).toHaveTextContent(
+      "无安全运行计划,已拒绝执行(未自动降级 CPU)",
+    );
+    const plan = screen.getByTestId("runtime-plan");
+    expect(plan).toHaveTextContent(/运行计划:GPU 容量不足/);
+    expect(plan).toHaveTextContent(/需要操作:在上方调整设备策略或提高运行预算/);
+  });
 });
