@@ -1,13 +1,19 @@
 # ask-ai PRODUCT STATE
 
 > **性质**:当前产品状态快照 — 每次 significant FINAL PASS / 能力成熟度变化 / 产品假设失效后更新(协议 PART VI §27)。
-> **本版**:2026-08-31(C9 三波加固收官 + 推送收口后)。定位/原则见 `PRODUCT_VISION.md`,规划与候选池见 `PRODUCT_ROADMAP.md`。
+> **本版**:2026-09-04(v1.1.0 发布定稿,FINAL PRODUCTION PASS)。定位/原则见 `PRODUCT_VISION.md`,规划与候选池见 `PRODUCT_ROADMAP.md`。(上一版 2026-08-31 的内容保留于 git 历史。)
 
 ---
 
 ## 1. 总体判断
 
-**上线就绪(All Green)——距真实访客只差 T1a 一个契约(widget 分发物 + 三站点嵌入)。** 工程侧全部收口:main = origin/main = `4db4c41`(CI run 33355154229 success);生产运行 `76d75e7`(4 提交随 T1a 发布生效);数据面 15/15 源全绿。产品至今**零真实访客**——L1~L3(真实环境 E2E / 灰度信号 / 持续稳定)全部未开始,挂在 T1a 后。治理面:DUAL_AGENT_PROTOCOL v2.0 生效。
+**v1.1.0 已发布并经生产容量验收(FINAL PRODUCTION PASS)——距真实访客仍差 T1a Phase 4(wiki 灰度嵌入的上线窗口,待用户确认)。**
+
+- 代码:main = origin/main = `762eae3b…`;Release:**v1.1.0**(annotated tag + GitHub Release);CI 33885620242 success
+- 生产:tesla-t4 三服务统一 `sha-762eae3`(healthy);数据面同步正常(受控真实嵌入同步 + 删除回流均验证)
+- GPU 运行时(本版核心):MODEL×WORKLOAD×DEVICE 契约;单一 backend GPU 所有权(sync 零自载模型);GPU 执行闸(查询优先+有界公平);容量计划 **reranker_transient** 生效(预算 auto=4210MiB,HEALTHY);**瞬态重排**生产实测 pre1238→峰3375→post1238 MiB 精确回落;容量分级数值化呈现(UUID 归一化修复后)
+- 质量面:后端全量 1665/6/0;admin 274/0;生产 16+9 次 Ask 零 OOM;#22/#24 生产冒烟过并关闭
+- 既有风险延续:admin 种子密码仍有效;三方显存增长会压缩预算(计划器会如实降级并可见)
 
 ## 2. 能力成熟度(2026-08-31)
 
