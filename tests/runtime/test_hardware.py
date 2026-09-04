@@ -55,6 +55,31 @@ def test_normalize_gpu_uuid_forms():
     assert normalize_gpu_uuid("MIG-abc") == "MIG-abc"  # 非 GPU- 形态原样保留
 
 
+def test_normalize_gpu_uuid_preserves_index_fallback_identity():
+    """REV3.1:index-N 兜底身份在归一化往返中稳定(不得改写为 GPU-index-N)。"""
+    assert normalize_gpu_uuid("index-0") == "index-0"
+    assert normalize_gpu_uuid("index-5") == "index-5"
+    assert normalize_gpu_uuid("  index-3  ") == "index-3"
+
+
+def test_persisted_index_fallback_identity_remains_resolvable():
+    """REV3.1:持久化 gpu_uuid="index-0" 经读取归一化后,与 discover_gpus()
+    兜底身份一致 —— fail-closed 校验集合包含它,可解析、不误判不存在。"""
+    from types import SimpleNamespace
+
+    fake_props = SimpleNamespace(uuid=None, name="Tesla T4", total_memory=16384 * 1024 * 1024)
+    fake_torch = mock.Mock()
+    fake_torch.cuda.is_available.return_value = True
+    fake_torch.cuda.device_count.return_value = 1
+    fake_torch.cuda.get_device_properties.return_value = fake_props
+    with mock.patch.dict("sys.modules", {"torch": fake_torch}):
+        discovered = {d.uuid for d in discover_gpus()}
+    persisted = "index-0"  # 假想历史行写入的兜底身份
+    normalized = normalize_gpu_uuid(persisted)
+    assert normalized == "index-0"  # 读取归一化不改写
+    assert normalized in discovered  # 与发现兜底身份可解析(fail-closed 集合包含)
+
+
 # ------------------------------------------------------- 读数身份契约(§4/§6)
 
 

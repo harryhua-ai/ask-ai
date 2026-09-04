@@ -25,13 +25,16 @@ logger = logging.getLogger(__name__)
 _NVIDIA_SMI_TIMEOUT_SECONDS = 10
 
 _UUID_PREFIX = "GPU-"
+_INDEX_FALLBACK_PREFIX = "index-"  # torch 无 uuid 时的发现兜底身份(REV3.1)
 
 
 def normalize_gpu_uuid(raw: str | None) -> str | None:
     """归一化 GPU 身份为规范形 ``GPU-<uuid>``(REV3 单一稳定身份)。
 
     同一物理卡的 torch 裸形与 nvidia-smi 规范形归一化后一致;
-    空串/None → None;非 ``GPU-`` 前缀形态(如 MIG-…)原样保留。
+    空串/None → None;非 ``GPU-`` 前缀形态原样保留:
+    ``MIG-…``(实例身份)与 ``index-N``(torch 无 uuid 时的发现兜底身份,
+    REV3.1——持久化/读取往返必须稳定,不得被改写成 GPU-index-N)。
     """
     if raw is None:
         return None
@@ -39,8 +42,8 @@ def normalize_gpu_uuid(raw: str | None) -> str | None:
     bare = bare.removeprefix(_UUID_PREFIX)
     if not bare:
         return None
-    if bare.startswith("MIG-"):
-        return bare  # 非 GPU- 前缀身份(MIG 实例等)不在归一化范围,原样保留
+    if bare.startswith(("MIG-", _INDEX_FALLBACK_PREFIX)):
+        return bare  # 非 GPU- 前缀身份不在归一化范围,原样保留
     return f"{_UUID_PREFIX}{bare}"
 
 
