@@ -396,3 +396,33 @@ REPORT_COMMIT: (见本仓提交)
 PRODUCTION_MUTATIONS: NONE
 NEXT: Planner Review → PD-1~4 拍板 → v1.0.1 集成落定后按 §19 拓扑派发 Wave-0
 ```
+
+---
+
+## 26. Planner Review Verdict(REV 1,2026-09-04)
+
+> 本节为 Planner 裁决层,追加于 DISCOVERY PASS 之后;原文冻结不改,冲突处以本节为准。
+
+```
+VERDICT        DISCOVERY REVIEW PASS
+READY_STATUS   READY
+PD-1           APPROVED WITH MODIFICATION — Unknown path ≠ automatic include;
+               use evidence-based INCLUDE / EXCLUDE / NEEDS_REVIEW
+PD-2/3/4       APPROVED(按 §24 建议原样生效)
+TOPOLOGY       ONE PRIMARY WORKTREE,#22 only(取代 §19 的 TWO_WAY 建议)
+DEPENDENCY     实现启动前必须 rebase 到已验收的 v1.0.1 集成基线
+SCHEMA         无迁移;仅 config.discovery_rules additive 键
+HARD BOUNDARY  Discovery/preview 治理 + Admin discovery UI;
+               connectors / sync runtime / ingestion / safety.py / sync 持久化模型
+               = FORBIDDEN UNLESS NEW EVIDENCE REQUIRES
+GOVERNANCE     本报告(含本节)镜像入主仓 Source-of-Truth 仓并推 origin——
+               本地无 remote docs 提交单独不足以作为持久执行授权
+NEXT           v1.0.1 基线落定后冻结 #22 Execution Contract,再以单一治理波执行 v1.1.0
+```
+
+### PD-1 修正对冻结契约的影响(约束 #22 Execution Contract 起草)
+
+1. **§9.2 L2 中「网站同域 HTML 页默认 include(含未知路径)」作废**;`classify_url` 现行兜底 `(technical_doc, review)` 保留为**最后落点**,不翻转兜底本身。
+2. **证据化分类取代默认翻转**:INCLUDE / EXCLUDE 必须给出 preview 可得的证据信号(非穷尽,清单由 #22 Execution Contract 冻结),例如:同域 sitemap 归属与站点级一致性、**路径族群多数决策**(同前缀家族内已判定页面的归票)、既有 `discovery_rules` 继承、优先类别 hint 命中、页面族群抽样证据;**无证据支持任一方向 → NEEDS_REVIEW**。
+3. **§21 验收口径改写**:「待确认收缩」由"词表机械收缩"改为"**证据覆盖驱动的收缩**"——`128 → auto-handle ~all` 的达成路径 = 族群证据 + 规则继承,而非兜底翻转;NEEDS_REVIEW 数量是证据覆盖面的诚实函数,不得用默认值美化,也不得为凑数制造弱证据。
+4. §13(v1.1 增量)与 §19(Wave-0 的 classify_url 翻转项)按本节同步修订;§9.3-§9.5、§11、§16、§17(分组聚合、rules、scope_confirmed、wire)不受影响,原样生效。
