@@ -50,7 +50,13 @@ AdminDep = Annotated[CurrentUser, Depends(require_role("admin"))]
 
 @router.get("/local-models")
 async def list_local_models(_: ViewerDep, request: Request) -> list[dict]:
-    """返回本地加载的嵌入模型与重排序模型信息(viewer+ 可访问)。"""
+    """返回本地加载的嵌入模型与重排序模型信息(viewer+ 可访问)。
+
+    Hardware-Aware Runtime:device 字段为运行期原始值;device_label 为
+    硬件面向呈现(如「NVIDIA Tesla T4 · GPU 0」/「CPU · <型号>」),
+    禁止以裸 ``cuda`` 作为用户可见设备名。
+    """
+    manager = getattr(request.app.state, "model_runtime", None)
     models: list[dict] = []
     embedder = getattr(request.app.state, "embedder", None)
     if embedder is not None:
@@ -60,6 +66,7 @@ async def list_local_models(_: ViewerDep, request: Request) -> list[dict]:
                 "model_name": getattr(embedder, "_model_name", "BAAI/bge-m3"),
                 "device": getattr(embedder, "_device", "unknown"),
                 "dimension": getattr(embedder, "_dimension", 1024),
+                "device_label": _runtime_device_label(manager, "query_embedding"),
             }
         )
     reranker = getattr(request.app.state, "reranker", None)
@@ -69,9 +76,22 @@ async def list_local_models(_: ViewerDep, request: Request) -> list[dict]:
                 "role": "reranking",
                 "model_name": getattr(reranker, "_model_name", "BAAI/bge-reranker-v2-m3"),
                 "device": getattr(reranker, "_device", "unknown"),
+                "device_label": _runtime_device_label(manager, "query_reranker"),
             }
         )
     return models
+
+
+def _runtime_device_label(manager, workload: str) -> str:
+    """从运行时管理器取 Effective Device 面向标签;不可得时如实降级。"""
+    if manager is not None:
+        state = manager.states.get(workload)
+        if state is not None:
+            try:
+                return manager.device_label(state.effective)
+            except Exception:  # noqa: BLE001 - 标签失败不影响模型信息
+                pass
+    return "unknown"
 
 
 # 所有需要在响应中脱敏、在写入时加密的敏感字段名

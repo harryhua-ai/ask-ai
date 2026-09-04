@@ -43,6 +43,7 @@ class Settings:
     encryption_key: str
     embedder_batch_size: int = 12
     embedder_max_length: int = 8192
+    internal_api_base_url: str = "http://backend:8000"
 
     @property
     def postgres_dsn(self) -> str:
@@ -93,6 +94,9 @@ def load_settings(config_dir: Path | None = None) -> Settings:
         embedder_device=_env("EMBEDDER_DEVICE", "auto"),
         embedder_batch_size=int(_env("EMBEDDER_BATCH_SIZE", "12")),
         embedder_max_length=int(_env("EMBEDDER_MAX_LENGTH", "8192")),
+        # Hardware-Aware Runtime:sync 执行面消费 backend 单一驻留嵌入运行时的
+        # 内部端点基址(compose 网络内服务名;本地联调可覆盖)
+        internal_api_base_url=_env("INTERNAL_API_BASE_URL", "http://backend:8000"),
         model_cache_dir=Path(_env("MODEL_CACHE_DIR", str(project_root / "models"))),
         github_token=_env("GITHUB_TOKEN"),
         api_host=_env("ASKAI_API_HOST", "0.0.0.0"),

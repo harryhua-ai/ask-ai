@@ -44,16 +44,18 @@ import backend.connectors.web_crawl
 import backend.llm.deepseek  # noqa: F401
 from backend.api.admin.router import admin_router
 from backend.api.admin.schemas import validate_llm_api_base
+from backend.api.internal_embeddings import router as internal_embeddings_router
 from backend.api.routes import router as api_router
 from backend.auth.crypto import decrypt_api_key
-from backend.release import get_release_identity
 from backend.config import load_settings, load_yaml_config
 from backend.db.session import get_engine, get_session_factory, init_db
-from backend.embedder.bge import BGEEmbedder, BGEReranker
+from backend.embedder.bge import BGEEmbedder, BGEReranker  # noqa: F401 (runtime 工厂默认)
 from backend.llm.registry import LLMRegistry, LLMRouter
 from backend.pipeline.rag import RAGOrchestrator
+from backend.release import get_release_identity
 from backend.retrieval.rerank import RerankPipeline
 from backend.retrieval.search import HybridSearcher
+from backend.runtime.manager import ModelRuntimeManager
 from backend.services.config_loader import load_llm_config_from_db
 from backend.utils.budget import BudgetConfig, BudgetLimiter
 
@@ -313,13 +315,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         weaviate_host, weaviate_port = _parse_weaviate_url(settings.weaviate_url)
         weaviate_client = weaviate.connect_to_local(host=weaviate_host, port=weaviate_port)
 
-        # Embedder + Reranker
-        embedder = BGEEmbedder(
-            device=settings.embedder_device,
-            batch_size=settings.embedder_batch_size,
-            max_length=settings.embedder_max_length,
-        )
-        reranker = BGEReranker(device=settings.embedder_device)
+        # Embedder + Reranker(Hardware-Aware Runtime:MODEL × WORKLOAD × DEVICE)
+        # 单一驻留权威:query/sync embedding 同模型+同 GPU 共享同一实例;
+        # 策略缺省 = EMBEDDER_DEVICE 引导默认(与 v1.1 之前行为一致);
+        # Configured(Admin 持久)≠ Effective(此处落地),重启生效。
+        model_runtime = ModelRuntimeManager(settings)
+        await model_runtime.load(app.state.session_factory)
+        embedder = model_runtime.embedder
+        reranker = model_runtime.reranker
+        app.state.model_runtime = model_runtime
         app.state.embedder = embedder
         app.state.reranker = reranker
         app.state.weaviate_class_name = settings.weaviate_class_name
@@ -508,6 +512,7 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 app.include_router(api_router)
+app.include_router(internal_embeddings_router, prefix="/api")
 app.include_router(admin_router)
 
 # Task 21: 生产部署 — 在 /admin 路径下托管 admin SPA 构建产物。

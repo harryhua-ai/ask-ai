@@ -441,6 +441,45 @@ class SiteExperience(Base):
     )
 
 
+class ModelRuntimePolicy(Base):
+    """模型运行策略(Hardware-Aware Runtime:MODEL × WORKLOAD × DEVICE)。
+
+    - workload ∈ query_embedding | sync_embedding | query_reranker(封闭集合);
+    - device_kind ∈ gpu | cpu;gpu_uuid = 稳定物理身份(torch UUID;cpu 时 NULL);
+    - 缺行 = 未配置 → 运行时按 EMBEDDER_DEVICE 引导默认(GPU-first,行为与
+      v1.1 之前一致);Admin 保存 Configured Device,Effective 在(重)启动时
+      落地 —— Configured ≠ Effective 是产品契约的真相要求。
+    """
+
+    __tablename__ = "model_runtime_policies"
+
+    workload: Mapped[str] = mapped_column(String(50), primary_key=True)
+    model_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    device_kind: Mapped[str] = mapped_column(String(10), nullable=False)
+    gpu_uuid: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ModelRuntimeSetting(Base):
+    """模型运行全局设置(当前仅 GPU 运行容量预算策略)。
+
+    - mode=auto:预算由硬件实况推导(当前可用容量),非硬编码常量;
+    - mode=manual:Admin 设定的运行规划上限(安全预算,非 CUDA 硬限额,
+      Effective 可用容量永远不超过硬件实况)。
+    """
+
+    __tablename__ = "model_runtime_settings"
+
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(10), nullable=False, default="auto")
+    manual_budget_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class QuestionCluster(Base):
     """问题聚类结果(Phase 3B Coverage Gaps + Top Questions)。"""
 

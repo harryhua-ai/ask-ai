@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { RefreshCw, SlidersHorizontal, Info, Plus } from "lucide-react";
+import { RefreshCw, SlidersHorizontal, Info, Plus, ShieldCheck } from "lucide-react";
 import {
   useLLMProviders,
   useLLMRouting,
@@ -18,15 +18,22 @@ import { ChainChip } from "@/components/ChainChip";
 import { useAuth } from "@/hooks/useAuth";
 import { ProviderCredentialDialog } from "@/components/ProviderCredentialDialog";
 import { EndpointAuthDialog } from "@/components/EndpointAuthDialog";
-import { ShieldCheck } from "lucide-react";
 import { ProviderEditDialog } from "@/components/ProviderEditDialog";
 import { AddToTaskDialog } from "@/components/AddToTaskDialog";
+import ModelRuntimeTab from "@/components/ModelRuntimeTab";
 import { cn } from "@/lib/utils";
 import type { LLMChainItem } from "@/types/api";
 
-const READONLY_CARDS = [
-  { key: "embedding", title: "向量模型", id: "embedding" },
-  { key: "reranking", title: "排序模型", id: "rerank" },
+type TabKey = "pipeline" | "runtime";
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: "pipeline", label: "模型流水线" },
+  { key: "runtime", label: "模型运行" },
+];
+
+const RETRIEVAL_CARDS = [
+  { key: "embedding", title: "向量模型", role: "查询与知识的向量化(语义召回)", workload: "query_embedding" },
+  { key: "reranking", title: "排序模型", role: "检索结果精排(提升 Top-K 质量)", workload: "query_reranker" },
 ];
 
 const CONFIGURABLE_TASKS = [
@@ -50,6 +57,7 @@ function getChain(
 export default function LLMProviders() {
   const { user } = useAuth();
   const canWrite = user?.role === "admin" || user?.role === "editor";
+  const [tab, setTab] = useState<TabKey>("pipeline");
   const { data: providers } = useLLMProviders();
   const { data: routing } = useLLMRouting();
   const { data: localModels } = useLocalModels();
@@ -128,109 +136,177 @@ export default function LLMProviders() {
         <div>
           <h1 className="text-xl font-bold">模型配置</h1>
           <p className="text-sm text-muted-foreground">
-            按流水线环节配置各阶段模型 · 改完点应用变更生效
+            {tab === "pipeline"
+              ? "按流水线环节配置各阶段模型 · 改完点应用变更生效"
+              : "配置各模型工作负载的执行设备与运行容量"}
           </p>
         </div>
-        {canWrite && (
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setCredOpen(true)}>
-            <SlidersHorizontal className="mr-1.5 h-3.5 w-3.5" />
-            供应商凭证
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setAuthOpen(true)}>
-            <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
-            端点授权
-          </Button>
-          <Button size="sm" onClick={() => reload.mutate()} disabled={reload.isPending}>
-            <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", reload.isPending && "animate-spin")} />
-            {reload.isPending ? "重载中..." : "应用变更"}
-          </Button>
-        </div>
+        {tab === "pipeline" && canWrite && (
+          <div className="flex flex-wrap items-center gap-2">
+            <fieldset className="rounded-md border px-2 py-1">
+              <legend className="px-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                连接管理
+              </legend>
+              <div className="flex gap-1.5">
+                <Button variant="ghost" size="sm" onClick={() => setCredOpen(true)}>
+                  <SlidersHorizontal className="mr-1.5 h-3.5 w-3.5" />
+                  供应商凭证
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setAuthOpen(true)}>
+                  <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
+                  端点授权
+                </Button>
+              </div>
+            </fieldset>
+            <Button size="sm" onClick={() => reload.mutate()} disabled={reload.isPending}>
+              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", reload.isPending && "animate-spin")} />
+              {reload.isPending ? "重载中..." : "应用变更"}
+            </Button>
+          </div>
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        {READONLY_CARDS.map((c) => {
-          const m = localModels?.find((x) => x.role === c.key);
-          return (
-            <Card key={c.key} className="bg-muted/50">
-              <CardContent className="p-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold uppercase text-muted-foreground">{c.title}</span>
-                    <Badge variant="secondary" className="font-mono text-[10px]">{c.id}</Badge>
-                  </div>
-                  <Info className="h-3 w-3 text-muted-foreground/50" />
-                </div>
-                <div className="mt-1 font-mono text-sm">{m?.model_name ?? "未加载"}</div>
-                <div className="text-xs text-muted-foreground">{m?.device}</div>
-              </CardContent>
-            </Card>
-          );
-        })}
-
-        {CONFIGURABLE_TASKS.map((t) => {
-          const chain = getChain(routing, t.key);
-          return (
-            <Card key={t.key}>
-              <CardContent className="p-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-sm font-bold">
-                    <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[9px] text-primary-foreground">
-                      {t.order}
-                    </span>
-                    {t.title}
-                    <Badge variant="secondary" className="font-mono text-[10px]">{t.key}</Badge>
-                  </div>
-                  {t.needsRestart && (
-                    <Badge variant="outline" className="text-[10px] text-amber-700">首启需重启</Badge>
-                  )}
-                </div>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {chain.map((item, i) => {
-                    const prov = providers?.find((p) => p.id === item.provider);
-                    const avail =
-                      (prov &&
-                        ((prov.config as Record<string, unknown>).available_models as string[])) ??
-                      [];
-                    return (
-                      <ChainChip
-                        editable={canWrite}
-                        key={item.provider + i}
-                        order={i + 1}
-                        providerId={item.provider}
-                        model={item.model}
-                        availableModels={avail}
-                        canMoveUp={i > 0}
-                        canMoveDown={i < chain.length - 1}
-                        onChangeModel={(m) => handleChangeModel(t.key, i, m)}
-                        onRemove={() => handleRemoveFromTask(t.key, i)}
-                        onMoveUp={() => handleMove(t.key, i, i - 1)}
-                        onMoveDown={() => handleMove(t.key, i, i + 1)}
-                      />
-                    );
-                  })}
-                  {canWrite && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 gap-1 rounded-full border-dashed text-xs text-muted-foreground"
-                    onClick={() => setAddTask(t.key)}
-                  >
-                    <Plus className="h-3 w-3" />
-                    添加
-                  </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
+      {/* 主 Tab:模型流水线 / 模型运行(侧边导航保持「模型配置」单一入口) */}
+      <div className="flex gap-1 border-b" role="tablist" aria-label="模型配置分区">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.key}
+            onClick={() => setTab(t.key)}
+            className={cn(
+              "rounded-t-md px-4 py-2 text-sm font-medium",
+              tab === t.key
+                ? "border-b-2 border-primary text-primary"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      <p className="text-center text-xs text-muted-foreground">
-        意图分类(1) → 查询处理(2) → 向量+排序检索 → 剪枝(3) → 生成(4)
-      </p>
+      {tab === "runtime" ? (
+        <ModelRuntimeTab canWrite={canWrite} />
+      ) : (
+        <div className="space-y-4">
+          {/* A. 检索模型(向量 / 排序;硬件面向呈现,不暴露裸 cuda) */}
+          <div>
+            <h2 className="mb-2 text-sm font-semibold text-muted-foreground">检索模型</h2>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              {RETRIEVAL_CARDS.map((c) => {
+                const m = localModels?.find((x) => x.role === c.key) as
+                  | { model_name?: string; device?: string; device_label?: string }
+                  | undefined;
+                const deviceLabel = m?.device_label ?? m?.device;
+                return (
+                  <Card key={c.key} className="bg-muted/50">
+                    <CardContent className="p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold uppercase text-muted-foreground">
+                            {c.title}
+                          </span>
+                          <Badge variant="secondary" className="font-mono text-[10px]">
+                            {c.key}
+                          </Badge>
+                        </div>
+                        <Info className="h-3 w-3 text-muted-foreground/50" />
+                      </div>
+                      <div className="mt-1 font-mono text-sm">{m?.model_name ?? "未加载"}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {c.role}
+                      </div>
+                      <div className="mt-1 text-xs">
+                        <span className="text-muted-foreground">运行设备:</span>
+                        <span className="ml-1 font-medium">{deviceLabel ?? "—"}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="mt-1 text-xs text-primary underline-offset-2 hover:underline"
+                        onClick={() => setTab("runtime")}
+                      >
+                        在「模型运行」中配置执行设备 →
+                      </button>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* B. LLM 流水线(阶段链;链内序号即优先序,不重复编号) */}
+          <div>
+            <h2 className="mb-2 text-sm font-semibold text-muted-foreground">
+              LLM 流水线
+              <span className="ml-2 text-xs font-normal">
+                意图分类 → 查询处理 → 向量+排序检索 → 剪枝 → 生成
+              </span>
+            </h2>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              {CONFIGURABLE_TASKS.map((t) => {
+                const chain = getChain(routing, t.key);
+                return (
+                  <Card key={t.key}>
+                    <CardContent className="p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-sm font-bold">
+                          {t.title}
+                          <Badge variant="secondary" className="font-mono text-[10px]">
+                            {t.key}
+                          </Badge>
+                        </div>
+                        {t.needsRestart && (
+                          <Badge variant="outline" className="text-[10px] text-amber-700">
+                            首启需重启
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {chain.map((item, i) => {
+                          const prov = providers?.find((p) => p.id === item.provider);
+                          const avail =
+                            (prov &&
+                              ((prov.config as Record<string, unknown>).available_models as string[])) ??
+                            [];
+                          return (
+                            <ChainChip
+                              editable={canWrite}
+                              key={item.provider + i}
+                              order={i + 1}
+                              providerId={item.provider}
+                              model={item.model}
+                              availableModels={avail}
+                              canMoveUp={i > 0}
+                              canMoveDown={i < chain.length - 1}
+                              onChangeModel={(m) => handleChangeModel(t.key, i, m)}
+                              onRemove={() => handleRemoveFromTask(t.key, i)}
+                              onMoveUp={() => handleMove(t.key, i, i - 1)}
+                              onMoveDown={() => handleMove(t.key, i, i + 1)}
+                            />
+                          );
+                        })}
+                        {canWrite && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 gap-1 rounded-full border-dashed text-xs text-muted-foreground"
+                            onClick={() => setAddTask(t.key)}
+                          >
+                            <Plus className="h-3 w-3" />
+                            添加
+                          </Button>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {credOpen && (
         <ProviderCredentialDialog

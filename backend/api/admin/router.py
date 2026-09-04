@@ -12,6 +12,7 @@ from backend.api.admin.customizations import router as customizations_router
 from backend.api.admin.data_sources import router as data_sources_router
 from backend.api.admin.leads import router as leads_router
 from backend.api.admin.llm_providers import router as llm_providers_router
+from backend.api.admin.model_runtime import router as model_runtime_router
 from backend.api.admin.sync_logs import router as sync_logs_router
 from backend.api.admin.sync_runs import router as sync_runs_router
 from backend.api.admin.system import router as system_router
@@ -38,3 +39,4 @@ admin_router.include_router(tech_router)
 admin_router.include_router(business_router)
 admin_router.include_router(system_router)
 admin_router.include_router(widget_appearance_router)
+admin_router.include_router(model_runtime_router)

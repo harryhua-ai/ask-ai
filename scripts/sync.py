@@ -76,6 +76,7 @@ from backend.embedder.fallback import (
     _build_sync_embedder,
     _terminal_sync_embedder,
 )
+from backend.embedder.remote import build_remote_sync_embedder
 from backend.pipeline.ingest import IngestionPipeline
 from backend.services.source_lifecycle import sync_eligible_condition
 from backend.services.sync_runs import (
@@ -95,10 +96,23 @@ logger = logging.getLogger(__name__)
 
 
 def build_sync_embedder(settings) -> SyncEmbedderHandle:
-    """Build the sync handle through the W1 fallback factory."""
-    # Keep the existing scripts.sync.BGEEmbedder seam for offline tests while
-    # the public factory and lifecycle implementation live in backend/embedder.
-    return _build_sync_embedder(settings, BGEEmbedder)
+    """构造 sync 嵌入句柄(Hardware-Aware Runtime)。
+
+    默认 = 共享运行时客户端:sync 不再自载模型,经内部嵌入端点消费 backend
+    的单一驻留实例(同模型+同 GPU → 至多一个活跃运行时;GPU→CPU 单向回退
+    由服务端完成并如实镜像进遥测)。
+
+    ``ASKAI_SYNC_EMBEDDER=local`` 保留既有进程内 GPU-first 工厂(离线测试 /
+    本地联调逃生口);生产 compose 不设置该变量。
+    """
+    import os
+
+    mode = os.environ.get("ASKAI_SYNC_EMBEDDER", "remote").strip().lower()
+    if mode == "local":
+        # Keep the existing scripts.sync.BGEEmbedder seam for offline tests while
+        # the public factory and lifecycle implementation live in backend/embedder.
+        return _build_sync_embedder(settings, BGEEmbedder)
+    return build_remote_sync_embedder(settings)
 
 
 def _parse_weaviate_endpoint(weaviate_url: str) -> tuple[str, int]:

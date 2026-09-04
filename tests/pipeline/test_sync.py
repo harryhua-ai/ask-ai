@@ -45,13 +45,19 @@ def _make_config(
 
 
 def _make_settings() -> MagicMock:
-    """构造默认 Settings mock,字段值与 run_sync 期望一致。"""
+    """构造默认 Settings mock,字段值与 run_sync 期望一致。
+
+    jwt_secret / internal_api_base_url 给定真实字符串:默认 remote 同步嵌入
+    句柄在构造期派生内部令牌(HMAC 需 str key);测试不真正发请求。
+    """
     settings = MagicMock()
     settings.config_dir = Path("/tmp/fake-config")
     settings.postgres_dsn = "postgresql+asyncpg://user:pwd@localhost/db"
     settings.weaviate_url = "http://localhost:8080"
     settings.weaviate_class_name = "Document"
     settings.embedder_device = "cpu"
+    settings.jwt_secret = "test-jwt-secret"
+    settings.internal_api_base_url = "http://127.0.0.1:9"
     return settings
 
 
