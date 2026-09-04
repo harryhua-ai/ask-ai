@@ -493,12 +493,22 @@ class TestStreamCitationGolden:
         assert second_answer == "第二轮[1]"
 
     async def test_cit_g010_zero_content_still_raises(self):
-        """CIT-G010:零可用内容仍抛 EmptyGenerationError,不被校验层伪装成功。"""
+        """CIT-G010(Issue #19 修订):标记耗尽 → 不足语义 complete,绝伪装成功。
+
+        旧合约:零可用内容抛 EmptyGenerationError。Issue #19(Empty-
+        Generation Contract)将 C 型(资格耗尽:唯一内容是被剔除标记)映射
+        为显式不足语义(complete is_answered=False + result_key),与
+        B 型(模型零内容,无剔除→仍抛 EmptyGenerationError)分型。
+        安全不变量不变:绝不伪装成功。"""
         a = _make_sr(text="A", title="A", url="https://e.com/a", source_id="a")
-        # 流唯一内容是悬空标记 [99] → 被校验层剔除后零可用内容 → 仍走 P1 失败语义
+        # 流唯一内容是悬空标记 [99] → 被校验层剔除后零可用内容 → C 型不足语义
         rag, _, _, _ = _build_orchestrator(reranked_results=[a], stream_chunks=["[99]"])
-        with pytest.raises(EmptyGenerationError):
-            await _collect_stream(rag)
+        events = await _collect_stream(rag)
+        completes = [e for e in events if e["type"] == "complete"]
+        assert len(completes) == 1
+        assert completes[0]["is_answered"] is False
+        assert completes[0]["result_key"] == "no_evidence"  # 无产品边界 → 既有拒答键
+        assert not any(e["type"] == "token" for e in events)
 
     async def test_prompt_contract_carries_evidence_binding(self):
         """CIT-02 prompt 契约:证据绑定与禁止编造数值的要求进入用户消息。"""

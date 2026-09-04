@@ -341,6 +341,9 @@ async def ask(
                     {
                         "conversation_id": conversation_id,
                         "kind": failure_kind,
+                        # Issue #19(Empty-Generation Contract):B 型(模型零
+                        # 内容)附确定性 reason 供观测/重试决策;客户端可忽略
+                        "reason": ("model_empty_stream" if failure_kind == "empty_generation" else None),
                         # message 恒保留(旧客户端兼容);message_key 为
                         # 阶段⑯新增的可选结构化身份,新客户端可据此映射
                         "message": localized_message(SERVICE_UNAVAILABLE_KEY, language),

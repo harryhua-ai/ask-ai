@@ -116,13 +116,22 @@ async def test_int_chk_002a_zero_generation_still_explicit_failure():
 
 @pytest.mark.asyncio
 async def test_int_chk_002b_citation_only_generation_with_all_dangling_is_failure():
-    """INT-CHK-002b:生成内容只有被剔除的悬空引用 → 不许伪装成功。"""
+    """INT-CHK-002b(Issue #19 修订):生成内容只有被剔除的悬空引用 → 不许伪装成功。
+
+    旧合约断言抛 EmptyGenerationError;Issue #19 Empty-Generation Contract
+    将该 C 型(资格耗尽)映射为显式不足语义 —— 失败属性不变
+    (is_answered=False + result_key=no_evidence),只是不再谎报服务故障。"""
     rag, _ = _build(
         [PUBLIC_SR],
         mapping={"website-camthink": ("widget", "api")},
         stream_chunks=["[9] [7]"],  # 只有 1 个可见源 → 全部悬空被剔
     )
 
-    with pytest.raises(EmptyGenerationError):
-        async for _ in rag.stream_answer("工作温度", "widget"):
-            pass
+    completes = []
+    async for raw in rag.stream_answer("工作温度", "widget"):
+        e = json.loads(raw)
+        if e.get("type") == "complete":
+            completes.append(e)
+    assert len(completes) == 1
+    assert completes[0]["is_answered"] is False
+    assert completes[0]["result_key"] == "no_evidence"

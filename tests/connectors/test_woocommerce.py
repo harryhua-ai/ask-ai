@@ -182,15 +182,30 @@ def test_woocommerce_html_cleaning_handles_malformed_tags_and_keeps_lt():
 
 @pytest.mark.unit
 def test_woocommerce_category_to_product_mapping():
-    """category name → product 映射(NE301→ne301,无匹配→commercial)。"""
+    """category name → product 映射(Issue #19 RC2:设备类别优先,无匹配→commercial)。"""
     import backend.connectors.woocommerce  # noqa: F401
 
     cfg = _make_config()
     connector = ConnectorRegistry.create(cfg)
     assert connector._category_to_product([{"name": "NE301"}]) == "ne301"
-    assert connector._category_to_product([{"name": "Accessories"}]) == "accessories"
+    # Issue #19:accessories 归一 canonical commercial(与 #5 迁移后生产数据
+    # 一致;旧 "accessories" 标签会造成 ingest 与存量 canonical 漂移)
+    assert connector._category_to_product([{"name": "Accessories"}]) == "commercial"
     assert connector._category_to_product([{"name": "Unknown"}]) == "commercial"
     assert connector._category_to_product([]) == "commercial"
+
+
+def test_woocommerce_device_category_wins_over_broad_category():
+    """Issue #19(RC2):设备类别先于广品线类别判定,不被列表序抢注。"""
+    cfg = _make_config()
+    connector = ConnectorRegistry.create(cfg)
+    # 旧实现按列表序先命中先胜:["AI Cameras", "NE301"] → aitoolstack(错误)
+    assert (
+        connector._category_to_product([{"name": "AI Cameras"}, {"name": "NE301"}])
+        == "ne301"
+    )
+    # 广品线仍可在无设备类别时兜底
+    assert connector._category_to_product([{"name": "AI Cameras"}]) == "aitoolstack"
 
 
 @pytest.mark.unit
@@ -211,15 +226,16 @@ def test_woocommerce_category_mapping_decodes_html_entities():
     )
     # AI Cameras 实体安全
     assert connector._category_to_product([{"name": "AI Cameras"}]) == "aitoolstack"
-    # 多 category:列表顺序遍历,先命中者胜出(Real-Run 中 AI Cameras 在 NE 前时→aitoolstack,
-    # 与 plan M1 期望 aitoolstack=AI Cameras(5)+Edge AI Boxes(2)+Modules&Dev Kits(14)=21 一致)
+    # Issue #19(RC2):设备类别优先于广品线,不再按列表序先命中先胜 ——
+    # 真实设备页(["AI Cameras","NE301"])必须归 ne301(旧行为=aitoolstack
+    # 是商店设备身份丢失的根因,详见 Discovery §5)
     assert (
         connector._category_to_product(
             [{"name": "AI Cameras"}, {"name": "NE301"}]
         )
-        == "aitoolstack"  # AI Cameras 在前,先命中
+        == "ne301"  # 设备类别优先(RC2 修正;旧=aitoolstack 抢注)
     )
-    # 反序:NE301 在前 → ne301
+    # 反序:NE301 在前 → ne301(顺序无关)
     assert (
         connector._category_to_product(
             [{"name": "NE301"}, {"name": "AI Cameras"}]

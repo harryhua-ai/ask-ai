@@ -58,6 +58,7 @@ from backend.product_taxonomy import UNKNOWN_SLUG, get_taxonomy
 from backend.retrieval.search import SearchResult
 from backend.utils.language import detect_language, resolve_answer_language
 from backend.utils.user_messages import (
+    COMPARISON_EVIDENCE_INSUFFICIENT_KEY,
     NO_EVIDENCE_KEY,
     PRODUCT_AMBIGUOUS_KEY,
     PRODUCT_EVIDENCE_INSUFFICIENT_KEY,
@@ -159,6 +160,93 @@ def _product_insufficient_reply(
             PRODUCT_EVIDENCE_INSUFFICIENT_KEY,
         )
     return _reject_answer(language), NO_EVIDENCE_KEY
+
+
+def _comparison_insufficient_reply(
+    language: str,
+    resolution: ProductResolution,
+    taxonomy: Any,
+    missing_targets: tuple[str, ...],
+) -> tuple[str, str]:
+    """Issue #19(Evidence Contract):比较模式证据不足 → 按目标明示缺侧。
+
+    ``missing`` = 缺官方资料的 target 展示名(其余 target 即有支持侧);
+    文案为 user_messages 冻结键,禁止在此拼装自由文本。
+    """
+    display_all = "、".join(taxonomy.display_name(t) for t in resolution.targets)
+    display_missing = "、".join(taxonomy.display_name(t) for t in missing_targets)
+    return (
+        localized_message(
+            COMPARISON_EVIDENCE_INSUFFICIENT_KEY,
+            language,
+            products=display_all,
+            missing=display_missing,
+        ),
+        COMPARISON_EVIDENCE_INSUFFICIENT_KEY,
+    )
+
+
+def _merge_per_target_candidates(
+    fused_per_target: list[list[Any]],
+    targets: tuple[str, ...],
+    taxonomy: Any,
+    top_k: int,
+) -> tuple[list[Any], dict[str, Any]]:
+    """Issue #19(RC1):comparison 证据的结构化 per-target 归属合并。
+
+    每个 target 以「自身资格标签集」独立检索(共享/平台证据由各路资格集
+    天然带回)后,按轮转配额合并,使每侧标注证据**结构性地**进入候选 ——
+    不再依赖单一查询语义排序决定哪侧证据幸存:
+
+    - 每 target 自身标注候选保留至 ``quota = max(1, top_k // n)`` 条;
+    - 共享/平台/超额槽位 = ``top_k - n * quota``(按出现序去重回填);
+    - 跨路去重键 = ``(source_id, chunk_index)``。
+
+    Returns:
+        (合并候选, product_scope 追加 stage:配额/保留计数/合并后缺失侧;
+         缺失侧由合并结果统计,是 D 前置检查的确定性输入)
+    """
+    n = max(1, len(targets))
+    quota = max(1, top_k // n)
+    rest_cap = max(0, top_k - n * quota)
+    target_slugs = set(targets)
+    seen: set[tuple[str, int]] = set()
+    own: dict[str, list[Any]] = {t: [] for t in targets}
+    rest: list[Any] = []
+    for results in fused_per_target:
+        for r in results:
+            key = (r.source_id, r.chunk_index)
+            if key in seen:
+                continue
+            seen.add(key)
+            slug = taxonomy.canonicalize(r.product) or UNKNOWN_SLUG
+            if slug in target_slugs and len(own[slug]) < quota:
+                own[slug].append(r)
+            elif len(rest) < rest_cap:
+                rest.append(r)
+    merged: list[Any] = []
+    pools = [list(own[t]) for t in targets]
+    while any(pools):
+        for pool in pools:
+            if pool:
+                merged.append(pool.pop(0))
+    merged.extend(rest)
+    counts = {
+        t: sum(
+            1 for r in merged if (taxonomy.canonicalize(r.product) or UNKNOWN_SLUG) == t
+        )
+        for t in targets
+    }
+    missing = tuple(t for t in targets if counts[t] == 0)
+    stage = {
+        "per_target_quota": {
+            "quota": quota,
+            "rest_cap": rest_cap,
+            "own_kept": {t: counts[t] for t in targets},
+            "missing_after_merge": list(missing),
+        }
+    }
+    return merged, stage
 
 
 class EmptyGenerationError(RuntimeError):
@@ -1267,14 +1355,38 @@ class RAGOrchestrator:
 
         # 统一检索 + 三路 RRF 融合(与 answer 共用 _retrieve_and_fuse,保证 parity)
         t1 = time.monotonic()
-        fused, path_counts = await self._retrieve_and_fuse(
-            extracted,
-            search_query,
-            intent.category,
-            product_filter=product_filter,
-            channel=channel,
-            product_labels=scope_labels,
-        )
+        if resolution.mode == MODE_COMPARISON and scope_labels:
+            # Issue #19(RC1):comparison 结构化 per-target 证据获取 ——
+            # 每个 target 以「自身资格标签集」独立跑同一三路融合管线
+            # (共享/平台证据由各路资格集天然带回),再按轮转配额合并;
+            # 单查询语义排序不再决定哪侧证据进入上下文。
+            fused_per_target: list[list[Any]] = []
+            path_counts: dict[str, int] = {}
+            for _target in resolution.targets:
+                _results, _pc = await self._retrieve_and_fuse(
+                    extracted,
+                    search_query,
+                    intent.category,
+                    product_filter=product_filter,
+                    channel=channel,
+                    product_labels=taxonomy.eligible_labels((_target,)),
+                )
+                fused_per_target.append(_results)
+                for _k, _v in _pc.items():
+                    path_counts[_k] = path_counts.get(_k, 0) + _v
+            fused, quota_stage = _merge_per_target_candidates(
+                fused_per_target, resolution.targets, taxonomy, self._top_k
+            )
+            product_scope_stage.update(quota_stage)
+        else:
+            fused, path_counts = await self._retrieve_and_fuse(
+                extracted,
+                search_query,
+                intent.category,
+                product_filter=product_filter,
+                channel=channel,
+                product_labels=scope_labels,
+            )
         search_ms = int((time.monotonic() - t1) * 1000)
 
         t2 = time.monotonic()
@@ -1306,6 +1418,90 @@ class RAGOrchestrator:
             ]
             if pre_defensive != len(reranked):
                 product_scope_stage["ineligible_filtered"] = pre_defensive - len(reranked)
+
+        # Issue #19(D-preflight / Evidence Contract):comparison 模式下任一
+        # target 缺自身标注证据 ⇒ 显式不足语义(明示缺侧),禁止静默降级为
+        # 单目标、也不进入必然证据饥饿的生成。以最终候选(经 rerank/prune/
+        # 纵深过滤)统计,是诚实口径。
+        if resolution.mode == MODE_COMPARISON and scope_labels:
+            _own_after = {
+                _t: sum(
+                    1
+                    for _r in reranked
+                    if (taxonomy.canonicalize(_r.product) or UNKNOWN_SLUG) == _t
+                )
+                for _t in resolution.targets
+            }
+            product_scope_stage.setdefault("per_target_quota", {})[
+                "own_after_rerank"
+            ] = _own_after
+            _missing = tuple(_t for _t, _c in _own_after.items() if _c == 0)
+            if _missing:
+                elapsed = int((time.monotonic() - start) * 1000)
+                reject_text, reject_key = _comparison_insufficient_reply(
+                    language, resolution, taxonomy, _missing
+                )
+                # 拒答前收敛 lead 判定任务(与空检索拒答同纪律:未展示回答
+                # 则不展示邀请,qualified 信号照常收敛)
+                reject_lead_payload: dict[str, Any] | None = None
+                if lead_qual_task is not None:
+                    try:
+                        reject_qual = await lead_qual_task
+                        reject_lead_payload = {
+                            "ran": bool(reject_qual and reject_qual.ran),
+                            "level": reject_qual.level if reject_qual else "none",
+                            "invited": False,
+                            "ack": False,
+                            "explicit_sales_request": bool(
+                                reject_qual and reject_qual.explicit_sales_request
+                            ),
+                            "fields": reject_qual.fields.non_empty() if reject_qual else {},
+                            "summary": reject_qual.summary if reject_qual else "",
+                            "ms": None,
+                        }
+                    except Exception:  # noqa: BLE001 — 与 _run_qualifier 同为 fail-open
+                        reject_lead_payload = None
+                yield json.dumps(
+                    {
+                        "type": "complete",
+                        "answer": reject_text,
+                        "sources": [],
+                        "is_answered": False,
+                        "language": language,
+                        "response_time_ms": elapsed,
+                        "intent": intent.category,
+                        "result_key": reject_key,
+                        "trace_payload": {
+                            "type": "reject_short",
+                            "stages": {
+                                "intent": {
+                                    "ms": intent_ms,
+                                    "category": intent.category,
+                                    "reason": intent.reason,
+                                },
+                                "rewrite": {
+                                    "ms": rewrite_ms,
+                                    "extracted": extracted,
+                                    "rewritten": search_query,
+                                },
+                                **(
+                                    {"product_scope": product_scope_stage}
+                                    if product_scope_in_trace
+                                    else {}
+                                ),
+                            },
+                            "total_ms": elapsed,
+                            "intent": intent.category,
+                            "confidence": intent.confidence,
+                            "config_snapshot": {
+                                **self._config_snapshot(),
+                                "result_key": reject_key,
+                            },
+                        },
+                        "lead": reject_lead_payload,
+                    }
+                )
+                return
 
         if len(reranked) < effective_min:
             # P1 兜底:rerank 滤光但 fused 非空时降级用 fused top-N(与 answer 同策略)
@@ -1502,6 +1698,82 @@ class RAGOrchestrator:
         # = 异常完成,禁止以 complete(is_answered=True) 伪装成功;抛给 SSE 层
         # 统一降级为用户可见失败(与首 token 前异常共用同一条降级通道)。
         if not full_answer.strip():
+            # Issue #19(Empty-Generation Contract):先分型再降级 ——
+            # C 型(资格耗尽:流内唯一内容是已被剔除的悬空/无据/产品不合格
+            # 标记)是**确定性的证据/资格问题**,绝非服务故障,按产品/比较
+            # 不足语义返回;B 型(模型零内容,无任何剔除发生)维持既有
+            # EmptyGenerationError → service_unavailable 降级(重试语义成立)。
+            _drop_total = (
+                citation_filter.stats.get("dangling_dropped", 0)
+                + citation_filter.stats.get("unsupported_dropped", 0)
+                + citation_filter.stats.get("ineligible_product_dropped", 0)
+            )
+            if _drop_total > 0:
+                logger.warning(
+                    "CIT 资格耗尽(drops=%d)→ 不足语义: query=%d chars, sources=%d",
+                    _drop_total,
+                    len(query),
+                    len(sources),
+                )
+                if resolution.mode == MODE_COMPARISON and scope_labels:
+                    text, key = _comparison_insufficient_reply(
+                        language, resolution, taxonomy, resolution.targets
+                    )
+                else:
+                    text, key = _product_insufficient_reply(language, resolution, taxonomy)
+                elapsed = int((time.monotonic() - start) * 1000)
+                # 未向客户端产出任何 token:lead 邀请与拒答同纪律收敛
+                exhaust_lead_payload: dict[str, Any] | None = None
+                if lead_qual_task is not None:
+                    try:
+                        exhaust_qual = await lead_qual_task
+                        exhaust_lead_payload = {
+                            "ran": bool(exhaust_qual and exhaust_qual.ran),
+                            "level": exhaust_qual.level if exhaust_qual else "none",
+                            "invited": False,
+                            "ack": False,
+                            "explicit_sales_request": bool(
+                                exhaust_qual and exhaust_qual.explicit_sales_request
+                            ),
+                            "fields": exhaust_qual.fields.non_empty() if exhaust_qual else {},
+                            "summary": exhaust_qual.summary if exhaust_qual else "",
+                            "ms": None,
+                        }
+                    except Exception:  # noqa: BLE001 — fail-open
+                        exhaust_lead_payload = None
+                yield json.dumps(
+                    {
+                        "type": "complete",
+                        "answer": text,
+                        "sources": [],
+                        "is_answered": False,
+                        "language": language,
+                        "response_time_ms": elapsed,
+                        "intent": intent.category,
+                        "result_key": key,
+                        "trace_payload": {
+                            "type": "reject_short",
+                            "stages": {
+                                "generate": {"ms": int((time.monotonic() - t3) * 1000)},
+                                "citation_integrity": {**cite_ctx.stats, **citation_filter.stats},
+                                **(
+                                    {"product_scope": product_scope_stage}
+                                    if product_scope_in_trace
+                                    else {}
+                                ),
+                            },
+                            "total_ms": elapsed,
+                            "intent": intent.category,
+                            "confidence": intent.confidence,
+                            "config_snapshot": {
+                                **self._config_snapshot(),
+                                "result_key": key,
+                            },
+                        },
+                        "lead": exhaust_lead_payload,
+                    }
+                )
+                return
             logger.error(
                 "LLM 流正常结束但零可用内容: query=%d chars, sources=%d, llm_ms=%d",
                 len(query),

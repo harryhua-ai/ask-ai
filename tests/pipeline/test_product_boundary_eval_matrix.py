@@ -260,8 +260,13 @@ async def test_scenario_H_comparison_allowed_and_attributed():
     rag, searcher, llm = _rag([NE301_FW, NE503_FW])
     events = await _collect(rag, "NE301 和 NE503 的固件升级方式有什么区别?")
     complete = _complete(events)
-    expected = TAX.eligible_labels(("ne301", "ne503"))
-    assert all(labels == expected for labels in searcher.calls)
+    # Issue #19(RC1):comparison → per-target 检索(每个 target 以自身
+    # 资格标签集独立调用一次;共享证据由单 target 资格集天然包含)
+    # 每路 _retrieve_and_fuse 中 fake 记录 hybrid + symbols 两次调用
+    expected_calls = (
+        [TAX.eligible_labels(("ne301",))] * 2 + [TAX.eligible_labels(("ne503",))] * 2
+    )
+    assert searcher.calls == expected_calls  # 该 fake 直接记录 label 列表
     system = llm.last_messages[0]["content"]
     assert "比较多个产品" in system and "按产品分节" in system
     user = llm.last_messages[-1]["content"]

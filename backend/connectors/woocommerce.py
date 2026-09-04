@@ -34,16 +34,45 @@ from backend.connectors.registry import ConnectorRegistry, SourceConfig
 logger = logging.getLogger(__name__)
 
 # category name(小写) → product 标识
-# AI Cameras / Edge AI Boxes / Modules & Dev Kits 归 aitoolstack(广品线)
-_CATEGORY_MAP = {
+# 设备类别(具体型号)优先判定;广品线(AI Cameras / Edge AI Boxes /
+# Modules & Dev Kits)仅作设备类别未命中时的回退 —— Issue #19(RC2):
+# 旧实现按 categories 列表序先命中先胜,真实设备页(categories=
+# ["AI Cameras", "NE301"])被广品线抢注为 aitoolstack,导致
+# 设备身份在商店元数据中丢失(比较查询证据饥饿的直接成因)。
+_DEVICE_CATEGORY_MAP = {
     "ne101": "ne101",
     "ne301": "ne301",
+    "ne302": "ne302",
     "ne503": "ne503",
-    "accessories": "accessories",
+    "ng4500": "ng4500",
+}
+_BROAD_CATEGORY_MAP = {
     "ai cameras": "aitoolstack",
     "edge ai boxes": "aitoolstack",
     "modules & dev kits": "aitoolstack",
 }
+
+
+def _device_identity_from_text(text: str) -> str | None:
+    """从产品名/slug/URL 文本确定性派生设备身份(Issue #19 Store Identity)。
+
+    走 taxonomy 别名扫描(与问答侧同一词表,零 LLM),只认 ``kind=product``
+    的设备 slug —— aitoolstack/neomind 等 platform 桶不是设备身份,不在此
+    认领;无设备命中返回 ``None``(调用方回退类别映射,**禁止猜测**)。
+
+    连接器 ingest(name+slug)与元数据迁移(title+url)共用本函数,
+    保证两侧派生语义逐字一致。
+    """
+    if not text:
+        return None
+    from backend.product_taxonomy import get_taxonomy
+
+    taxonomy = get_taxonomy()
+    for slug in taxonomy.extract_products(text):
+        entity = taxonomy.entity(slug)
+        if entity is not None and entity.kind == "product":
+            return slug
+    return None
 
 
 class _HTMLTextExtractor(HTMLParser):
@@ -175,25 +204,26 @@ class WooCommerceConnector:
     def _category_to_product(categories: list[dict]) -> str:
         """category name → product 标识(无匹配 → commercial)。
 
-        WooCommerce API 返回的 category name 可能含 HTML 实体(如
-        ``Modules &amp; Dev Kits``),故先 ``html.unescape`` 解码再匹配。
-
-        多 category 产品(如 ``['AI Cameras', 'NE301']``)按列表顺序遍历,
-        先命中者胜出 — Real-Run 中 AI Cameras 通常排在 NE 前故归 aitoolstack,
-        与 plan M1 期望一致(aitoolstack = AI Cameras + Edge AI Boxes +
-        Modules & Dev Kits = 21)。
+        Issue #19(RC2)修正:**设备类别优先于广品线类别** —— 先查
+        ``_DEVICE_CATEGORY_MAP``,任一 category 命中具体型号即返回;全部
+        未命中再查 ``_BROAD_CATEGORY_MAP``(aitoolstack 广品线),最后
+        commercial 兜底。旧实现按列表序先命中先胜,设备页被广品线抢注。
 
         Args:
             categories: product JSON 的 ``categories`` 字段
                 (``[{"name": "NE301", ...}, ...]``)。
 
         Returns:
-            product 标识(ne101/ne301/ne503/accessories/aitoolstack/commercial)。
+            product 标识(ne101/ne301/ne302/ne503/ng4500/commercial/
+            aitoolstack)。
         """
-        for cat in categories or []:
-            name = unescape(cat.get("name") or "").lower()
-            if name in _CATEGORY_MAP:
-                return _CATEGORY_MAP[name]
+        names = [unescape(cat.get("name") or "").lower() for cat in categories or []]
+        for name in names:
+            if name in _DEVICE_CATEGORY_MAP:
+                return _DEVICE_CATEGORY_MAP[name]
+        for name in names:
+            if name in _BROAD_CATEGORY_MAP:
+                return _BROAD_CATEGORY_MAP[name]
         return "commercial"
 
     def _product_to_document(self, p: dict) -> RawDocument:
@@ -227,7 +257,13 @@ class WooCommerceConnector:
         ]
         content = "\n\n".join(part for part in parts if part)
         content_hash = hashlib.sha256(content.encode()).hexdigest()
-        product_tag = self._category_to_product(p.get("categories", []))
+        # Issue #19(Store Identity Contract):设备身份优先由产品名+slug
+        # 确定性派生(与迁移脚本同一函数);类别映射仅作回退,且设备类别
+        # 先于广品线类别判定。
+        product_tag = (
+            _device_identity_from_text(f"{name} {p.get('slug', '')}")
+            or self._category_to_product(p.get("categories", []))
+        )
 
         return RawDocument(
             source_id=f"{self._config.id}/{pid}",
