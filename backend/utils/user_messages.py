@@ -17,6 +17,10 @@ NO_EVIDENCE_KEY = "no_evidence"
 PRODUCT_AMBIGUOUS_KEY = "product_ambiguous"
 PRODUCT_EVIDENCE_INSUFFICIENT_KEY = "product_evidence_insufficient"
 PRODUCT_NOT_SUPPORTED_KEY = "product_not_supported"
+# Issue #19(Evidence Contract):比较模式下单侧/双侧目标证据缺失的专属键;
+# 与 product_evidence_insufficient 的区别:按 target 明示缺侧,语义为
+# 「无法完成完整对比」而非「单产品无资料」。
+COMPARISON_EVIDENCE_INSUFFICIENT_KEY = "comparison_evidence_insufficient"
 
 MESSAGE_KEYS = frozenset(
     {
@@ -26,6 +30,7 @@ MESSAGE_KEYS = frozenset(
         PRODUCT_AMBIGUOUS_KEY,
         PRODUCT_EVIDENCE_INSUFFICIENT_KEY,
         PRODUCT_NOT_SUPPORTED_KEY,
+        COMPARISON_EVIDENCE_INSUFFICIENT_KEY,
     }
 )
 
@@ -57,6 +62,15 @@ _MESSAGES: dict[str, dict[str, str]] = {
         "zh": "您询问的产品暂不在支持范围内,请尝试询问 CamThink 产品相关问题。",
         "en": "The product you asked about is not in my supported scope. "
         "Please ask about CamThink products.",
+    },
+    # Issue #19(Evidence Contract):{products}=本轮全部目标展示名,
+    # {missing}=缺官方资料侧展示名;明示哪侧缺、哪侧已有支持,不建议重试。
+    COMPARISON_EVIDENCE_INSUFFICIENT_KEY: {
+        "zh": "官方资料中暂未找到 {missing} 的相关说明,暂时无法完成 {products} "
+        "的完整对比;已就其余产品提供现有资料。",
+        "en": "I couldn't find official information about {missing}, so I can't "
+        "complete a full comparison of {products} yet. Information is available "
+        "for the other product(s).",
     },
 }
 

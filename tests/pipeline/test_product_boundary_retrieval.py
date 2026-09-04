@@ -334,8 +334,11 @@ async def test_comparison_mode_prompt_and_scope():
     rag, searcher, llm = _build([NE503_DOC, NE301_DOC])
     events = await _collect(rag, "NE301 和 NE503 哪个续航长?")
     complete = _complete(events)
-    expected = TAX.eligible_labels(("ne301", "ne503"))
-    assert searcher.calls[0]["product_labels"] == expected
+    # Issue #19(RC1):comparison → per-target 检索;每路融合含
+    # hybrid + symbols + bucket 三次 searcher 调用,标签 = 该 target 资格集
+    assert [c["product_labels"] for c in searcher.calls] == (
+        [TAX.eligible_labels(("ne301",))] * 3 + [TAX.eligible_labels(("ne503",))] * 3
+    )
     system = llm.last_messages[0]["content"]
     assert "比较" in system
     assert "NeoEye NE301" in system and "NeoEye NE503" in system
