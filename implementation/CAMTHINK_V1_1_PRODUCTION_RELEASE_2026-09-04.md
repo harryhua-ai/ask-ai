@@ -2,9 +2,10 @@
 
 - 日期:2026-09-04
 - 角色:Engineering Executor
-- STATUS:**PRODUCTION CANDIDATE READY**
-- RECOMMENDED_PRODUCTION_VERDICT:**FINAL PRODUCTION PASS**(建议;决定权在 Planner)
-- 执行边界:按 §22 已 **STOP BEFORE TAGGING** —— 未打 tag、未建 GitHub Release、未关 #22/#24、未动 Roadmap
+- STATUS:**PARTIAL**(2026-09-04 容量门更新;原 PRODUCTION CANDIDATE READY 结论被下方「容量门」节**取代/更正**)
+- RECOMMENDED_PRODUCTION_VERDICT:**不适用**(原 FINAL PASS 建议作废;容量证据因候选缺陷不可判定,详见下方容量门节 §C/§R)
+- 执行边界:两轮门均 **STOP BEFORE TAGGING** —— 未打 tag、未建 GitHub Release、未关 #22/#24、未动 Roadmap
+- **最新节**:「== 容量门(RELEASE CANDIDATE 72cdcbf)==」(本文档下半部),含强制 RCA 更正
 
 ---
 
@@ -159,3 +160,177 @@ v1.1.0
 ## RECOMMENDED_PRODUCTION_VERDICT
 
 **FINAL PRODUCTION PASS**(建议)—— MAIN 集成/CI/迁移/部署/验收/观察全链通过;唯一次生事件(GPU OOM)为宿主环境既有状况、已自愈并经 8 分钟稳定窗复验,不影响发布物正确性。Planner 拍板后进入 §16 正式化(v1.1.0 tag → GitHub Release → #22/#24 closure → Roadmap)。
+
+---
+
+# == 容量门(RELEASE CANDIDATE 72cdcbf)== 2026-09-04 追加;本节取代上方旧结论
+
+> 本节依「MAIN INTEGRATION + PRODUCTION CAPACITY GATE(STATUS: AUTHORIZED)」执行。
+> 上半部(b7a016d 发布门)中 KNOWN_LIMITATIONS #1/#5 的「孤儿进程」归因被本节
+> §P **强制更正**;其 FINAL PASS 建议作废——容量证据当时即未采集, Planner 未授予。
+
+## A. RELEASE_CANDIDATE / MAIN_INTEGRATION
+
+| 项 | 证据 |
+|---|---|
+| RELEASE_CANDIDATE | **72cdcbf**(REV2;Planner verdict: ENGINEERING FINAL PASS) |
+| 集成前 origin/main | `b7a016d…`(fetch 后核验,与门声明一致) |
+| merge-base / ahead-behind | `b7a016d`;0 behind / 3 ahead(FF 可行) |
+| 谱系 | `b7a016d → 35785a4(REV0) → 1e58dbd(REV1) → 72cdcbf(REV2)`,**fast-forward only** |
+| 推送后 | `origin/main == main == 72cdcbf6a704138bd9a591d4cdf2a2c1884bf6d4` |
+| 工作树注记 | 主仓检出原为陈旧分支 `codex/issue-14-w1-sync-runtime-reliability`(内容早已被吸收;分支未动);`.gitignore` 一行**既有未提交本地卫生行**(`ght/`)与候选树零交集——stash→FF→恢复,披露不隐瞒 |
+
+## B. HOSTED_CI / IMAGE_PROVENANCE
+
+- CI_RUN **33878095495**(head_sha 核验 = 72cdcbf6…):test ✅ + build-and-push ✅
+- IMAGE_TAG `ghcr.io/harryhua-ai/ask-ai:sha-72cdcbf`
+- IMAGE_DIGEST `sha256:d174819fa44e233f224c5cad029eef02d5f2628a69157f30eed70ca55c95b0ba`
+- IMAGE_ID `sha256:4693d92ac826…`(生产 inspect)
+- RELEASE.json:`git_sha=72cdcbf6a704…` 全串、`ci_run_id=33878095495`(fail-closed 实证;无浮动镜像歧义)
+
+## C. RUNTIME_PLAN — undecided(候选缺陷;容量验收不可判定的根因)
+
+实测:3 workloads configured=GPU/effective=GPU/loaded;shared_embedding_runtime=true;
+**plan.mode=`undecided`**(reason: GPU 预算不可读)、容量分级=`unknown` →
+**reranker_transient 未激活**,重排双驻留惰性物化(=v1.1 现状行为)。
+
+**根因(生产容器内实证)**:torch `get_device_properties().uuid` 产出**无前缀**
+`3caad314-…`,而容器内 `nvidia-smi --id=` 只认 `GPU-` 前缀形态:
+`read_gpu_memory(短uuid)=None`,同容器 `read_gpu_memory(None)` 与
+`read_gpu_memory("GPU-…")` 均正常(3100/16384)→ 单点 UUID 前缀格式不匹配。
+后果链:预算不可读 → undecided(fail-safe=维持双驻留)→ B3 瞬态驻留与 B4 预算
+驱动计划生产未激活;容量分级恒 unknown,UNSAFE/HEALTHY 无法如实呈现。
+
+**拟议 REV3(供 Planner 立项)**:`read_gpu_memory` 全卡查询 + 本地归一化匹配
+(strip `GPU-` 前缀)或 `--id` 前缀重试;单点小修 + 生产形态回归测试。
+
+**为何非 FAIL**:fail-safe 按设计工作(证据不可读→维持现状+如实 unknown,不臆造),
+§22 无任一实质失败条件;但 §12/§17 验收证据**不可判定**——按 §22 报 PARTIAL,不虚报。
+
+## D. PRE_DEPLOY_BASELINE(只读)
+
+- 生产 sha-b7a016d ×3 服务(healthy);镜像 `sha256:16f7c74e…`;
+- DB:`model_runtime_*` 两表**不存在**(迁移未跑过);`sync_runs.execution_device` 在位;
+- GPU:T4,UUID `GPU-3caad314-…`,**total 实测 16384 MiB**;used 15637/free 294;
+  三方 = server.py 3492 + llama-server 5910 + neomind 2188 = **11592 MiB(全程零触碰)**;
+  旧 backend 4044;有效容量 ≈ **4792 MiB**;
+- 口径注记:门书「≈15.56 GiB」为发现期口径;实测 16384 MiB——按 §17 依实测评判。
+
+## E. MIGRATION / DEPLOYMENT
+
+- 备份 `~/ask-ai-backups/ask_ai-pre-72cdcbf-20260904-212954.sql.gz`(6.5MB);
+- 迁移 ×2 幂等 ✓;两表建立、0 行(缺省=EMBEDDER_DEVICE 引导默认,GPU-first 保留,零回填);
+- 顺序 migration → backend(health 30s,git_sha 断言✓)→ sync-executor → sync-cron,
+  三服务统一 `sha-72cdcbf`,全程显式 ASKAI_IMAGE_TAG(无 latest 回落);
+- 回滚锚:`sha-b7a016d` + 全库备份;未触发。
+
+## F. 启动驻留 + GPU_MEMORY_TIMELINE(§10/§17)
+
+| 时点 | used/free (MiB) | ASK-AI 驻留 |
+|---|---|---|
+| 部署前 | 15637 / 294 | 4044(旧 backend,双模型) |
+| 新 backend 稳态(未 Ask) | 12831 / 3100 | **1238**(仅嵌入;重排权重在主机内存) |
+| Acceptance A 峰值 | **15335 / 596** | 嵌入+重排物化+激活 |
+| A 后稳态 | 15335 / 596 | 4070(双驻留形态,≈旧 4044) |
+| sync 嵌入后 | **15799 / 132** | 4070(分配器缓存 +460) |
+
+- **MINIMUM_HEADROOM = 132 MiB**(sync 嵌入缓存后);查询窗最低 596 MiB;
+- §10 的「瞬态生效→不再复现 4044 驻留」论证**前提不成立**(瞬态未激活)——移交 REV3;
+- 结构收益已兑现:sync 零模型装载/零 GPU 进程(与计划无关,恒生效)。
+
+## G. ASK_ONLY_ACCEPTANCE(§11)
+
+16/16 真实生产 Ask 成功;CUDA OOM=0(三服务全量日志 grep=0)。
+无 sync 基线 6 连问:TTFT 2.75–7.87s / E2E 4.29–8.84s;RAG 分段:rerank
+**1010–1871ms(GPU)**(旧 CPU 26.7s)、rewrite 468–766ms、search 50–73ms、
+ttft 305–618ms、llm_total 837–2710ms。无累积增长迹象(样本有限,见 UNKNOWN)。
+
+## H. TRANSIENT_RERANKER_ACCEPTANCE(§12)
+
+**N/A — 未激活**。双驻留下重排「首跳物化后保持驻留」为设计语义(证据:1238→15335→稳态 15335)。
+瞬态「用后卸载」显存证明需 REV3 后重测。不虚报。
+
+## I/J. SYNC_ACCEPTANCE + ASK_SYNC + SYNC_REPEATED_ASK(§13-15)
+
+- **真实嵌入同步(受控可逆测试文件注入 `experience/`,事后全清理)**:
+  run 547 `execution_device="gpu"`、fallback_reason=NULL、completed;
+  backend 日志 `POST /api/internal/embeddings 200`(来源=执行器容器);
+  执行器:零「加载 BGE」日志、**零 GPU 进程** → §16 单一模型所有权实证
+  (全机 4 个 compute PID:三方 3 个逐 PID 等于基线 + backend 1 个 4206 MiB);
+- **C**:sync 运行中 3/3 Ask 成功(TTFT 3.26–8.63s);
+- **D**:sync-all 滚动中 6/6 Ask 成功(TTFT 3.06–8.48s);20 分钟窗 18 runs 全
+  completed,无饥饿(公平性语义另有候选内确定性并发测试背书);
+- sync 嵌入后 free=132 MiB 紧态下探针 Ask 仍成功(分配器缓存复用),但该紧态
+  无法被容量分级呈现(unknown)——缺陷后果,强化 PARTIAL。
+
+## K. BUDGET CONTROL PLANE(§18,可逆)
+
+manual 4096 写入→DB 落库→快照如实(manual/undecided)→恢复 auto→DB 复核
+`auto/NULL`。保存-持久-恢复工作;「驱动计划」受同一读数缺陷阻断。生产未留变化。
+
+## L. ADMIN_ACCEPTANCE(§19,真浏览器经 SSH 隧道)
+
+模型配置双 Tab ✓;检索模型卡带「运行设备:Tesla T4 · GPU 0」硬件标签 ✓;LLM 流水线 ✓;
+模型运行:可用执行设备(T4+CPU)、三 workload 卡(configured/effective/状态 + 双共享徽标)、
+GPU 运行容量(自动管理=还原后状态)、容量与建议(容量未知/外部占用/ASK-AI 驻留 4.0GB/
+「运行计划:维持当前驻留(预算不可读)」)✓;无 System Information 蔓延;零变更操作(除 §18 可逆)。
+
+## M. ISSUE_22_SMOKE / ISSUE_24_SMOKE(§20)
+
+- #22:`preview-dirs` 200(生产路径实测);数据源页正常;无回归迹象;
+- #24:`site-config?site_id=camthink-wiki`(合法 Origin)返回 `launcher_icon=current /
+  launcher_shape=rounded-square / launcher_theme=auto` + 遗留桥 `launcher_style=current`;
+  widget.js 200。无回归迹象。
+
+## P. RCA_CORRECTION(强制更正)
+
+**更正前(错误)**:「孤儿 GPU 进程导致容量被占」(见上半部 KNOWN_LIMITATIONS #1/#5——作废)。
+**更正后(正确)**:此前观察到的 backend/sync GPU PID **全部可归属**(在役容器正常
+进程或 sync 运行期瞬态子进程,cgroup 归属实证),从不存在孤儿;结构性根因 =
+**(1) 进程本地重复模型驻留**(sync 子进程自载 BGE GPU 副本)+ **(2) backend
+嵌入+重排双模型常驻/峰值** 超出真实有效容量;本候选对症处置:单一模型所有权
+(backend 唯一持有,sync 经内部端点消费——§16 生产实证)、驻留计划(因 §C 缺陷
+本次未激活,REV3 激活)、有界 GPU 执行(已生效)。
+
+## Q. RISKS / UNKNOWN / ROLLBACK_STATUS
+
+- RISKS:①读数缺陷使容量分级不可见(HEALTHY/UNSAFE→全 unknown),sync 后 free
+  曾至 132 MiB 运营不可见;②双驻留下 A 窗最低 free=596 贴近 512 保留,并发/大批量
+  sync 下 OOM 风险真实(本次 16/16 零 OOM,样本有限);③生产 admin 默认密码既有隐患;
+- UNKNOWN:sync 缓存增长长窗收敛性;REV3 后实际 plan 判定;
+- ROLLBACK_STATUS:未触发;锚完备(`sha-b7a016d`+全库备份;迁移纯加表)。
+
+## S. §25 FINAL EXECUTOR RETURN 摘要
+
+| 字段 | 值 |
+|---|---|
+| STATUS | **PARTIAL** |
+| MAIN_BEFORE → MAIN_AFTER | `b7a016d…` → `72cdcbf6…`(FF;origin/main 核验一致) |
+| CI_RUN / CI_RESULT | 33878095495 / success(test+build-and-push,head_sha=72cdcbf) |
+| IMAGE_TAG / DIGEST / ID | sha-72cdcbf / `sha256:d174819f…` / `sha256:4693d92a…` |
+| MIGRATION_RESULT | ×2 幂等成功;两表 0 行;零回填 |
+| PRODUCTION_SHA | 72cdcbf6a704138bd9a591d4cdf2a2c1884bf6d4(三服务统一,/health 实证) |
+| RUNTIME_PLAN | **undecided**(读数缺陷)→ 双驻留回退;预期 transient 未激活 |
+| GPU_TOTAL | 16384 MiB(实测) |
+| EXTERNAL_GPU_USAGE | 11592 MiB(server.py 3492+llama 5910+neomind 2188;零触碰) |
+| ASKAI_STEADY_GPU | 4070 MiB(Ask 后双驻留稳态);启动期 1238(仅嵌入) |
+| ASKAI_PEAK_GPU | 15335 used 全窗(A 峰);sync 后 15799 |
+| MINIMUM_HEADROOM | **132 MiB**(sync 嵌入缓存后);查询窗 596 |
+| ASK_ONLY_RESULT | PASS:16/16,TTFT 2.75–7.87s,rerank GPU 1010–1871ms |
+| TRANSIENT_RERANKER_RESULT | **N/A / 未激活**(计划 undecided;REV3 后重测) |
+| SYNC_RESULT | PASS:run 547 execution_device=gpu + 内部端点 200 + 执行器零 GPU 进程 |
+| ASK_SYNC_RESULT | PASS:sync 中 3/3 Ask 成功 |
+| SYNC_REPEATED_ASK_RESULT | PASS:sync-all 中 6/6 + sync 后探针 1/1;20min 窗 18 runs 全 completed |
+| CUDA_OOM_COUNT | **0**(三服务全量日志) |
+| MODEL_OWNERSHIP_RESULT | 单一 backend 所有(4 PID=三方3+backend1);执行器/cron 零 GPU 模型 |
+| ADMIN_ACCEPTANCE | PASS(真浏览器;双 Tab/真相面/共享徽标/容量未知如实) |
+| ISSUE_22_SMOKE / ISSUE_24_SMOKE | PASS / PASS(preview-dirs 200;site-config 统一外观字段) |
+| RCA_CORRECTION | §P(孤儿结论作废;根因=进程本地重复驻留+双模型常驻/峰值) |
+| ROLLBACK_STATUS | 未触发;锚完备 |
+| RISKS / UNKNOWN | §Q |
+| REPORT_PATH | docs/implementation/CAMTHINK_V1_1_PRODUCTION_RELEASE_2026-09-04.md(本节) |
+| REPORT_COMMIT | docs 仓本提交 |
+| PRODUCTION_MUTATIONS | 上半部台账(作废部分以本节 §M/账本为准):镜像 pull+三服务更新(授权)、迁移×2、预算 manual→auto 还原、13 测试文档受控注入→全量清理(文件+weaviate 13 对象点删,复核归零)、/tmp 清理;**无 tag/Release/关单/三方触碰** |
+
+**STOP。未打 tag、未发 Release、未关 #22/#24。等待 Planner 裁定(建议:授权 REV3
+读数修复候选 → 重跑 §9-§12/§17-§18 四项 → 再议 FINAL PRODUCTION PASS)。**
