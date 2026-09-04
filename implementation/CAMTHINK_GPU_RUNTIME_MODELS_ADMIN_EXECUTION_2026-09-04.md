@@ -412,3 +412,67 @@ workload 自动转为 CPU —— 超出产品授权。REV2 语义:
 | PRODUCTION_MUTATIONS | **NONE**(无生产变更/无 merge main/无 tag/release) |
 
 **STOP。等待 Planner 复审。**
+
+---
+
+# REV3 — GPU UUID 归一化(2026-09-04 追加;窄修复)
+
+- **BASELINE**: 72cdcbf(生产当前运行态;容量门 PARTIAL 的根因修复)
+- **REV3_COMMIT**: **ab0e29c**(@origin/v1.1/gpu-runtime-models-admin;**未 push main、未触碰生产**)
+- **STATUS**: **CANDIDATE READY**(按 §8 工程停点:待 Planner 审查授权后才可部署/集成)
+- **PRODUCTION_MUTATIONS**: **NONE**
+
+## ROOT_CAUSE(生产容量门 PARTIAL 的单点根因,已在生产容器内实证)
+
+- `discover_gpus()` 经 `torch.cuda.get_device_properties().uuid` 取得**无前缀裸形**
+  `3caad314-…`;
+- `read_gpu_memory` 将其直接传给 `nvidia-smi --id=3caad314-…`;生产容器内驱动
+  **拒绝非 `GPU-` 前缀形态**(返回码非 0),Python 侧身份匹配无从发生;
+- 后果链:读数 None → 有效预算 None → 计划 `undecided`(fail-safe=维持双驻留)→
+  reranker_transient / 预算驱动未激活、容量分级恒 unknown。
+
+## UUID_NORMALIZATION(单一规范身份)
+
+- 新增 `normalize_gpu_uuid(raw)`:剥 `GPU-` 前缀后统一重建规范形 `GPU-<uuid>`;
+  torch 裸形与 nvidia-smi 规范形归一化结果一致(不依赖具体 UUID 值);
+  空串/None→None;`MIG-` 等非 GPU- 前缀形态**原样保留**(不归一化、不破坏);
+- `discover_gpus()` 发现期即产出**规范形** uuid:torch 发现、持久化策略、容量观测、
+  Admin 呈现、CUDA index 投影共用同一身份表示;index 兜底行为不变(torch 无 uuid
+  时 `index-N`,不臆造 GPU- 形态);
+- `read_gpu_memory(uuid)` 改为**单次全卡查询 + 本地精确身份匹配**:
+  彻底弃用 `--id`(驱动不再有机会拒绝任何形态——修复在命令之前,非事后放宽匹配);
+  `None`→默认第一卡;规范形/裸形→同一物理卡;未知/不可见→**None 绝不回退他卡**;
+  多卡按归一化精确相等逐行选择(支持未来多卡选择);
+- `manager._read_policies`:历史策略行可能存有规范化前的裸形 uuid——读取期归一化
+  (向后兼容,§3 身份契约;生产当前 0 行,纯防御)。
+
+## CHANGED_FILES
+
+- `backend/runtime/hardware.py`(归一化 + 发现规范形 + 读数重写)
+- `backend/runtime/manager.py`(`_read_policies` 读取期归一化;向后兼容所需,最小面)
+- `tests/runtime/test_hardware.py`(回归测试 A-F 重写/新增)
+
+## TESTS(§6 A-F 全覆盖;全部 mock,无真实 GPU 依赖)
+
+| 用例 | 证明 |
+|---|---|
+| A 裸形→规范形 | `read_gpu_memory("3caad314-…")` 解析 T4 快照;args 断言**无 `--id`** |
+| B 规范形 | `read_gpu_memory("GPU-…")` 同一快照 |
+| C None 默认卡 | 双卡 fixture 返回第一卡数值 |
+| D 未知身份 | 规范形+裸形未知 UUID 均 → None(不回退 GPU 0) |
+| E 多卡 fixture | 请求第二卡(A100)得第二卡数值,规范形/裸形一致且≠第一卡 |
+| F discover 稳定身份 | 双卡 torch 裸形→规范形输出;index/name/total 不变;缺 uuid→index 兜底 |
+| 归一化纯函数 | 空白容忍/None/空/MIG- 原样/GPU- 空壳 |
+
+## REGRESSION
+
+- 后端全量离线:**1663 passed / 6 skipped / 0 failed**;
+- 聚焦 runtime + 内部端点 + Admin API + embedder + sync:**108 passed**;
+- ruff / black:**clean**;
+- Admin 代码零触碰 → 无 Admin 测试/构建需求(契约条款);生产零触碰。
+
+## PRODUCTION_MUTATIONS
+
+**NONE**。候选仅在候选分支(`v1.1/gpu-runtime-models-admin` @ ab0e29c);
+main 未动(仍 72cdcbf = 生产运行态);部署须待 Planner 授权后按容量门流程重验
+§9-§12/§17-§18(plan 预期 `reranker_transient` 激活 + 容量分级如实呈现)。
