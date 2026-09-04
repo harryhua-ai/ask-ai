@@ -88,7 +88,7 @@ def _build_orchestrator(
     if stream_chunks is not None:
         captured: dict = {}
 
-        def _fake_stream(messages, task=None):
+        def _fake_stream(messages, task=None, **kwargs):
             captured["messages"] = messages
 
             async def _gen():
@@ -481,7 +481,7 @@ class TestStreamCitationGolden:
         # 第二轮:只剩一个可见源,同样的回答文本 [2] 变悬空
         reranker.rerank.return_value = [a]
 
-        def _fake_stream2(messages, task=None):
+        def _fake_stream2(messages, task=None, **kwargs):
             async def _gen():
                 yield "第二轮[1][2]"
 

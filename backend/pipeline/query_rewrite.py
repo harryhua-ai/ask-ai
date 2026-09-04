@@ -68,6 +68,9 @@ async def rewrite_query(
         response = await llm.generate(
             [{"role": "user", "content": prompt}],
             task="query_rewrite",
+            # Issue #23(QW-1):预处理结构化任务禁用思考(Discovery 实证
+            # extract ON/OFF 输出等义且 OFF 更快)
+            thinking="disabled",
         )
         rewritten = response.content.strip().strip('"').strip("'")
         if rewritten and rewritten != query:
@@ -117,6 +120,9 @@ async def extract_query(query: str, llm: Any) -> str:
         response = await llm.generate(
             [{"role": "user", "content": prompt}],
             task="query_rewrite",
+            # Issue #23(QW-1):预处理结构化任务禁用思考(Discovery 实证
+            # extract ON/OFF 输出等义且 OFF 更快)
+            thinking="disabled",
         )
         extracted = response.content.strip().strip('"').strip("'")
         if extracted:

@@ -66,6 +66,19 @@ class DeepseekProvider:
     def provider_id(self) -> str:
         return self._id
 
+    @staticmethod
+    def _apply_thinking(payload: dict, kwargs: dict) -> dict:
+        """Issue #23(QW-1/QW-2):显式 ``thinking="disabled"`` 注入 provider 开关。
+
+        Discovery 实证(生产同 base/model/key 受控实验):deepseek-v4-flash 为
+        混合思考模型,``thinking: {"type": "disabled"}`` 可关且 TTFC 显著下降;
+        ``enable_thinking``/``reasoning_effort`` 对本端点无效(禁用)。
+        仅在调用方显式传参时注入 —— 缺省行为与基线逐字一致。
+        """
+        if kwargs.get("thinking") == "disabled":
+            payload["thinking"] = {"type": "disabled"}
+        return payload
+
     async def generate(self, messages: list[dict], **kwargs) -> LLMResponse:
         """调用非流式 /chat/completions 并返回 LLMResponse。
 
@@ -83,13 +96,16 @@ class DeepseekProvider:
                     resp = await client.post(
                         f"{self._api_base}/chat/completions",
                         headers=self._auth_headers(),
-                        json={
-                            "model": kwargs.get("model", self._model),
-                            "messages": messages,
-                            "max_tokens": kwargs.get("max_tokens", self._max_tokens),
-                            "temperature": kwargs.get("temperature", self._temperature),
-                            "stream": False,
-                        },
+                        json=self._apply_thinking(
+                            {
+                                "model": kwargs.get("model", self._model),
+                                "messages": messages,
+                                "max_tokens": kwargs.get("max_tokens", self._max_tokens),
+                                "temperature": kwargs.get("temperature", self._temperature),
+                                "stream": False,
+                            },
+                            kwargs,
+                        ),
                     )
                     resp.raise_for_status()
                     data = resp.json()
@@ -139,13 +155,16 @@ class DeepseekProvider:
                         "POST",
                         f"{self._api_base}/chat/completions",
                         headers=self._auth_headers(),
-                        json={
-                            "model": kwargs.get("model", self._model),
-                            "messages": messages,
-                            "max_tokens": kwargs.get("max_tokens", self._max_tokens),
-                            "temperature": kwargs.get("temperature", self._temperature),
-                            "stream": True,
-                        },
+                        json=self._apply_thinking(
+                            {
+                                "model": kwargs.get("model", self._model),
+                                "messages": messages,
+                                "max_tokens": kwargs.get("max_tokens", self._max_tokens),
+                                "temperature": kwargs.get("temperature", self._temperature),
+                                "stream": True,
+                            },
+                            kwargs,
+                        ),
                     ) as resp,
                 ):
                     resp.raise_for_status()

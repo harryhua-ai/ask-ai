@@ -130,7 +130,7 @@ class ScriptedLLM:
             return LLMResponse(content=content, model="t", tokens_input=1, tokens_output=1, latency_ms=1)
         return LLMResponse(content=self.answer, model="t", tokens_input=1, tokens_output=1, latency_ms=1)
 
-    def stream(self, messages, task=None):
+    def stream(self, messages, task=None, **kwargs):
         self.last_messages = messages
 
         async def _gen():

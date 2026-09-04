@@ -585,3 +585,26 @@ async def test_generate_with_api_key_sends_bearer_header():
     with patch("httpx.AsyncClient.post", side_effect=fake_post):
         await prov.generate([{"role": "user", "content": "hi"}])
     assert captured["headers"] == {"Authorization": "Bearer sk-live"}
+
+
+# ---------------------------------------------------------------------------
+# Issue #23(QW-1/QW-2):thinking 选项注入(仅显式传参时生效)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_thinking_disabled_injects_provider_semantics():
+    from backend.llm.deepseek import DeepseekProvider as DeepSeekProvider
+
+    payload = {"model": "deepseek-v4-flash", "stream": True}
+    out = DeepSeekProvider._apply_thinking(payload, {"thinking": "disabled"})
+    assert out["thinking"] == {"type": "disabled"}
+
+
+def test_apply_thinking_default_untouched():
+    from backend.llm.deepseek import DeepseekProvider as DeepSeekProvider
+
+    payload = {"model": "m", "stream": False}
+    out = DeepSeekProvider._apply_thinking(payload, {})
+    assert "thinking" not in out
+    out = DeepSeekProvider._apply_thinking(payload, {"thinking": "enabled"})
+    assert "thinking" not in out  # 未支持的变体不注入(Discovery:仅 disabled 有效)

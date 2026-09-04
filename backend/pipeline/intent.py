@@ -66,6 +66,9 @@ async def classify_intent(query: str, llm: Any) -> IntentResult:
             task="intent",
             max_tokens=128,
             temperature=0.0,
+            # Issue #23(QW-1):意图分类为结构化预处理任务,思考被禁用 ——
+            # Discovery 实证 max_tokens=128 可被 reasoning 全额吞噬致空 content
+            thinking="disabled",
         )
         raw = response.content.strip()
         # 兼容 LLM 可能包裹 markdown code fence 的情况
@@ -86,5 +89,12 @@ async def classify_intent(query: str, llm: Any) -> IntentResult:
         logger.info("意图识别: %r → %s (%s) confidence=%s", query[:100], category, reason, confidence)
         return IntentResult(category=category, reason=reason, confidence=confidence)
     except Exception:
-        logger.warning("意图识别失败,fail-open 为 product", exc_info=True)
-        return IntentResult(category="product", reason="classification failed")
+        # Issue #23 §4:空/畸形响应不得伪装成可信的 product 分类 ——
+        # fail-open 显式降为零置信并带结构化原因(trace/观测可分辨),
+        # 下游 boost 桶行为保持(不发明新意图分类)。
+        logger.warning("意图识别失败,fail-open 为 product(confidence=0)", exc_info=True)
+        return IntentResult(
+            category="product",
+            reason="classification failed (fail-open: empty/malformed response)",
+            confidence=0.0,
+        )

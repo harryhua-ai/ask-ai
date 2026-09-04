@@ -475,13 +475,24 @@ class RAGOrchestrator:
 
     def _config_snapshot(self) -> dict[str, Any]:
         """当前编排器配置快照,写入 trace 供后续对照。"""
-        return {
+        snapshot = {
             "alpha": self._alpha,
             "recall_limit": self._recall_limit,
             "top_k": self._top_k,
             "min_results": self._min_results,
             "has_pruner": self._pruner is not None,
         }
+        # Issue #23(最小遥测):generation 链路身份 + thinking 模式
+        # (防御式:LLM 实例可能是测试替身,describe_chain 缺失/非 dict 静默跳过)
+        describe = getattr(self._llm, "describe_chain", None)
+        if callable(describe):
+            try:
+                meta = describe("generation")
+            except Exception:  # noqa: BLE001 — 遥测失败绝不影响主流程
+                meta = None
+            if isinstance(meta, dict):
+                snapshot["llm_generation"] = {**meta, "thinking_mode": "disabled"}
+        return snapshot
 
     def _social_answer(self, query: str, language: str, elapsed: int) -> RAGAnswer | None:
         """社交对话(寒暄/致谢/身份/能力/告别)确定性短路。
@@ -1109,7 +1120,9 @@ class RAGOrchestrator:
         )
 
         t_gen = time.monotonic()
-        llm_response = await self._llm.generate(messages, task="generation")
+        llm_response = await self._llm.generate(
+            messages, task="generation", thinking="disabled"
+        )
         stages["generate"] = {
             "ms": int((time.monotonic() - t_gen) * 1000),
             "latency_ms": getattr(llm_response, "latency_ms", None),
@@ -1682,7 +1695,11 @@ class RAGOrchestrator:
         full_answer = ""
         t3 = time.monotonic()
         first_token_ms: int | None = None
-        async for chunk in self._llm.stream(messages, task="generation"):
+        # Issue #23(QW-2 候选):generation 禁用思考 —— 准入以
+        # FASTER × NOT LESS CORRECT 评估门为准(见执行报告 §6)。
+        async for chunk in self._llm.stream(
+            messages, task="generation", thinking="disabled"
+        ):
             if first_token_ms is None:
                 first_token_ms = int((time.monotonic() - t3) * 1000)
             out = citation_filter.feed(chunk)
@@ -1869,6 +1886,7 @@ class RAGOrchestrator:
                             "ms": llm_ms,
                             "ttft_ms": first_token_ms,
                             "tokens_output": len(full_answer),
+                            "thinking_mode": "disabled",
                         },
                         "output": {"ms": 0, "sources_count": len(sources)},
                         "citation_integrity": {

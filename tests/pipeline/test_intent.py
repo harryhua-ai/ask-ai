@@ -122,3 +122,53 @@ async def test_classify_uses_intent_task():
     llm.generate.assert_awaited_once()
     _, kwargs = llm.generate.call_args
     assert kwargs.get("task") == "intent"
+
+
+# ---------------------------------------------------------------------------
+# Issue #23 §4:intent 失败语义 —— 空/畸形响应不得伪装为可信 product 分类
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_issue23_empty_content_fail_open_is_zero_confidence():
+    """ reproduced 案例:NeoRuntime 如何安装部署? —— reasoning 吞掉
+    max_tokens 后 content 为空 → fail-open 必须显式零置信 + 结构化原因,
+    不伪装为可信 product 分类。"""
+    llm = _make_llm("")  # 空 content(QW-1 之前的线上缺陷形态)
+    result = await classify_intent("NeoRuntime 如何安装部署?", llm)
+    assert result.category == "product"  # 桶语义保持(不发明新分类)
+    assert result.confidence == 0.0
+    assert "fail-open" in result.reason
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_issue23_malformed_json_fail_open_is_zero_confidence():
+    llm = _make_llm('{"category": "prod')  # 截断 JSON
+    result = await classify_intent("NeoRuntime 如何安装部署?", llm)
+    assert result.category == "product"
+    assert result.confidence == 0.0
+    assert "fail-open" in result.reason
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_issue23_llm_exception_fail_open_is_zero_confidence():
+    llm = MagicMock()
+    llm.generate = AsyncMock(side_effect=RuntimeError("timeout"))
+    result = await classify_intent("NeoRuntime 如何安装部署?", llm)
+    assert result.category == "product"
+    assert result.confidence == 0.0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_issue23_intent_request_disables_thinking():
+    """QW-1:intent 调用必须携带 thinking=disabled(防 reasoning 吞 token)。"""
+    llm = MagicMock()
+    llm.generate = AsyncMock(return_value=MagicMock(content='{"category": "support"}'))
+    result = await classify_intent("NeoRuntime 如何安装部署?", llm)
+    assert result.category == "support"
+    _, kwargs = llm.generate.call_args
+    assert kwargs.get("thinking") == "disabled"

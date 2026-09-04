@@ -63,7 +63,7 @@ class FakeLLM:
         self.stream_error = stream_error
         self.stream_messages: list | None = None
 
-    async def stream(self, messages, task=None):
+    async def stream(self, messages, task=None, **kwargs):
         self.stream_messages = messages
         for c in self.stream_chunks or []:
             yield c

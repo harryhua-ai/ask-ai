@@ -71,6 +71,12 @@ class LLMRouter:
         """根据任务名返回对应链路，缺省回退到 generation。"""
         return self._routing.get(task, self._routing.get("generation", []))
 
+    def describe_chain(self, task: str = "generation") -> dict:
+        """返回任务链路首选项的静态描述(Issue #23 最小遥测;不发请求)。"""
+        chain = self._get_chain(task)
+        item = chain[0] if chain else {}
+        return {"provider": item.get("provider"), "model": item.get("model")}
+
     async def generate(self, messages: list[dict], task: str = "generation", **kwargs):
         """按链路顺序尝试各供应商的同步生成。"""
         last_error = None
