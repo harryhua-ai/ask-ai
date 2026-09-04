@@ -334,3 +334,116 @@ GPU 运行容量(自动管理=还原后状态)、容量与建议(容量未知/�
 
 **STOP。未打 tag、未发 Release、未关 #22/#24。等待 Planner 裁定(建议:授权 REV3
 读数修复候选 → 重跑 §9-§12/§17-§18 四项 → 再议 FINAL PRODUCTION PASS)。**
+
+---
+
+# == REV3.1 生产容量 DELTA 门(候选 762eae3)== 2026-09-04 追加
+
+> 基线:72cdcbf 生产态(上一节 PARTIAL);授权:REV3.1 生产容量 DELTA 门。
+> 结果:**UUID 归一化缺陷修复在生产实证生效;§12/§17 容量证据补齐;全项 PASS 证据在案**。
+> 未打 tag/未发 Release/未关 #22/#24 —— Planner 独立裁定 FINAL PRODUCTION PASS。
+
+## REV3_1_SHA / CI / IMAGE
+
+| 项 | 值 |
+|---|---|
+| REV3_1_SHA | **762eae3**(谱系 72cdcbf→ab0e29c→762eae3,严格直系无偏离;FF 集成) |
+| MAIN_BEFORE → MAIN_AFTER | `72cdcbf…` → `762eae3…`(origin/main 推送后核验一致) |
+| CI | Run **33885620242**(head_sha=762eae3 核验):test ✅ + build-and-push ✅ |
+| IMAGE | tag `sha-762eae3`;digest `sha256:04215cb4aed7…`;ImageID `sha256:e9042cba…`;RELEASE.json `git_sha=762eae3b…` 全串 + `ci_run_id=33885620242` |
+
+## UUID_NORMALIZATION_PROOF(§5 关键阻断复测——缺陷修复实证)
+
+| 指标 | 72cdcbf(容量门) | **762eae3(本次)** |
+|---|---|---|
+| GPU UUID | 裸形 `3caad314-…` | **规范形 `GPU-3caad314-5735-d4c2-64ce-e82bb88a11ba`** |
+| 读数 | None(未知) | **数值快照:16384 / used 12831 / free 3100** |
+| 有效预算 | null | **auto=4210 MiB**(数值) |
+| RUNTIME_PLAN | undecided | **reranker_transient**(reason 如实;floors 4562/4050/3412) |
+| CAPACITY_STATE | unknown | **HEALTHY** |
+| 部署 | — | migration:无(REV3.1 无新迁移);backend→sync-executor→sync-cron,health 30s,三服务镜像逐一核验 |
+
+## RUNTIME_PLAN / CAPACITY_STATE(§10)
+
+plan=`reranker_transient`;容量=HEALTHY(预算 4210 ≥ 驻留 1110+512);
+Configured/Effective/Status 全真;**residency=transient 经 API 如实暴露**
+(query_embedding/sync_embedding=resident,query_reranker=transient);
+容量不再因 UUID 格式原因 unknown——当前 unknown 全消。
+
+## TRANSIENT_RESIDENCY_PROOF(§6;1s 采样 nvidia-smi 实测,非仅应用态字段)
+
+| 阶段 | GPU used/free (MiB) | 语义 |
+|---|---|---|
+| **Ask 前**(瞬态稳态) | 12831 / **3100** | ASK-AI=1238(仅嵌入常驻);重排权重在主机内存 → **TRANSIENT_PRE** |
+| **Ask 中**(重排物化) | 峰值 **14967 / 964** | 重排上卡(+~1150 权重+激活)→ **TRANSIENT_PEAK / MINIMUM_HEADROOM(查询窗)=964** |
+| **Ask 后**(卸载完成) | **12831 / 3100** | 精确回落到 Ask 前水平 → **TRANSIENT_POST**;7 连问首末采样相同,**零累积增长** |
+
+对照:双驻留形态(72cdcbf 容量门)Ask 后卡死在 free=596;瞬态卸载后 free=3100——
+**查询余量提升 5×,B3 理论(瞬态峰≤4050 预算内)在生产实测成立**。
+
+## GPU_MEMORY_TIMELINE / CAPACITY_NUMBERS(§9)
+
+- GPU_TOTAL_MB = 16384;EXTERNAL_GPU_MB = 11592(三方逐 PID 与基线一致,零触碰);
+- ASKAI_STARTUP_MB = 1110(仅嵌入);ASKAI_STEADY_MB = **1238/12841**(瞬态卸载后,非重排期);
+- ASKAI_ASK_PEAK_MB ≈ 3375(全机 14967 − 三方 11592);
+- ASKAI_ASK_SYNC_PEAK_MB:sync 嵌入批与 Ask 共享嵌入实例+闸互斥,未观测到超越
+  Ask 峰的新峰值(sampler 窗内 max 仍 14967);
+- MINIMUM_HEADROOM_MB = **964**(查询窗;对照双驻留 596);
+- TRANSIENT_PRE/PEAK/POST = 1238 / ~3375 / 1238(ASK-AI 口径);
+- **CUDA_OOM_COUNT = 0**(backend/sync-executor/sync-cron 全量日志)。
+
+## ASK_RESULT(§7)
+
+7/7 真实 Ask 成功(≥6 最低要求):TTFT 4.02–10.0s / E2E 4.55–11.16s;后端 RAG
+分段 rerank 维持 GPU 毫秒级;瞬态卸载 7 次重复成功,首末 GPU 采样相同(无泄漏)。
+
+## SYNC_ASK_RESULT(§8;受控真实嵌入,非短路)
+
+- 受控注入 13 测试文档 → run 594:`execution_device="gpu"`、completed;
+- backend 日志 `POST /api/internal/embeddings 200`(执行器容器来源);
+- 执行器/cron:零「加载 BGE」日志、零 GPU 进程(sync 期全机 compute PID=
+  三方 3 + backend 1 @1238 —— **单一 GPU 模型所有者**,无重复嵌入副本);
+- sync 运行中 3/3 Ask 成功(TTFT 0.72–9.31s;首问为短答拒答形态,属正常);
+- 清理:文件删除→resync→weaviate 13 对象 uuid 点删,复核 ksc=481 chunks(原态);
+- sync 完成后 GPU 稳态 12841/3090(有界,无失控增长)。
+
+## MODEL_OWNERSHIP
+
+单一 backend GPU 模型所有者;执行器/cron 零 GPU 模型(全门沿用容量门 §16 结论,
+本次部署后实测一致)。
+
+## REGRESSION_SMOKE(§11 轻回归)
+
+health 200(git_sha=762eae3b)✓;#22 preview-dirs 200 ✓;#24 site-config
+(camthink-wiki,合法 Origin)返回统一外观字段 ✓。未重做全量验收(按契约)。
+
+## RISKS
+
+1. 重排瞬态化使每次 Ask 重排步含 ~0.5-1s 上卡开销(re-rank 总时长仍 1.0-1.9s
+   GPU 量级,显著优于 CPU 26.7s);
+2. 查询窗最低余量 964 MiB 健康,但三方显存若继续增长将压缩预算(计划器会如实
+   降级——这正是容量分级恢复可见性后的保护);
+3. 生产 admin 默认密码既有隐患(持续提醒)。
+
+## UNKNOWN
+
+- 长时窗(小时级)瞬态往返的分配器长期行为未测(观测窗 7 连问首末采样恒定);
+- 多卡主机上的行为由单测 fixture 覆盖,未做多卡生产验证(生产单卡)。
+
+## PRODUCTION_MUTATIONS(台账)
+
+1. 镜像 `sha-762eae3` pull;三服务滚动更新(授权动作);
+2. 受控测试语料 13 文件(experience/)注入→真实嵌入同步(594)→**文件删除+
+   weaviate 13 对象 uuid 点删(复核归零,知识库恢复 481 chunks 原态)**;
+3. /tmp 采样文件清理;
+4. 未做:tag / GitHub Release / 关 #22/#24 / roadmap / 三方 GPU 触碰 / 迁移(无新迁移)。
+
+## PRODUCTION_ACCEPTANCE_CANDIDATE 结论
+
+REV3.1 在生产实证:UUID 归一化修复生效(§5 全项绿)、计划=**reranker_transient**
+(容量证据驱动,非强推)、瞬态驻留以真实 nvidia-smi 采样证明(物化→卸载→精确回落)、
+16+ 次跨门 Ask 与真实嵌入 sync 零 OOM、单一 GPU 模型所有权保持、容量分级恢复
+数值化呈现。**Executor 证据链完整,提请 Planner 独立裁定 FINAL PRODUCTION PASS**
+(通过后进入 v1.1.0 tag/Release/#22/#24 closure/roadmap 的 §16 正式化)。
+
+**STOP。**
