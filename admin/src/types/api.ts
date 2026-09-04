@@ -252,6 +252,8 @@ export interface RepoDiscoveryGroup {
   scope_confirmed?: boolean | null;
   /** #22:组内被排除少数派数(多数决组如实呈现)。 */
   member_excluded?: number;
+  /** #22 REV2:组内 L3 未决成员数(多数决组不得隐藏歧义)。 */
+  member_review?: number;
 }
 
 /** #16/#17 preview 端点统一 envelope(S0 共享契约)。 */

@@ -76,6 +76,7 @@ class DiscoveryGroupOut(BaseModel):
     admin_decision: str | None = None  # 规则继承的既有决策(include|exclude|None)
     scope_confirmed: bool | None = None  # include 组逐成员有效范围机械确认
     member_excluded: int = 0  # 组内被排除少数派数(多数决组如实呈现)
+    member_review: int = 0  # 组内 L3 未决成员数(多数决组不得隐藏歧义,Planner REV2)
 
     @classmethod
     def from_group(cls, g: CandidateGroup) -> "DiscoveryGroupOut":
@@ -88,6 +89,7 @@ class DiscoveryGroupOut(BaseModel):
             admin_decision=g.admin_decision,
             scope_confirmed=g.scope_confirmed,
             member_excluded=g.member_excluded,
+            member_review=g.member_review,
         )
 
 

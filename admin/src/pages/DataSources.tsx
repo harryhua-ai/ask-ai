@@ -1322,6 +1322,14 @@ export default function DataSources() {
                               ⚠ 有纳入页不在生效范围
                             </span>
                           )}
+                          {(g.member_review ?? 0) > 0 && (
+                            <span
+                              className="text-amber-600"
+                              title="组内存在待人工确认页面;采用策略不会替你决定该部分"
+                            >
+                              {g.member_review} 待确认
+                            </span>
+                          )}
                           <span className="truncate text-muted-foreground" title={g.samples.join(" | ")}>
                             如 {g.samples[0]}
                           </span>

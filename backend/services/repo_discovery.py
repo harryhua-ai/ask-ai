@@ -99,39 +99,46 @@ def compile_recommended_config(
 ) -> dict:
     """S0 候选 → 既有 config 词表(纯函数;PD-2 不建第二套 authority)。
 
-    - ``file_types``:**技术安全 ∧ include 推荐**候选的扩展名(排序去重)。
-      review(如图片)/exclude/不安全类型一律不进白名单——UI 层管理员仍可
-      在技术安全边界内手动增补,但推荐产物本身保守;
-    - ``exclude_dirs``:分组推荐为 exclude 的**目录**组(与 envelope 同一
-      summarize 规则;根文件组与 review 组不进)。connector 侧语义为
-      「任意层级同名目录排除」,恰好覆盖 tests/ 在嵌套场景的复现。
+    **组界门控(Planner REV2,阻断性修正)**:逐候选扩展名只有在其**所属组**
+    已被安全判定为 include(或经 ``group_decisions`` 决议为 include)时才进
+    ``file_types``;未决 review 组**零编译**——成员扩展名不进白名单、目录也
+    不进排除(L3 保持完全未决,防止「review 组的部分内容经扩展名碰撞或
+    成员级收集被静默摄入」)。exclude 组目录进 ``exclude_dirs``(connector
+    语义:目录排除胜过白名单)。
 
-    #22 §17 冻结扩展:``group_decisions``(组键 → include|exclude)为会话级
-    管理员覆盖(§11 组决策含 admin 覆盖);缺省 None 时行为与 v1.0.0 完全
-    一致。持久决策走规则继承(apply_discovery_rules 先改写候选推荐),
-    编译仍只有一个入口——本函数不解释 discovery_rules 本身。
+    - ``file_types``:技术安全 ∧ include 推荐 ∧ **所属组已安全判定 include**
+      的候选扩展名(排序去重);
+    - ``exclude_dirs``:组推荐/组决议为 exclude 的目录(根文件组不进);
+    - ``group_decisions``(§17):组键 → include|exclude 的管理员组决议,
+      即该组的裁决(含把平票 review 组决议为 include/exclude 的路径);
+      缺省 None 时按聚合推荐,行为向后兼容。
     """
     decisions = group_decisions or {}
+    _, groups = summarize_candidates(candidates, group_key=top_level_group)
+    group_rec = {g.key: g.recommendation for g in groups}
+    for key, decision in decisions.items():
+        if decision in ("include", "exclude"):
+            group_rec[key] = decision
 
-    def _effective_rec(c: FileAdmission) -> str:
-        override = decisions.get(top_level_group(c.path))
-        return override if override in ("include", "exclude") else c.recommendation
+    def _group_decided(c: FileAdmission) -> bool:
+        """组界门控 + 成员级推荐:组已安全判定 include 且该成员自身推荐 include。
+
+        组门控解除 L3 歧义(未决组零编译);成员级推荐保护混合组内的
+        排除少数派(组 include 不抬举成员级 exclude 结论,如二进制资产)。
+        """
+        return (
+            group_rec.get(top_level_group(c.path)) == "include"
+            and c.recommendation == "include"
+        )
 
     file_types = sorted(
         {
             PurePosixPath(c.path).suffix.lower()
             for c in candidates
-            if _effective_rec(c) == "include" and c.technical_safe and PurePosixPath(c.path).suffix
+            if _group_decided(c) and c.technical_safe and PurePosixPath(c.path).suffix
         }
     )
-    _, groups = summarize_candidates(candidates, group_key=top_level_group)
-    excluded = {g.key for g in groups if g.recommendation == "exclude"}
-    for key, decision in decisions.items():
-        if decision == "exclude":
-            excluded.add(key)
-        elif decision == "include":
-            excluded.discard(key)
-    exclude_dirs = sorted(k for k in excluded if k != ROOT_GROUP_KEY)
+    exclude_dirs = sorted(k for k, rec in group_rec.items() if rec == "exclude" and k != ROOT_GROUP_KEY)
     return {"file_types": file_types, "exclude_dirs": exclude_dirs}
 
 
@@ -225,10 +232,15 @@ def discover_repository(
         capability_notes=capability_notes,
     )
     # #22:持久规则继承 → 重编译(规则决策进词表)→ scope_confirmed 机械确认。
-    # 零发现/截断告警保留;scope 告警按最终编译产物追加。
+    # 组级规则裁决(admin_decision)作为 compile 的 group_decisions 入参——
+    # §11.1「既有 admin 规则编译进持久化词表」的显式通道:规则裁决解除组的
+    # 平票歧义后,组内成员级推荐(安全 include)才进入白名单。
     rules = parse_discovery_rules(discovery_rules)
     result = apply_discovery_rules(result, rules)
-    result.recommended_config = compile_recommended_config(result.candidates)
+    rule_decisions = {
+        g.key: g.admin_decision for g in result.groups if g.admin_decision is not None
+    }
+    result.recommended_config = compile_recommended_config(result.candidates, rule_decisions)
     result.warnings = list(result.warnings) + annotate_scope(result)
     return result
 

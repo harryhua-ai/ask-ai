@@ -238,6 +238,14 @@ function GroupSection({
                   {g.member_excluded} 个已排除
                 </span>
               )}
+              {(g.member_review ?? 0) > 0 && (
+                <span
+                  className="text-xs text-amber-600"
+                  title="组内存在待人工确认成员;该部分不进入采用策略的生效范围,直至组被决定"
+                >
+                  {g.member_review} 个待确认
+                </span>
+              )}
               {reasons.map((r) => (
                 <span key={r} className="text-xs text-muted-foreground">
                   {r}

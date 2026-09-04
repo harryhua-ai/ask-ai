@@ -170,7 +170,8 @@ def test_r6_apply_strategy_components_enter_effective_scope():
 
 
 def test_compile_with_group_decisions_override():
-    """§17 第二参:组决策含 admin 覆盖;L1 安全边界不可被覆盖(unsafe 不进白名单)。"""
+    """§17 第二参:组决议即该组裁决(含把平票 review 组决议 include/exclude);
+    L1 安全边界不可被覆盖(unsafe 成员即使组决议 include 也不进白名单)。"""
     members = [
         _adm("src/a.py"),
         _adm("docs/x.md"),
@@ -180,18 +181,21 @@ def test_compile_with_group_decisions_override():
         _adm("misc/blob.iso", rec="exclude"),
     ]
     base = rd.compile_recommended_config(members)
-    assert base["file_types"] == [".md", ".py"]  # docs 平票组:.md 来自 misc/include? 见下行
-    # 注:file_types 收**逐成员** include 扩展名,与组无关;docs 的 .md 已在白名单
-    assert "docs" not in base["exclude_dirs"]  # review 组不进排除
+    # 组界门控:docs/misc 平票未决 → .md 零编译;仅 src 组 include 编译
+    assert base["file_types"] == [".py"]
+    assert "docs" not in base["exclude_dirs"] and "misc" not in base["exclude_dirs"]
     assert "tests" in base["exclude_dirs"]
     overridden = rd.compile_recommended_config(
-        members, {"misc": "include", "tests": "exclude"}
+        members, {"docs": "include", "misc": "include", "tests": "exclude"}
     )
-    assert "misc" not in overridden["exclude_dirs"]
-    assert "tests" in overridden["exclude_dirs"]
-    # L1 安全边界:unsafe 成员即使决策 include 也不进白名单
-    overridden_unsafe = rd.compile_recommended_config(members, {"misc": "include"})
-    assert ".iso" not in overridden_unsafe["file_types"]
+    # 决议 include:docs/misc 的安全成员扩展名进白名单(blob.iso unsafe 仍排除)
+    assert sorted(overridden["file_types"]) == [".md", ".py"]
+    assert overridden["exclude_dirs"] == ["tests"]
+    resolved_exclude = rd.compile_recommended_config(members, {"misc": "exclude"})
+    assert "misc" in resolved_exclude["exclude_dirs"]
+    assert ".md" not in resolved_exclude["file_types"]  # misc 决议排除后 .md 不编译
+    # L1 安全边界:unsafe 成员即使组决议 include 也不进白名单
+    assert ".iso" not in rd.compile_recommended_config(members, {"misc": "include"})["file_types"]
 
 
 def test_compile_default_none_is_backward_compatible():
@@ -211,7 +215,8 @@ def _rules(*pairs):
 
 
 def test_r7_apply_strategy_does_not_consume_unresolved_review():
-    """L3 未决组(平票真歧义)不被静默吞掉:review 组不进 file_types 也不进排除。"""
+    """L3 未决组不被部分消费(Planner REV2 组界门控):review 组**零编译**——
+    组内 include 成员的扩展名不进白名单、目录也不进排除;组级保持待确认。"""
     result = rd.discover_repository(
         "https://github.com/o/r",
         None,
@@ -228,10 +233,55 @@ def test_r7_apply_strategy_does_not_consume_unresolved_review():
     )
     g = {x.key: x for x in result.groups}["docs"]
     assert g.recommendation == "review"  # 平票=真歧义,组级 L3 维持人工(PD-2)
-    # 组级未决,但成员级安全决策保持强(#22 冻结:分组不得摧毁更强的逐项证据):
-    # docs/manual.md 逐项 include → 编译按成员级语义进白名单(v1.0.0 同语义)
-    assert result.recommended_config["file_types"] == [".md", ".py"]
-    assert "docs" not in result.recommended_config["exclude_dirs"]  # 组不被静默吞掉
+    # REV2 组界门控:未决组的成员级 include 证据只用于呈现,不进编译产物
+    assert result.recommended_config["file_types"] == [".py"]
+    assert "docs" not in result.recommended_config["exclude_dirs"]  # 也不被静默吞掉
+
+
+def test_rev2_majority_group_with_l3_member_visible_not_compiled():
+    """多数决组内含 L3 成员:member_review 显式呈现;L3 成员自身扩展名不进编译。"""
+    members = [
+        _adm("src/a.ts"),
+        _adm("src/b.ts"),
+        _adm("src/c.ts"),
+        _adm("src/d.bin", rec="review"),  # L3 成员(唯一扩展名,防碰撞判定)
+    ]
+    _by, groups = summarize_candidates(members, group_key=_key)
+    g = groups[0]
+    assert g.recommendation == "include"  # 多数决
+    assert g.member_review == 1  # L3 歧义不被聚合隐藏
+    compiled = rd.compile_recommended_config(members)
+    assert ".ts" in compiled["file_types"]  # 安全多数成员正常编译
+    assert ".bin" not in compiled["file_types"]  # L3 成员扩展名零编译
+
+
+def test_rev2_admin_include_resolution_compiles_review_group():
+    """管理员对 review 组决议 include(组决策)→ 该组范围进入编译产物。"""
+    members = [
+        _adm("src/a.py"),
+        _adm("docs/manual.md"),
+        _adm("docs/legacy.test.ts"),
+    ]
+    base = rd.compile_recommended_config(members)
+    assert base["file_types"] == [".py"]  # docs 平票未决:零编译
+    resolved = rd.compile_recommended_config(members, {"docs": "include"})
+    assert sorted(resolved["file_types"]) == [".md", ".py"]  # 决议后 docs 进范围
+    assert "docs" not in resolved["exclude_dirs"]
+
+
+def test_rev2_admin_exclude_resolution_compiles_review_group_out():
+    """管理员对 review 组决议 exclude → 目录进排除(connector 语义:目录排除胜过白名单)。"""
+    members = [
+        _adm("docs/manual.md"),
+        _adm("docs/legacy.test.ts"),
+        _adm("sandbox/x.md"),
+        _adm("sandbox/y.test.ts"),
+    ]
+    resolved = rd.compile_recommended_config(
+        members, {"docs": "exclude", "sandbox": "exclude"}
+    )
+    assert resolved["exclude_dirs"] == ["docs", "sandbox"]
+    assert resolved["file_types"] == []  # 两组均决议排除:无任何 include 编译
 
 
 def test_r8_persisted_rule_inherited_on_rediscovery():
@@ -305,6 +355,44 @@ def test_l1_always_beats_rules():
     readme = next(a for a in result.candidates if a.path.endswith("README.md"))
     assert readme.recommendation == "include"
     assert ".md" in result.recommended_config["file_types"]
+
+
+def test_rev2_rule_exclude_resolution_on_tie_group():
+    """持久规则 exclude 决议平票组:组翻转 exclude、目录进编译排除、印章呈现。"""
+    tree = {
+        "tree": [
+            {"path": "media/report.md", "type": "blob", "size": 100},
+            {"path": "media/old.test.ts", "type": "blob", "size": 100},
+        ],
+        "truncated": False,
+    }
+    result = rd.discover_repository(
+        "https://github.com/o/r",
+        None,
+        _fake_api(tree),
+        discovery_rules=_rules(("media", "exclude")),
+    )
+    g = {x.key: x for x in result.groups}["media"]
+    assert g.recommendation == "exclude"
+    assert g.admin_decision == "exclude"
+    assert "media" in result.recommended_config["exclude_dirs"]
+    assert ".md" not in result.recommended_config["file_types"]
+
+
+def test_rev2_scope_confirmed_gates_on_majority_group_l3_member():
+    """多数决组含 L3 成员时,scope/聚合如实呈现:member_review>0。"""
+    tree = {
+        "tree": [
+            {"path": "src/a.ts", "type": "blob", "size": 100},
+            {"path": "src/b.ts", "type": "blob", "size": 100},
+            {"path": "src/c.ts", "type": "blob", "size": 100},
+        ],
+        "truncated": False,
+    }
+    result = rd.discover_repository("https://github.com/o/r", None, _fake_api(tree))
+    g = {x.key: x for x in result.groups}["src"]
+    assert g.member_review == 0
+    assert g.scope_confirmed is True
 
 
 def test_scope_confirmed_flags_out_of_scope_include_members():

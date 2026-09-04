@@ -135,6 +135,7 @@ class CandidateGroup:
     admin_decision: str | None = None  # 规则继承的既有决策(include | exclude | None)
     scope_confirmed: bool | None = None  # include 组的逐成员有效范围机械确认(§11.3)
     member_excluded: int = 0  # 组内被排除少数派数(多数决组内如实呈现,不隐藏)
+    member_review: int = 0  # 组内 L3 未决成员数(Planner REV2:多数决组不得隐藏歧义)
 
 
 @dataclass
@@ -226,6 +227,7 @@ def summarize_candidates(
                     recommendation=best,
                     samples=samples,
                     member_excluded=exc,
+                    member_review=counts.get("review", 0),
                 )
             )
     return by_role, groups
@@ -368,8 +370,27 @@ def apply_discovery_rules(result: DiscoveryResult, rules: object) -> DiscoveryRe
         if hit:
             matched.append(idx)
     result.decision_origins = origins
-    result.target = {**result.target, "inherited_rules": len(matched)}
     _rebuild_views(result)
+    # 组级规则裁决(Planner REV2 同源语义):规则命中成员的决策**一致**时,
+    # 该组推荐 = 规则决策——规则是对整组(模式族)的管理员裁决,不被组内
+    # L1 排除成员的平票效应架空(L1 成员保持排除,计数进 member_excluded);
+    # 命中决策冲突(如 /mix/alpha=include 与 /mix/beta=exclude)→ 不覆盖,
+    # 维持聚合结果与真歧义呈现。
+    if result.group_key is not None:
+        group_decisions: dict[str, set[str]] = {}
+        for a in result.candidates:
+            for idx in matched:
+                rule = rule_list[idx]
+                if _rule_matches(rule, a.path, result.kind):
+                    group_decisions.setdefault(result.group_key(a.path), set()).add(
+                        rule["decision"]
+                    )
+                    break
+        for g in result.groups:
+            decisions = group_decisions.get(g.key)
+            if decisions and len(decisions) == 1:
+                g.recommendation = next(iter(decisions))
+    result.target = {**result.target, "inherited_rules": len(matched)}
     return result
 
 
