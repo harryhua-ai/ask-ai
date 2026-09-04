@@ -27,6 +27,9 @@ declare global {
       primaryColor?: string;
       /** MSW:站点体验标识;pageContext 见 utils/pageContext.ts */
       siteId?: string;
+      /** Issue #24 预览/测试覆写(Admin 实时预览通道;真实站点由 site-config 承载) */
+      launcherStyle?: string;
+      launcherTheme?: string;
     };
   }
 }
@@ -36,6 +39,8 @@ type ConfigOverrides = {
   language?: string;
   primaryColor?: string;
   siteId?: string;
+  launcherStyle?: string;
+  launcherTheme?: string;
 };
 
 function readDataset(el: HTMLElement | null | undefined): ConfigOverrides {
@@ -46,6 +51,8 @@ function readDataset(el: HTMLElement | null | undefined): ConfigOverrides {
     language: d.language || undefined,
     primaryColor: d.primaryColor || undefined,
     siteId: d.siteId || undefined,
+    launcherStyle: d.launcherStyle || undefined,
+    launcherTheme: d.launcherTheme || undefined,
   };
 }
 
@@ -77,6 +84,12 @@ export function resolveConfig(
       DEFAULT_PRIMARY_COLOR,
     siteId:
       fromScript.siteId ?? fromPreset.siteId ?? fromGlobal.siteId ?? undefined,
+    // Issue #24:预览/测试覆写(Admin 实时预览);真实站点外观由 site-config 承载。
+    // 覆写优先级高于 site-config(预览必须即时反映未保存的选择)。
+    launcherStyle:
+      fromScript.launcherStyle ?? fromPreset.launcherStyle ?? fromGlobal.launcherStyle ?? undefined,
+    launcherTheme:
+      fromScript.launcherTheme ?? fromPreset.launcherTheme ?? fromGlobal.launcherTheme ?? undefined,
   };
 }
 

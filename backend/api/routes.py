@@ -440,6 +440,10 @@ async def widget_site_config(
     ML 闭环(G-L5):可选 ``language`` 查询参数(归一化)选择 welcome /
     starters 的本地化变体;无该语言的变体时回落站点默认——站点身份
     (site_id / display_name)与语言无关,响应形状不变。
+
+    Issue #24:响应增 ``launcher_style`` / ``launcher_theme``(归一化后的
+    有效值;未配置/非法持久值回落 current|auto)。授权路径零变化——字段
+    只出现在已通过 Origin 授权的响应体,不触碰 resolve_site/allowed_origins。
     """
     try:
         site = await resolve_site(session_factory, site_id, extract_request_origin(request))
@@ -452,6 +456,8 @@ async def widget_site_config(
         "welcome": site.localized_welcome(normalized_language),
         "language": site.language,
         "starters": list(site.localized_starters(normalized_language)),
+        "launcher_style": site.launcher_style,
+        "launcher_theme": site.launcher_theme,
     }
 
 

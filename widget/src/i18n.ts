@@ -13,6 +13,8 @@ export interface UiStrings {
   serviceBusy: string;
   uploadFailed: string;
   attachTitle: string;
+  /** Issue #24:launcher 按钮可访问名(按钮级,不依赖图标) */
+  launcherOpen: string;
 }
 
 const EN: UiStrings = {
@@ -23,6 +25,7 @@ const EN: UiStrings = {
   serviceBusy: "The service is busy right now. Please try again shortly.",
   uploadFailed: "Upload failed",
   attachTitle: "Attach .txt or .log",
+  launcherOpen: "Open the Ask AI assistant",
 };
 
 const ZH: UiStrings = {
@@ -35,6 +38,7 @@ const ZH: UiStrings = {
   serviceBusy: "服务繁忙,请稍后再试。",
   uploadFailed: "上传失败",
   attachTitle: "附加 .txt 或 .log 文件",
+  launcherOpen: "打开 Ask AI 助手",
 };
 
 export function uiStrings(lang: "en" | "zh"): UiStrings {

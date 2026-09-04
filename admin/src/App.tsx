@@ -15,6 +15,7 @@ import Analytics from "@/pages/Analytics";
 import BusinessOverview from "@/pages/BusinessOverview";
 import SalesLeads from "@/pages/SalesLeads";
 import SystemInfo from "@/pages/SystemInfo";
+import WidgetAppearance from "@/pages/WidgetAppearance";
 
 export default function App() {
   return (
@@ -39,6 +40,7 @@ export default function App() {
                   <Route path="/analytics" element={<Analytics />} />
                   <Route path="/users" element={<Users />} />
                   <Route path="/system" element={<SystemInfo />} />
+                  <Route path="/widget-appearance" element={<WidgetAppearance />} />
                 </Routes>
               </Layout>
             </ProtectedRoute>

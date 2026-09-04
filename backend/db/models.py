@@ -426,6 +426,10 @@ class SiteExperience(Base):
     welcome_i18n: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     starters_i18n: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Issue #24:launcher 外观(per-site;NULL = 未配置 → 兼容默认 current|auto)。
+    # 种子(seed_default_sites)不写这两列:Admin 独立持久值跨 YAML 重启存续。
+    launcher_style: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    launcher_theme: Mapped[str | None] = mapped_column(String(10), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

@@ -2,6 +2,7 @@ import { NavLink } from "react-router-dom";
 import {
   Database,
   Palette,
+  Sparkles,
   Cpu,
   MessageSquare,
   Users,
@@ -33,6 +34,7 @@ const CONFIG_ITEMS: NavItem[] = [
   { to: "/customizations", icon: Palette, label: "对话接入", roles: ["admin", "editor", "viewer"] },
   { to: "/llm-providers", icon: Cpu, label: "模型配置", roles: ["admin", "editor", "viewer"] },
   { to: "/answer-overrides", icon: CheckSquare, label: "答案覆盖", roles: ["admin", "editor", "viewer"] },
+  { to: "/widget-appearance", icon: Sparkles, label: "Widget 外观", roles: ["admin", "editor"] },
   { to: "/users", icon: Users, label: "用户管理", roles: ["admin"] },
   { to: "/system", icon: Info, label: "系统信息", roles: ["admin", "editor", "viewer"] },
 ];

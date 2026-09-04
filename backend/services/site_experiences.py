@@ -33,6 +33,27 @@ DEFAULT_SITES_CONFIG = Path("config/sites.yaml")
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
+# ---------------------------------------------------------------------------
+# Issue #24:Launcher 外观(per-site 语义身份;语义 id 稳定,SVG 实现可重构)
+# NULL = 未配置 → 兼容默认(current | auto);未知/非法持久值 → 服务端归一化
+# 回落默认(fail-safe,不得破坏 Widget bootstrap)。
+# ---------------------------------------------------------------------------
+
+LAUNCHER_STYLES: tuple[str, ...] = ("current", "assistant-spark", "chat-bubble", "orbit-neural")
+LAUNCHER_THEMES: tuple[str, ...] = ("auto", "light", "dark")
+DEFAULT_LAUNCHER_STYLE = "current"
+DEFAULT_LAUNCHER_THEME = "auto"
+
+
+def normalize_launcher_style(value: object) -> str:
+    """持久值 → 有效 launcher_style(非法/缺失回落 ``current``)。"""
+    return value if value in LAUNCHER_STYLES else DEFAULT_LAUNCHER_STYLE
+
+
+def normalize_launcher_theme(value: object) -> str:
+    """持久值 → 有效 launcher_theme(auto|light|dark;非法/缺失回落 ``auto``)。"""
+    return value if value in LAUNCHER_THEMES else DEFAULT_LAUNCHER_THEME
+
 
 class SiteDenied(Exception):
     """站点身份校验失败(未知/禁用站点、无来源、来源不匹配)。
@@ -56,6 +77,9 @@ class ResolvedSite:
     starters: tuple[str, ...]
     welcome_i18n: dict | None = None
     starters_i18n: dict | None = None
+    # Issue #24:launcher 外观(归一化后的有效值;NULL 行值已在解析时回落默认)
+    launcher_style: str = DEFAULT_LAUNCHER_STYLE
+    launcher_theme: str = DEFAULT_LAUNCHER_THEME
 
     def localized_welcome(self, language: str | None) -> str | None:
         """按请求语言取欢迎语;无变体或缺省回落站点默认(语言独立于站点身份)。"""
@@ -152,6 +176,8 @@ async def resolve_site(
         welcome_i18n=dict(row.welcome_i18n) if row.welcome_i18n else None,
         starters_i18n=dict(row.starters_i18n) if row.starters_i18n else None,
         starters=tuple(row.starters or []),
+        launcher_style=normalize_launcher_style(getattr(row, "launcher_style", None)),
+        launcher_theme=normalize_launcher_theme(getattr(row, "launcher_theme", None)),
     )
 
 

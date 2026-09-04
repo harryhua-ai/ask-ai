@@ -18,6 +18,7 @@ from backend.api.admin.system import router as system_router
 from backend.api.admin.tech import tech_router
 from backend.api.admin.traces import traces_router
 from backend.api.admin.users import router as users_router
+from backend.api.admin.widget_appearance import router as widget_appearance_router
 
 admin_router = APIRouter(prefix="/api/admin")
 admin_router.include_router(auth_router)
@@ -36,3 +37,4 @@ admin_router.include_router(traces_router)
 admin_router.include_router(tech_router)
 admin_router.include_router(business_router)
 admin_router.include_router(system_router)
+admin_router.include_router(widget_appearance_router)

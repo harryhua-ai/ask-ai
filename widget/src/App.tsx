@@ -12,7 +12,12 @@ import {
 } from "./utils/language";
 import { uiStrings } from "./i18n";
 import { ChatPanel } from "./components/ChatPanel";
-import fabIcon from "./assets/CamThink.ai-black.png";
+import { Launcher } from "./launcher/Launcher";
+import {
+  resolveLauncherStyle,
+  resolveLauncherThemePref,
+  useResolvedTheme,
+} from "./launcher/registry";
 
 // legacy 兜底推荐问题按 UI 语言双变体(G-L4/G-L5:站点 starters 缺失时的回落)
 const DEFAULT_STARTERS: Record<"en" | "zh", string[]> = {
@@ -87,6 +92,15 @@ export function App({ config }: { config: WidgetConfig }) {
     messages.length === 0 ? resolveStarters(siteConfig, DEFAULT_STARTERS[uiLang]) : [];
   const welcome = messages.length === 0 ? siteConfig?.welcome : undefined;
   const strings = uiStrings(uiLang);
+
+  // Issue #24:launcher 外观解析。优先级 = data-launcher-*(Admin 预览/测试覆写)
+  // > site-config(持久权威,服务端已归一化)> 兼容默认(current|auto)。
+  // 未知/非法值在 registry 中 fail-safe 回落,不破坏 bootstrap。
+  const launcherStyle = resolveLauncherStyle(config.launcherStyle ?? siteConfig?.launcher_style);
+  const launcherThemePref = resolveLauncherThemePref(
+    config.launcherTheme ?? siteConfig?.launcher_theme,
+  );
+  const launcherTheme = useResolvedTheme(launcherThemePref);
 
   const openPanel = useCallback(() => {
     // 打开面板时重读页面语言(SPA 路由切换后 UI 跟随)
@@ -178,12 +192,12 @@ export function App({ config }: { config: WidgetConfig }) {
   return (
     <>
       {!isOpen && (
-        <button
-          className="ask-ai-fab"
-          onClick={openPanel}
-        >
-          <img className="ask-ai-fab-icon" src={fabIcon} alt="Ask AI" />
-        </button>
+        <Launcher
+          style={launcherStyle}
+          theme={launcherTheme}
+          label={strings.launcherOpen}
+          onOpen={openPanel}
+        />
       )}
       {isOpen && (
         <ChatPanel
