@@ -92,6 +92,60 @@ trace: retrieve 214ms / rerank 317ms(真实计时入 trace)
 4. 基线既有 `test_query_preempts_queued_sync` CI 偶发(另行移交项)与本修复无关;
 5. answer()/stream_answer() 比较路径外的既有不对称(如 page_boost 细节)未在本任务范围重排,既有 parity 测试守护。
 
-## 10. 最终执行状态
+## 10. 首轮候选
 
-**CANDIDATE READY** —— 候选 `64c43c5`(origin/worktree-exec/comparison-evidence-20260905),等待 Planner 验收。血统:073f262(v1.1.1)→ 64c43c5。
+候选 `64c43c5`(origin/worktree-exec/comparison-evidence-20260905)—— Planner 复审 **PARTIAL**(2 阻断,见 REV1)。
+
+---
+
+## REV1 — 比较语义两阻断修复(2026-09-06)
+
+- **Planner 判定**:PARTIAL(Blocker 1 维度语义 / Blocker 2 代码导向比较);管线架构整体 ACCEPTED。
+- **修复提交**:`56aed49b4e2cd1cba986823d4384a0058ed3755f` @ 同分支(已推送,远程核验一致;血统 073f262→64c43c5→56aed49)。
+
+### R1. 修复设计
+
+**Blocker 1(维度语义)**:固定聚焦模板 `"<展示名> overview specifications features capabilities"` 丢失用户请求的比较维度。
+- 新增 `_comparison_dimension(query, taxonomy, targets)`:确定性合成维度 —— 剥离目标词形(展示名/slug/大写形)与引导停用词(compare/and/vs/versus/的区别…)后剩余实质片段(零 LLM、零产品硬编码);无实质剩余 → 空串;
+- `_target_evidence_query` 增维度参数:有维度 → `"<展示名> <维度>"`(目标身份+用户维度并存;形状与生产校准过的单产品成功查询 "NE301 battery life" 一致);无维度 → 原验证模板。整句对比查询仍不直接作为重排查询(H2 不回潮);
+- trace 暴露 `dimension` / `code_oriented`(rerank stage)。
+
+**Blocker 2(代码导向比较)**:分层配额对一切比较 code-last。
+- 新增 `_is_code_oriented_comparison(text)`:确定性词面判定(通用技术词表 code/firmware/sdk/api/driver/implementation/固件/代码/…,零产品硬编码);
+- `_merge_per_target_candidates` 增 `code_priority` 参数:代码导向比较 → `competitive`(代码与非代码按融合序公平竞争配额,相关代码不被非代码自动饿死);通用比较 → `tiered`(tier1-first 不变);trace `selection` 字段记录模式。
+
+### R2. 变更文件
+
+- `backend/pipeline/rag.py`:上述两函数 + merge 参数 + pipeline 接线(raw_query 入参、维度合成、模式选择)+ 3 处 trace 暴露;
+- `tests/pipeline/test_comparison_evidence_correctness.py`:fake reranker 升级为维度敏感(维度词须真实进入聚焦查询才命中);新增 REV1 fixtures(MIXED/FWMIXED)与 3 用例(C/D/E)。
+
+### R3. 阻断证据(确定性测试,先 RED 后 GREEN)
+
+| 用例 | 场景 | RED(64c43c5) | GREEN(56aed49) |
+|---|---|---|---|
+| C `test_attribute_specific_comparison_surfaces_dimension_evidence` | "…power consumption",泛文档在前 | 聚焦句无维度 → generic 规则 → 泛 overview 过阈、功耗文档被滤 | 聚焦句含 "power consumption",双侧功耗证据胜出进 sources |
+| D `test_code_oriented_comparison_lets_code_compete` | "…firmware architecture",官方文档+相关固件 | 代码被分层挡在配额外,代码证据不可达 | competitive 模式,相关固件证据入配额、过阈、进生成 |
+| E `test_generic_comparison_code_does_not_regain_quota` | 同 D 语料 + generic 比较 | —(已过) | 仍过:无关代码不得回潮(锁定意图敏感,而非撤销 H1) |
+
+### R4. 全量回归 / lint
+
+- 聚焦:comparison 13/10→**13/13**;pipeline 目录 493 绿;
+- 离线全量(隔离库 ask_ai_test_cmp2,用后已 DROP):**1705 passed / 3 skipped / 0 failed**;
+- ruff / black(改动文件)全绿。
+
+### R5. 生产等价只读复现(真语料 + 真 LLM 直调 answer(),零生产触碰;脚本已清除)
+
+| 查询 | dimension | selection | own_after_rerank | 结果 |
+|---|---|---|---|---|
+| Compare NE503 and NE301 | ''(generic) | tiered | {ne503:5, ne301:3} | **answered**,双侧 sources(wiki/官网/商店),真 LLM 产出产品定位/架构对比 |
+| Compare NE301 and NE503(反转) | '' | tiered | {ne301:3, ne503:4} | **answered**,双侧 sources |
+| Compare NE301 and NE503 supported AI models(属性) | 'supported ai models' | tiered | {ne301:5, ne503:5} | **answered**,真 LLM 产出双侧 AI 模型对比(NE301 TFLite Int8/STM32N6 480×480/10MB vs NE503 侧) |
+| Compare the NE301 and NE503 firmware architecture(代码导向) | 'firmware architecture' | **competitive** | {ne301:4, ne503:3} | **answered**,真 LLM 产出固件架构对比(TFLite Int8 量化推理…) |
+| Compare NE301 and NE503 power consumption(对照) | 'power consumption' | tiered | {ne301:3, **ne503:0**} | **诚实 fail-closed**:真语料中 NE503 侧无合格功耗官方证据 → 按契约拒答并明示缺侧(C5:拒答反映真实证据可用性) |
+
+维度可用性扫描(证据管线只读遍历):battery life/ne503=0、storage/ne301=0、sensor options/ne503=0 为单侧;wireless connectivity(3/4)、networking(4/4)、supported AI models(5/5)、power supply(2/4)双侧支撑 —— 属性比较证据选取了双侧支撑的维度,同时保留单侧维度拒答作为 fail-closed 正面证据。
+
+### R6. 最终执行状态
+
+**CANDIDATE READY(REV1)** —— 等待 Planner 复审。候选 tip = `56aed49b4e2cd1cba986823d4384a0058ed3755f`
+(@ origin/worktree-exec/comparison-evidence-20260905)。
