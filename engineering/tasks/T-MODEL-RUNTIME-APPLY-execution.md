@@ -267,3 +267,77 @@ capture V(self._lock 内,绝不跨越异步 DB I/O)
 **CANDIDATE READY(REV2)** —— 等待 Planner 复审。候选 tip =
 `073f26236c08531212f6d5b12b8b8173f0557c79`(@ origin/worktree-exec/model-runtime-apply-20260905;
 血统 762eae3 → d997782 → 9b9435f → 073f262)。
+
+
+---
+
+## HOTFIX RELEASE GATE — 集成 + 生产发布 + T4 窄验收(2026-09-05)
+
+- **Planner 判定**:FINAL PASS(授权候选 073f262)
+- **最终状态**:**PRODUCTION CANDIDATE READY**(待 Planner 终审;PRODUCTION_MUTATIONS 见 §9.7)
+
+### 9.1 集成
+
+- 远端候选核验:`refs/heads/worktree-exec/model-runtime-apply-20260905 = 073f26236c08531212f6d5b12b8b8173f0557c79`(精确匹配授权)
+- 集成方式:FF-only(`git merge --ff-only`,候选直接建于基线 762eae3,零冲突零改编)
+- **main = origin/main = 073f26236c08531212f6d5b12b8b8173f0557c79**;血统 762eae3→d997782→9b9435f→073f262
+
+### 9.2 托管 CI(不可替代证据)
+
+- Workflow/Run:**Build & Push GPU Image — run id `33962813514`**(push main 触发,head sha 073f262)
+- 结果:**conclusion=success**(job `test`=success;job `build-and-push`=success)
+- 产物:GPU 全包含镜像 `ghcr.io/harryhua-ai/ask-ai:sha-073f262`
+
+### 9.3 部署(精确 SHA)
+
+- 目标:tesla-t4 生产;部署前磁盘 943G 空闲;末次同步 11:00 UTC 已完成(cron 窗口外作业)
+- 备份/回滚锚:compose 备份 + 前镜像 id `sha256:e9042cba…`(sha-762eae3);三服务
+  (backend / sync-executor / sync-cron)`ASKAI_IMAGE_TAG=sha-073f262 docker compose up -d`(每次 up -d 显式带 tag)
+- 部署后 `/health`:`{"status":"ok","version":"0.0.0+main.073f2623","git_sha":"073f26236c08531212f6d5b12b8b8173f0557c79","app_mode":"production"}`
+
+### 9.4 验收 B — runtime 基线
+
+- **部署前**(762eae3,旧真相面):plan=reranker_transient;三 workload configured=gpu/GPU-3caad314-…,
+  **effective=gpu/gpu_uuid=None**(v1.1.0 启动时的装配;DB 后来保存的规范 uuid 处于 pending,
+  每 workload restart_required=true——正是本热修复消灭的「保存后必须重启」状态);capacity=HEALTHY
+- **部署后**(新代码启动 load):generation=**1**;plan=reranker_transient;三 workload
+  configured=effective=gpu/GPU-3caad314-…,pending 全 false,shared_embedding_runtime=true;
+  capacity=HEALTHY(budget 4210MiB/free 3100/askai 驻留 1110)——历史挂起配置被启动如实落地
+
+### 9.5 验收 C — 真实 T4 Apply(双相,终态=原配置)
+
+| 相 | 操作 | 结果 |
+|---|---|---|
+| 1 | PUT sync_embedding→cpu(pending=true:configured=cpu/effective=gpu)→ POST apply | **HTTP 200 in 1.56s**;generation 1→**2**;sync effective=cpu/pending=false;query 零重建(实例复用);shared_embedding_runtime=false(共享正确断裂);plan 仍 reranker_transient |
+| 2 | PUT sync_embedding→gpu/GPU-3caad314-…(pending=true:configured=gpu/effective=cpu)→ POST apply | **HTTP 200 in 0.94s**;generation 2→**3**;sync effective=gpu/pending=false;**shared_embedding_runtime=true(共享重建,复用查询实例,GPU 空闲无新消耗)**;plan=reranker_transient;capacity=HEALTHY |
+
+- Save/Apply 语义全程可区分(保存→「待应用生效」pending;apply 后归零)✓
+- 共享嵌入不变量 ✓;reranker residency=transient 与容量策略一致 ✓;GPU→CPU 与 CPU→GPU 双向真实转换 PASS
+
+### 9.6 验收 D — 真实查询(After Apply,generation=3)
+
+- 内部嵌入通道(真实 BGE-m3,经共享运行时):HTTP 200,`dim=1024, execution_device=gpu, fallback_reason=None`
+- 真实生产 ask(channel=admin,不混入访客统计;session=apply-gate-073f262):
+  HTTP 200 in 12.5s;SSE 事件 sources×1 / token×137 / done×1 / **error×0**,完整中文答案流式完成
+  (conversation_id=090229ad-a950-43fe-b0f1-5b2325bf7457)
+- 无 CUDA OOM、无 unsafe 状态、无回退;backend 全程 healthy
+
+### 9.7 验收 E — 日志审查(backend,部署后 25 分钟窗)
+
+- 3 次「候选装配/已提交」:generation 1(启动)→2(相 1)→3(相 2),plan 恒 reranker_transient;两次 apply 端点 200
+- 模型加载恰 3 次:BGE-m3(cuda:0)+ reranker(cuda:0)= 启动;BGE-m3(cpu)= 相 1 差量重建的 sync CPU 实例;
+  **相 2 零新加载**(复用查询实例,差量重建设计在生产兑现)
+- `cuda out of memory|oom|UnsafeRuntimePlan|Traceback` 扫描:**0 命中**
+- sync-executor/sync-cron 正常运行(既有 SAWarning 为 v1.1.0 已知小修候选,非本次引入)
+- 生产零触碰红线:未动第三方 GPU 进程(llama-server/neomind 等);未做破坏性失败注入(工程测试已覆盖失败路径)
+
+### 9.8 残余与说明
+
+- 生产 `generation` 字段自本版起出现在真相面(新增,向后兼容)
+- 已知既有项(非本次引入):sync_executor_loop.py:281 SAWarning;admin 种子密码治理仍挂起
+- 回滚路径:三服务 `ASKAI_IMAGE_TAG=sha-762eae3 up -d`(锚镜像仍在主机)
+
+### 9.9 最终状态
+
+**PRODUCTION CANDIDATE READY** —— 集成、托管 CI、生产部署、双相真实 Apply、真实查询、
+日志审查全部通过;等待 Planner 终审。
