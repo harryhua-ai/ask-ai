@@ -129,7 +129,7 @@ describe("ModelRuntimeTab(§35 模型运行)", () => {
     expect(screen.getByText(/外部占用/)).toBeInTheDocument();
   });
 
-  it("保存 workload 设备:PUT 规范载荷 + 重启生效提示", async () => {
+  it("保存 workload 设备:PUT 规范载荷 + 待「应用更改」生效提示", async () => {
     apiFetch.mockImplementation((path: string, options?: RequestInit) => {
       if (path === "/model-runtime") return Promise.resolve(RUNTIME);
       if (path === "/model-runtime/policies/sync_embedding" && options?.method === "PUT")
@@ -160,7 +160,137 @@ describe("ModelRuntimeTab(§35 模型运行)", () => {
         ),
       ).toBe(true),
     );
-    expect(await screen.findByText(/重启后生效/)).toBeInTheDocument();
+    expect(await screen.findByText(/待应用更改生效/)).toBeInTheDocument();
+    // 保存(持久化)后出现显式「应用更改」入口,Save 与 Apply 语义可区分
+    expect(await screen.findByTestId("apply-runtime-button")).toBeInTheDocument();
+  });
+
+  it("Apply:有待生效配置时点击「应用更改」→ POST apply,成功后刷新为已生效真相", async () => {
+    const pendingRuntime = {
+      ...RUNTIME,
+      policies: RUNTIME.policies.map((p) =>
+        p.workload === "sync_embedding"
+          ? {
+              ...p,
+              configured: { kind: "cpu", gpu_uuid: null, label: "CPU · Intel Xeon Gold 6133" },
+              restart_required: true,
+            }
+          : p,
+      ),
+      runtime_plan: {
+        mode: "dual_resident",
+        budget_mb: 9000,
+        pending_mode: "cpu_only",
+        restart_required: true,
+        generation: 1,
+      },
+    };
+    const appliedRuntime = {
+      ...pendingRuntime,
+      policies: pendingRuntime.policies.map((p) => ({
+        ...p,
+        restart_required: false,
+      })),
+      runtime_plan: {
+        mode: "cpu_only",
+        budget_mb: 9000,
+        pending_mode: "cpu_only",
+        restart_required: false,
+        generation: 2,
+      },
+    };
+    apiFetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path === "/model-runtime") return Promise.resolve(pendingRuntime);
+      if (path === "/model-runtime/apply" && options?.method === "POST")
+        return Promise.resolve(appliedRuntime);
+      return Promise.reject(new Error(`unexpected ${path}`));
+    });
+    renderTab();
+    const button = await screen.findByTestId("apply-runtime-button");
+    expect(button).toHaveTextContent("应用更改");
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(
+        apiFetch.mock.calls.some(
+          ([path, options]) =>
+            path === "/model-runtime/apply" && (options as RequestInit).method === "POST",
+        ),
+      ).toBe(true),
+    );
+    // 成功后真相面刷新:待生效徽标消失,运行计划变为已生效模式,Apply 入口收起
+    await waitFor(() =>
+      expect(screen.queryByText("待应用生效")).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(screen.getByTestId("runtime-plan")).toHaveTextContent(/运行计划:无 GPU 工作负载/));
+    expect(screen.queryByTestId("apply-runtime-button")).not.toBeInTheDocument();
+  });
+
+  it("Apply 处理中:按钮禁用并显示「应用中…」", async () => {
+    let resolveApply: (value: unknown) => void = () => {};
+    const pendingRuntime = {
+      ...RUNTIME,
+      runtime_plan: {
+        mode: "dual_resident",
+        budget_mb: 9000,
+        pending_mode: "cpu_only",
+        restart_required: true,
+        generation: 1,
+      },
+    };
+    apiFetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path === "/model-runtime") return Promise.resolve(pendingRuntime);
+      if (path === "/model-runtime/apply" && options?.method === "POST")
+        return new Promise((resolve) => {
+          resolveApply = resolve;
+        });
+      return Promise.reject(new Error(`unexpected ${path}`));
+    });
+    renderTab();
+    const button = await screen.findByTestId("apply-runtime-button");
+    fireEvent.click(button);
+    await waitFor(() => expect(button).toHaveTextContent("应用中…"));
+    expect(button).toBeDisabled();
+    resolveApply({
+      ...pendingRuntime,
+      runtime_plan: { ...pendingRuntime.runtime_plan, restart_required: false, generation: 2 },
+    });
+    // 成功后待生效清零,Apply 入口收起
+    await waitFor(() =>
+      expect(screen.queryByTestId("apply-runtime-button")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("Apply 失败:明确说明「当前运行配置未改变」及可操作错误", async () => {
+    const pendingRuntime = {
+      ...RUNTIME,
+      policies: RUNTIME.policies.map((p) => ({ ...p, restart_required: true })),
+      runtime_plan: {
+        mode: "dual_resident",
+        budget_mb: 9000,
+        pending_mode: "cpu_only",
+        restart_required: true,
+        generation: 1,
+      },
+    };
+    apiFetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path === "/model-runtime") return Promise.resolve(pendingRuntime);
+      if (path === "/model-runtime/apply" && options?.method === "POST")
+        return Promise.reject(
+          new Error(
+            "应用更改被拒绝:候选配置无安全运行计划。当前运行配置未改变,线上查询不受影响;请提高 GPU 运行预算后重试。",
+          ),
+        );
+      return Promise.reject(new Error(`unexpected ${path}`));
+    });
+    renderTab();
+    const button = await screen.findByTestId("apply-runtime-button");
+    fireEvent.click(button);
+    const error = await screen.findByTestId("apply-error");
+    expect(error).toHaveTextContent("应用失败,当前运行配置未改变");
+    expect(error).toHaveTextContent(/请提高 GPU 运行预算后重试/);
+    // 失败后待生效状态保持(配置未丢,可调整后重试)
+    expect(screen.getByTestId("apply-runtime-button")).toHaveTextContent("应用更改");
+    expect(screen.getAllByText("待应用生效").length).toBeGreaterThan(0);
   });
 
   it("GPU 预算:auto 默认可见,manual 输入 GB 并 PUT", async () => {
@@ -239,7 +369,7 @@ describe("ModelRuntimeTab(§35 模型运行)", () => {
     expect(screen.getByText("瞬态驻留")).toBeInTheDocument();
     const plan = screen.getByTestId("runtime-plan");
     expect(plan).toHaveTextContent(/运行计划:重排瞬态驻留/);
-    expect(plan).toHaveTextContent(/重启后将变为:GPU 容量不足/);
+    expect(plan).toHaveTextContent(/点击「应用更改」后变为:GPU 容量不足/);
   });
 
   it("REV1 B4:按容量计划落 CPU 的 workload 显式标注(非静默降级)", async () => {

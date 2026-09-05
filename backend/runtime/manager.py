@@ -20,12 +20,17 @@
   次让路后获得一次执行权,持续查询压力下不会永久饥饿;
 - **#14 保真**:sync 路径 CUDA 失败按既有分类(仅三类)单向回退 CPU(同模型),
   遥测三值 gpu/cpu/gpu_to_cpu 如实;查询路径无自动回退;
-- **Configured ≠ Effective**:Admin 保存仅持久化 Configured;Effective 在
-  (重)启动落地;重启生效是 V1 的确定性行为。
+- **Configured ≠ Effective + 显式 Apply**:Admin 保存仅持久化 Configured;
+  Effective 在(重)启动落地,或由管理员显式「应用更改」(apply)在本生命周期内
+  落地。apply = 候选装配 + 原子换装:先按最新持久配置完整装配候选运行时
+  (UNSAFE 计划/GPU 缺失/模型加载失败 → 拒绝且当前运行时零改动),成功才在
+  锁内原子提交;差量重建(设备未变的 workload 复用既有实例,不产生同卡
+  双驻留),换装后被替换实例由在飞调用自然用完再回收。
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 from collections.abc import Callable
@@ -112,6 +117,21 @@ class UnsafeRuntimePlanError(RuntimeError):
     """
 
 
+class ApplyRejectedError(RuntimeError):
+    """Apply 候选装配被拒绝(fail-before-mutate;当前 Effective Runtime 未改变)。
+
+    触发面(契约:T-MODEL-RUNTIME-APPLY):
+    - ``capacity_unsafe``:候选计划为 gpu_insufficient(先拒装配,不先全量硬载);
+    - ``build_failed``:配置 GPU 不存在/不可见,或模型加载失败;
+    - ``not_loaded``:运行时尚未完成启动装配。
+    失败路径保证旧运行时完整可用(构造期零 self 突变,提交是最后一步)。
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 @dataclass(frozen=True)
 class DeviceSelection:
     """解析后的目标设备(kind + GPU UUID;cpu 时 uuid 为 None)。"""
@@ -146,6 +166,26 @@ class ResidencyPlan:
     budget_mb: int | None
     floors_mb: dict[str, int] = field(default_factory=dict)
     reason: str = ""
+
+
+@dataclass
+class _RuntimeAssembly:
+    """一次完整装配的候选产物(先构造后提交,支撑 Apply 的原子换装)。
+
+    ``built_from`` 记录本装配的输入选择,供下次 Apply 做差量重建:
+    设备未变的 workload 复用既有实例(避免同卡双驻留与无谓重载)。
+    """
+
+    query_embedder: Embedder | None
+    query_on_gpu: bool
+    sync_embedder_override: Embedder | None
+    sync_on_gpu: bool
+    reranker: Reranker | None
+    reranker_transient: bool
+    reranker_gpu_device: str | None
+    states: dict[str, WorkloadState]
+    plan: ResidencyPlan
+    built_from: dict[str, DeviceSelection]
 
 
 def compute_residency_plan(
@@ -305,6 +345,13 @@ class ModelRuntimeManager:
         self._gpu_memory_reader = gpu_memory_reader
         self._gpu_gate = _GpuGate()
         self._lock = threading.Lock()
+        # Apply 串行锁(覆盖 读取现状→候选装配→提交 全程;与 _lock 分离,
+        # 候选装配不阻塞在线查询的实例捕获读)
+        self._apply_lock = threading.Lock()
+        # 装配纪元:每次提交(启动 load / Apply)递增;Admin/日志证据用
+        self._generation = 0
+        # 当前装配的输入选择(Apply 差量重建的对比基准)
+        self._built_from: dict[str, DeviceSelection] = {}
         # B1:查询嵌入实例始终构造并持有(在线查询是第一优先级)
         self._query_embedder: Embedder | None = None
         self._query_on_gpu: bool = False
@@ -330,7 +377,9 @@ class ModelRuntimeManager:
         """读取持久策略并构造模型(lifespan 调用;语义与既有启动等价)。"""
         async with session_factory() as session:
             policies = await self._read_policies(session)
-            await self._read_budget_setting(session)
+            budget_mode, manual_budget_mb = await self._read_budget_setting(session)
+        self._budget_mode = budget_mode
+        self._manual_budget_mb = manual_budget_mb
         self._build(policies)
         self._loaded = True
 
@@ -344,11 +393,13 @@ class ModelRuntimeManager:
             if r.workload in WORKLOADS
         }
 
-    async def _read_budget_setting(self, session: AsyncSession) -> None:
+    async def _read_budget_setting(self, session: AsyncSession) -> tuple[str, int | None]:
+        """读取 GPU 预算设置(纯读;由调用方决定提交时机,Apply 失败不污染色)。"""
         row = await session.get(ModelRuntimeSetting, "gpu_budget")
-        if row is not None:
-            self._budget_mode = row.mode if row.mode in {"auto", "manual"} else "auto"
-            self._manual_budget_mb = row.manual_budget_mb
+        if row is None:
+            return "auto", None
+        mode = row.mode if row.mode in {"auto", "manual"} else "auto"
+        return mode, row.manual_budget_mb
 
     def _default_selection(self) -> DeviceSelection:
         """无持久策略时的引导默认 = EMBEDDER_DEVICE(与 v1.1 之前一致)。"""
@@ -388,6 +439,22 @@ class ModelRuntimeManager:
         return "cuda"
 
     def _build(self, policies: dict[str, tuple[str, str | None, str]]) -> None:
+        """装配并立即提交(启动路径;Apply 走 _apply_policies 的候选-提交两段)。"""
+        asm = self._assemble(policies, self._budget_mode, self._manual_budget_mb)
+        self._commit(asm, self._budget_mode, self._manual_budget_mb)
+
+    def _assemble(
+        self,
+        policies: dict[str, tuple[str, str | None, str]],
+        budget_mode: str,
+        manual_budget_mb: int | None,
+    ) -> _RuntimeAssembly:
+        """候选装配(纯构造,失败即抛,零 self 突变)。
+
+        与上一装配差量对比(_built_from):设备未变的 workload 复用既有
+        实例 —— Apply 不产生同卡双驻留,也不无谓重载模型。UNSAFE 计划下
+        查询侧 GPU 工作负载不构造实例(R2-1;启动路径可达,Apply 已先行拒绝)。
+        """
         model_names = {
             WORKLOAD_QUERY_EMBEDDING: "BAAI/bge-m3",
             WORKLOAD_SYNC_EMBEDDING: "BAAI/bge-m3",
@@ -404,75 +471,128 @@ class ModelRuntimeManager:
         reranker_sel = configured[WORKLOAD_QUERY_RERANKER]
 
         # B4:预算 → 驻留计划(先于任何模型构造;UNSAFE 不许先全量硬载)
-        budget_mb = self._effective_budget_mb()
+        budget_mb = self._effective_budget_mb(budget_mode, manual_budget_mb)
         plan = compute_residency_plan(
             budget_mb,
             embedder_gpu=query_sel.kind == _DEVICE_KIND_GPU or sync_sel.kind == _DEVICE_KIND_GPU,
             reranker_gpu=reranker_sel.kind == _DEVICE_KIND_GPU,
         )
-        self._plan = plan
-        self._executed_plan_mode = plan.mode
         insufficient = plan.mode == PLAN_GPU_INSUFFICIENT
+
+        # 差量重建判定(对比当前装配的输入选择)
+        prev = self._built_from or {}
+        prev_query_sel = prev.get(WORKLOAD_QUERY_EMBEDDING)
+        prev_sync_sel = prev.get(WORKLOAD_SYNC_EMBEDDING)
+        prev_reranker_sel = prev.get(WORKLOAD_QUERY_RERANKER)
+        prev_share = (
+            prev_query_sel is not None
+            and prev_sync_sel is not None
+            and prev_query_sel.key() == prev_sync_sel.key()
+        )
+        query_rebuild = (
+            prev_query_sel is None
+            or configured[WORKLOAD_QUERY_EMBEDDING].key() != prev_query_sel.key()
+        )
+        # sync 重建面:自身选择变化 / 共享关系变化 / 历史一次性回退待重置
+        # (Apply=重新物化,与重启语义一致;实例缺失的退化装配同样触发)
+        sync_rebuild = (
+            prev_sync_sel is None
+            or configured[WORKLOAD_SYNC_EMBEDDING].key() != prev_sync_sel.key()
+            or share != prev_share
+            or self._sync_cpu_embedder is not None
+        )
+        reranker_rebuild = (
+            prev_reranker_sel is None
+            or reranker_sel.key() != prev_reranker_sel.key()
+            or plan.mode != self._executed_plan_mode
+            or self._reranker is None
+        )
+        # 历史一次性回退待重置(Apply=重新物化):共享模式下被 OOM 过的正是
+        # 共享实例本身 → 连带重建 query,换得全新共享运行时(与重启语义一致)
+        fallback_reset = self._sync_cpu_embedder is not None
+        if fallback_reset and share:
+            query_rebuild = True
 
         # B1 + R2-1:查询实例始终持有;但 UNSAFE 计划下查询侧工作负载
         # fail-closed —— 既不自动改跑 CPU(未经产品授权),也不上 GPU 冒险
         # (防不安全执行),拒绝执行并给出管理员可操作指引(Admin 保持可用)。
         if query_sel.kind == _DEVICE_KIND_GPU and insufficient:
             effective_query = query_sel  # 无实例在执行;effective 不谎报为 CPU
-            self._query_embedder = None
-            self._query_on_gpu = False
+            query_embedder = None
+            query_on_gpu = False
+        elif query_rebuild:
+            effective_query = query_sel
+            query_embedder = self._build_embedder(query_sel)
+            query_on_gpu = effective_query.kind == _DEVICE_KIND_GPU
         else:
             effective_query = query_sel
-            self._query_embedder = self._build_embedder(query_sel)
-            self._query_on_gpu = effective_query.kind == _DEVICE_KIND_GPU
+            query_embedder = self._query_embedder
+            query_on_gpu = self._query_on_gpu
 
         # sync 是后台工作负载:GPU 不可安全执行时按计划落 CPU(#14 谱系的
         # 既有授权 CPU 路径;显式状态标注,非静默)。与查询实例不共享
         # (查询侧在 UNSAFE 下无实例,共享无从谈起)。
-        if share and self._query_embedder is not None:
-            self._sync_embedder_override = None
+        if share and query_embedder is not None:
+            sync_embedder_override = None
             effective_sync = effective_query
-            self._sync_on_gpu = self._query_on_gpu
+            sync_on_gpu = query_on_gpu
         elif sync_sel.kind == _DEVICE_KIND_GPU and insufficient:
             effective_sync = DeviceSelection(kind=_DEVICE_KIND_CPU)
-            self._sync_embedder_override = self._embedder_factory(device=_DEVICE_KIND_CPU)
-            self._sync_on_gpu = False
+            sync_embedder_override = self._embedder_factory(device=_DEVICE_KIND_CPU)
+            sync_on_gpu = False
+        elif sync_rebuild:
+            effective_sync = sync_sel
+            sync_embedder_override = self._build_embedder(sync_sel)
+            sync_on_gpu = effective_sync.kind == _DEVICE_KIND_GPU
         else:
             effective_sync = sync_sel
-            self._sync_embedder_override = None if share else self._build_embedder(sync_sel)
-            self._sync_on_gpu = effective_sync.kind == _DEVICE_KIND_GPU
+            sync_embedder_override = self._sync_embedder_override
+            sync_on_gpu = self._sync_on_gpu
 
         # B3:重排装配三态(双驻留 / 瞬态 / 按计划 CPU);模型身份与打分语义零变化
-        self._reranker_transient = False
+        reranker_transient = False
+        reranker_gpu_device = self._reranker_gpu_device  # 复用分支保持现值
         if reranker_sel.kind == _DEVICE_KIND_GPU:
             if insufficient:
                 # R2-1:重排不自动落 CPU(未经产品授权);fail-closed 无实例,
                 # rerank() 拒绝执行并给出可操作指引;effective 不谎报为 CPU。
                 effective_reranker = reranker_sel
-                self._reranker = None
+                reranker = None
                 reranker_residency = RESIDENCY_RESIDENT
             else:
                 effective_reranker = reranker_sel
-                self._reranker_gpu_device = self._gpu_device_str(reranker_sel)
+                reranker_gpu_device = self._gpu_device_str(reranker_sel)
                 if plan.mode == PLAN_RERANKER_TRANSIENT:
                     # 权重驻留主机内存,仅重排步骤上卡(FlagEmbedding compute
                     # 自带 .half()+.to(device);代理负责完成即卸载)
-                    self._reranker = _TransientGpuReranker(
-                        self,
-                        self._reranker_factory(device=self._reranker_gpu_device),
-                        self._reranker_gpu_device,
+                    reranker = (
+                        _TransientGpuReranker(
+                            self,
+                            self._reranker_factory(device=reranker_gpu_device),
+                            reranker_gpu_device,
+                        )
+                        if reranker_rebuild
+                        else self._reranker
                     )
-                    self._reranker_transient = True
+                    reranker_transient = True
                     reranker_residency = RESIDENCY_TRANSIENT
                 else:
-                    self._reranker = self._reranker_factory(device=self._reranker_gpu_device)
+                    reranker = (
+                        self._reranker_factory(device=reranker_gpu_device)
+                        if reranker_rebuild
+                        else self._reranker
+                    )
                     reranker_residency = RESIDENCY_RESIDENT
         else:
             effective_reranker = reranker_sel
-            self._reranker = self._reranker_factory(device=_DEVICE_KIND_CPU)
+            reranker = (
+                self._reranker_factory(device=_DEVICE_KIND_CPU)
+                if reranker_rebuild
+                else self._reranker
+            )
             reranker_residency = RESIDENCY_RESIDENT
 
-        self.states = {
+        states = {
             WORKLOAD_QUERY_EMBEDDING: WorkloadState(
                 workload=WORKLOAD_QUERY_EMBEDDING,
                 model_name=model_names[WORKLOAD_QUERY_EMBEDDING],
@@ -485,7 +605,7 @@ class ModelRuntimeManager:
                 model_name=model_names[WORKLOAD_SYNC_EMBEDDING],
                 configured=sync_sel,
                 effective=effective_sync,
-                shared=share and self._query_embedder is not None,
+                shared=share and query_embedder is not None,
             ),
             WORKLOAD_QUERY_RERANKER: WorkloadState(
                 workload=WORKLOAD_QUERY_RERANKER,
@@ -499,23 +619,64 @@ class ModelRuntimeManager:
         # sync 后台按计划落 CPU 的既有授权路径显式标注(非静默)。
         if insufficient:
             if query_sel.kind == _DEVICE_KIND_GPU:
-                self.states[WORKLOAD_QUERY_EMBEDDING].status = STATUS_UNSAFE_NO_PLAN
+                states[WORKLOAD_QUERY_EMBEDDING].status = STATUS_UNSAFE_NO_PLAN
             if reranker_sel.kind == _DEVICE_KIND_GPU:
-                self.states[WORKLOAD_QUERY_RERANKER].status = STATUS_UNSAFE_NO_PLAN
+                states[WORKLOAD_QUERY_RERANKER].status = STATUS_UNSAFE_NO_PLAN
             if sync_sel.kind == _DEVICE_KIND_GPU:
-                self.states[WORKLOAD_SYNC_EMBEDDING].status = STATUS_PLAN_CPU
-        for state in self.states.values():
+                states[WORKLOAD_SYNC_EMBEDDING].status = STATUS_PLAN_CPU
+        for state in states.values():
             if (
                 state.effective.kind == _DEVICE_KIND_CPU
                 and state.configured.kind == _DEVICE_KIND_GPU
             ):
                 state.status = STATUS_PLAN_CPU
         logger.info(
-            "model runtime 计划:%s(预算=%sMiB);embedding=%s reranker=%s",
+            "model runtime 候选装配:%s(预算=%sMiB);embedding=%s reranker=%s",
             plan.mode,
             budget_mb,
-            "GPU" if self._query_on_gpu else "CPU",
-            ("GPU/瞬态" if self._reranker_transient else effective_reranker.kind.upper()),
+            "GPU" if query_on_gpu else "CPU",
+            ("GPU/瞬态" if reranker_transient else effective_reranker.kind.upper()),
+        )
+        return _RuntimeAssembly(
+            query_embedder=query_embedder,
+            query_on_gpu=query_on_gpu,
+            sync_embedder_override=sync_embedder_override,
+            sync_on_gpu=sync_on_gpu,
+            reranker=reranker,
+            reranker_transient=reranker_transient,
+            reranker_gpu_device=reranker_gpu_device,
+            states=states,
+            plan=plan,
+            built_from=dict(configured),
+        )
+
+    def _commit(
+        self, asm: _RuntimeAssembly, budget_mode: str, manual_budget_mb: int | None
+    ) -> None:
+        """原子提交候选装配(锁内整组赋值;读侧经 _lock 捕获一致快照)。"""
+        with self._lock:
+            self._query_embedder = asm.query_embedder
+            self._query_on_gpu = asm.query_on_gpu
+            self._sync_embedder_override = asm.sync_embedder_override
+            self._sync_on_gpu = asm.sync_on_gpu
+            # 历史一次性回退实例随换装作废(Apply=重新物化;重建判定已保证
+            # 回退过的 sync 必被重建,此处只清指针不留悬空状态)
+            self._sync_cpu_embedder = None
+            self._reranker = asm.reranker
+            self._reranker_transient = asm.reranker_transient
+            self._reranker_gpu_device = asm.reranker_gpu_device
+            self.states = asm.states
+            self._plan = asm.plan
+            self._executed_plan_mode = asm.plan.mode
+            self._built_from = asm.built_from
+            self._budget_mode = budget_mode
+            self._manual_budget_mb = manual_budget_mb
+            self._generation += 1
+            self._loaded = True  # 至少完成一次装配提交;Apply 由此放行
+        logger.info(
+            "model runtime 已提交(generation=%s,plan=%s)",
+            self._generation,
+            asm.plan.mode,
         )
 
     def _gpu_index(self, selection: DeviceSelection) -> int:
@@ -554,17 +715,24 @@ class ModelRuntimeManager:
         snapshot = self._gpu_memory_reader(gpu_uuid)
         return gpu_uuid, snapshot, askai_resident_mb
 
-    def _effective_budget_mb(self) -> int | None:
+    def _effective_budget_mb(
+        self,
+        budget_mode: str | None = None,
+        manual_budget_mb: int | None = None,
+    ) -> int | None:
         """有效 GPU 预算:auto=空闲+ASK-AI 驻留(实况);manual=min(手动, 实况)。
 
         manual 是规划上限而非 cgroup 硬限;观测缺失 → None(计划退化 undecided)。
+        参数缺省 = 当前已提交设置(Apply 传候选值,做「假如应用」的预演)。
         """
+        mode = budget_mode if budget_mode in ("auto", "manual") else self._budget_mode
+        manual = manual_budget_mb if manual_budget_mb is not None else self._manual_budget_mb
         _, snapshot, askai_resident_mb = self._read_gpu_facts()
         free_mb = snapshot.free_mb if snapshot else None
         if free_mb is None:
             return None
-        if self._budget_mode == "manual" and self._manual_budget_mb:
-            return min(self._manual_budget_mb, free_mb + (askai_resident_mb or 0))
+        if mode == "manual" and manual:
+            return min(manual, free_mb + (askai_resident_mb or 0))
         return free_mb + (askai_resident_mb or 0)
 
     # ------------------------------------------------------------- 推理路径
@@ -594,15 +762,20 @@ class ModelRuntimeManager:
 
         B2:GPU 执行的嵌入批次经 _GpuGate 互斥入闸;CPU 执行(含回退后)
         不占闸 —— 无显存峰问题,不过度串行化。
+        换装一致性:在锁内一次性捕获(实例 + 设备事实),执行在锁外 ——
+        Apply 原子换装后,在飞批次用完旧实例,新批次即用新装配。
         """
         if workload not in (WORKLOAD_QUERY_EMBEDDING, WORKLOAD_SYNC_EMBEDDING):
             raise KeyError(f"unknown embedding workload: {workload}")
-        instance = self._embedder_for(workload)
+        with self._lock:
+            instance = self._embedder_for(workload)
+            sync_on_gpu = self._sync_on_gpu
+            query_on_gpu = self._query_on_gpu
         if instance is None:
             # R2-1:UNSAFE 计划 fail-closed —— 不自动降级 CPU,不上 GPU 冒险
             raise self._raise_unsafe_plan(workload)
         if workload == WORKLOAD_SYNC_EMBEDDING:
-            if not self._sync_on_gpu:
+            if not sync_on_gpu:
                 return instance.embed(texts)
             try:
                 with self._gpu_gate.sync():
@@ -614,7 +787,7 @@ class ModelRuntimeManager:
                 ):
                     raise
                 return self._fallback_sync_to_cpu(reason, exc, texts)
-        if self._query_on_gpu:
+        if query_on_gpu:
             with self._gpu_gate.query():
                 return instance.embed(texts)
         return instance.embed(texts)
@@ -624,16 +797,17 @@ class ModelRuntimeManager:
     ) -> list[np.ndarray]:
         """#14 保真:GPU 批次 CUDA 失败单向回退 CPU(同模型;闸已释放)。"""
         state = self.states[WORKLOAD_SYNC_EMBEDDING]
-        # 单向 GPU→CPU,仅 sync workload;查询实例不动
+        # 单向 GPU→CPU,仅 sync workload;查询实例不动(锁内完成状态突变,
+        # 与 Apply 换装的提交互斥)
         with self._lock:
             if self._sync_cpu_embedder is None:
                 logger.warning("sync 嵌入 CUDA 故障(%s),单向回退 CPU(查询实例不受影响)", reason)
                 self._sync_cpu_embedder = self._embedder_factory(device=_DEVICE_KIND_CPU)
-        self._sync_on_gpu = False
-        state.effective = DeviceSelection(kind=_DEVICE_KIND_CPU)
-        state.status = STATUS_FALLBACK
-        state.fallback_reason = reason
-        state.fallback_detail = f"{type(exc).__name__}: {exc}"[:500]
+            self._sync_on_gpu = False
+            state.effective = DeviceSelection(kind=_DEVICE_KIND_CPU)
+            state.status = STATUS_FALLBACK
+            state.fallback_reason = reason
+            state.fallback_detail = f"{type(exc).__name__}: {exc}"[:500]
         try:
             return self._sync_cpu_embedder.embed(texts)
         except Exception as cpu_exc:
@@ -644,10 +818,12 @@ class ModelRuntimeManager:
 
     def rerank(self, query: str, documents: list[str]) -> list[float]:
         """查询重排入口(query_reranker;无自动设备回退,与现状一致)。"""
-        if self._reranker is None:
+        with self._lock:
+            reranker = self._reranker
+        if reranker is None:
             # R2-1:UNSAFE 计划 fail-closed(不自动降级 CPU,不上 GPU 冒险)
             raise self._raise_unsafe_plan(WORKLOAD_QUERY_RERANKER)
-        return self._reranker.rerank(query, documents)
+        return reranker.rerank(query, documents)
 
     # ------------------------------------------------------------- 真相面
 
@@ -669,7 +845,7 @@ class ModelRuntimeManager:
         return selection.gpu_uuid or "GPU"
 
     def runtime_plan_snapshot(self) -> dict:
-        """B4/R2-1 真相面:当前生效计划 + 预算变化后的待重启计划 + 行动要求。"""
+        """B4/R2-1 真相面:当前生效计划 + 预算变化后的待生效计划 + 行动要求。"""
         executed = self._executed_plan_mode
         current = self.current_plan()
         return {
@@ -682,6 +858,9 @@ class ModelRuntimeManager:
             "restart_required": executed is not None
             and current.mode not in (None, executed)
             and current.mode != PLAN_UNDECIDED,
+            # 装配纪元:启动 load=1,每次成功 Apply +1;Admin/日志据其确认
+            # 「应用更改」确实落到了当前进程的运行时
+            "generation": self._generation,
         }
 
     def current_plan(self) -> ResidencyPlan:
@@ -807,7 +986,7 @@ class ModelRuntimeManager:
         device_kind: str,
         gpu_uuid: str | None,
     ) -> dict:
-        """持久化 Configured Device(重启生效;不触碰 Effective)。"""
+        """持久化 Configured Device(「应用更改」或重启生效;不触碰 Effective)。"""
         if workload not in WORKLOADS:
             raise ValueError(f"unknown workload: {workload}")
         if device_kind not in (_DEVICE_KIND_GPU, _DEVICE_KIND_CPU):
@@ -832,6 +1011,93 @@ class ModelRuntimeManager:
             await session.commit()
         state.configured = DeviceSelection(kind=device_kind, gpu_uuid=gpu_uuid)
         return self.workload_snapshot(workload)
+
+    async def apply(self, session_factory: async_sessionmaker[AsyncSession]) -> dict:
+        """显式生效(「应用更改」):重读持久配置 → 候选装配 → 原子换装。
+
+        契约(T-MODEL-RUNTIME-APPLY):
+        - 成功:Effective == Configured,restart_required 归零,本生命周期内生效;
+        - 失败(ApplyRejectedError):当前 Effective Runtime 零改动,线上查询
+          完整可用(候选构造期不碰任何 self 突变,提交是最后一步);
+        - 不经 Docker/进程重启;模型装载走独立线程,不阻塞事件循环
+          (生产 504 教训:进程内长阻塞 = /health 全超时)。
+        """
+        if not self._loaded:
+            raise ApplyRejectedError("not_loaded", "模型运行时尚未完成启动装配,暂不能应用更改")
+        async with session_factory() as session:
+            policies = await self._read_policies(session)
+            budget_mode, manual_budget_mb = await self._read_budget_setting(session)
+        return await asyncio.to_thread(
+            self._apply_policies, policies, budget_mode, manual_budget_mb
+        )
+
+    def _apply_policies(
+        self,
+        policies: dict[str, tuple[str, str | None, str]],
+        budget_mode: str,
+        manual_budget_mb: int | None,
+    ) -> dict:
+        """Apply 同步核心(独立线程内执行;_apply_lock 串行化多次 Apply)。"""
+        if not self._loaded:
+            raise ApplyRejectedError("not_loaded", "模型运行时尚未完成启动装配,暂不能应用更改")
+        with self._apply_lock:
+            # 1) 候选计划预演:UNSAFE 先拒(先拒装配,不先全量硬载,R2-1 谱系)
+            embedder_gpu = (
+                self._configured_for(policies, WORKLOAD_QUERY_EMBEDDING).kind == _DEVICE_KIND_GPU
+                or self._configured_for(policies, WORKLOAD_SYNC_EMBEDDING).kind == _DEVICE_KIND_GPU
+            )
+            reranker_gpu = (
+                self._configured_for(policies, WORKLOAD_QUERY_RERANKER).kind == _DEVICE_KIND_GPU
+            )
+            plan = compute_residency_plan(
+                self._effective_budget_mb(budget_mode, manual_budget_mb),
+                embedder_gpu=embedder_gpu,
+                reranker_gpu=reranker_gpu,
+            )
+            if plan.mode == PLAN_GPU_INSUFFICIENT:
+                raise ApplyRejectedError(
+                    "capacity_unsafe",
+                    "应用更改被拒绝:候选配置无安全运行计划"
+                    f"(有效 GPU 预算 {plan.budget_mb}MiB 低于瞬态下限 "
+                    f"{plan.floors_mb.get('transient_mb', 0)}MiB)。"
+                    "当前运行配置未改变,线上查询不受影响;"
+                    "请提高 GPU 运行预算、释放显存,或将部分工作负载改为 CPU 后重试。",
+                )
+            # 2) 候选装配:GPU 缺失/模型加载失败在此抛出(fail-before-mutate)
+            try:
+                asm = self._assemble(policies, budget_mode, manual_budget_mb)
+            except ApplyRejectedError:
+                raise
+            except Exception as exc:
+                raise ApplyRejectedError(
+                    "build_failed",
+                    f"应用更改失败:候选运行时装配出错({exc})。"
+                    "当前运行配置未改变,线上查询不受影响;"
+                    "请核对设备策略与 GPU 可见性后重试。",
+                ) from exc
+            # 3) 原子提交(锁内整组赋值;读侧经 _lock 捕获一致快照)
+            self._commit(asm, budget_mode, manual_budget_mb)
+        # 4) 被替换实例回收(在飞调用持有自身引用,自然用完;此处仅加速
+        #    循环引用回收与显存归还,best-effort 不影响正确性)
+        self._release_superseded_models()
+        logger.info(
+            "model runtime Apply 完成:rebuilt 差量见上方候选装配日志(generation=%s)",
+            self._generation,
+        )
+        return self.snapshot()
+
+    def _release_superseded_models(self) -> None:
+        """换装后被替换模型的确定性回收(best-effort;不触碰在飞调用)。"""
+        try:
+            import gc
+
+            gc.collect()
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:  # 回收失败不影响运行时正确性
+            logger.debug("superseded model release best-effort failed", exc_info=True)
 
     async def save_gpu_budget(
         self,
@@ -924,7 +1190,8 @@ class _QueryEmbedderProxy(Embedder):
 
     @property
     def dimension(self) -> int:
-        inner = self._manager._embedder_for(WORKLOAD_QUERY_EMBEDDING)
+        with self._manager._lock:
+            inner = self._manager._embedder_for(WORKLOAD_QUERY_EMBEDDING)
         if inner is None:
             raise self._manager._raise_unsafe_plan(WORKLOAD_QUERY_EMBEDDING)
         return inner.dimension

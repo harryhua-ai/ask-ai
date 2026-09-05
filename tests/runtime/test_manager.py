@@ -36,6 +36,7 @@ from backend.runtime.manager import (
     WORKLOAD_QUERY_EMBEDDING,
     WORKLOAD_QUERY_RERANKER,
     WORKLOAD_SYNC_EMBEDDING,
+    ApplyRejectedError,
     ModelRuntimeManager,
     UnsafeRuntimePlanError,
     _TransientGpuReranker,
@@ -704,3 +705,292 @@ def test_reranker_proxy_delegates():
     manager, _, _ = _make_manager("cuda")
     manager._build({})
     assert manager.reranker.rerank("q", ["d"]) == [0.5]
+
+
+# --------------------------------- Apply:候选装配 + 原子换装(T-MODEL-RUNTIME-APPLY)
+
+_APPLY = "_apply_policies"  # 差量重建判定 + 候选装配 + 原子提交(单测直调同步核心)
+
+
+def test_apply_cpu_to_gpu_rebuilds_query_and_serves():
+    """验收:CPU→GPU Apply PASS —— 新 Effective Runtime 真实接住查询。"""
+    manager, _created, _ = _make_manager(
+        "cpu", gpu_snapshot=GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
+    )
+    manager._build({})
+    old_query = manager._embedder_for(WORKLOAD_QUERY_EMBEDDING)
+    gen_before = manager._generation
+
+    manager._apply_policies({WORKLOAD_QUERY_EMBEDDING: ("gpu", None, "BAAI/bge-m3")}, "auto", None)
+
+    new_query = manager._embedder_for(WORKLOAD_QUERY_EMBEDDING)
+    assert new_query is not old_query and new_query.device == "cuda"
+    vectors = manager.embed(WORKLOAD_QUERY_EMBEDDING, ["q1", "q2"])
+    assert len(vectors) == 2 and new_query.calls == [["q1", "q2"]]  # 真实打到新实例
+    assert manager.states[WORKLOAD_QUERY_EMBEDDING].effective.kind == "gpu"
+    assert manager._query_on_gpu is True
+    assert manager._generation == gen_before + 1
+    # 共享关系断裂:sync 拿到自己的新 CPU 实例(不再复用旧共享实例)
+    sync_instance = manager._embedder_for(WORKLOAD_SYNC_EMBEDDING)
+    assert sync_instance is not old_query and sync_instance.device == "cpu"
+    assert manager.embed(WORKLOAD_SYNC_EMBEDDING, ["doc"])[0].shape == (4,)
+
+
+def test_apply_gpu_to_cpu_rebuilds_and_serves():
+    """验收:GPU→CPU Apply PASS —— 全部工作负载换装 CPU 后真实可执行。"""
+    manager, _created, _ = _make_manager(
+        "cuda", gpu_snapshot=GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
+    )
+    manager._build({})
+    old_query = manager._embedder_for(WORKLOAD_QUERY_EMBEDDING)
+    old_reranker = manager._reranker
+
+    manager._apply_policies(
+        {
+            WORKLOAD_QUERY_EMBEDDING: ("cpu", None, "BAAI/bge-m3"),
+            WORKLOAD_SYNC_EMBEDDING: ("cpu", None, "BAAI/bge-m3"),
+            WORKLOAD_QUERY_RERANKER: ("cpu", None, "BAAI/bge-reranker-v2-m3"),
+        },
+        "auto",
+        None,
+    )
+
+    new_query = manager._embedder_for(WORKLOAD_QUERY_EMBEDDING)
+    assert new_query is not old_query and new_query.device == "cpu"
+    assert manager.embed(WORKLOAD_QUERY_EMBEDDING, ["q"])[0].shape == (4,)
+    assert manager._reranker is not old_reranker
+    assert manager.rerank("q", ["d"]) == [0.5]
+    snap = manager.snapshot()
+    assert all(not p["restart_required"] for p in snap["policies"])  # 契约#3
+    assert snap["runtime_plan"]["restart_required"] is False
+
+
+def test_apply_preserves_unchanged_query_instance_when_only_sync_moves():
+    """差量重建:query 设备未变 → 实例原样复用(不同卡双驻留/无谓重载零产生)。"""
+    manager, created, _ = _make_manager(
+        "cuda", gpu_snapshot=GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
+    )
+    manager._build({})
+    query_before = manager._embedder_for(WORKLOAD_QUERY_EMBEDDING)
+    created_before = len(created)
+
+    manager._apply_policies({WORKLOAD_SYNC_EMBEDDING: ("cpu", None, "BAAI/bge-m3")}, "auto", None)
+
+    assert manager._embedder_for(WORKLOAD_QUERY_EMBEDDING) is query_before
+    assert len(created) == created_before + 1  # 只新建 sync 的 CPU 实例
+    assert manager.states[WORKLOAD_QUERY_EMBEDDING].shared is False
+
+
+def test_apply_reshares_single_instance_when_sync_returns_to_query_device():
+    """验收:Query/Sync 同 GPU 仍共享 embedding runtime(Apply 后共享关系重建)。"""
+    manager, created, _ = _make_manager(
+        "cuda", gpu_snapshot=GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
+    )
+    manager._build({WORKLOAD_SYNC_EMBEDDING: ("cpu", None, "BAAI/bge-m3")})
+    assert manager.states[WORKLOAD_QUERY_EMBEDDING].shared is False
+    created_before = len(created)
+
+    manager._apply_policies({}, "auto", None)  # sync 回到默认(=query 的 GPU)
+
+    assert manager.states[WORKLOAD_QUERY_EMBEDDING].shared is True
+    assert manager._embedder_for(WORKLOAD_SYNC_EMBEDDING) is manager._embedder_for(
+        WORKLOAD_QUERY_EMBEDDING
+    )
+    assert len(created) == created_before  # 共享复用,零新建
+    assert manager._sync_embedder_override is None
+
+
+def test_apply_noop_rebuilds_nothing_but_bumps_generation():
+    manager, created, created_r = _make_manager(
+        "cuda", gpu_snapshot=GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
+    )
+    manager._build({})
+    q, s, r = (
+        manager._embedder_for(WORKLOAD_QUERY_EMBEDDING),
+        manager._embedder_for(WORKLOAD_SYNC_EMBEDDING),
+        manager._reranker,
+    )
+    created_n, reranker_n = len(created), len(created_r)
+
+    snap = manager._apply_policies({}, "auto", None)
+
+    assert manager._embedder_for(WORKLOAD_QUERY_EMBEDDING) is q
+    assert manager._embedder_for(WORKLOAD_SYNC_EMBEDDING) is s
+    assert manager._reranker is r
+    assert len(created) == created_n and len(created_r) == reranker_n
+    assert snap["runtime_plan"]["generation"] == 2
+
+
+def test_apply_reranker_residency_follows_budget_apply_both_ways():
+    """验收:Reranker residency plan 保真 —— 预算应用后瞬态/双驻留双向正确切换。"""
+    snapshot = GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
+    manager, _, _ = _make_manager("cuda", gpu_snapshot=snapshot, reranker_cls=FakeResidencyReranker)
+    manager._budget_mode = "manual"
+    manager._manual_budget_mb = 9000  # 双驻留
+    manager._build({})
+    assert not isinstance(manager._reranker, _TransientGpuReranker)
+
+    # 应用更低预算 → 瞬态
+    manager._apply_policies({}, "manual", 4096)
+    assert isinstance(manager._reranker, _TransientGpuReranker)
+    assert manager.states[WORKLOAD_QUERY_RERANKER].residency == RESIDENCY_TRANSIENT
+    assert manager._reranker_transient is True
+    assert manager.rerank("q", ["a"]) == [0.5]
+    assert manager._reranker.underlying.offloads == 1  # 瞬态语义保真:调用即卸载
+
+    # 应用更高预算 → 双驻留
+    manager._apply_policies({}, "manual", 9000)
+    assert not isinstance(manager._reranker, _TransientGpuReranker)
+    assert manager.states[WORKLOAD_QUERY_RERANKER].residency == "resident"
+    snap = manager.snapshot()
+    assert snap["runtime_plan"]["mode"] == PLAN_DUAL_RESIDENT
+    assert snap["runtime_plan"]["restart_required"] is False
+
+
+def test_apply_capacity_unsafe_rejected_and_previous_runtime_intact():
+    """验收:capacity unsafe → Apply FAIL,旧 Effective Runtime 完整可用。"""
+    snapshot = GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
+    manager, created, _ = _make_manager("cuda", gpu_snapshot=snapshot)
+    manager._build({})
+    q_before = manager._embedder_for(WORKLOAD_QUERY_EMBEDDING)
+    created_before = len(created)
+
+    with pytest.raises(ApplyRejectedError) as exc_info:
+        manager._apply_policies({}, "manual", 3800)  # 低于瞬态下限 4050
+    assert exc_info.value.code == "capacity_unsafe"
+    assert "当前运行配置未改变" in str(exc_info.value)
+
+    assert manager._embedder_for(WORKLOAD_QUERY_EMBEDDING) is q_before
+    assert len(created) == created_before  # 零候选实例构造
+    assert manager._generation == 1  # 未提交
+    vectors = manager.embed(WORKLOAD_QUERY_EMBEDDING, ["still-alive"])
+    assert len(vectors) == 1 and q_before.calls == [["still-alive"]]  # 线上查询完好
+
+
+def test_apply_missing_gpu_rejected_and_previous_runtime_intact():
+    """验收:invalid/missing GPU → Apply FAIL,旧运行时可用,无部分状态。"""
+    manager, _created, _ = _make_manager("cpu")
+    manager._build({})
+    q_before = manager._embedder_for(WORKLOAD_QUERY_EMBEDDING)
+
+    with pytest.raises(ApplyRejectedError) as exc_info:
+        manager._apply_policies(
+            {
+                WORKLOAD_QUERY_EMBEDDING: (
+                    "gpu",
+                    "00000000-0000-0000-0000-000000000000",
+                    "BAAI/bge-m3",
+                )
+            },
+            "auto",
+            None,
+        )
+    assert exc_info.value.code == "build_failed"
+    assert "当前运行配置未改变" in str(exc_info.value)
+
+    assert manager._embedder_for(WORKLOAD_QUERY_EMBEDDING) is q_before
+    assert manager.states[WORKLOAD_QUERY_EMBEDDING].effective.kind == "cpu"
+    assert manager._generation == 1
+    manager.embed(WORKLOAD_QUERY_EMBEDDING, ["q"])  # 旧运行时照常服务
+
+
+def test_apply_model_load_failure_rejected_and_previous_runtime_intact():
+    """验收:模型加载失败 → Apply FAIL,旧实例(含 rerank)完整可用。"""
+    snapshot = GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
+
+    def broken_reranker_factory(device: str = "cpu", **kwargs):
+        if device.startswith("cuda"):
+            raise RuntimeError("CUDA out of memory while loading reranker")
+        return FakeReranker(device=device)
+
+    manager, _, _ = _make_manager("cpu", gpu_snapshot=snapshot)
+    manager._reranker_factory = broken_reranker_factory
+    manager._build({WORKLOAD_QUERY_RERANKER: ("cpu", None, "BAAI/bge-reranker-v2-m3")})
+    reranker_before = manager._reranker
+
+    with pytest.raises(ApplyRejectedError) as exc_info:
+        manager._apply_policies(
+            {WORKLOAD_QUERY_RERANKER: ("gpu", None, "BAAI/bge-reranker-v2-m3")}, "auto", None
+        )
+    assert exc_info.value.code == "build_failed"
+
+    assert manager._reranker is reranker_before
+    assert manager.rerank("q", ["d"]) == [0.5]  # 旧重排器照常工作
+    assert manager._generation == 1
+
+
+def test_apply_clears_stale_sync_fallback_and_rebuilds():
+    """Apply=重新物化:历史一次性 GPU→CPU 回退随换装重置(与重启语义一致)。"""
+    snapshot = GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
+    manager, _, _ = _make_manager("cuda", gpu_snapshot=snapshot)
+    manager._build({})
+    gpu_instance = manager._embedder_for(WORKLOAD_SYNC_EMBEDDING)
+    gpu_instance.fail_plan = [_torch_oom()]
+    manager.embed(WORKLOAD_SYNC_EMBEDDING, ["doc"])
+    assert manager.states[WORKLOAD_SYNC_EMBEDDING].status == "fallback_gpu_to_cpu"
+    assert manager._sync_cpu_embedder is not None
+
+    manager._apply_policies({}, "auto", None)
+
+    assert manager._sync_cpu_embedder is None  # 回退指针清零
+    fresh_sync = manager._embedder_for(WORKLOAD_SYNC_EMBEDDING)
+    assert fresh_sync is not gpu_instance and fresh_sync.device == "cuda"
+    state = manager.states[WORKLOAD_SYNC_EMBEDDING]
+    assert state.status == "loaded" and state.fallback_reason is None
+    manager.embed(WORKLOAD_SYNC_EMBEDDING, ["doc2"])
+    assert fresh_sync.calls == [["doc2"]]
+
+
+def test_apply_inflight_query_completes_on_old_instance_new_served_by_new():
+    """换装并发安全:在飞批次用完旧实例;新批次即用新装配(无部分状态暴露)。"""
+    manager, _, _ = _make_manager("cpu")
+    manager._build({})
+    old_query = manager._embedder_for(WORKLOAD_QUERY_EMBEDDING)
+    release = threading.Event()
+    script: dict = {"calls": [], "q1": release}
+    _patch_scripted_embed(old_query, script)
+
+    t = threading.Thread(target=manager.embed, args=(WORKLOAD_QUERY_EMBEDDING, ["q1"]))
+    t.start()
+    deadline = time.time() + 10
+    while "q1:start" not in script["calls"] and time.time() < deadline:
+        time.sleep(0.005)
+
+    manager._apply_policies({WORKLOAD_QUERY_EMBEDDING: ("gpu", None, "BAAI/bge-m3")}, "auto", None)
+    new_query = manager._embedder_for(WORKLOAD_QUERY_EMBEDDING)
+    assert new_query is not old_query
+
+    release.set()
+    t.join(timeout=10)
+    assert not t.is_alive()
+    assert script["calls"] == ["q1:start", "q1:end"]  # 在飞调用在旧实例上完整结束
+    vectors = manager.embed(WORKLOAD_QUERY_EMBEDDING, ["q2"])
+    assert len(vectors) == 1
+    assert new_query.calls == [["q2"]]  # 新查询打到新装配
+
+
+def test_apply_budget_only_materializes_plan_and_zeroes_restart_required():
+    """契约#3:Apply 成功后 Configured==Effective 且 restart_required=false。"""
+    snapshot = GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
+    manager, _, _ = _make_manager("cuda", gpu_snapshot=snapshot)
+    manager._build({})
+    manager._budget_mode = "manual"
+    manager._manual_budget_mb = 4096
+    snap = manager.snapshot()
+    assert snap["runtime_plan"]["restart_required"] is True  # 保存后待生效
+
+    snap = manager._apply_policies({}, "manual", 4096)
+
+    assert snap["runtime_plan"]["mode"] == PLAN_RERANKER_TRANSIENT
+    assert snap["runtime_plan"]["restart_required"] is False
+    assert snap["runtime_plan"]["generation"] == 2
+    assert all(not p["restart_required"] for p in snap["policies"])
+    for p in snap["policies"]:
+        assert p["configured"]["kind"] == p["effective"]["kind"]
+
+
+def test_apply_not_loaded_rejected():
+    manager, _, _ = _make_manager("cuda")
+    with pytest.raises(ApplyRejectedError) as exc_info:
+        manager._apply_policies({}, "auto", None)
+    assert exc_info.value.code == "not_loaded"

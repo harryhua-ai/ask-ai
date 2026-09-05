@@ -4,8 +4,9 @@
 // Configured/Effective/Status(共享嵌入运行时显式指示)、GPU 运行容量策略
 // (自动/手动上限)与容量建议。不做系统监控仪表盘(温度/风扇/进程表等
 // 属未来 System Information 页,本页明确排除)。
-// 真相契约:Configured ≠ Effective —— 保存仅持久化,重启生效以「待重启」
-// 状态如实呈现;Effective 只反映运行时已落地的事实。
+// 真相契约:Configured ≠ Effective —— 保存仅持久化;存在待生效配置时提供
+// 显式「应用更改」(候选装配+原子换装,本生命周期内生效),生效前以
+// 「生效设备」为准;应用失败明确呈现「当前运行配置未改变」。
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -50,6 +51,7 @@ export interface ModelRuntimeState {
     action_required?: boolean;
     pending_mode?: string | null;
     restart_required?: boolean;
+    generation?: number;
   };
   capacity: {
     state: string;
@@ -119,19 +121,26 @@ export default function ModelRuntimeTab({ canWrite }: { canWrite: boolean }) {
   const [budgetMode, setBudgetMode] = useState<"auto" | "manual">("auto");
   const [budgetGb, setBudgetGb] = useState<string>("");
   const [savingBudget, setSavingBudget] = useState(false);
+  // 「应用更改」:processing 状态 + 失败说明(当前运行配置未改变)
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+
+  const adoptSnapshot = useCallback((s: ModelRuntimeState) => {
+    setState(s);
+    setBudgetMode(s.capacity.budget_mode === "manual" ? "manual" : "auto");
+    setBudgetGb(
+      s.capacity.budget_mode === "manual" && s.capacity.budget_mb
+        ? (s.capacity.budget_mb / 1024).toFixed(1)
+        : "",
+    );
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
       const s = await apiFetch<ModelRuntimeState>("/model-runtime");
-      setState(s);
-      setBudgetMode(s.capacity.budget_mode === "manual" ? "manual" : "auto");
-      setBudgetGb(
-        s.capacity.budget_mode === "manual" && s.capacity.budget_mb
-          ? (s.capacity.budget_mb / 1024).toFixed(1)
-          : "",
-      );
+      adoptSnapshot(s);
       setDrafts((prev) => {
         const next: Record<string, string> = {};
         for (const p of s.policies) {
@@ -146,7 +155,7 @@ export default function ModelRuntimeTab({ canWrite }: { canWrite: boolean }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [adoptSnapshot]);
 
   useEffect(() => {
     void load();
@@ -166,6 +175,32 @@ export default function ModelRuntimeTab({ canWrite }: { canWrite: boolean }) {
     return dirty;
   }, [state, drafts]);
 
+  // 待生效配置:任一 workload 已保存未生效,或运行计划有待生效变化
+  const hasPendingRuntime = useMemo(() => {
+    if (!state) return false;
+    return (
+      state.policies.some((p) => p.restart_required) ||
+      Boolean(state.runtime_plan?.restart_required)
+    );
+  }, [state]);
+
+  const applyChanges = async () => {
+    setApplying(true);
+    setApplyError(null);
+    try {
+      const s = await apiFetch<ModelRuntimeState>("/model-runtime/apply", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      adoptSnapshot(s);
+      toast.success("更改已生效:运行时已按保存的配置重新装配");
+    } catch (err) {
+      setApplyError(err instanceof Error ? err.message : "应用失败");
+    } finally {
+      setApplying(false);
+    }
+  };
+
   const savePolicy = async (workload: string) => {
     const value = drafts[workload];
     if (!value) return;
@@ -180,7 +215,7 @@ export default function ModelRuntimeTab({ canWrite }: { canWrite: boolean }) {
         { method: "PUT", body: JSON.stringify(body) },
       );
       toast.success(
-        `已保存「${WORKLOAD_META[workload]?.title ?? workload}」配置:重启后生效`,
+        `已保存「${WORKLOAD_META[workload]?.title ?? workload}」配置:待「应用更改」生效`,
       );
       setState((prev) =>
         prev
@@ -273,9 +308,28 @@ export default function ModelRuntimeTab({ canWrite }: { canWrite: boolean }) {
 
       {/* B. 模型运行策略 */}
       <Card aria-label="模型运行策略">
-        <CardHeader className="p-4 pb-2">
+        <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 p-4 pb-2">
           <CardTitle className="text-sm">模型运行策略</CardTitle>
+          {canWrite && hasPendingRuntime && (
+            <Button
+              type="button"
+              size="sm"
+              data-testid="apply-runtime-button"
+              disabled={applying}
+              onClick={applyChanges}
+            >
+              {applying ? "应用中…" : "应用更改"}
+            </Button>
+          )}
         </CardHeader>
+        {applyError && (
+          <div
+            className="mx-4 mb-2 rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive"
+            data-testid="apply-error"
+          >
+            应用失败,当前运行配置未改变:{applyError}
+          </div>
+        )}
         <CardContent className="space-y-3 p-4 pt-0">
           {state.policies.map((p) => {
             const meta = WORKLOAD_META[p.workload] ?? { title: p.workload, role: "" };
@@ -317,7 +371,7 @@ export default function ModelRuntimeTab({ canWrite }: { canWrite: boolean }) {
                   )}
                   {p.restart_required && (
                     <Badge variant="outline" className="text-amber-700">
-                      待重启生效
+                      待应用生效
                     </Badge>
                   )}
                 </div>
@@ -345,7 +399,7 @@ export default function ModelRuntimeTab({ canWrite }: { canWrite: boolean }) {
                           : p.status === "unsafe_no_safe_plan"
                             ? "无安全运行计划,已拒绝执行(未自动降级 CPU)"
                             : p.restart_required
-                              ? "已保存,待重启生效"
+                              ? "已保存,待应用更改生效"
                               : "运行中"}
                     </span>
                   </div>
@@ -383,7 +437,8 @@ export default function ModelRuntimeTab({ canWrite }: { canWrite: boolean }) {
           })}
           <p className="text-xs text-muted-foreground">
             同一模型 + 同一 GPU 的查询/同步嵌入共享同一运行实例(见「共享模型运行实例」标记);
-            保存的设备配置在服务重启后生效,生效前以「生效设备」为准。
+            保存的配置在点击「应用更改」后立即生效(服务重启时同样生效),生效前以「生效设备」为准;
+            应用失败时当前运行配置不会改变。
           </p>
         </CardContent>
       </Card>
@@ -476,7 +531,7 @@ export default function ModelRuntimeTab({ canWrite }: { canWrite: boolean }) {
               运行计划:{PLAN_META[state.runtime_plan.mode] ?? state.runtime_plan.mode}
               {state.runtime_plan.restart_required && state.runtime_plan.pending_mode && (
                 <span className="ml-1 text-amber-700 dark:text-amber-400">
-                  (预算变化,重启后将变为:
+                  (已保存待生效:点击「应用更改」后变为:
                   {PLAN_META[state.runtime_plan.pending_mode] ??
                     state.runtime_plan.pending_mode}
                   )

@@ -4,8 +4,12 @@
                                 Configured/Effective/Status + 共享运行时 +
                                 容量(auto/manual 预算与分级状态);
 - PUT  /model-runtime/policies/{workload} — 持久化 Configured Device
-                                (重启生效;不触碰 Effective;非法值 422);
-- PUT  /model-runtime/gpu-budget — GPU 运行容量策略(auto/manual 上限)。
+                                (「应用更改」或重启生效;不触碰 Effective;
+                                非法值 422);
+- PUT  /model-runtime/gpu-budget — GPU 运行容量策略(auto/manual 上限);
+- POST /model-runtime/apply  — 显式生效:按最新持久配置候选装配 + 原子换装,
+                                本生命周期内落地(失败 409 且当前运行时零改动,
+                                detail 为管理员可读的完整中文说明)。
 
 权限:读 viewer+,写 editor+(与模型配置页一致)。
 UI 权威 = 模型配置 → 模型运行(本 API 不建第二配置系统)。
@@ -19,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from backend.auth.dependencies import CurrentUser, require_role
-from backend.runtime.manager import WORKLOADS
+from backend.runtime.manager import WORKLOADS, ApplyRejectedError
 
 router = APIRouter(prefix="/model-runtime", tags=["模型运行时"])
 
@@ -96,3 +100,20 @@ async def put_gpu_budget(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/apply")
+async def apply_model_runtime(
+    _: EditorDep,
+    request: Request,
+) -> dict[str, Any]:
+    """显式生效(「应用更改」):候选装配 + 原子换装,返回换装后完整真相面。
+
+    失败语义(409):当前 Effective Runtime 零改动,线上查询不受影响;
+    detail 为管理员可读的完整说明(原因 + 可操作指引)。
+    """
+    manager = _manager(request)
+    try:
+        return await manager.apply(request.app.state.session_factory)
+    except ApplyRejectedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
