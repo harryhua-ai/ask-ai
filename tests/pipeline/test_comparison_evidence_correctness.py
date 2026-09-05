@@ -132,6 +132,31 @@ NE503_FWMIXED = [
     ),
 ]
 
+# REV2:真融合序竞争 fixture —— quota=5,相关代码在融合序位 2,
+# 其后还有 4+ 非代码(非代码数量 ≥ quota,暴露 (t1+t2)[:quota] 的排序缺陷)
+NE301_FWCROWDED = [
+    _official("ne301", "wiki/301/guide-a", 0),
+    _doc(
+        "ne301", "ne301-local/fw/scheduler", 0, "code", "firmware architecture scheduler for NE301"
+    ),
+    _official("ne301", "wiki/301/guide-b", 1),
+    _official("ne301", "wiki/301/guide-c", 2),
+    _official("ne301", "wiki/301/guide-d", 3),
+    _official("ne301", "wiki/301/guide-e", 4),
+    _official("ne301", "wiki/301/guide-f", 5),
+]
+NE503_FWCROWDED = [
+    _official("ne503", "wiki/503/overview", 0),
+    _official("ne503", "web/503/product", 0, "heading"),
+    _doc(
+        "ne503",
+        "ne503-local/fw/encoder",
+        0,
+        "code",
+        "firmware architecture encoder pipeline for NE503",
+    ),
+]
+
 
 class _ScopedSearcher:
     """按 product_labels 脚本化返回(复刻 per-target 检索;平台/共享路返回空)。"""
@@ -445,3 +470,72 @@ async def test_generic_comparison_code_does_not_regain_quota():
     assert (
         "ne301-local" not in src_urls and "ne503-local" not in src_urls
     ), "通用产品比较中无关代码不得进入生成证据"
+
+
+# ---------------------------------------------- REV2(Blocker 1/2 回归)
+
+
+@pytest.mark.unit
+async def test_competitive_selection_preserves_fused_order():
+    """Rev2 B1:代码导向比较的配额竞争必须按**原始融合序** ——
+    quota=5、融合序位 2 的相关代码必须入池并可达生成,
+    即使其后有 4+ 非代码候选((t1+t2)[:quota] 会把它挤掉)。"""
+    rag, _ = _make_rag({"ne301": NE301_FWCROWDED, "ne503": NE503_FWCROWDED})
+    events = await _collect_stream(rag, "Compare the NE301 and NE503 firmware architecture")
+    complete = events[-1]
+    assert complete["is_answered"] is True
+    src_urls = " ".join(s.get("url", "") for s in complete["sources"])
+    assert "fw/scheduler" in src_urls, "真融合序竞争下,融合序位 2 的相关代码必须入池并可达生成"
+
+
+@pytest.mark.unit
+async def test_generic_control_code_still_excluded_on_crowded_corpus():
+    """Rev2 控制组:同拥挤语料 + generic 比较 → tier1-first 仍生效,
+    代码不得回潮。"""
+    rag, _ = _make_rag({"ne301": NE301_FWCROWDED, "ne503": NE503_FWCROWDED})
+    events = await _collect_stream(rag, QUERY_A)
+    complete = events[-1]
+    assert complete["is_answered"] is True
+    src_urls = " ".join(s.get("url", "") for s in complete["sources"])
+    assert "ne301-local" not in src_urls
+
+
+def test_code_orientation_lexical_boundaries():
+    """Rev2 B2:代码导向判定必须词/短语边界匹配 —— 真/假例表冻结。"""
+    from backend.pipeline.rag import _is_code_oriented_comparison
+
+    for text in (
+        "Compare the NE301 and NE503 firmware architecture",
+        "source code architecture comparison",
+        "Compare NE301 and NE503 SDK APIs",
+        "Compare NE301 and NE503 API implementation",
+        "Compare NE301 and NE503 driver implementation",
+        "Compare NE301 and NE503 middleware implementation",
+        "比较两款相机的固件",
+        "源码 对比",
+        "驱动实现 差异",
+    ):
+        assert _is_code_oriented_comparison(text), f"应为 True: {text}"
+    for text in (
+        "Compare A and B power source",
+        "Compare A and B capital cost",
+        "Compare A and B rapid startup",
+        "Compare A and B product capabilities",
+        "Compare A and B battery life",
+        "Compare A and B networking options",
+        "Compare A and B power supply",
+    ):
+        assert not _is_code_oriented_comparison(text), f"应为 False: {text}"
+
+
+@pytest.mark.unit
+async def test_false_positive_source_keeps_tiered_selection():
+    """Rev2 B2(E2):含非代码用法 "source" 的普通比较不得误判为代码导向
+    —— code_oriented=false、selection=tiered(trace 可观测)。"""
+    rag, _ = _make_rag({"ne301": NE301_FUSED, "ne503": NE503_FUSED})
+    events = await _collect_stream(rag, "Compare NE301 and NE503 power source")
+    complete = events[-1]
+    rerank_stage = complete["trace_payload"]["stages"]["rerank"]
+    assert rerank_stage.get("code_oriented") is False
+    quota = complete["trace_payload"]["stages"]["product_scope"]["per_target_quota"]
+    assert quota["selection"] == "tiered"

@@ -21,6 +21,7 @@
 import asyncio
 import json
 import logging
+import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
@@ -228,6 +229,9 @@ def _merge_per_target_candidates(
     seen: set[tuple[str, int]] = set()
     own_tier1: dict[str, list[Any]] = {t: [] for t in targets}
     own_tier2: dict[str, list[Any]] = {t: [] for t in targets}
+    # 每 target 原始融合序的全部自有候选(Rev2:competitive 需要真正的
+    # 融合序竞争 —— t1/t2 分层会重排,不能代表原始 RRF 排序)
+    own_fused: dict[str, list[Any]] = {t: [] for t in targets}
     rest: list[Any] = []
     for results in fused_per_target:
         for r in results:
@@ -237,6 +241,7 @@ def _merge_per_target_candidates(
             seen.add(key)
             slug = taxonomy.canonicalize(r.product) or UNKNOWN_SLUG
             if slug in target_slugs:
+                own_fused[slug].append(r)
                 if r.chunk_type == "code":
                     own_tier2[slug].append(r)
                 else:
@@ -247,7 +252,9 @@ def _merge_per_target_candidates(
     for t in targets:
         t1, t2 = own_tier1[t], own_tier2[t]
         if code_priority:
-            keep = (t1 + t2)[:quota]  # 公平竞争:代码与非代码按融合序
+            # Rev2 B1:真正的融合序竞争 —— 代码与非代码按原始 RRF 排序
+            # 公平争夺配额(非代码数量再多也不自动挤掉排前的相关代码)
+            keep = own_fused[t][:quota]
         else:
             keep = t1[:quota]
             keep.extend(t2[: max(0, quota - len(keep))])
@@ -299,31 +306,42 @@ _DIMENSION_STOPWORDS = frozenset(
     }
 )
 
-#: 显式代码/实现导向比较的判定词(通用技术词;Rev1 Blocker 2)。
-_CODE_ORIENTATION_HINTS = (
-    "code",
-    "firmware",
-    "sdk",
-    "api",
-    "apis",
-    "driver",
-    "drivers",
-    "implementation",
-    "implement",
-    "source",
-    "middleware",
-    "固件",
-    "代码",
-    "驱动",
-    "源码",
-    "实现",
+#: 显式代码/实现导向比较的判定词(通用技术词;Rev2 Blocker 2:
+#: 英文按 token/短语边界匹配,杜绝 "capital"⊂api、"startup"⊂api 之类
+#: 子串误报;"source" 单词不判定 —— 需 "source code" 短语)。
+_CODE_SINGLE_TOKENS = frozenset(
+    {
+        "code",
+        "firmware",
+        "sdk",
+        "api",
+        "apis",
+        "driver",
+        "drivers",
+        "implementation",
+        "implement",
+        "middleware",
+    }
 )
+_CODE_PHRASES = frozenset({"source code"})
+#: CJK 无空格分词,按子串判定;措辞取实现语义词(避免 "驱动器" 类误报)。
+_CODE_CJK_SUBSTRINGS = ("固件", "源码", "代码", "驱动实现")
 
 
 def _is_code_oriented_comparison(text: str) -> bool:
-    """该比较是否显式要求代码/实现层面的对比(确定性词面判定)。"""
+    """该比较是否显式要求代码/实现层面的对比(确定性词/短语边界判定)。
+
+    英文:token 化后命中单 token 词表,或命中短语("source code");
+    中文:实现语义子串(固件/源码/代码/驱动实现)。
+    """
     lowered = (text or "").lower()
-    return any(hint in lowered for hint in _CODE_ORIENTATION_HINTS)
+    if any(sub in lowered for sub in _CODE_CJK_SUBSTRINGS):
+        return True
+    tokens = [tok for tok in re.split(r"[^a-z0-9]+", lowered) if tok]
+    if any(tok in _CODE_SINGLE_TOKENS for tok in tokens):
+        return True
+    bigrams = {f"{tokens[i]} {tokens[i + 1]}" for i in range(len(tokens) - 1)}
+    return any(phrase in bigrams for phrase in _CODE_PHRASES)
 
 
 def _comparison_dimension(query: str, taxonomy: Any, targets: tuple[str, ...]) -> str:
