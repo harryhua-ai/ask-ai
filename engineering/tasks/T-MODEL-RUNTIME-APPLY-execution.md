@@ -214,3 +214,56 @@ save 在「Apply 读快照之后、_commit 之前」落地时,DB 已是 B(GPU)�
 
 **CANDIDATE READY(REV1)** —— 等待 Planner 复审。候选 tip = `9b9435fc9dfbbc0734e8f519e707f3e3f320281f`
 (@ origin/worktree-exec/model-runtime-apply-20260905;前序 d997782 为同分支历史提交)。
+
+
+---
+
+## REV2 — 残余竞态窗口修复:纪元捕获先于 DB 读(2026-09-05)
+
+- **Planner 判定**:REV1 方向接受(配置纪元守卫正确);残余窗口一处。
+- **修复提交**:`073f26236c08531212f6d5b12b8b8173f0557c79` @ 同分支(已推送,远程核验一致)。
+
+### 8.1 根因
+
+REV1 的 `apply()` 在**读库之后**捕获 `_config_version`。若 Save B 在「DB 读完成、
+版本捕获」之间落地(commit→bump),Apply 会捕获到 B 的新纪元却仍持有旧快照 A
+→ 提交校验误放行 → A 覆盖/隐藏 B。
+
+### 8.2 修复(顺序契约定稿)
+
+```
+capture V(self._lock 内,绝不跨越异步 DB I/O)
+→ read DB policies/budget(异步,锁外)
+→ assemble(线程,零 self 突变)
+→ commit only if current version == V(_lock 内校验+提交原子)
+```
+
+捕获严格先于读 ⇒ 任何在捕获后落地(commit→bump)的保存必被提交校验检出;
+唯一放行路径是「捕获到提交全程纪元未变」,即窗口内零配置保存 ⇒ 持久权威
+不可能被旧快照覆盖。`self._lock` 仅微秒级持有,不跨越任何 await。
+
+### 8.3 代码变更(9b9435f → 073f262)
+
+- `backend/runtime/manager.py`:`apply()` 捕获块移至 DB 读之前 + docstring 更新;
+  其余(save 侧、_commit 守卫、装配、热路径、UX)零改动。
+
+### 8.4 确定性边界回归(零 sleep)
+
+| 测试 | 编排 | 断言 |
+|---|---|---|
+| `test_save_landing_between_version_capture_and_db_read_rejects`(runtime) | 钩 `_read_policies`:捕获后、快照完成前 Save B(GPU)完整落地,返回陈旧快照 A(等价「读先于 B 提交」) | config_changed 拒决;configured=GPU/effective=CPU/pending=true;generation 不进 |
+| `test_budget_save_landing_between_capture_and_budget_read_rejects`(runtime) | 钩 `_read_budget_setting`:捕获后、预算读前 Save B(manual 4096)落地,返回陈旧 auto | 拒决;预算保持 4096;pending_mode=transient 可见;executed dual 未被旧快照提交 |
+| `test_apply_via_session_boundary_without_save_still_applies`(runtime) | 同 fake-session 通道、无保存 | 正常应用(restart_required 全 false、generation 2、换装后 embed 可执行)——守卫不误伤 |
+| `test_apply_endpoint_save_before_db_snapshot_409_truth_preserved`(API) | 端到端:钩 `_read_policies` 内 await **真实** save_policy(全 CPU 干净态上保存 query→GPU),返回陈旧快照 | 409 +「新的配置保存/当前运行配置未改变」;configured=GPU/effective=CPU/pending=true/generation 未进;DB 行=gpu |
+
+### 8.5 回归结果(073f262 树)
+
+- runtime `57 passed`;Admin model-runtime API `11 passed`(含 REV2 边界)
+- 后端离线全量(隔离库):**1690 passed / 0 failed**(46.1s)
+- admin vitest 277 全绿、tsc+build 绿(UI 零改动);ruff/black 绿
+
+### 8.6 REV2 后验收锚点
+
+**CANDIDATE READY(REV2)** —— 等待 Planner 复审。候选 tip =
+`073f26236c08531212f6d5b12b8b8173f0557c79`(@ origin/worktree-exec/model-runtime-apply-20260905;
+血统 762eae3 → d997782 → 9b9435f → 073f262)。
