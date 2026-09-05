@@ -394,3 +394,81 @@ async def test_apply_endpoint_race_with_concurrent_save_409_truth_preserved(
     async with app.state.session_factory() as session:
         await session.execute(ModelRuntimePolicy.__table__.delete())
         await session.commit()
+
+
+async def test_apply_endpoint_save_before_db_snapshot_409_truth_preserved(
+    auth_headers, runtime_manager, monkeypatch
+):
+    """REV2 边界(端到端):Save B 在「纪元捕获之后、DB 快照完成之前」经真实
+    save_policy 落地,Apply 仍持有陈旧快照 A → 必须拒决(config_changed),
+    不得用读后捕获的新纪元误放行旧快照。
+
+    确定性:钩住 _read_policies —— 在其内 await 真实保存(DB 提交+纪元推进)
+    后返回陈旧快照(读先于 B 提交的等价快照);零 sleep。
+    """
+    manager = runtime_manager
+    fake_gpu = SimpleNamespace(
+        uuid="GPU-00000000-0000-0000-0000-0000000000bb",
+        index=0,
+        label="Fake T4 · GPU 0",
+        name="Fake T4",
+        total_memory_mb=15564,
+    )
+    monkeypatch.setattr("backend.runtime.manager.discover_gpus", lambda: [fake_gpu])
+    stale_policies = {
+        "query_embedding": ("cpu", None, "BAAI/bge-m3"),
+        "sync_embedding": ("cpu", None, "BAAI/bge-m3"),
+        "query_reranker": ("cpu", None, "BAAI/bge-reranker-v2-m3"),
+    }
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 前置:全 CPU 配置并成功 Apply(干净态)
+        for workload in ("query_embedding", "sync_embedding", "query_reranker"):
+            put = await client.put(
+                f"/api/admin/model-runtime/policies/{workload}",
+                headers=auth_headers,
+                json={"device_kind": "cpu", "gpu_uuid": None},
+            )
+            assert put.status_code == 200
+        applied = await client.post("/api/admin/model-runtime/apply", headers=auth_headers)
+        assert applied.status_code == 200
+        baseline = (await client.get("/api/admin/model-runtime", headers=auth_headers)).json()
+        generation_before = baseline["runtime_plan"]["generation"]
+
+        real_read_policies = manager._read_policies
+
+        async def read_policies_with_save_before_snapshot(session):
+            # 捕获(V)已发生、DB 快照完成前:真实 Save B 完整落地
+            await manager.save_policy(
+                app.state.session_factory,
+                "query_embedding",
+                device_kind="gpu",
+                gpu_uuid=fake_gpu.uuid,
+            )
+            return stale_policies  # 陈旧快照 A(读先于 B 提交的等价物)
+
+        manager._read_policies = read_policies_with_save_before_snapshot
+        try:
+            resp = await client.post("/api/admin/model-runtime/apply", headers=auth_headers)
+        finally:
+            manager._read_policies = real_read_policies
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert "新的配置保存" in detail and "当前运行配置未改变" in detail
+
+        # B 不被旧快照隐藏:configured=GPU / effective=CPU / pending / generation 未进
+        after = (await client.get("/api/admin/model-runtime", headers=auth_headers)).json()
+        query = next(p for p in after["policies"] if p["workload"] == "query_embedding")
+        assert query["configured"]["kind"] == "gpu"
+        assert query["effective"]["kind"] == "cpu"
+        assert query["restart_required"] is True
+        assert after["runtime_plan"]["generation"] == generation_before
+
+        async with app.state.session_factory() as session:
+            row = await session.get(ModelRuntimePolicy, "query_embedding")
+            assert row is not None and row.device_kind == "gpu"
+
+    async with app.state.session_factory() as session:
+        await session.execute(ModelRuntimePolicy.__table__.delete())
+        await session.commit()

@@ -1064,19 +1064,20 @@ class ModelRuntimeManager:
         - 成功:Effective == Configured,restart_required 归零,本生命周期内生效;
         - 失败(ApplyRejectedError):当前 Effective Runtime 零改动,线上查询
           完整可用(候选构造期不碰任何 self 突变,提交是最后一步);
-        - Save/Apply 顺序契约(REV1):读快照时捕获配置纪元,提交时校验;
-          读快照后落地的保存 → 本轮拒决(config_changed),持久 Configured
-          保持权威且 pending 可见,管理员重试即应用最新配置;
+        - Save/Apply 顺序契约(REV1/REV2):**先捕获配置纪元,再读持久快照**
+          (self._lock 绝不跨越异步 DB I/O),提交时校验纪元未变。捕获与
+          读库之间(或读库期间)落地的任何保存 → 本轮拒决(config_changed),
+          持久 Configured 保持权威且 pending 可见,管理员重试即应用最新配置;
         - 不经 Docker/进程重启;模型装载走独立线程,不阻塞事件循环
           (生产 504 教训:进程内长阻塞 = /health 全超时)。
         """
         if not self._loaded:
             raise ApplyRejectedError("not_loaded", "模型运行时尚未完成启动装配,暂不能应用更改")
+        with self._lock:
+            config_version_at_read = self._config_version  # REV2:捕获先于 DB 读
         async with session_factory() as session:
             policies = await self._read_policies(session)
             budget_mode, manual_budget_mb = await self._read_budget_setting(session)
-        with self._lock:
-            config_version_at_read = self._config_version
         return await asyncio.to_thread(
             self._apply_policies,
             policies,

@@ -1105,10 +1105,127 @@ def test_apply_retry_after_config_changed_applies_newest_config():
         {WORKLOAD_QUERY_EMBEDDING: ("cpu", None, "BAAI/bge-m3")},
         "auto",
         None,
-        config_version_at_read=manager._config_version,  # apply() 语义:读后捕获
+        config_version_at_read=manager._config_version,  # apply() 语义:读前捕获的最新纪元
     )
     query = next(p for p in snap["policies"] if p["workload"] == WORKLOAD_QUERY_EMBEDDING)
     assert query["configured"]["kind"] == "cpu" and query["effective"]["kind"] == "cpu"
     assert query["restart_required"] is False
     assert snap["runtime_plan"]["restart_required"] is False
     assert all(not p["restart_required"] for p in snap["policies"])
+
+
+# ------------------- REV2:纪元捕获必须先于 DB 读(读库前/读库中落地的保存)
+
+
+class _FakeAsyncSession:
+    async def __aenter__(self):
+        return object()
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _fake_session_factory():
+    return _FakeAsyncSession()
+
+
+@pytest.mark.asyncio
+async def test_save_landing_between_version_capture_and_db_read_rejects():
+    """REV2 边界(Planner 指出的残余窗口):Save B 在「纪元捕获之后、DB 快照
+    完成之前」落地 → 若读后捕获,B 的新纪元会被误当作快照版本,旧快照 A
+    仍会提交并隐藏 B。捕获先于读后,该交织被结构化排除:A 必被拒决。
+
+    确定性:钩住 _read_policies,在 DB 快照完成前完整落地 Save B,并返回
+    陈旧快照 A(等价于「读先于 B 提交」的真实快照)—— 零 sleep。
+    """
+    manager, _, _ = _make_manager(
+        "cpu", gpu_snapshot=GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
+    )
+    manager._build({})  # 初始:全 CPU(= 陈旧快照 A 的语义)
+    generation_before = manager._generation
+    save_landed = threading.Event()
+
+    async def read_policies_with_concurrent_save(session):
+        # 捕获(V)已发生、DB 快照未完成:Save B 完整落地(DB 提交+纪元推进)
+        manager._commit_saved_config(
+            WORKLOAD_QUERY_EMBEDDING, DeviceSelection(kind="gpu", gpu_uuid=None)
+        )
+        save_landed.set()
+        return {}  # 返回陈旧快照 A(无持久行 = 默认全 CPU)
+
+    manager._read_policies = read_policies_with_concurrent_save
+
+    async def read_budget_plain(session):
+        return ("auto", None)
+
+    manager._read_budget_setting = read_budget_plain
+
+    with pytest.raises(ApplyRejectedError) as exc_info:
+        await manager.apply(_fake_session_factory)
+    assert save_landed.is_set()
+    assert exc_info.value.code == "config_changed"
+
+    # B 不被旧快照 A 隐藏:configured=GPU(新持久值)/effective=CPU/pending 可见
+    state = manager.states[WORKLOAD_QUERY_EMBEDDING]
+    assert state.configured.kind == "gpu"
+    assert state.effective.kind == "cpu"
+    snap = manager.snapshot()
+    query = next(p for p in snap["policies"] if p["workload"] == WORKLOAD_QUERY_EMBEDDING)
+    assert query["restart_required"] is True
+    assert snap["runtime_plan"]["generation"] == generation_before  # A 未提交
+
+
+@pytest.mark.asyncio
+async def test_budget_save_landing_between_capture_and_budget_read_rejects():
+    """REV2 边界(GPU 预算同机制):预算保存在捕获后、预算读前落地 → 拒决。"""
+    manager, _, _ = _make_manager(
+        "cuda", gpu_snapshot=GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
+    )
+    manager._build({})  # auto → dual_resident
+    generation_before = manager._generation
+
+    async def read_budget_with_concurrent_save(session):
+        manager._commit_saved_budget("manual", 4096)  # Save B 完整落地
+        return ("auto", None)  # 陈旧快照:仍是 auto
+
+    manager._read_budget_setting = read_budget_with_concurrent_save
+
+    async def read_policies_plain(session):
+        return {}
+
+    manager._read_policies = read_policies_plain
+
+    with pytest.raises(ApplyRejectedError) as exc_info:
+        await manager.apply(_fake_session_factory)
+    assert exc_info.value.code == "config_changed"
+    # B 保持权威且 pending 可见;旧快照(auto/dual)未被提交
+    assert manager._budget_mode == "manual" and manager._manual_budget_mb == 4096
+    snap = manager.snapshot()
+    assert snap["runtime_plan"]["pending_mode"] == PLAN_RERANKER_TRANSIENT
+    assert snap["runtime_plan"]["restart_required"] is True
+    assert snap["runtime_plan"]["mode"] == PLAN_DUAL_RESIDENT
+    assert snap["runtime_plan"]["generation"] == generation_before
+
+
+@pytest.mark.asyncio
+async def test_apply_via_session_boundary_without_save_still_applies():
+    """对照:同一 fake-session 通道、无并发保存 → 正常应用(守卫不误伤)。"""
+    manager, _created, _ = _make_manager(
+        "cpu", gpu_snapshot=GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
+    )
+    manager._build({})
+
+    async def read_policies_plain(session):
+        return {WORKLOAD_QUERY_EMBEDDING: ("cpu", None, "BAAI/bge-m3")}
+
+    async def read_budget_plain(session):
+        return ("auto", None)
+
+    manager._read_policies = read_policies_plain
+    manager._read_budget_setting = read_budget_plain
+
+    snap = await manager.apply(_fake_session_factory)
+    assert all(not p["restart_required"] for p in snap["policies"])
+    assert snap["runtime_plan"]["restart_required"] is False
+    assert snap["runtime_plan"]["generation"] == 2
+    manager.embed(WORKLOAD_QUERY_EMBEDDING, ["q"])  # 换装后真实可执行
