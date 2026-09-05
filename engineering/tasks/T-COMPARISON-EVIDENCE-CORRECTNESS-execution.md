@@ -355,3 +355,45 @@ source products: ['ne301', 'ne503']
 ### F7. 无变更确认
 
 本门全程零实现改动、零生产数据/配置变更、零语料触碰;验证库与临时脚本均已清除;主仓 HEAD 未动。
+
+
+---
+
+## MERGE GATE — 受控集成(2026-09-06)
+
+- **Planner 状态**:FINAL ENGINEERING REVIEW = PASS + FINAL VERIFICATION = PASS;授权集成,**不授权** tag/Release/部署/生产变更。
+- **最终状态**:**MERGE PASS**
+
+### M1. 预合并身份门
+
+- `origin/main = 073f26236c08531212f6d5b12b8b8173f0557c79`(与期望基线精确一致)
+- `origin/worktree-exec/comparison-evidence-20260905 = cdbcad38fc3512561e12c71ff6eda067d06257b5`(精确)
+- `git merge-base --is-ancestor 073f262… cdbcad3…` 通过;candidate ahead 5 / behind 0;linear & fast-forwardable
+
+### M2. 合并(FAST-FORWARD ONLY)
+
+- `git checkout main && git pull --ff-only origin main && git merge --ff-only origin/worktree-exec/comparison-evidence-20260905`
+- 推送前 `git rev-parse HEAD = cdbcad38fc3512561e12c71ff6eda067d06257b5`;正常 push(无 force)
+- **无 merge commit / squash / replacement / amended commit**
+
+### M3. 推送后身份(独立远端核验)
+
+- `origin/main = cdbcad38fc3512561e12c71ff6eda067d06257b5`
+- `origin/worktree-exec/comparison-evidence-20260905 = cdbcad38…`(候选分支保留,未删除)
+
+### M4. 托管 CI / 镜像构建
+
+- Workflow:**Build & Push GPU Image — run id `33981057517`**(push main 触发,headSha=cdbcad38… 精确)
+- URL:https://github.com/harryhua-ai/ask-ai/actions/runs/33981057517
+- 结果:overall **success**;job `test` = success;job `build-and-push` = success
+- 镜像 tag:`ghcr.io/harryhua-ai/ask-ai:sha-cdbcad3`(amd64 index,digest sha256:59d67a76…)
+- 开发版本(main 快照):`0.0.0+main.cdbcad38`
+- **in-image RELEASE.json 断言日志**:「in-image RELEASE.json: version=0.0.0+main.cdbcad38 git_sha=cdbcad38fc3512561e12c71ff6eda067d06257b5」(workflow 内 Assert 步骤,与候选 SHA 精确一致)
+
+### M5. 生产安全边界确认
+
+本门**未执行**:update.sh / docker compose pull / docker compose up / 生产重启 / 生产健康验收 / 数据或配置变更 / reindex;**未创建** version tag、GitHub Release;未使用 latest 部署。latest/SHA 镜像仅为集成工件。
+
+### M6. 最终状态
+
+**MERGE PASS** —— main = origin/main = cdbcad38fc3512561e12c71ff6eda067d06257b5;托管 CI 绿;生产部署等待后续显式 Release / Production Gate(使用不可变 release tag)。
