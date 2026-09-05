@@ -940,6 +940,28 @@ class RAGOrchestrator:
         quota_stage["per_target_quota"]["own_after_rerank"] = own_after_rerank
         quota_stage["per_target_quota"]["missing_after_rerank"] = missing_after_rerank
 
+        # Rev3:比较感知剪枝 —— 上下文裁剪必须与前置比较管线同语义:
+        # 每侧以「该侧聚焦句」评估(目标身份+请求维度),逐侧剪枝后均衡合并,
+        # 全局整句评估不得清零单侧(否则 D-preflight 会把排序/剪枝伪象
+        # 误读为证据缺失)。噪声仍可剪;真缺失仍由 D-preflight fail-closed。
+        pruned_count = 0
+        if self._pruner is not None:
+            for target in resolution.targets:
+                survivors = per_target_survivors[target]
+                if not survivors:
+                    continue
+                kept = await self._pruner.prune(
+                    per_target_stage[target]["focused_query"], survivors
+                )
+                pruned_count += len(survivors) - len(kept)
+                per_target_survivors[target] = kept
+            if rest_survivors:
+                kept_rest = await self._pruner.prune(search_query, rest_survivors)
+                pruned_count += len(rest_survivors) - len(kept_rest)
+                rest_survivors = kept_rest
+        per_target_after_prune = {t: len(per_target_survivors[t]) for t in resolution.targets}
+        quota_stage["per_target_quota"]["per_target_after_prune"] = per_target_after_prune
+
         # 重排前分层合并候选(P1 兜底/纵深过滤的 fused 语义;轮转交错保均衡)
         pools = [list(own_per_target[t]) for t in resolution.targets]
         merged_pre: list[Any] = []
@@ -965,6 +987,8 @@ class RAGOrchestrator:
             "path_counts": path_counts,
             "dimension": dimension,
             "code_oriented": code_oriented,
+            "pruned_count": pruned_count,
+            "per_target_after_prune": per_target_after_prune,
             "per_target_quota": quota_stage["per_target_quota"],
             "per_target": per_target_stage,
             "candidates": candidates_diag,
@@ -1316,12 +1340,13 @@ class RAGOrchestrator:
                 "ms": cmp_stage_info["rerank_ms"],
                 "top_score": reranked[0].score if reranked else None,
                 "count": len(reranked),
-                "pruned": 0,
+                "pruned": cmp_stage_info["pruned_count"],
                 "results": self._rerank_snippets(reranked),
                 "per_target": cmp_stage_info["per_target"],
                 "candidates": cmp_stage_info["candidates"],
                 "dimension": cmp_stage_info["dimension"],
                 "code_oriented": cmp_stage_info["code_oriented"],
+                "per_target_after_prune": cmp_stage_info["per_target_after_prune"],
             }
             product_scope_stage.update({"per_target_quota": cmp_stage_info["per_target_quota"]})
             stages["product_scope"] = product_scope_stage
@@ -1353,7 +1378,9 @@ class RAGOrchestrator:
                 "results": self._rerank_snippets(reranked),
             }
 
-        if self._pruner:
+        if self._pruner and cmp_stage_info is None:
+            # Rev3:比较路径的剪枝已在 _comparison_evidence_pipeline 内按
+            # 目标聚焦语义逐侧执行(parity;整句全局评估不得清零单侧)。
             reranked = await self._pruner.prune(search_query, reranked)
             pruned_count = pre_prune_count - len(reranked)
             stages["rerank"]["pruned"] = pruned_count
@@ -1762,7 +1789,7 @@ class RAGOrchestrator:
             path_counts = cmp_stage_info["path_counts"]
             product_scope_stage.update({"per_target_quota": cmp_stage_info["per_target_quota"]})
             pre_prune_count = len(reranked)
-            pruned_count = 0
+            pruned_count = cmp_stage_info["pruned_count"]
         else:
             fused, path_counts = await self._retrieve_and_fuse(
                 extracted,
@@ -1783,7 +1810,10 @@ class RAGOrchestrator:
         # 提前声明以便拒答路径的 trace 引用保持 None → 不出现 page_boost 键)
         page_boost_stage: dict | None = None
 
-        if self._pruner:
+        if self._pruner and cmp_stage_info is None:
+            # Rev3:比较路径的剪枝已在 _comparison_evidence_pipeline 内
+            # 按目标聚焦语义逐侧执行(与 answer parity);仅非比较路径走
+            # 全局剪枝。
             reranked = await self._pruner.prune(query, reranked)
             pruned_count = pre_prune_count - len(reranked)
 
@@ -1827,6 +1857,8 @@ class RAGOrchestrator:
             rerank_stage["candidates"] = cmp_stage_info["candidates"]
             rerank_stage["dimension"] = cmp_stage_info["dimension"]
             rerank_stage["code_oriented"] = cmp_stage_info["code_oriented"]
+            rerank_stage["pruned"] = cmp_stage_info["pruned_count"]
+            rerank_stage["per_target_after_prune"] = cmp_stage_info["per_target_after_prune"]
 
         # Issue #19(D-preflight / Evidence Contract):comparison 模式下任一
         # target 缺自身标注证据 ⇒ 显式不足语义(明示缺侧),禁止静默降级为
@@ -2279,6 +2311,10 @@ class RAGOrchestrator:
                                     "candidates": cmp_stage_info["candidates"],
                                     "dimension": cmp_stage_info["dimension"],
                                     "code_oriented": cmp_stage_info["code_oriented"],
+                                    "pruned": cmp_stage_info["pruned_count"],
+                                    "per_target_after_prune": cmp_stage_info[
+                                        "per_target_after_prune"
+                                    ],
                                 }
                                 if cmp_stage_info is not None
                                 else {}

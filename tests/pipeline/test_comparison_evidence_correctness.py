@@ -137,7 +137,11 @@ NE503_FWMIXED = [
 NE301_FWCROWDED = [
     _official("ne301", "wiki/301/guide-a", 0),
     _doc(
-        "ne301", "ne301-local/fw/scheduler", 0, "code", "firmware architecture scheduler for NE301"
+        "ne301",
+        "ne301-local/fw/scheduler",
+        0,
+        "code",
+        "KEEP firmware architecture scheduler for NE301",
     ),
     _official("ne301", "wiki/301/guide-b", 1),
     _official("ne301", "wiki/301/guide-c", 2),
@@ -153,7 +157,7 @@ NE503_FWCROWDED = [
         "ne503-local/fw/encoder",
         0,
         "code",
-        "firmware architecture encoder pipeline for NE503",
+        "KEEP firmware architecture encoder pipeline for NE503",
     ),
 ]
 
@@ -539,3 +543,200 @@ async def test_false_positive_source_keeps_tiered_selection():
     assert rerank_stage.get("code_oriented") is False
     quota = complete["trace_payload"]["stages"]["product_scope"]["per_target_quota"]
     assert quota["selection"] == "tiered"
+
+
+# ------------------------------------- REV3(剪枝比较感知 + parity 回归)
+
+
+class _GlobalStarvingPruner:
+    """确定性 fake pruner(冻结 REV3 缺陷形状):
+
+    - 整句/裸查询(不以目标展示名开头)= 全局评估语义 → 只保留 lead 侧
+      (模拟全局剪枝对合并集的饥饿行为:B 侧被清零);
+    - 目标聚焦句(以展示名开头)= 比较感知语义 → 只保留 KEEP 标记的
+      相关证据(噪声被删)。
+    """
+
+    def __init__(self):
+        self.queries: list[str] = []
+
+    async def prune(self, query: str, chunks):
+        self.queries.append(query)
+        if query.startswith(("NeoEye NE301", "NeoEye NE503")):
+            return [r for r in chunks if "KEEP" in r.text]
+        return [r for r in chunks if r.product == "ne503"]
+
+
+def _make_rag_with_pruner(by_label, *, answer: str = "GROUND-COMPARED-ANSWER"):
+    rag, scorer = _make_rag(by_label, answer=answer)
+    pruner = _GlobalStarvingPruner()
+    rag._pruner = pruner
+    return rag, scorer, pruner
+
+
+# REV3 fixtures:双侧 qualifying 证据(KEEP)+ 噪声(无 KEEP)
+NE301_PRUNE = [
+    _doc(
+        "ne301",
+        "wiki/301/overview",
+        0,
+        "paragraph",
+        "KEEP OFFICIAL-PRODUCT-DOC overview evidence for NE301",
+    ),
+    _doc("ne301", "noise/301/unrelated", 0, "paragraph", "NOISE unrelated marketing blurb"),
+    _doc(
+        "ne301",
+        "wiki/301/specs",
+        1,
+        "table",
+        "KEEP OFFICIAL-PRODUCT-DOC specification table for NE301",
+    ),
+]
+NE503_PRUNE = [
+    _doc(
+        "ne503",
+        "wiki/503/overview",
+        0,
+        "paragraph",
+        "KEEP OFFICIAL-PRODUCT-DOC overview evidence for NE503",
+    ),
+    _doc("ne503", "noise/503/unrelated", 0, "paragraph", "NOISE unrelated marketing blurb"),
+    _doc(
+        "ne503",
+        "wiki/503/specs",
+        1,
+        "table",
+        "KEEP OFFICIAL-PRODUCT-DOC specification table for NE503",
+    ),
+]
+
+
+@pytest.mark.unit
+async def test_global_prune_cannot_starve_one_side():
+    """Rev3 阻断(A):全局剪枝不得清零聚焦重排后的合格侧证据 ——
+    503c229 上全局剪枝删 B 侧 → 误拒 comparison_evidence_insufficient。"""
+    rag, _, _ = _make_rag_with_pruner({"ne301": NE301_PRUNE, "ne503": NE503_PRUNE})
+    events = await _collect_stream(rag, QUERY_A)
+    complete = events[-1]
+    assert complete["is_answered"] is True, "聚焦重排后的双侧合格证据不得被全局剪枝清零成误拒"
+    assert complete["result_key"] != "comparison_evidence_insufficient"
+    src_products = {s["product"] for s in complete["sources"]}
+    assert {"ne301", "ne503"} <= src_products
+
+
+@pytest.mark.unit
+async def test_comparison_prune_still_removes_noise():
+    """Rev3(B):比较感知剪枝仍须删除无关证据 —— 不得变成「全保」;"""
+    rag, _, pruner = _make_rag_with_pruner({"ne301": NE301_PRUNE, "ne503": NE503_PRUNE})
+    events = await _collect_stream(rag, QUERY_A)
+    complete = events[-1]
+    assert complete["is_answered"] is True
+    src_urls = " ".join(s.get("url", "") for s in complete["sources"])
+    assert "noise/" not in src_urls, "无关噪声证据必须被剪除"
+    # 聚焦语义剪枝确实被逐侧调用(而非整句全局调用)
+    focused_calls = [q for q in pruner.queries if q.startswith(("NeoEye NE301", "NeoEye NE503"))]
+    assert len(focused_calls) >= 2, "必须按目标聚焦语义逐侧剪枝"
+
+
+@pytest.mark.unit
+async def test_prune_keeps_dimension_semantics_for_attribute_comparison():
+    """Rev3(C):属性比较 + 剪枝 —— 维度语义保持,双侧相关功耗证据幸存,
+    泛 overview 噪声可被剪除。"""
+    power_a = _doc(
+        "ne301", "wiki/301/power", 0, "paragraph", "KEEP power consumption profile for NE301"
+    )
+    power_b = _doc(
+        "ne503", "wiki/503/power", 0, "paragraph", "KEEP power consumption profile for NE503"
+    )
+    mixed = {
+        "ne301": [
+            _official("ne301", "wiki/301/overview", 0),
+            power_a,
+            _official("ne301", "wiki/301/specs", 1, "table"),
+        ],
+        "ne503": [_official("ne503", "wiki/503/overview", 0), power_b],
+    }
+    rag, _, _ = _make_rag_with_pruner(mixed)
+    events = await _collect_stream(rag, "Compare NE301 and NE503 power consumption")
+    complete = events[-1]
+    assert complete["is_answered"] is True
+    src_urls = " ".join(s.get("url", "") for s in complete["sources"])
+    assert (
+        "wiki/301/power" in src_urls and "wiki/503/power" in src_urls
+    ), "双侧功耗维度证据必须幸存剪枝"
+
+
+@pytest.mark.unit
+async def test_prune_does_not_lose_code_evidence_in_code_oriented_comparison():
+    """Rev3(D):代码导向比较 —— competitive 选出的相关代码证据不得在
+    剪枝阶段因回到整句语义而丢失。"""
+    rag, _, _ = _make_rag_with_pruner({"ne301": NE301_FWCROWDED, "ne503": NE503_FWCROWDED})
+    events = await _collect_stream(rag, "Compare the NE301 and NE503 firmware architecture")
+    complete = events[-1]
+    assert complete["is_answered"] is True
+    src_urls = " ".join(s.get("url", "") for s in complete["sources"])
+    assert (
+        "fw/scheduler" in src_urls and "fw/encoder" in src_urls
+    ), "相关代码证据必须穿越剪枝进入生成"
+
+
+@pytest.mark.unit
+async def test_genuine_missing_side_fail_closed_with_pruner():
+    """Rev3(E):真缺失 + 剪枝启用 → 仍 fail-closed,无编造保底。"""
+    rag, _, _ = _make_rag_with_pruner({"ne301": [], "ne503": NE503_PRUNE})
+    events = await _collect_stream(rag, QUERY_A)
+    complete = events[-1]
+    assert complete["is_answered"] is False
+    assert complete["result_key"] == "comparison_evidence_insufficient"
+
+
+@pytest.mark.unit
+async def test_pruned_count_non_negative_and_exact_both_paths():
+    """Rev3(G):pruned_count == N-M 且 ≥ 0,answer/stream 两路一致;
+    Rev3 缺陷 1(answer 比较分支 pre_prune_count=0 → 负数)回归锁定。"""
+    for label, run in (
+        ("stream", lambda rag: _collect_stream(rag, QUERY_A)),
+        ("answer", lambda rag: rag.answer(QUERY_A, "widget")),
+    ):
+        rag, _, _ = _make_rag_with_pruner({"ne301": NE301_PRUNE, "ne503": NE503_PRUNE})
+        result = await run(rag)
+        events = result if isinstance(result, list) else None
+        complete = events[-1] if events else result
+        trace = complete["trace_payload"] if events else result.trace_payload
+        stages = trace["stages"]
+        quota = stages["product_scope"]["per_target_quota"]
+        after_rerank = quota["own_after_rerank"]
+        after_prune = quota.get("per_target_after_prune") or {}
+        assert after_prune, "trace 缺少剪枝后逐侧计数"
+        n = sum(after_rerank.values())
+        m = sum(after_prune.values())
+        pruned = stages["rerank"]["pruned"]
+        assert pruned == n - m, f"[{label}] pruned={pruned} 应为 {n}-{m}={n - m}"
+        assert pruned >= 0, f"[{label}] pruned_count 不得为负"
+        assert trace.get("type") == "rag" or stages["rerank"]["count"] == m
+
+
+@pytest.mark.unit
+async def test_answer_stream_parity_pruning_semantics():
+    """Rev3(F):answer/stream 共享同一比较剪枝契约 —— 同场景同结果。"""
+    by_label = {"ne301": NE301_PRUNE, "ne503": NE503_PRUNE}
+    rag_s, _, pruner_s = _make_rag_with_pruner(by_label)
+    events = await _collect_stream(rag_s, QUERY_A)
+    complete = events[-1]
+    rag_a, _, pruner_a = _make_rag_with_pruner(by_label)
+    result = await rag_a.answer(QUERY_A, "widget")
+    assert complete["is_answered"] == result.is_answered
+    assert (
+        complete["result_key"]
+        == (
+            result.trace_payload.get("config_snapshot", {}).get("result_key")
+            if result.is_answered is False
+            else "answered"
+        )
+        or result.is_answered
+    )
+    # 剪枝调用形状一致:逐侧聚焦句(两路不得再出现整句/裸查询差异)
+    for pruner in (pruner_s, pruner_a):
+        assert all(
+            q.startswith(("NeoEye NE301", "NeoEye NE503")) for q in pruner.queries
+        ), f"比较路径剪枝必须统一使用聚焦句: {pruner.queries}"
