@@ -37,6 +37,7 @@ from backend.runtime.manager import (
     WORKLOAD_QUERY_RERANKER,
     WORKLOAD_SYNC_EMBEDDING,
     ApplyRejectedError,
+    DeviceSelection,
     ModelRuntimeManager,
     UnsafeRuntimePlanError,
     _TransientGpuReranker,
@@ -994,3 +995,120 @@ def test_apply_not_loaded_rejected():
     with pytest.raises(ApplyRejectedError) as exc_info:
         manager._apply_policies({}, "auto", None)
     assert exc_info.value.code == "not_loaded"
+
+
+# --------------------------- REV1:Save/Apply 配置竞态守卫(配置纪元)
+
+
+def test_save_landing_mid_apply_aborts_and_keeps_newest_config_pending():
+    """REV1 阻断修复:Save B 在 Apply A 读快照后落地 → A 整体拒决,B 不被隐藏。
+
+    确定性协调:注入 _assemble 钩子,在候选装配中途以 save_policy 的同款
+    内存侧代码路径(_commit_saved_config)落地并发 Save(事件语义等价于
+    DB 已提交)——非 sleep 编排。
+    """
+    manager, _, _ = _make_manager(
+        "cpu", gpu_snapshot=GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
+    )
+    manager._build({})  # 初始装配:全 CPU(Planner 竞态样本的 Effective=CPU)
+    version_at_read = manager._config_version  # Apply A 读快照时捕获的纪元
+    generation_before = manager._generation
+
+    real_assemble = manager._assemble
+    saved = threading.Event()
+
+    def assemble_with_concurrent_save(policies, budget_mode, manual_budget_mb):
+        # 并发 Save B:DB 已提交(GPU)→ 内存侧同锁推进 configured + 纪元
+        manager._commit_saved_config(
+            WORKLOAD_QUERY_EMBEDDING, DeviceSelection(kind="gpu", gpu_uuid=None)
+        )
+        saved.set()
+        return real_assemble(policies, budget_mode, manual_budget_mb)
+
+    manager._assemble = assemble_with_concurrent_save
+    try:
+        with pytest.raises(ApplyRejectedError) as exc_info:
+            manager._apply_policies({}, "auto", None, config_version_at_read=version_at_read)
+    finally:
+        manager._assemble = real_assemble
+    assert saved.is_set()  # Save B 确实落在候选装配期间
+    assert exc_info.value.code == "config_changed"
+    assert "重新" in str(exc_info.value) and "当前运行配置未改变" in str(exc_info.value)
+
+    # B 未被旧快照覆盖/隐藏:DB 权威(GPU)在 Admin 真相面可见且 pending
+    state = manager.states[WORKLOAD_QUERY_EMBEDDING]
+    assert state.configured.kind == "gpu"  # 较新持久值 = 内存 Configured
+    assert state.effective.kind == "cpu"  # 有效运行时保持 A 之前的旧装配(CPU)
+    assert state.status == "loaded"
+    snap = manager.snapshot()
+    query = next(p for p in snap["policies"] if p["workload"] == WORKLOAD_QUERY_EMBEDDING)
+    assert query["restart_required"] is True  # 待生效可见(配置已保存,未应用)
+    # 拒决 = 零提交:装配代数不进、实例不变、在线查询不受影响
+    assert manager._generation == generation_before
+    old_query = manager._embedder_for(WORKLOAD_QUERY_EMBEDDING)
+    manager.embed(WORKLOAD_QUERY_EMBEDDING, ["q"])
+    assert old_query.calls == [["q"]]
+
+
+def test_budget_save_landing_mid_apply_aborts_and_keeps_pending():
+    """REV1:GPU 预算保存与 Apply 同竞态面 —— 同一纪元守卫拒决。"""
+    manager, _, _ = _make_manager(
+        "cuda", gpu_snapshot=GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
+    )
+    manager._build({})  # auto 预算 9000 → dual_resident
+    version_at_read = manager._config_version
+
+    real_assemble = manager._assemble
+
+    def assemble_with_concurrent_budget_save(policies, budget_mode, manual_budget_mb):
+        # 并发 Save B:manual 4096 已提交 DB → 内存侧推进预算 + 纪元
+        manager._commit_saved_budget("manual", 4096)
+        return real_assemble(policies, budget_mode, manual_budget_mb)
+
+    manager._assemble = assemble_with_concurrent_budget_save
+    try:
+        with pytest.raises(ApplyRejectedError) as exc_info:
+            manager._apply_policies({}, "auto", None, config_version_at_read=version_at_read)
+    finally:
+        manager._assemble = real_assemble
+    assert exc_info.value.code == "config_changed"
+    # 较新的预算保存保持权威且 pending 可见(执行计划 dual ≠ 现计划 transient)
+    assert manager._budget_mode == "manual" and manager._manual_budget_mb == 4096
+    snap = manager.snapshot()
+    assert snap["runtime_plan"]["pending_mode"] == PLAN_RERANKER_TRANSIENT
+    assert snap["runtime_plan"]["restart_required"] is True
+    assert snap["runtime_plan"]["mode"] == PLAN_DUAL_RESIDENT  # 旧快照计划未被提交
+
+
+def test_apply_retry_after_config_changed_applies_newest_config():
+    """拒决后重试:以最新持久配置重放 → 成功且 Configured==Effective。"""
+    manager, _created, _ = _make_manager(
+        "cuda", gpu_snapshot=GpuMemorySnapshot(used_mb=6000, free_mb=9000, total_mb=15564)
+    )
+    manager._build({})
+    stale_version = manager._config_version
+    # Save B 落地(query 改 cpu,假设 DB 已提交同款配置)
+    manager._commit_saved_config(
+        WORKLOAD_QUERY_EMBEDDING, DeviceSelection(kind="cpu", gpu_uuid=None)
+    )
+    with pytest.raises(ApplyRejectedError) as exc_info:
+        manager._apply_policies(
+            {WORKLOAD_QUERY_EMBEDDING: ("gpu", None, "BAAI/bge-m3")},
+            "auto",
+            None,
+            config_version_at_read=stale_version,
+        )
+    assert exc_info.value.code == "config_changed"
+
+    # 重试:按 Save B 之后的最新持久配置(= sync 默认 gpu、query cpu)
+    snap = manager._apply_policies(
+        {WORKLOAD_QUERY_EMBEDDING: ("cpu", None, "BAAI/bge-m3")},
+        "auto",
+        None,
+        config_version_at_read=manager._config_version,  # apply() 语义:读后捕获
+    )
+    query = next(p for p in snap["policies"] if p["workload"] == WORKLOAD_QUERY_EMBEDDING)
+    assert query["configured"]["kind"] == "cpu" and query["effective"]["kind"] == "cpu"
+    assert query["restart_required"] is False
+    assert snap["runtime_plan"]["restart_required"] is False
+    assert all(not p["restart_required"] for p in snap["policies"])

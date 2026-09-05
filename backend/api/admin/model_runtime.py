@@ -48,7 +48,7 @@ async def get_model_runtime(
 
 
 class WorkloadPolicyUpdate(BaseModel):
-    """Configured Device 更新(重启生效)。"""
+    """Configured Device 更新(「应用更改」或重启生效)。"""
 
     device_kind: str = Field(min_length=1, max_length=10)
     gpu_uuid: str | None = None

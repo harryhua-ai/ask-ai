@@ -348,6 +348,11 @@ class ModelRuntimeManager:
         # Apply 串行锁(覆盖 读取现状→候选装配→提交 全程;与 _lock 分离,
         # 候选装配不阻塞在线查询的实例捕获读)
         self._apply_lock = threading.Lock()
+        # 配置纪元:save_policy / save_gpu_budget 在 DB 提交后同锁推进;
+        # Apply 在读快照时捕获、提交时校验——旧快照的 Apply 一律拒决
+        # (REV1 Save/Apply 竞态守卫:持久 Configured 是唯一权威,永不被
+        # 旧快照覆盖或隐藏)。由 self._lock 保护。
+        self._config_version = 0
         # 装配纪元:每次提交(启动 load / Apply)递增;Admin/日志证据用
         self._generation = 0
         # 当前装配的输入选择(Apply 差量重建的对比基准)
@@ -651,10 +656,29 @@ class ModelRuntimeManager:
         )
 
     def _commit(
-        self, asm: _RuntimeAssembly, budget_mode: str, manual_budget_mb: int | None
+        self,
+        asm: _RuntimeAssembly,
+        budget_mode: str,
+        manual_budget_mb: int | None,
+        expected_config_version: int | None = None,
     ) -> None:
-        """原子提交候选装配(锁内整组赋值;读侧经 _lock 捕获一致快照)。"""
+        """原子提交候选装配(锁内整组赋值;读侧经 _lock 捕获一致快照)。
+
+        REV1 Save/Apply 竞态守卫:``expected_config_version`` 非空时(Apply
+        路径),若读快照后有新的配置保存落地(设备策略或 GPU 预算),整体
+        拒决 —— 旧快照候选绝不覆盖/隐藏更新的持久 Configured。
+        """
         with self._lock:
+            if (
+                expected_config_version is not None
+                and self._config_version != expected_config_version
+            ):
+                raise ApplyRejectedError(
+                    "config_changed",
+                    "应用更改期间检测到新的配置保存(设备策略或 GPU 预算)。"
+                    "当前运行配置未改变,线上查询不受影响;"
+                    "请重新点击「应用更改」以应用最新保存的配置。",
+                )
             self._query_embedder = asm.query_embedder
             self._query_on_gpu = asm.query_on_gpu
             self._sync_embedder_override = asm.sync_embedder_override
@@ -978,6 +1002,23 @@ class ModelRuntimeManager:
             "peak_reserve_mb": QUERY_PEAK_RESERVE_MB,
         }
 
+    def _commit_saved_config(self, workload: str, selection: DeviceSelection) -> None:
+        """save_policy 的内存侧(DB 提交成功后调用)。
+
+        REV1 契约:内存 configured 与配置纪元同锁原子推进 —— 纪元不变
+        ⇔ 无新保存落地;Apply 以此在提交时检出旧快照。
+        """
+        with self._lock:
+            self.states[workload].configured = selection
+            self._config_version += 1
+
+    def _commit_saved_budget(self, mode: str, manual_budget_mb: int | None) -> None:
+        """save_gpu_budget 的内存侧(DB 提交成功后调用;同上原子推进纪元)。"""
+        with self._lock:
+            self._budget_mode = mode
+            self._manual_budget_mb = manual_budget_mb
+            self._config_version += 1
+
     async def save_policy(
         self,
         session_factory: async_sessionmaker[AsyncSession],
@@ -986,7 +1027,11 @@ class ModelRuntimeManager:
         device_kind: str,
         gpu_uuid: str | None,
     ) -> dict:
-        """持久化 Configured Device(「应用更改」或重启生效;不触碰 Effective)。"""
+        """持久化 Configured Device(「应用更改」或重启生效;不触碰 Effective)。
+
+        顺序契约:DB 提交成功 → 同锁推进配置纪元 + 内存 configured;
+        进行中的 Apply 在提交时检出纪元变化即整体拒决(旧快照不覆盖新保存)。
+        """
         if workload not in WORKLOADS:
             raise ValueError(f"unknown workload: {workload}")
         if device_kind not in (_DEVICE_KIND_GPU, _DEVICE_KIND_CPU):
@@ -1009,7 +1054,7 @@ class ModelRuntimeManager:
             row.device_kind = device_kind
             row.gpu_uuid = gpu_uuid
             await session.commit()
-        state.configured = DeviceSelection(kind=device_kind, gpu_uuid=gpu_uuid)
+        self._commit_saved_config(workload, DeviceSelection(kind=device_kind, gpu_uuid=gpu_uuid))
         return self.workload_snapshot(workload)
 
     async def apply(self, session_factory: async_sessionmaker[AsyncSession]) -> dict:
@@ -1019,6 +1064,9 @@ class ModelRuntimeManager:
         - 成功:Effective == Configured,restart_required 归零,本生命周期内生效;
         - 失败(ApplyRejectedError):当前 Effective Runtime 零改动,线上查询
           完整可用(候选构造期不碰任何 self 突变,提交是最后一步);
+        - Save/Apply 顺序契约(REV1):读快照时捕获配置纪元,提交时校验;
+          读快照后落地的保存 → 本轮拒决(config_changed),持久 Configured
+          保持权威且 pending 可见,管理员重试即应用最新配置;
         - 不经 Docker/进程重启;模型装载走独立线程,不阻塞事件循环
           (生产 504 教训:进程内长阻塞 = /health 全超时)。
         """
@@ -1027,8 +1075,14 @@ class ModelRuntimeManager:
         async with session_factory() as session:
             policies = await self._read_policies(session)
             budget_mode, manual_budget_mb = await self._read_budget_setting(session)
+        with self._lock:
+            config_version_at_read = self._config_version
         return await asyncio.to_thread(
-            self._apply_policies, policies, budget_mode, manual_budget_mb
+            self._apply_policies,
+            policies,
+            budget_mode,
+            manual_budget_mb,
+            config_version_at_read,
         )
 
     def _apply_policies(
@@ -1036,6 +1090,7 @@ class ModelRuntimeManager:
         policies: dict[str, tuple[str, str | None, str]],
         budget_mode: str,
         manual_budget_mb: int | None,
+        config_version_at_read: int | None = None,
     ) -> dict:
         """Apply 同步核心(独立线程内执行;_apply_lock 串行化多次 Apply)。"""
         if not self._loaded:
@@ -1075,8 +1130,14 @@ class ModelRuntimeManager:
                     "当前运行配置未改变,线上查询不受影响;"
                     "请核对设备策略与 GPU 可见性后重试。",
                 ) from exc
-            # 3) 原子提交(锁内整组赋值;读侧经 _lock 捕获一致快照)
-            self._commit(asm, budget_mode, manual_budget_mb)
+            # 3) 原子提交(锁内整组赋值;含 REV1 配置纪元守卫:读快照后有
+            #    新保存落地 → 整体拒决,旧快照不覆盖持久 Configured)
+            self._commit(
+                asm,
+                budget_mode,
+                manual_budget_mb,
+                expected_config_version=config_version_at_read,
+            )
         # 4) 被替换实例回收(在飞调用持有自身引用,自然用完;此处仅加速
         #    循环引用回收与显存归还,best-effort 不影响正确性)
         self._release_superseded_models()
@@ -1121,8 +1182,7 @@ class ModelRuntimeManager:
             row.mode = mode
             row.manual_budget_mb = manual_budget_mb
             await session.commit()
-        self._budget_mode = mode
-        self._manual_budget_mb = manual_budget_mb
+        self._commit_saved_budget(mode, manual_budget_mb)
         return self.capacity()
 
     def workload_snapshot(self, workload: str) -> dict:

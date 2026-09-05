@@ -8,7 +8,9 @@
 - viewer 只读(写 403)。
 """
 
+import asyncio
 import uuid
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -311,3 +313,84 @@ async def test_apply_endpoint_not_loaded_409(auth_headers, runtime_manager):
         assert "尚未完成启动装配" in resp.json()["detail"]
     finally:
         app.state.model_runtime = original
+
+
+async def test_apply_endpoint_race_with_concurrent_save_409_truth_preserved(
+    auth_headers, runtime_manager, monkeypatch
+):
+    """REV1 Save/Apply 竞态(端到端,Planner 竞态样本):Save B(GPU)在
+    Apply A 读快照后、提交前经真实 save_policy(DB 提交+纪元推进)落地 →
+    A 整体拒决(config_changed);持久 Configured(GPU)不被旧快照覆盖或
+    隐藏:configured=GPU / effective=CPU / pending 可见 / generation 未进。
+
+    确定性协调:注入 _assemble 钩子 + run_coroutine_threadsafe 把真实保存
+    调度到事件循环,在候选装配中途完成 —— 无 sleep。
+    """
+    loop = asyncio.get_running_loop()
+    manager = runtime_manager
+    fake_gpu = SimpleNamespace(
+        uuid="GPU-00000000-0000-0000-0000-0000000000aa",
+        index=0,
+        label="Fake T4 · GPU 0",
+        name="Fake T4",
+        total_memory_mb=15564,
+    )
+    monkeypatch.setattr("backend.runtime.manager.discover_gpus", lambda: [fake_gpu])
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 前置:全 CPU 配置并成功 Apply(Configured==Effective 干净态)
+        for workload in ("query_embedding", "sync_embedding", "query_reranker"):
+            put = await client.put(
+                f"/api/admin/model-runtime/policies/{workload}",
+                headers=auth_headers,
+                json={"device_kind": "cpu", "gpu_uuid": None},
+            )
+            assert put.status_code == 200
+        applied = await client.post("/api/admin/model-runtime/apply", headers=auth_headers)
+        assert applied.status_code == 200
+        baseline = (await client.get("/api/admin/model-runtime", headers=auth_headers)).json()
+        query_before = next(p for p in baseline["policies"] if p["workload"] == "query_embedding")
+        assert query_before["effective"]["kind"] == "cpu"
+        generation_before = baseline["runtime_plan"]["generation"]
+
+        real_assemble = manager._assemble
+
+        def assemble_with_concurrent_save(plcs, bm, mb):
+            fut = asyncio.run_coroutine_threadsafe(
+                manager.save_policy(
+                    app.state.session_factory,
+                    "query_embedding",
+                    device_kind="gpu",
+                    gpu_uuid=fake_gpu.uuid,
+                ),
+                loop,
+            )
+            fut.result(timeout=10)  # Save B 完整落地(DB+内存 configured+纪元)
+            return real_assemble(plcs, bm, mb)
+
+        manager._assemble = assemble_with_concurrent_save
+        try:
+            resp = await client.post("/api/admin/model-runtime/apply", headers=auth_headers)
+        finally:
+            manager._assemble = real_assemble
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert "新的配置保存" in detail and "当前运行配置未改变" in detail
+
+        # 持久权威未被旧快照覆盖:configured=GPU(新保存)、effective=CPU、
+        # pending 可见、装配代数未进
+        after = (await client.get("/api/admin/model-runtime", headers=auth_headers)).json()
+        query = next(p for p in after["policies"] if p["workload"] == "query_embedding")
+        assert query["configured"]["kind"] == "gpu"
+        assert query["effective"]["kind"] == query_before["effective"]["kind"]
+        assert query["restart_required"] is True
+        assert after["runtime_plan"]["generation"] == generation_before
+
+        # DB 权威与内存真相一致(不丢 B)
+        async with app.state.session_factory() as session:
+            row = await session.get(ModelRuntimePolicy, "query_embedding")
+            assert row is not None and row.device_kind == "gpu"
+
+    async with app.state.session_factory() as session:
+        await session.execute(ModelRuntimePolicy.__table__.delete())
+        await session.commit()
