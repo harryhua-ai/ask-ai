@@ -194,7 +194,59 @@ trace: retrieve 214ms / rerank 317ms(真实计时入 trace)
 
 共享 `_comparison_evidence_pipeline` 未动签名语义;REV2 全部新用例走 stream_answer,parity 用例(answer+stream 同场景同结果)保持通过;两路 trace 均携带 dimension/code_oriented/selection。
 
-### R2.7 最终执行状态
+### R2.7 REV2 候选
 
-**CANDIDATE READY(REV2)** —— 等待 Planner 复审。候选 tip = `503c22954ac6de6fe2a2555a3b23672989ab060f`
+候选 `503c229` —— Planner 复审 **PARTIAL**(1 阻断 + 2 parity 缺陷,见 REV3)。
+
+---
+
+## REV3 — 比较感知剪枝 + parity 修复(2026-09-06)
+
+- **Planner 判定**:REV2 两阻断 ACCEPTED;新阻断 = 剪枝不感知比较语义;另 2 parity 缺陷。
+- **修复提交**:`346d3e6fa6e138da82d115f9608398640f475596` @ 同分支(已推送,远程核验一致;血统 073f262→64c43c5→56aed49→503c229→346d3e6)。
+
+### R3.1 根因(剪枝伪象)
+
+比较流:per-target 检索 → 均衡配额 → 聚焦重排 → 合并 → **全局 LLM 剪枝(整句查询,全局评估合并集)** → D-preflight。全局剪枝可把聚焦重排后某侧的全部合格证据剪除,D-preflight 把剪枝伪象误读为证据缺失 → 误拒。C1/C3 修复被后置剪枝回退。
+
+### R3.2 修复设计(最小,共享抽象内)
+
+比较路径剪枝移入 `_comparison_evidence_pipeline`(聚焦重排之后):
+- **逐侧聚焦剪枝**:每侧以该侧聚焦句(目标身份+请求维度)调 `self._pruner.prune(...)` —— 与该侧重排完全同语义(C3 贯穿);
+- rest 以对比句剪枝(supplement 语义不变);
+- 剪后轮转交错 → D-preflight(口径不变);
+- **外层全局剪枝对比较路径跳过**(`cmp_stage_info is None` 守卫;非比较路径不变,不禁用);
+- 噪声仍可剪(聚焦语义下无关证据照样被删);真缺失仍 fail-closed。
+
+parity 缺陷修复:
+1. answer() 比较分支 `pre_prune_count=0` 未设 → 负 pruned_count;现比较分支 pruned_count 由管线返回(= Σ逐侧(重排后−剪后)),恒 ≥0;外层剪枝跳过不再二次污染;
+2. 两路 prune 查询不同源(answer=search_query / stream=raw query)→ 比较剪枝统一为管线内聚焦逐侧调用(测试 F 断言两路 pruner 收到的全部是聚焦句)。
+
+trace:rerank stage 新增 `per_target_after_prune`(与 `per_target`/own_after_rerank 区分)+ `pruned`(总剪除)—— 剪枝致单侧消失可直接诊断;无全文落盘。
+
+### R3.3 RED 证据(503c229 上先失败,6 用例)
+
+A(全局饿死→误拒)/ B(噪声仍剪+逐侧聚焦调用断言)/ C(属性维度穿越剪枝)/ D(代码证据穿越剪枝)/ G(pruned_count 精确非负,两路)/ F(parity 剪枝形状)—— 全部 RED;E(真缺失)在基线即通过(守护)。
+
+### R3.4 GREEN 与回归
+
+- comparison 套件 **24/24**(REV3 新增 7);pipeline 目录绿;
+- 离线全量(隔离库 ask_ai_test_cmp4,用后已 DROP):**1716 passed / 3 skipped / 0 failed**;
+- ruff / black(改动文件)全绿。
+
+### R3.5 生产等价只读复现(**剪枝器实际启用**:真 LLMPruner 注入,pruning routing available=True;真语料+真 LLM 直调 answer(),零生产触碰;脚本已清除)
+
+| 查询 | selection | after_focused_rerank | after_prune | 结果 |
+|---|---|---|---|---|
+| Compare NE503 and NE301 | tiered | {ne503:5, ne301:2} | 同左(pruned 0) | **answered** 双侧 sources |
+| Compare NE301 and NE503 | tiered | {ne301:3, ne503:4} | 同左 | **answered** 双侧 sources |
+| … supported AI models | tiered | {ne301:5, ne503:5} | 同左(fail-open×2,见下) | **answered** |
+| … firmware architecture | **competitive** | {ne301:2, ne503:2} | 同左 | **answered**,真代码 chunk(NE301 Drivers 页)入上下文 |
+| … power consumption | tiered | {ne301:3, **ne503:0**} | {ne301:3, ne503:0} | **诚实 fail-closed**(真缺失,剪枝未编造) |
+
+观测注记:supported AI models 场景 pruning LLM 两次返回格式异常 → fail-open 保留全部(既有安全方向:fail-open 只可能多保留,不可能饿死单侧);聚焦语义下真语料证据全部被判相关,pruned_total=0 —— 「剪枝启用后不再饿死单侧」由生产语料直接实证,「噪声仍可剪」由确定性测试 B 证明。
+
+### R3.6 最终执行状态
+
+**CANDIDATE READY(REV3)** —— 等待 Planner 复审。候选 tip = `346d3e6fa6e138da82d115f9608398640f475596`
 (@ origin/worktree-exec/comparison-evidence-20260905)。
