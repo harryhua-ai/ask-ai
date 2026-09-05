@@ -246,7 +246,52 @@ A(全局饿死→误拒)/ B(噪声仍剪+逐侧聚焦调用断言)/ C(属性维�
 
 观测注记:supported AI models 场景 pruning LLM 两次返回格式异常 → fail-open 保留全部(既有安全方向:fail-open 只可能多保留,不可能饿死单侧);聚焦语义下真语料证据全部被判相关,pruned_total=0 —— 「剪枝启用后不再饿死单侧」由生产语料直接实证,「噪声仍可剪」由确定性测试 B 证明。
 
-### R3.6 最终执行状态
+### R3.6 REV3 候选
 
-**CANDIDATE READY(REV3)** —— 等待 Planner 复审。候选 tip = `346d3e6fa6e138da82d115f9608398640f475596`
+候选 `346d3e6` —— Planner 复审 **PARTIAL**(answer 终态覆盖阻断 + 测试空洞,见 REV4)。
+
+---
+
+## REV4 — 终态覆盖缺陷修复 + 非零剪枝证明链(2026-09-06)
+
+- **Planner 判定**:REV3 核心架构 ACCEPTED;阻断 = answer() 比较 trace 丢失真实 pruned_count;测试缺口 = REV3 噪声 fixture 空洞绿。
+- **修复提交**:`cdbcad38fc3512561e12c71ff6eda067d06257b5` @ 同分支(已推送,远程核验一致;血统 …→503c229→346d3e6→cdbcad3)。
+
+### R4.1 覆盖根因与修复
+
+- answer() 比较分支局部 `pruned_count` 保持初值 0(管线真值只写进了 stages 初建,外层剪枝又被跳过);公共终态 `stages["rerank"]["pruned"] = pruned_count` 把正确值覆盖为 0 → answer 与 stream 不一致,REV3-G 被违反。
+- 修复(一行,与 stream 同源):answer() 比较分支 `pruned_count = cmp_stage_info["pruned_count"]`;公共终态保留。
+
+### R4.2 连带发现:trace 语义冲突(D-preflight 覆盖)
+
+stream/answer 两处 D-preflight 把「剪枝+纵深过滤后的最终计数」覆写进 `own_after_rerank` —— 挤掉「聚焦重排后」语义,导致剪枝事件在 trace 中不可诊断(own_after_rerank == after_prune)。修复:最终计数写独立字段 **`own_final`**;`own_after_rerank`(聚焦重排后)与 `per_target_after_prune`(剪枝后)构成两段轨迹,`own_final` 为终态。
+
+### R4.3 测试空洞修复(非零剪枝证明链)
+
+- 原噪声 fixture 无 OFFICIAL 标记 → 在聚焦重排即被滤除 → after_rerank == after_prune(0==0),answer 覆盖 bug 逃逸;
+- 修正:噪声文档含 OFFICIAL(过聚焦重排、幸存计入 after_rerank)但无 KEEP(被 pruner 删);fake pruner 记录 `received`(查询+收到 id);
+- 证明链(E):噪声 ①幸存聚焦重排(after_rerank > after_prune)②被送达 pruner(received 含 noise id)③被删除(after_prune/sources 不含)。
+
+### R4.4 RED 证据(346d3e6 上)
+
+6 用例先失败:A(4 > 4 不成立——trace 覆盖致 delta 不可见)、B(answer pruned=0 ≠ N-M)、C(stream 通过,作对照)、D(parity:0 ≠ 2)、E(证明链断于覆盖)、以及既有 G 用例(0==0 空洞暴露)。
+
+### R4.5 GREEN 与回归
+
+- comparison 套件 **29/29**(REV4 新增 5);pipeline 目录绿;
+- 离线全量(隔离库 ask_ai_test_cmp5,用后已 DROP):**1721 passed / 3 skipped / 0 failed**;
+- ruff / black(改动文件)全绿。
+
+### R4.6 聚焦生产等价只读复现(answer 路径=此前覆盖 bug 路径;真语料+真 LLM+剪枝启用;脚本已清除)
+
+| 查询 | selection | after_focused_rerank | after_prune | own_final | pruned | 三值自洽 |
+|---|---|---|---|---|---|---|
+| Compare NE503 and NE301 | tiered | {ne503:5, ne301:3} | {ne503:5, ne301:2} | {ne503:5, ne301:2} | **1** | ✓ (pruned = n-m, ≥0) |
+| Compare the NE301 and NE503 firmware architecture | competitive | {ne301:4, ne503:3} | {ne301:2, ne503:2} | {ne301:2, ne503:2} | **3** | ✓ |
+
+真语料下出现真实非零剪枝(1 与 3)——聚焦剪枝在生产语料上确实剪除无关候选;两段轨迹(after_focused_rerank → after_prune → own_final)完整可诊断。
+
+### R4.7 最终执行状态
+
+**CANDIDATE READY(REV4)** —— 等待 Planner 复审。候选 tip = `cdbcad38fc3512561e12c71ff6eda067d06257b5`
 (@ origin/worktree-exec/comparison-evidence-20260905)。
