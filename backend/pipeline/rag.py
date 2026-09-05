@@ -191,6 +191,8 @@ def _merge_per_target_candidates(
     targets: tuple[str, ...],
     taxonomy: Any,
     top_k: int,
+    *,
+    code_priority: bool = False,
 ) -> tuple[dict[str, list[Any]], list[Any], dict[str, Any]]:
     """Issue #19(RC1)+ T-COMPARISON-EVIDENCE-CORRECTNESS(C1/C2):per-target
     分层归属合并。
@@ -206,6 +208,10 @@ def _merge_per_target_candidates(
       更直接相关的官方产品证据);
     配额先由 tier1 按融合序填充,余量由 tier2 回填(RCA 实证:ne301 路融合
     前 5 席曾为 4 代码 + 1 FAQ,官方证据被代码饿死)。
+
+    意图敏感(Rev1 Blocker 2):``code_priority=True``(显式代码/实现导向
+    比较)时不分层 —— 代码与非代码按融合序公平竞争配额,相关代码证据
+    不会被非代码自动饿死;通用产品比较保持 tier1-first(C2)。
 
     - 共享/平台/超额槽位 = ``top_k - n * quota``(按出现序去重回填,语义不变);
     - 跨路去重键 = ``(source_id, chunk_index)``。
@@ -240,8 +246,11 @@ def _merge_per_target_candidates(
     own_per_target: dict[str, list[Any]] = {}
     for t in targets:
         t1, t2 = own_tier1[t], own_tier2[t]
-        keep = t1[:quota]
-        keep.extend(t2[: max(0, quota - len(keep))])
+        if code_priority:
+            keep = (t1 + t2)[:quota]  # 公平竞争:代码与非代码按融合序
+        else:
+            keep = t1[:quota]
+            keep.extend(t2[: max(0, quota - len(keep))])
         own_per_target[t] = keep
     merged = [r for t in targets for r in own_per_target[t]]
     counts = {
@@ -258,20 +267,104 @@ def _merge_per_target_candidates(
             "tier1_pool": {t: len(own_tier1[t]) for t in targets},
             "tier2_pool": {t: len(own_tier2[t]) for t in targets},
             "tier1_kept": {t: min(len(own_tier1[t]), quota) for t in targets},
+            "selection": "competitive" if code_priority else "tiered",
             "missing_after_merge": list(missing),
         }
     }
     return own_per_target, rest, stage
 
 
-def _target_evidence_query(taxonomy: Any, target: str) -> str:
+#: 比较维度合成时的引导/停用词(确定性剥离;零 LLM、零产品硬编码)。
+_DIMENSION_STOPWORDS = frozenset(
+    {
+        "compare",
+        "compared",
+        "comparison",
+        "and",
+        "or",
+        "vs",
+        "versus",
+        "between",
+        "the",
+        "a",
+        "an",
+        "please",
+        "difference",
+        "differences",
+        "的区别",
+        "差异",
+        "对比",
+        "比较",
+        "哪个好",
+    }
+)
+
+#: 显式代码/实现导向比较的判定词(通用技术词;Rev1 Blocker 2)。
+_CODE_ORIENTATION_HINTS = (
+    "code",
+    "firmware",
+    "sdk",
+    "api",
+    "apis",
+    "driver",
+    "drivers",
+    "implementation",
+    "implement",
+    "source",
+    "middleware",
+    "固件",
+    "代码",
+    "驱动",
+    "源码",
+    "实现",
+)
+
+
+def _is_code_oriented_comparison(text: str) -> bool:
+    """该比较是否显式要求代码/实现层面的对比(确定性词面判定)。"""
+    lowered = (text or "").lower()
+    return any(hint in lowered for hint in _CODE_ORIENTATION_HINTS)
+
+
+def _comparison_dimension(query: str, taxonomy: Any, targets: tuple[str, ...]) -> str:
+    """Rev1 Blocker 1:从比较查询中合成「用户请求的比较维度」(确定性,零 LLM)。
+
+    剥离目标词形(展示名/slug/大写形)与比较引导词后,剩余实质片段即维度
+    (如 "power consumption" / "SDK APIs");无实质剩余 → 空串(退回通用
+    聚焦模板)。维度将与目标展示名合成 per-target 聚焦查询,同时保留
+    目标身份与请求维度(整句不再直接作为重排查询,H2 不回潮)。
+    """
+    text = query or ""
+    for t in targets:
+        for word_form in (
+            taxonomy.display_name(t),
+            taxonomy.display_name(t).replace(" ", ""),
+            t,
+            t.upper(),
+        ):
+            if word_form:
+                text = text.replace(word_form, " ")
+    tokens = [
+        tok
+        for tok in (w.strip(".,;:!?'\"()[]").lower() for w in text.split())
+        if tok and tok not in _DIMENSION_STOPWORDS
+    ]
+    dimension = " ".join(tokens)
+    return dimension[:80].strip()
+
+
+def _target_evidence_query(taxonomy: Any, target: str, dimension: str = "") -> str:
     """C3(RCA H2 修复):目标聚焦证据查询(确定性,零 LLM 调用,零硬编码)。
 
     比较模式下,单目标文档必须按「它对描述该目标的用处」评估,而非按整句
     跨产品对比句评估(冻结 RCA 实证:整句对比查询把官方 NE301 文档压到
     0.2237 < 0.3,而聚焦句式下同文档 0.7230;官方文档组普遍 0.5→0.97)。
-    措辞取自冻结 RCA H2 实验中经验证的聚焦句式,按 taxonomy 展示名泛化。
+    - 有维度:``"<展示名> <维度>"`` —— 目标身份 + 用户请求的比较维度
+      (Rev1 Blocker 1;形状与生产校准过的单产品成功查询一致);
+    - 无维度:沿用冻结 RCA H2 实验验证的通用聚焦句式。
     """
+    if dimension:
+        return f"{taxonomy.display_name(target)} {dimension}"
     return f"{taxonomy.display_name(target)} overview specifications features capabilities"
 
 
@@ -722,6 +815,7 @@ class RAGOrchestrator:
     async def _comparison_evidence_pipeline(
         self,
         *,
+        raw_query: str,
         extracted: str,
         search_query: str,
         intent_category: str,
@@ -767,8 +861,16 @@ class RAGOrchestrator:
                 path_counts[k] = path_counts.get(k, 0) + v
         search_ms = int((time.monotonic() - t0) * 1000)
 
+        # Rev1 Blocker 1/2:比较维度合成(目标身份+用户维度)+ 意图敏感分层
+        dimension = _comparison_dimension(raw_query, taxonomy, resolution.targets)
+        code_oriented = _is_code_oriented_comparison(f"{raw_query} {dimension}")
+
         own_per_target, rest, quota_stage = _merge_per_target_candidates(
-            fused_per_target, resolution.targets, taxonomy, self._top_k
+            fused_per_target,
+            resolution.targets,
+            taxonomy,
+            self._top_k,
+            code_priority=code_oriented,
         )
 
         t1 = time.monotonic()
@@ -777,7 +879,7 @@ class RAGOrchestrator:
         candidates_diag: list[dict[str, Any]] = []
         for target in resolution.targets:
             own = own_per_target[target]
-            focused_query = _target_evidence_query(taxonomy, target)
+            focused_query = _target_evidence_query(taxonomy, target, dimension)
             survivors = self._reranker.rerank(focused_query, own, top_k=self._top_k)
             per_target_survivors[target] = survivors
             survivor_keys = {(s.source_id, s.chunk_index) for s in survivors}
@@ -843,6 +945,8 @@ class RAGOrchestrator:
             "search_ms": search_ms,
             "rerank_ms": rerank_ms,
             "path_counts": path_counts,
+            "dimension": dimension,
+            "code_oriented": code_oriented,
             "per_target_quota": quota_stage["per_target_quota"],
             "per_target": per_target_stage,
             "candidates": candidates_diag,
@@ -1174,6 +1278,7 @@ class RAGOrchestrator:
             # T-COMPARISON-EVIDENCE-CORRECTNESS:比较证据管线,与 stream_answer()
             # 共用同一抽象(parity)—— per-target 检索 + 分层配额 + 按目标聚焦重排。
             fused, reranked, cmp_stage_info = await self._comparison_evidence_pipeline(
+                raw_query=query,
                 extracted=extracted,
                 search_query=search_query,
                 intent_category=intent.category,
@@ -1197,6 +1302,8 @@ class RAGOrchestrator:
                 "results": self._rerank_snippets(reranked),
                 "per_target": cmp_stage_info["per_target"],
                 "candidates": cmp_stage_info["candidates"],
+                "dimension": cmp_stage_info["dimension"],
+                "code_oriented": cmp_stage_info["code_oriented"],
             }
             product_scope_stage.update({"per_target_quota": cmp_stage_info["per_target_quota"]})
             stages["product_scope"] = product_scope_stage
@@ -1623,6 +1730,7 @@ class RAGOrchestrator:
             # + 分层配额 + 按目标聚焦重排),与 answer() 共用同一抽象 ——
             # 流式/非流式不得漂移。证据契约(D-preflight)位置与口径不变。
             fused, reranked, cmp_stage_info = await self._comparison_evidence_pipeline(
+                raw_query=query,
                 extracted=extracted,
                 search_query=search_query,
                 intent_category=intent.category,
@@ -1699,6 +1807,8 @@ class RAGOrchestrator:
             }
             rerank_stage["per_target"] = cmp_stage_info["per_target"]
             rerank_stage["candidates"] = cmp_stage_info["candidates"]
+            rerank_stage["dimension"] = cmp_stage_info["dimension"]
+            rerank_stage["code_oriented"] = cmp_stage_info["code_oriented"]
 
         # Issue #19(D-preflight / Evidence Contract):comparison 模式下任一
         # target 缺自身标注证据 ⇒ 显式不足语义(明示缺侧),禁止静默降级为
@@ -2149,6 +2259,8 @@ class RAGOrchestrator:
                                 {
                                     "per_target": cmp_stage_info["per_target"],
                                     "candidates": cmp_stage_info["candidates"],
+                                    "dimension": cmp_stage_info["dimension"],
+                                    "code_oriented": cmp_stage_info["code_oriented"],
                                 }
                                 if cmp_stage_info is not None
                                 else {}

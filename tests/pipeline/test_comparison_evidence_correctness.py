@@ -83,6 +83,55 @@ NE301_CODE_ONLY = [
     _code("ne301", "ne301-local/Middlewares/ISP/isp", 41),
 ]
 
+# REV1 fixtures:维度敏感场景(泛文档在前,维度相关证据在后 —— 排除融合序侥幸)
+NE301_MIXED = [
+    _official("ne301", "wiki/301/overview", 0),
+    _official("ne301", "wiki/301/specs", 1, "table"),
+    _doc(
+        "ne301",
+        "wiki/301/power-profile",
+        0,
+        "paragraph",
+        "POWER-DIM power consumption profile for NE301",
+    ),
+    _official("ne301", "web/301/product", 0, "heading"),
+]
+NE503_MIXED = [
+    _official("ne503", "wiki/503/overview", 0),
+    _official("ne503", "web/503/product", 0, "heading"),
+    _doc(
+        "ne503",
+        "wiki/503/power-profile",
+        0,
+        "paragraph",
+        "POWER-DIM power consumption profile for NE503",
+    ),
+]
+NE301_FWMIXED = [
+    _official("ne301", "wiki/301/overview", 0),
+    _official("ne301", "wiki/301/specs", 1, "table"),
+    _official("ne301", "web/301/product", 0, "heading"),
+    _doc(
+        "ne301",
+        "ne301-local/fw/encoder",
+        0,
+        "code",
+        "firmware architecture encoder pipeline for NE301",
+    ),
+    _code("ne301", "ne301-local/fw/unrelated", 9),
+]
+NE503_FWMIXED = [
+    _official("ne503", "wiki/503/overview", 0),
+    _official("ne503", "web/503/product", 0, "heading"),
+    _doc(
+        "ne503",
+        "ne503-local/fw/encoder",
+        0,
+        "code",
+        "firmware architecture encoder pipeline for NE503",
+    ),
+]
+
 
 class _ScopedSearcher:
     """按 product_labels 脚本化返回(复刻 per-target 检索;平台/共享路返回空)。"""
@@ -109,31 +158,35 @@ class _QueryAwareReranker:
     - 整句对比查询(含 " vs "):**查询中先点名的目标**的官方文档 0.9
       (生产实证:重排器偏爱与前导产品名匹配的文档,ne503 侧 0.32–0.95 过阈),
       另一侧官方文档 0.2(H2 惩罚,<0.3),其余 0.05;
-    - 目标聚焦查询(以展示名开头):官方产品文档 0.85、其余 0.05;
+    - 维度聚焦查询(含显式比较维度词):**文本包含该维度**的文档 0.9、
+      其余 0.2 —— 维度必须真实进入聚焦查询才会命中(Rev1 Blocker 1);
+    - 目标聚焦查询(以展示名开头,generic):官方产品文档 0.85、其余 0.05;
     - 其余(单产品常规查询):一律 0.9(AC6:代码证据照常可用)。
     """
+
+    _DIMENSIONS = ("power consumption", "firmware architecture")
 
     def __init__(self):
         self.queries: list[str] = []
 
     def rerank(self, query: str, documents: list[str]) -> list[float]:
         self.queries.append(query)
-        scores = []
+        lowered = query.lower()
+        for dim in self._DIMENSIONS:
+            if dim in lowered:
+                return [0.9 if dim in text.lower() else 0.2 for text in documents]
         if " vs " in query:
             lead_slug = "ne301" if query.index("NE301") < query.index("NE503") else "ne503"
-        else:
-            lead_slug = None
-        for text in documents:
-            if " vs " in query:
+            scores = []
+            for text in documents:
                 if _OFFICIAL in text:
                     scores.append(0.9 if lead_slug in text.lower() else 0.2)
                 else:
                     scores.append(0.05)
-            elif query.startswith(("NeoEye NE301", "NeoEye NE503")):
-                scores.append(0.85 if _OFFICIAL in text else 0.05)
-            else:
-                scores.append(0.9)
-        return scores
+            return scores
+        if query.startswith(("NeoEye NE301", "NeoEye NE503")):
+            return [0.85 if _OFFICIAL in text else 0.05 for text in documents]
+        return [0.9 for _ in documents]
 
 
 # 生产 trace 实证:比较查询的提取/改写句 == "NE503 vs NE301 comparison"(顺序随查询)
@@ -342,3 +395,53 @@ async def test_single_product_code_query_still_retrieves_code():
     result = await rag.answer("NE301 firmware ISP library", "widget")
     assert result.is_answered is True
     assert any(r.chunk_type == "code" for r in result.reranked_results)
+
+
+# ---------------------------------------------- REV1(Blocker 1/2 回归)
+
+
+@pytest.mark.unit
+async def test_attribute_specific_comparison_surfaces_dimension_evidence():
+    """Rev1 B1(C):属性比较 —— 用户请求的维度必须进入聚焦查询,幸存证据
+    须与维度相关,而非泛 overview 材料。"""
+    rag, scorer = _make_rag({"ne301": NE301_MIXED, "ne503": NE503_MIXED})
+    events = await _collect_stream(rag, "Compare NE301 and NE503 power consumption")
+    complete = events[-1]
+    assert complete["is_answered"] is True
+    focused = [q for q in scorer.queries if q.startswith(("NeoEye NE301", "NeoEye NE503"))]
+    assert focused and all(
+        "power consumption" in q for q in focused
+    ), f"聚焦查询必须保留用户请求的维度: {focused}"
+    src_urls = " ".join(s.get("url", "") for s in complete["sources"])
+    assert "power-profile" in src_urls, "功耗维度证据必须进入生成"
+    # 泛 overview 不应挤掉维度证据(至少存在一条功耗侧;双侧均需维度证据)
+    assert "wiki/301/power-profile" in src_urls and "wiki/503/power-profile" in src_urls
+
+
+@pytest.mark.unit
+async def test_code_oriented_comparison_lets_code_compete():
+    """Rev1 B2(D):显式代码/实现导向比较 —— 相关代码证据可竞争/占据配额
+    并进入生成;非代码优先分层不得饿死它。"""
+    rag, scorer = _make_rag({"ne301": NE301_FWMIXED, "ne503": NE503_FWMIXED})
+    events = await _collect_stream(rag, "Compare the NE301 and NE503 firmware architecture")
+    complete = events[-1]
+    assert complete["is_answered"] is True
+    assert complete["result_key"] != "comparison_evidence_insufficient"
+    src_urls = " ".join(s.get("url", "") for s in complete["sources"])
+    assert "fw/encoder" in src_urls, "代码导向比较中,相关固件证据必须可达生成(分层不得饿死)"
+    focused = [q for q in scorer.queries if q.startswith(("NeoEye NE301", "NeoEye NE503"))]
+    assert focused and all("firmware architecture" in q for q in focused)
+
+
+@pytest.mark.unit
+async def test_generic_comparison_code_does_not_regain_quota():
+    """Rev1 B2(E):同一混合语料下,通用比较仍不得让无关代码回潮占配额 ——
+    修复必须意图敏感,而非简单撤销 H1 分层。"""
+    rag, _ = _make_rag({"ne301": NE301_FWMIXED, "ne503": NE503_FWMIXED})
+    events = await _collect_stream(rag, QUERY_A)
+    complete = events[-1]
+    assert complete["is_answered"] is True
+    src_urls = " ".join(s.get("url", "") for s in complete["sources"])
+    assert (
+        "ne301-local" not in src_urls and "ne503-local" not in src_urls
+    ), "通用产品比较中无关代码不得进入生成证据"
