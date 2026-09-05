@@ -341,3 +341,54 @@ capture V(self._lock 内,绝不跨越异步 DB I/O)
 
 **PRODUCTION CANDIDATE READY** —— 集成、托管 CI、生产部署、双相真实 Apply、真实查询、
 日志审查全部通过;等待 Planner 终审。
+
+
+---
+
+## RELEASE CLOSURE — ASK-AI v1.1.1 正式发布(2026-09-05)
+
+- **Planner 判定**:Engineering FINAL PASS + Production Functional Acceptance PASS + Release Governance PARTIAL(本节即补齐治理闭环)
+- **最终状态**:**RELEASE COMPLETE**
+
+### 10.1 版本 / tag
+
+- 注解 tag `v1.1.1`(tag 对象 `101539f0`)→ deref = `073f26236c08531212f6d5b12b8b8173f0557c79`(精确;accepted SHA 与 tag 之间零实现提交)
+- 已推 origin,远端核验一致;main 保持在 073f262(v1.1.0→v1.1.1 线性 patch 血统)
+
+### 10.2 正式 tag 构建(非 main 快照 CI)
+
+- Run:**`33964243346`**(Build & Push GPU Image,push tag v1.1.1,head sha=073f262 精确)
+- 首跑 `test` job 失败:v1.1.0 既有**时序敏感并发测试** `test_query_preempts_queued_sync` 偶发
+  (闸逻辑正常——q 已插队执行;断言时 s2 尚未慢调度器拉起);同 SHA 于 main push run 33962813514 已绿
+- 处置:`--failed` 重跑,**test+build-and-push 双绿**,零代码改动;flaky 已记录待 Planner 排期加固
+- 镜像烘焙 RELEASE.json(容器内实证):`{"version":"1.1.1","git_sha":"073f26236c…","image":"ghcr.io/harryhua-ai/ask-ai:v1.1.1","ci_run_id":"33964243346"}`
+- 正式镜像 tag `v1.1.1` 存在(digest 63a64153…;与 sha-073f262 tag 内容差异=RELEASE.json 版本字段,git 源同)
+
+### 10.3 生产发布身份
+
+- 三服务(backend/sync-executor/sync-cron)`ASKAI_IMAGE_TAG=v1.1.1 up -d`,镜像行全为 `ghcr.io/harryhua-ai/ask-ai:v1.1.1`
+- `/health`:`{"status":"ok","version":"1.1.1","git_sha":"073f26236c08531212f6d5b12b8b8173f0557c79","app_mode":"production"}`
+
+### 10.4 窄验收 smoke(零配置变更;GPU 转换行为不再重复测试)
+
+- runtime 快照:generation=1(启动 load);三 workload **configured==effective**(同 uuid)、pending 全 false、status loaded
+- plan=reranker_transient;capacity=HEALTHY(budget 4210MiB);shared_embedding_runtime=true(与 Release Gate 终态一致,未被改动)
+- 真实查询:内部嵌入通道 HTTP 200,`dim=1024, device=gpu, fallback=None`
+- 日志扫描(部署后 8 分钟窗):`cuda out of memory|oom|UnsafeRuntimePlan|Traceback` **0 命中**;恰一次启动提交(generation=1)
+- backend healthy;sync-executor/sync-cron 正常
+
+### 10.5 GitHub Release
+
+- **ASK-AI v1.1.1 — Model Runtime Apply Hotfix**:https://github.com/harryhua-ai/ask-ai/releases/tag/v1.1.1
+- 要点:免重启显式 Apply(候选装配+原子换装)/失败保旧/配置纪元并发守卫/T4 双向真实 Apply 验收/
+  既有契约不变;含 accepted SHA、tag CI run、生产验收引用;v1.1.0 历史未改写
+
+### 10.6 残余移交(非阻塞)
+
+- `test_query_preempts_queued_sync` CI 偶发(flaky,首跑失败重跑绿):建议 Planner 立项加固(测试鲁棒性,非产品缺陷)
+- 既有已知项不变:sync_executor_loop.py:281 SAWarning;admin 种子密码治理挂起
+
+### 10.7 最终状态
+
+**RELEASE COMPLETE** —— v1.1.1 = main = tag = 生产 = CI 全链对齐 073f262;血统
+v1.1.0(762eae3)→ d997782 → 9b9435f → 073f262(v1.1.1);无未授权变更。
