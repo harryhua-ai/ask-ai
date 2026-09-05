@@ -444,3 +444,70 @@ source products: ['ne301', 'ne503']
 ### G8. 最终状态
 
 **RELEASE PASS** —— v1.1.2 工件链完整:tag(de1b3090)→ deref cdbcad3 → GHCR v1.1.2 → RELEASE.json(version=1.1.2, git_sha 精确)→ GitHub Release;生产待激活。
+
+
+---
+
+## v1.1.2 PRODUCTION ACTIVATION + ACCEPTANCE GATE — 生产激活与验收(2026-09-06)
+
+- **Planner 状态**:ENGINEERING/FINAL VERIFICATION/MERGE/RELEASE 四门全 PASS;授权 `./deploy/prod/update.sh v1.1.2` 与最小验收观察。
+- **最终状态**:**PRODUCTION PASS**
+
+### P0. 已知过程偏差(承 Release Gate G7)
+
+镜像 RELEASE.json 取证时曾在 T4 执行一次 `docker pull v1.1.2`(仅下载,无容器启动/重启/数据影响)——按本门要求,激活前以远端 digest + 本地镜像独立复核,未以缓存为充分证据(见 P1-D)。
+
+### P1. 预部署快照(READ ONLY)
+
+- **A. /health**:`{"status":"ok","version":"1.1.1","git_sha":"073f26236c…","app_mode":"production"}`(与预期一致)
+- **B. 三服务镜像**:backend/sync-cron/sync-executor 全 `ghcr.io/harryhua-ai/ask-ai:v1.1.1`(内部一致)
+- **C. 回滚锚**:`ghcr.io/harryhua-ai/ask-ai:v1.1.1` 本地在位(RepoDigest `sha256:63a64153…` 可解析)
+- **D. v1.1.2 身份**:远端 digest `sha256:0ae3435ac2dca2ffe61b2fb0c337b0fd785ad2a38821e13f0af8ceb99f4192e5`(精确);本地缓存镜像 RELEASE.json `version=1.1.2 / git_sha=cdbcad38…`(精确)
+- **E. 活动同步**:无 running/pending;最近 3 次 sync_runs 全 completed(1030–1032)—— 安全
+- **F. 基线**:GPU 12871/3060 MiB;backend 近 30 分钟错误 0
+
+### P2. 部署
+
+- 命令:`cd ~/ask-ai && ./deploy/prod/update.sh v1.1.2`(exit 0)
+- 脚本输出:「部署完成:v1.1.2(version=1.1.2,git_sha=cdbcad38fc3512561e12c71ff6eda067d06257b5)」—— fail-closed 身份检查通过
+
+### P3. 即时身份门
+
+- 三服务全部 `ghcr.io/harryhua-ai/ask-ai:v1.1.2`(无混合 tag)
+- `/health`:`{"status":"ok","version":"1.1.2","git_sha":"cdbcad38fc3512561e12c71ff6eda067d06257b5","app_mode":"production"}`
+- backend 容器 image ID `7c3ce4264d96a` 与本地 v1.1.2 镜像一致(运行容器派生证明)
+
+### P4. 基础运行健康
+
+部署后 3 分钟窗:Traceback/CUDA OOM/OOM 扫描 **0 命中**;backend healthy;GPU 12831 MiB used( observational)。
+
+### P5. 主验收(真实生产 ask 路径 `/api/ask`,channel=admin,session=v112-acceptance)
+
+| 查询 | 结果 |
+|---|---|
+| **Compare NE503 and NE301**(主) | HTTP 200;**answered=true**;result=answered(非 insufficient);sources:**ne503×3(wiki overview/商店/官网博客)+ ne301×2(商店/wiki FAQ)**;回答实文:"**NE503 vs NE301: Key Differences** — NE503 … Hailo-15H SoC … 20 TOPS (INT8) … [1] …" 真实对比两产品 |
+| **Compare NE301 and NE503**(反转) | HTTP 200;**answered=true**;双侧 sources(ne301 battery-life/商店/FAQ + ne503 overview/商店);顺序无关成立 |
+| **Compare NE503 and NE301 supported AI models**(属性) | HTTP 200;**answered=true**;双侧 sources 含 ne301 verified-models 页(维度相关);dimension='supported ai models' |
+
+### P6. 生产 trace 逐侧证据(五次比较全部 mode=comparison)
+
+| 查询 | own_after_rerank | per_target_after_prune | own_final | selection | dimension | pruned |
+|---|---|---|---|---|---|---|
+| NE503 vs NE301(generic) | {ne503:5, ne301:3} | {5, 3} | {5, 3} | tiered | '' | 0 |
+| NE301 vs NE503(反转) | {ne301:3, ne503:4} | {3, 4} | {3, 4} | tiered | '' | 0 |
+| … supported AI models | {ne301:5, ne503:5} | {ne301:3, ne503:5} | {3, 5} | tiered | 'supported ai models' | **2**(泛 overview 被剪,维度相关保留) |
+
+三段轨迹(own_after_rerank / per_target_after_prune / own_final)在生产 trace 中独立呈现、互不覆盖;无单侧被剪枝饿死;无 sibling 顶替。
+
+### P7. 稳定观察
+
+部署后 15 分钟窗:Traceback/OOM 扫描 0 命中;backend healthy;三服务持续 v1.1.2;无意外数据/配置变更。
+
+### P8. 回滚与生产数据确认
+
+- 回滚:**未发生**(全部 PASS)
+- 生产数据/配置/语料:除验收请求的正常请求日志/trace 持久化外,**零变更**;无 sync/reindex/repair;无配置或模型变更
+
+### P9. 最终状态
+
+**PRODUCTION PASS** —— v1.1.2 已在生产激活并通过全部比较正确性验收;身份链 tag→SHA→镜像→运行容器全对齐;热修闭环。
