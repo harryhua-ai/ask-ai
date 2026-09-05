@@ -145,7 +145,56 @@ trace: retrieve 214ms / rerank 317ms(真实计时入 trace)
 
 维度可用性扫描(证据管线只读遍历):battery life/ne503=0、storage/ne301=0、sensor options/ne503=0 为单侧;wireless connectivity(3/4)、networking(4/4)、supported AI models(5/5)、power supply(2/4)双侧支撑 —— 属性比较证据选取了双侧支撑的维度,同时保留单侧维度拒答作为 fail-closed 正面证据。
 
-### R6. 最终执行状态
+### R6. REV1 候选
 
-**CANDIDATE READY(REV1)** —— 等待 Planner 复审。候选 tip = `56aed49b4e2cd1cba986823d4384a0058ed3755f`
+候选 `56aed49` —— Planner 复审 **PARTIAL**(2 阻断,见 REV2)。
+
+---
+
+## REV2 — 真融合序竞争 + 词边界判定(2026-09-06)
+
+- **Planner 判定**:REV1 PARTIAL(Blocker 1 competitive 非真融合序 / Blocker 2 子串误报);架构整体 ACCEPTED。
+- **修复提交**:`503c22954ac6de6fe2a2555a3b23672989ab060f` @ 同分支(已推送,远程核验一致;血统 073f262→64c43c5→56aed49→503c229)。
+
+### R2.1 修复一:competitive 改为原始融合序竞争(Blocker 1)
+
+- 根因:`(t1+t2)[:quota]` 中 t1/t2 已按代码/非代码重排,拼接后非代码恒在代码前;非代码数 ≥ quota 时相关代码零槽位。
+- 修复:`_merge_per_target_candidates` 收集阶段另存 `own_fused[t]`(每 target 原始融合序的全部自有候选,跨路去重语义不变);`code_priority=True` 时 `keep = own_fused[t][:quota]` —— 代码与非代码按原始 RRF 排序公平竞争;`tiered`(generic)保持 tier1-first 完全不变。
+
+### R2.2 修复二:代码导向判定改词/短语边界(Blocker 2)
+
+- 根因:子串匹配产生 "capital"⊂api、"rapid startup"⊂api、"power source"⊂source 误报,误触发 competitive → 固件污染普通产品比较。
+- 修复:`_is_code_oriented_comparison` 重写 —— 英文 token 化(`[^a-z0-9]+` 切分)后命中单 token 词表(code/firmware/sdk/api/apis/driver(s)/implementation/implement/middleware),或命中短语 "source code"(bigram);**"source" 单词不再判定**;中文按实现语义词子串(固件/源码/代码/驱动实现)。确定性保持,零产品硬编码。
+
+### R2.3 RED 证据(56aed49 上先失败)
+
+| 测试 | RED 失败点 |
+|---|---|
+| `test_competitive_selection_preserves_fused_order`(quota=5,相关代码融合序位 2,后随 4+ 非代码) | sources 无 fw/scheduler —— 相关代码被 (t1+t2)[:5] 挤掉,不可达生成 |
+| `test_code_orientation_lexical_boundaries`(9 True/7 False 例表) | "capital cost"/"rapid startup"/"power source" 误判 True |
+| `test_false_positive_source_keeps_tiered_selection` | "power source" 比较 code_oriented=True / selection=competitive(应 false/tiered) |
+
+### R2.4 GREEN 与回归
+
+- comparison 套件 **17/17**(含 REV2 新增 4:拥挤语料竞争、拥挤语料 generic 控制、词边界例表、false-positive tiered 保持);
+- pipeline 目录 **497 绿**;离线全量(隔离库,用后已 DROP)black 前后各一轮:**1709/0** 与 **1708 passed / 4 skipped / 0 failed**;
+- ruff / black(改动文件)全绿;顺带清理基线以来遗留的重复旧定义与本轮引入的过渡占位。
+
+### R2.5 生产等价只读复现(真语料+真 LLM 直调 answer(),零生产触碰;脚本已清除)
+
+| 查询 | dimension | code_oriented | selection | own_after | 结果 |
+|---|---|---|---|---|---|
+| Compare NE503 and NE301 | '' | false | tiered | 5/3 | answered,双侧 sources |
+| Compare NE301 and NE503 | '' | false | tiered | 3/4 | answered,双侧 sources |
+| … supported AI models | 'supported ai models' | false | tiered | 5/5 | answered(双侧 AI 模型对比) |
+| … firmware architecture | 'firmware architecture' | **true** | **competitive** | 4/3 | **answered,真语料代码证据进入生成**(sources 含 github.com/camthink-ai/ne301/.../OTA 代码页) |
+| … power source reliability(非代码 "source" 用法) | 'power source reliability' | **false**(不误判) | **tiered** | 2/3 | answered(电源可靠性对比,真语料双侧支撑) |
+
+### R2.6 answer/stream parity
+
+共享 `_comparison_evidence_pipeline` 未动签名语义;REV2 全部新用例走 stream_answer,parity 用例(answer+stream 同场景同结果)保持通过;两路 trace 均携带 dimension/code_oriented/selection。
+
+### R2.7 最终执行状态
+
+**CANDIDATE READY(REV2)** —— 等待 Planner 复审。候选 tip = `503c22954ac6de6fe2a2555a3b23672989ab060f`
 (@ origin/worktree-exec/comparison-evidence-20260905)。
