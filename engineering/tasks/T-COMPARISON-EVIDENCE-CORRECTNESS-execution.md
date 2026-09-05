@@ -291,7 +291,67 @@ stream/answer 两处 D-preflight 把「剪枝+纵深过滤后的最终计数」�
 
 真语料下出现真实非零剪枝(1 与 3)——聚焦剪枝在生产语料上确实剪除无关候选;两段轨迹(after_focused_rerank → after_prune → own_final)完整可诊断。
 
-### R4.7 最终执行状态
+### R4.7 REV4 候选
 
-**CANDIDATE READY(REV4)** —— 等待 Planner 复审。候选 tip = `cdbcad38fc3512561e12c71ff6eda067d06257b5`
-(@ origin/worktree-exec/comparison-evidence-20260905)。
+候选 `cdbcad3` —— 进入 FINAL VERIFICATION GATE(见下节)。
+
+---
+
+## FINAL VERIFICATION GATE — 新鲜可执行验证(2026-09-06)
+
+- **模式**:VERIFICATION ONLY / READ-ONLY PRODUCTION OBSERVATION;零代码/数据/配置/生产变更。
+- **结果**:**VERIFICATION PASS**
+
+### F1. 候选身份
+
+- `HEAD = cdbcad38fc3512561e12c71ff6eda067d06257b5`(精确匹配)
+- 血统:`073f262` 为 HEAD 祖先(`git merge-base --is-ancestor` 通过);线性 5 提交 64c43c5→56aed49→503c229→346d3e6→cdbcad3
+- worktree 状态:**clean**(无未提交改动);验证全程 SHA 未变(无 STOP 条件触发)
+
+### F2. 新鲜测试验证(命令 + 退出码 + 计数)
+
+| 验证项 | 命令(工作目录 = 候选 worktree) | exit | 结果 |
+|---|---|---|---|
+| 聚焦比较套件 | `.venv/bin/python -m pytest tests/pipeline/test_comparison_evidence_correctness.py -q -p no:cacheprovider` | 0 | **29 passed**, 31 warnings |
+| Issue#19/boundary/citation/resolver/pruner/retrieval | `-m pytest tests/pipeline/test_issue19_comparison.py tests/pipeline/test_product_boundary_retrieval.py tests/pipeline/test_product_boundary_eval_matrix.py tests/pipeline/test_citation_product_eligibility.py tests/pipeline/test_product_resolver.py tests/pipeline/test_pruner.py tests/retrieval/ -q -p no:cacheprovider` | 0 | **136 passed** |
+| CI 等价命令(同参数;本地项目 venv 替代 uv) | `-m pytest tests/ -q --ignore=tests/api/admin --ignore=tests/scripts/test_sync_db.py --ignore=tests/embedder --ignore=tests/e2e -p no:cacheprovider`(隔离库 ask_ai_test_verify,用后已 DROP) | 0 | **1414 passed, 172 warnings** |
+| admin API 套件(CI 排除面的补充) | `-m pytest tests/api/admin -q -p no:cacheprovider` | 0 | **255 passed, 1 skipped** |
+| ruff(4 个改动文件) | `ruff check backend/pipeline/rag.py tests/pipeline/test_comparison_evidence_correctness.py tests/pipeline/test_issue19_comparison.py tests/pipeline/test_accepted_changes_integration_gate.py` | 0 | All checks passed! |
+| black --check(同文件) | `black --check -q …` | 0 | 通过 |
+
+warnings 均为既有 deprecation/RuntimeWarning(mock 未 await 等),无失败;exclusions 与仓库 CI workflow 逐项一致。
+
+### F3. REV4 非零剪枝契约(新鲜确定性回归,29 用例内)
+
+- after_focused_rerank(6) > after_prune(4);pruned == 6−4 == **2 > 0**(双侧各一噪声);
+- `answer_pruned == stream_pruned == 2`;`per_target_after_prune` 两路一致;answered 状态一致;
+- 噪声证明链完整:①过聚焦重排(计入 after_rerank)②被送达 pruner(fake `received` 记录含 noise id)③被剪除(after_prune/sources 不含)。
+
+### F4. trace 三字段语义(互不覆盖,新鮮验证)
+
+`own_after_rerank`(聚焦重排后)/ `per_target_after_prune`(比较感知剪枝后)/ `own_final`(纵深过滤终态)三字段独立存在;非零剪枝 fixture 下 `own_after_rerank ≠ per_target_after_prune` 可观测(6 ≠ 4)。
+
+### F5. 生产等价只读检查(真语料 + 真 LLM + **剪枝器实际启用**;answer 路径;零生产触碰;脚本已清除)
+
+```
+pruning_enabled: True
+own_after_rerank: {'ne503': 5, 'ne301': 3}
+per_target_after_prune: {'ne503': 5, 'ne301': 3}
+own_final: {'ne503': 5, 'ne301': 3}
+pruned: 0 (n-m = 0)
+result_key: answered | is_answered: True
+source products: ['ne301', 'ne503']
+```
+
+双侧均被代表;结果非误拒;真语料 pruned=0(可接受,非零证明由 F3 确定性回归权威承担);trace 三值自洽(pruned == n-m)。
+
+### F6. 报告权威位置
+
+- **工程报告存放于独立 docs 仓库**(与主仓互不可见,协议约定)
+- Repository:harryhua-ai/ask-ai(主仓,代码)/ docs 本地仓(报告)
+- Path:`docs/engineering/tasks/T-COMPARISON-EVIDENCE-CORRECTNESS-execution.md`
+- Report commit:见本节所在 docs 仓 commit(含 REV0–REV4 完整历史 + 本 Final Verification 节)
+
+### F7. 无变更确认
+
+本门全程零实现改动、零生产数据/配置变更、零语料触碰;验证库与临时脚本均已清除;主仓 HEAD 未动。
