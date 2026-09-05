@@ -559,9 +559,11 @@ class _GlobalStarvingPruner:
 
     def __init__(self):
         self.queries: list[str] = []
+        self.received: list[tuple[str, list[str]]] = []
 
     async def prune(self, query: str, chunks):
         self.queries.append(query)
+        self.received.append((query, [r.source_id for r in chunks]))
         if query.startswith(("NeoEye NE301", "NeoEye NE503")):
             return [r for r in chunks if "KEEP" in r.text]
         return [r for r in chunks if r.product == "ne503"]
@@ -583,7 +585,13 @@ NE301_PRUNE = [
         "paragraph",
         "KEEP OFFICIAL-PRODUCT-DOC overview evidence for NE301",
     ),
-    _doc("ne301", "noise/301/unrelated", 0, "paragraph", "NOISE unrelated marketing blurb"),
+    _doc(
+        "ne301",
+        "noise/301/unrelated",
+        0,
+        "paragraph",
+        "OFFICIAL-PRODUCT-DOC NOISE unrelated official-sounding blurb",
+    ),
     _doc(
         "ne301",
         "wiki/301/specs",
@@ -600,7 +608,13 @@ NE503_PRUNE = [
         "paragraph",
         "KEEP OFFICIAL-PRODUCT-DOC overview evidence for NE503",
     ),
-    _doc("ne503", "noise/503/unrelated", 0, "paragraph", "NOISE unrelated marketing blurb"),
+    _doc(
+        "ne503",
+        "noise/503/unrelated",
+        0,
+        "paragraph",
+        "OFFICIAL-PRODUCT-DOC NOISE unrelated official-sounding blurb",
+    ),
     _doc(
         "ne503",
         "wiki/503/specs",
@@ -740,3 +754,93 @@ async def test_answer_stream_parity_pruning_semantics():
         assert all(
             q.startswith(("NeoEye NE301", "NeoEye NE503")) for q in pruner.queries
         ), f"比较路径剪枝必须统一使用聚焦句: {pruner.queries}"
+
+
+# --------------------------- REV4(真非零剪枝 + answer 覆盖缺陷回归)
+
+
+@pytest.mark.unit
+async def test_rev4_real_nonzero_prune_delta_in_trace():
+    """Rev4(A):噪声设计为「过聚焦重排、被 pruner 删」→
+    sum(after_focused_rerank) > sum(after_prune),真实非零剪枝事件。"""
+    rag, _, pruner = _make_rag_with_pruner({"ne301": NE301_PRUNE, "ne503": NE503_PRUNE})
+    events = await _collect_stream(rag, QUERY_A)
+    complete = events[-1]
+    quota = complete["trace_payload"]["stages"]["product_scope"]["per_target_quota"]
+    n = sum(quota["own_after_rerank"].values())
+    m = sum(quota["per_target_after_prune"].values())
+    assert n > m, f"必须有真实非零剪枝事件: after_rerank={n} after_prune={m}"
+    assert n - m == 2, "两侧各一条噪声应被剪除"
+    # E 证明链:噪声 ①过聚焦重排(出现在 pruner 收到物中) ②被 pruner 删除
+    noise_seen = [
+        q
+        for q, ids in pruner.received
+        if "noise/301/unrelated" in ids or "noise/503/unrelated" in ids
+    ]
+    assert noise_seen, "噪声必须被送达 pruner(而非在重排阶段即被滤除)"
+
+
+@pytest.mark.unit
+async def test_rev4_answer_trace_keeps_real_pruned_count():
+    """Rev4(B):answer() 的 rerank.pruned 必须等于 N-M 且 >0 ——
+    346d3e6 的公共终态覆盖 bug 在此暴露(被覆盖为 0)。"""
+    rag, _, _ = _make_rag_with_pruner({"ne301": NE301_PRUNE, "ne503": NE503_PRUNE})
+    result = await rag.answer(QUERY_A, "widget")
+    assert result.is_answered is True
+    stages = result.trace_payload["stages"]
+    quota = stages["product_scope"]["per_target_quota"]
+    n = sum(quota["own_after_rerank"].values())
+    m = sum(quota["per_target_after_prune"].values())
+    pruned = stages["rerank"]["pruned"]
+    assert pruned == n - m, f"[answer] pruned={pruned} 应为 {n}-{m}={n - m}"
+    assert pruned > 0, "[answer] 必须是真实非零剪枝事件"
+
+
+@pytest.mark.unit
+async def test_rev4_stream_trace_keeps_real_pruned_count():
+    """Rev4(C):stream_answer() 同场景 pruned == N-M 且 >0。"""
+    rag, _, _ = _make_rag_with_pruner({"ne301": NE301_PRUNE, "ne503": NE503_PRUNE})
+    events = await _collect_stream(rag, QUERY_A)
+    complete = events[-1]
+    stages = complete["trace_payload"]["stages"]
+    quota = stages["product_scope"]["per_target_quota"]
+    n = sum(quota["own_after_rerank"].values())
+    m = sum(quota["per_target_after_prune"].values())
+    pruned = stages["rerank"]["pruned"]
+    assert pruned == n - m
+    assert pruned > 0
+
+
+@pytest.mark.unit
+async def test_rev4_answer_stream_prune_parity():
+    """Rev4(D):同一确定性 fixture 下 answer/stream 的剪枝语义完全一致。"""
+    rag_s, _, _ = _make_rag_with_pruner({"ne301": NE301_PRUNE, "ne503": NE503_PRUNE})
+    events = await _collect_stream(rag_s, QUERY_A)
+    complete = events[-1]
+    st_s = complete["trace_payload"]["stages"]
+    rag_a, _, _ = _make_rag_with_pruner({"ne301": NE301_PRUNE, "ne503": NE503_PRUNE})
+    result = await rag_a.answer(QUERY_A, "widget")
+    st_a = result.trace_payload["stages"]
+    assert st_s["rerank"]["pruned"] == st_a["rerank"]["pruned"] > 0
+    assert st_s["rerank"]["per_target_after_prune"] == st_a["rerank"]["per_target_after_prune"]
+    assert complete["is_answered"] == result.is_answered
+
+
+@pytest.mark.unit
+async def test_rev4_noise_removal_full_proof_chain():
+    """Rev4(E):噪声移除完整证明链 —— ①过聚焦重排(幸存计入 after_rerank)
+    ②被送达 pruner ③被 pruner 删除(不出现在 after_prune/sources)。"""
+    rag, _, pruner = _make_rag_with_pruner({"ne301": NE301_PRUNE, "ne503": NE503_PRUNE})
+    events = await _collect_stream(rag, QUERY_A)
+    complete = events[-1]
+    stages = complete["trace_payload"]["stages"]
+    quota = stages["product_scope"]["per_target_quota"]
+    # ①+③:after_rerank 含噪声路径的贡献(> after_prune),after_prune 不含
+    assert sum(quota["own_after_rerank"].values()) > sum(quota["per_target_after_prune"].values())
+    # ②:噪声被送达 pruner
+    sent = [ids for _, ids in pruner.received]
+    assert any("noise/301/unrelated" in ids for ids in sent)
+    assert any("noise/503/unrelated" in ids for ids in sent)
+    # ③:最终 sources 无噪声
+    src_urls = " ".join(x.get("url", "") for x in complete["sources"])
+    assert "noise/" not in src_urls

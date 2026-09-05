@@ -1350,6 +1350,8 @@ class RAGOrchestrator:
             }
             product_scope_stage.update({"per_target_quota": cmp_stage_info["per_target_quota"]})
             stages["product_scope"] = product_scope_stage
+            # Rev4:局部计数与管线真相同步 —— 公共终态不得把比较剪枝数覆盖为 0
+            pruned_count = cmp_stage_info["pruned_count"]
         else:
             fused, path_counts = await self._retrieve_and_fuse(
                 extracted,
@@ -1424,7 +1426,9 @@ class RAGOrchestrator:
             }
             stages.setdefault("product_scope", product_scope_stage).setdefault(
                 "per_target_quota", {}
-            )["own_after_rerank"] = _own_after
+            )[
+                "own_final"
+            ] = _own_after  # Rev4:独立字段,不覆盖聚焦重排后计数
             _missing = tuple(_t for _t, _c in _own_after.items() if _c == 0)
             if _missing:
                 elapsed = int((time.monotonic() - start) * 1000)
@@ -1873,7 +1877,7 @@ class RAGOrchestrator:
                 )
                 for _t in resolution.targets
             }
-            product_scope_stage.setdefault("per_target_quota", {})["own_after_rerank"] = _own_after
+            product_scope_stage.setdefault("per_target_quota", {})["own_final"] = _own_after  # Rev4
             _missing = tuple(_t for _t, _c in _own_after.items() if _c == 0)
             if _missing:
                 elapsed = int((time.monotonic() - start) * 1000)
