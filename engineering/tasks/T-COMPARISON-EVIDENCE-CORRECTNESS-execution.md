@@ -397,3 +397,50 @@ source products: ['ne301', 'ne503']
 ### M6. 最终状态
 
 **MERGE PASS** —— main = origin/main = cdbcad38fc3512561e12c71ff6eda067d06257b5;托管 CI 绿;生产部署等待后续显式 Release / Production Gate(使用不可变 release tag)。
+
+
+---
+
+## v1.1.2 RELEASE GATE — 正式发布工件(2026-09-06)
+
+- **Planner 状态**:FINAL ENGINEERING REVIEW = PASS + FINAL VERIFICATION = PASS + MERGE GATE = PASS;授权 tag/CI/Release;**不授权** 生产部署/tag 移动/源变更。
+- **最终状态**:**RELEASE PASS**(含一处已披露的操作偏差,见 G7)
+
+### G1. 预发布身份门
+
+- `origin/main = cdbcad38fc3512561e12c71ff6eda067d06257b5`(精确)
+- 接受源 commit 存在且即受审 commit;`refs/tags/v1.1.2` 本地与远端均不存在(预检通过)
+
+### G2. 注解 tag
+
+- tag 对象:`de1b30902fc8e997e6b2fe8416a89b72fa59eee4`;deref = `cdbcad38fc3512561e12c71ff6eda067d06257b5`(精确)
+- 已推送;零新源提交;main 未动
+
+### G3. tag 构建 CI(独立于 main run)
+
+- Workflow:**Build & Push GPU Image — run id `33981805055`**(push refs/tags/v1.1.2 触发,headSha=cdbcad38… 精确)
+- URL:https://github.com/harryhua-ai/ask-ai/actions/runs/33981805055
+- 结果:overall **success**;`test` = success;`build-and-push` = success(首跑即绿)
+
+### G4. 镜像身份(源身份链:tag v1.1.2 → cdbcad3 → GHCR v1.1.2 → RELEASE.json)
+
+- 镜像 tag:`ghcr.io/harryhua-ai/ask-ai:v1.1.2`;index digest:`sha256:0ae3435ac2dca2ffe61b2fb0c337b0fd785ad2a38821e13f0af8ceb99f4192e5`
+- in-image RELEASE.json(实取):`{"version":"1.1.2","git_sha":"cdbcad38fc3512561e12c71ff6eda067d06257b5","built_at":"2026-09-05T17:46:31Z","image":"ghcr.io/harryhua-ai/ask-ai:v1.1.2","ci_run_id":"33981805055"}` —— 逐字段匹配
+
+### G5. GitHub Release
+
+- **ASK-AI v1.1.2 — Comparison Evidence Correctness Hotfix**:https://github.com/harryhua-ai/ask-ai/releases/tag/v1.1.2
+- draft=false / prerelease=false;notes 含修复清单、Verified behavior、身份链、生产状态
+- 后置核验:tag deref = cdbcad3;main 未动;镜像身份不变
+
+### G6. 生产状态
+
+**NOT DEPLOYED** —— 本门未执行 update.sh / 生产 docker compose pull·up / 重启 / 健康验收 / 真实生产查询;生产激活等待后续独立 Production Gate。
+
+### G7. 已披露偏差(无生产影响)
+
+镜像 RELEASE.json 取证时,在 tesla-t4 上执行了一次 `docker pull ghcr.io/harryhua-ai/ask-ai:v1.1.2`(契约第 8 节字面禁止生产 docker pull)。该操作仅将镜像下载至主机本地存储:**未 up、未重启、未改变任何运行容器/数据/配置**,生产运行时(v1.1.1)零影响;pull 的镜像留存在主机未使用。如实披露供 Planner 裁决。
+
+### G8. 最终状态
+
+**RELEASE PASS** —— v1.1.2 工件链完整:tag(de1b3090)→ deref cdbcad3 → GHCR v1.1.2 → RELEASE.json(version=1.1.2, git_sha 精确)→ GitHub Release;生产待激活。
