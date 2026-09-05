@@ -153,3 +153,64 @@ Apply 对比当前装配的输入选择(`_built_from`,新增字段,记录上次�
 ## 7. 最终执行状态
 
 **CANDIDATE READY** —— 等待 Planner 验收。验收锚点:候选提交 `d997782`(origin/worktree-exec/model-runtime-apply-20260905),本报告所在 docs 仓 commit 即持久化记录。
+
+---
+
+## REV1 — Planner PARTIAL 阻断修复:Save/Apply 配置竞态守卫(2026-09-05)
+
+- **Planner 判定**:PARTIAL(BLOCKER:Save/Apply configuration race)
+- **修复提交**:`9b9435fc9dfbbc0734e8f519e707f3e3f320281f` @ 同分支(已推送,远程核验一致)
+- **基线不变**:架构方向(候选装配+原子换装)零改动,仅新增配置事务边界。
+
+### 7.1 根因
+
+`_apply_lock` 只串行化 Apply-vs-Apply,未建立与 `save_policy`/`save_gpu_budget` 的配置事务边界:
+save 在「Apply 读快照之后、_commit 之前」落地时,DB 已是 B(GPU)且内存 configured 已被 save 更新,
+但旧快照候选(A)在 `_commit` 整组赋值 `states.configured/_built_from/预算` 时把内存拉回 A ——
+出现「DB=GPU / 内存 Configured=CPU / effective=CPU」,较新持久保存被静默隐藏至重启。
+
+### 7.2 选定的并发/顺序契约(配置纪元)
+
+- **持久 Configured 是唯一权威,任何提交于 Apply 快照之后的保存不得被覆盖或隐藏。**
+- `save_policy` / `save_gpu_budget`:DB 提交成功后,同锁(`self._lock`)原子推进
+  `_config_version` + 内存 configured/预算(新增 `_commit_saved_config`/`_commit_saved_budget`)。
+  ⇒ 纪元不变 ⇔ 快照后无新保存落地。
+- `apply()`:DB 读后同锁捕获 `config_version_at_read`;`_apply_policies` 透传;
+  `_commit(..., expected_config_version=...)` 在提交锁内校验,纪元已变 →
+  `ApplyRejectedError("config_changed")` **整体拒决**(detail:「应用更改期间检测到新的配置保存…
+  当前运行配置未改变…请重新点击『应用更改』以应用最新保存的配置」)。
+- 拒决即满足契约:持久真相保持权威且 pending 可见(configured=新值 / effective=旧值 /
+  restart_required=true),管理员重试一次即应用最新配置(deterministic,无合并复杂度)。
+- 约束核验:不阻塞普通 Save(锁微秒级);不阻塞 Query/Sync 热路径(捕获读未动);
+  不弱化候选装配+原子换装(拒决发生在提交点,纯新增前置校验);不部分应用;
+  Apply-vs-Apply 仍由 `_apply_lock` 串行化;无进程/容器重启。
+
+### 7.3 代码变更(d997782 → 9b9435f)
+
+- `backend/runtime/manager.py`:`_config_version` 字段;`_commit_saved_config`/`_commit_saved_budget`;
+  `save_policy`/`save_gpu_budget` 改用上述助手(DB 提交后同锁推进);`apply()` 读快照后捕获纪元并透传;
+  `_apply_policies` 新参 `config_version_at_read`(缺省 None=不校验,启动 `_build` 路径不变);
+  `_commit` 新增 `expected_config_version` 守卫(校验+提交同一锁内,校验通过后不可能被 save 插入)。
+- `backend/api/admin/model_runtime.py`:非阻塞清理——`WorkloadPolicyUpdate` docstring
+  「重启生效」→「『应用更改』或重启生效」。
+
+### 7.4 确定性竞态回归测试(Events/钩子/run_coroutine_threadsafe,零 sleep)
+
+| 测试 | 编排 | 断言 |
+|---|---|---|
+| `test_save_landing_mid_apply_aborts_and_keeps_newest_config_pending`(runtime) | 注入 `_assemble` 钩子,候选装配中途以 save 同款内存侧路径落地 Save B(GPU) | 409 类拒决 code=config_changed;configured=GPU/effective=CPU/pending=true;generation 不进;旧实例照常服务 |
+| `test_budget_save_landing_mid_apply_aborts_and_keeps_pending`(runtime) | 同钩子,中途 `_commit_saved_budget(manual,4096)` | 拒决;预算保持 4096;pending_mode=transient 可见;executed 计划未被旧快照提交 |
+| `test_apply_retry_after_config_changed_applies_newest_config`(runtime) | 拒决后以最新持久配置重放 | 成功;configured==effective;restart_required 全 false |
+| `test_apply_endpoint_race_with_concurrent_save_409_truth_preserved`(API) | 全 CPU 干净态 → 注入钩子 + `run_coroutine_threadsafe` 把**真实** `save_policy`(DB 提交+纪元推进)调度到事件循环,在 apply 中途完成(fake GPU 注入 discover 使 gpu 策略可经 API 保存) | 409 + detail 含「新的配置保存/当前运行配置未改变」;configured=GPU/effective=CPU/pending=true/generation 未进;DB 行=gpu(真相一致) |
+
+### 7.5 回归结果(9b9435f 树)
+
+- runtime:`54 passed`(含 REV1 新增 3);Admin model-runtime API:`10 passed`(含端到端竞态)
+- 后端离线全量(隔离库 ask_ai_test_apply):**1687 passed / 0 failed**(46.6s)
+- admin:`vitest` 全绿(277)、`tsc`+`npm run build` 绿(UI 零改动)
+- ruff/black(改动文件)全绿
+
+### 7.6 REV1 后验收锚点
+
+**CANDIDATE READY(REV1)** —— 等待 Planner 复审。候选 tip = `9b9435fc9dfbbc0734e8f519e707f3e3f320281f`
+(@ origin/worktree-exec/model-runtime-apply-20260905;前序 d997782 为同分支历史提交)。
