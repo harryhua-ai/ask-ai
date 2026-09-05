@@ -24,7 +24,13 @@ def taxonomy():
     return get_taxonomy()
 
 
-def _r(product: str, source_id: str, chunk_index: int, score: float = 0.5):
+def _r(
+    product: str,
+    source_id: str,
+    chunk_index: int,
+    score: float = 0.5,
+    chunk_type: str = "paragraph",
+):
     return SimpleNamespace(
         product=product,
         source_id=source_id,
@@ -33,6 +39,7 @@ def _r(product: str, source_id: str, chunk_index: int, score: float = 0.5):
         text="",
         title="",
         url="",
+        chunk_type=chunk_type,
     )
 
 
@@ -45,40 +52,55 @@ class TestPerTargetMerge:
         fused_ne302 = [_r("ne302", f"wiki/302/{i}", i) for i in range(6)]
         fused_ne301 = [_r("ne301", "store/ne301", 0)]
         targets = ("ne302", "ne301")
-        merged, stage = _merge_per_target_candidates(
+        own, _rest, stage = _merge_per_target_candidates(
             [fused_ne302, fused_ne301], targets, taxonomy, top_k=4
         )
-        counts = {
-            t: sum(1 for r in merged if (taxonomy.canonicalize(r.product) or "unknown") == t)
-            for t in targets
-        }
-        assert counts["ne301"] >= 1, "per-target 配额必须保证每侧标注证据进入候选"
-        assert counts["ne302"] >= 1
+        assert own["ne301"], "per-target 配额必须保证每侧标注证据进入候选"
+        assert own["ne302"]
         assert stage["per_target_quota"]["missing_after_merge"] == []
         assert stage["per_target_quota"]["quota"] == 2
 
+    def test_official_evidence_fills_quota_before_code(self, taxonomy):
+        """T-COMPARISON-EVIDENCE-CORRECTNESS C1/C2(H1 修复):目标自有候选
+        分层选取 —— 非代码官方产品证据先占配额,代码只补余量。"""
+        fused = [
+            [_r("ne301", f"fw/{i}", i, chunk_type="code") for i in range(5)]
+            + [_r("ne301", "wiki/301/overview", 0, chunk_type="paragraph")]
+        ]
+        own, _rest, stage = _merge_per_target_candidates(fused, ("ne301",), taxonomy, top_k=4)
+        kept_types = [r.chunk_type for r in own["ne301"]]
+        # tier1 官方证据先占坑(排首),代码只补余量(quota=4,tier1 池=1)
+        assert kept_types[0] == "paragraph", "官方产品证据必须先于代码进入配额"
+        assert kept_types.count("code") == 3
+        assert stage["per_target_quota"]["tier1_kept"]["ne301"] == 1
+
     def test_missing_side_is_reported(self, taxonomy):
         fused = [[_r("ne302", "wiki/302/0", 0)], []]
-        merged, stage = _merge_per_target_candidates(fused, ("ne302", "ne301"), taxonomy, top_k=4)
+        own, _rest, stage = _merge_per_target_candidates(
+            fused, ("ne302", "ne301"), taxonomy, top_k=4
+        )
         assert stage["per_target_quota"]["missing_after_merge"] == ["ne301"]
-        assert all((taxonomy.canonicalize(r.product) or "unknown") != "ne301" for r in merged)
+        assert own["ne301"] == []
 
     def test_shared_evidence_counts_for_neither_target(self, taxonomy):
         # top_k=5 → quota=2/侧,rest_cap=1(共享/平台证据有回填槽位)
         fused = [[_r("aitoolstack", "store/x", 0), _r("ne301", "wiki/301/0", 0)]]
-        merged, stage = _merge_per_target_candidates(fused, ("ne302", "ne301"), taxonomy, top_k=5)
+        _own, rest, stage = _merge_per_target_candidates(
+            fused, ("ne302", "ne301"), taxonomy, top_k=5
+        )
         assert stage["per_target_quota"]["own_kept"]["ne301"] == 1
         assert stage["per_target_quota"]["own_kept"]["ne302"] == 0
         assert stage["per_target_quota"]["missing_after_merge"] == ["ne302"]
         # 共享/平台证据仍可作 rest 槽位保留
-        assert any((r.product or "") == "aitoolstack" for r in merged)
+        assert any((r.product or "") == "aitoolstack" for r in rest)
 
     def test_cross_path_dedupe(self, taxonomy):
         fused = [
             [_r("ne302", "wiki/302/0", 0)],
             [_r("ne302", "wiki/302/0", 0), _r("ne301", "wiki/301/0", 0)],
         ]
-        merged, _ = _merge_per_target_candidates(fused, ("ne302", "ne301"), taxonomy, top_k=6)
+        own, rest, _ = _merge_per_target_candidates(fused, ("ne302", "ne301"), taxonomy, top_k=6)
+        merged = own["ne302"] + own["ne301"] + rest
         keys = [(r.source_id, r.chunk_index) for r in merged]
         assert len(keys) == len(set(keys))
 

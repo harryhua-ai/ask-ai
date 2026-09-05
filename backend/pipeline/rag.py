@@ -191,19 +191,28 @@ def _merge_per_target_candidates(
     targets: tuple[str, ...],
     taxonomy: Any,
     top_k: int,
-) -> tuple[list[Any], dict[str, Any]]:
-    """Issue #19(RC1):comparison 证据的结构化 per-target 归属合并。
+) -> tuple[dict[str, list[Any]], list[Any], dict[str, Any]]:
+    """Issue #19(RC1)+ T-COMPARISON-EVIDENCE-CORRECTNESS(C1/C2):per-target
+    分层归属合并。
 
     每个 target 以「自身资格标签集」独立检索(共享/平台证据由各路资格集
     天然带回)后,按轮转配额合并,使每侧标注证据**结构性地**进入候选 ——
-    不再依赖单一查询语义排序决定哪侧证据幸存:
+    不再依赖单一查询语义排序决定哪侧证据幸存。
 
-    - 每 target 自身标注候选保留至 ``quota = max(1, top_k // n)`` 条;
-    - 共享/平台/超额槽位 = ``top_k - n * quota``(按出现序去重回填);
+    分层配额(C1/C2,RCA H1 修复):目标自有候选分两层选取 ——
+    - tier1 = 客户面向官方产品证据(chunk_type != ``code``:官方 wiki/官网/
+      商店/规格资料);
+    - tier2 = 代码/固件证据(仍是合法知识,但**不得挤占**通用产品对比中
+      更直接相关的官方产品证据);
+    配额先由 tier1 按融合序填充,余量由 tier2 回填(RCA 实证:ne301 路融合
+    前 5 席曾为 4 代码 + 1 FAQ,官方证据被代码饿死)。
+
+    - 共享/平台/超额槽位 = ``top_k - n * quota``(按出现序去重回填,语义不变);
     - 跨路去重键 = ``(source_id, chunk_index)``。
 
     Returns:
-        (合并候选, product_scope 追加 stage:配额/保留计数/合并后缺失侧;
+        (own_per_target: 每 target 的配额内候选, rest: 共享/平台回填候选,
+         product_scope 追加 stage:配额/分层保留计数/合并后缺失侧;
          缺失侧由合并结果统计,是 D 前置检查的确定性输入)
     """
     n = max(1, len(targets))
@@ -211,7 +220,8 @@ def _merge_per_target_candidates(
     rest_cap = max(0, top_k - n * quota)
     target_slugs = set(targets)
     seen: set[tuple[str, int]] = set()
-    own: dict[str, list[Any]] = {t: [] for t in targets}
+    own_tier1: dict[str, list[Any]] = {t: [] for t in targets}
+    own_tier2: dict[str, list[Any]] = {t: [] for t in targets}
     rest: list[Any] = []
     for results in fused_per_target:
         for r in results:
@@ -220,21 +230,22 @@ def _merge_per_target_candidates(
                 continue
             seen.add(key)
             slug = taxonomy.canonicalize(r.product) or UNKNOWN_SLUG
-            if slug in target_slugs and len(own[slug]) < quota:
-                own[slug].append(r)
+            if slug in target_slugs:
+                if r.chunk_type == "code":
+                    own_tier2[slug].append(r)
+                else:
+                    own_tier1[slug].append(r)
             elif len(rest) < rest_cap:
                 rest.append(r)
-    merged: list[Any] = []
-    pools = [list(own[t]) for t in targets]
-    while any(pools):
-        for pool in pools:
-            if pool:
-                merged.append(pool.pop(0))
-    merged.extend(rest)
+    own_per_target: dict[str, list[Any]] = {}
+    for t in targets:
+        t1, t2 = own_tier1[t], own_tier2[t]
+        keep = t1[:quota]
+        keep.extend(t2[: max(0, quota - len(keep))])
+        own_per_target[t] = keep
+    merged = [r for t in targets for r in own_per_target[t]]
     counts = {
-        t: sum(
-            1 for r in merged if (taxonomy.canonicalize(r.product) or UNKNOWN_SLUG) == t
-        )
+        t: sum(1 for r in merged if (taxonomy.canonicalize(r.product) or UNKNOWN_SLUG) == t)
         for t in targets
     }
     missing = tuple(t for t in targets if counts[t] == 0)
@@ -243,10 +254,37 @@ def _merge_per_target_candidates(
             "quota": quota,
             "rest_cap": rest_cap,
             "own_kept": {t: counts[t] for t in targets},
+            # 分层事实(RCA H1 可观测):tier1=官方产品证据,tier2=代码
+            "tier1_pool": {t: len(own_tier1[t]) for t in targets},
+            "tier2_pool": {t: len(own_tier2[t]) for t in targets},
+            "tier1_kept": {t: min(len(own_tier1[t]), quota) for t in targets},
             "missing_after_merge": list(missing),
         }
     }
-    return merged, stage
+    return own_per_target, rest, stage
+
+
+def _target_evidence_query(taxonomy: Any, target: str) -> str:
+    """C3(RCA H2 修复):目标聚焦证据查询(确定性,零 LLM 调用,零硬编码)。
+
+    比较模式下,单目标文档必须按「它对描述该目标的用处」评估,而非按整句
+    跨产品对比句评估(冻结 RCA 实证:整句对比查询把官方 NE301 文档压到
+    0.2237 < 0.3,而聚焦句式下同文档 0.7230;官方文档组普遍 0.5→0.97)。
+    措辞取自冻结 RCA H2 实验中经验证的聚焦句式,按 taxonomy 展示名泛化。
+    """
+    return f"{taxonomy.display_name(target)} overview specifications features capabilities"
+
+
+def _survivor_score(
+    candidate: Any, survivor_keys: set[tuple[str, int]], survivors: list[Any]
+) -> float | None:
+    """紧凑候选诊断的分数提取:幸存者带加权重排分,被滤除者如实 None。"""
+    if (candidate.source_id, candidate.chunk_index) not in survivor_keys:
+        return None
+    for s in survivors:
+        if (s.source_id, s.chunk_index) == (candidate.source_id, candidate.chunk_index):
+            return round(s.score, 4) if s.score is not None else None
+    return None
 
 
 class EmptyGenerationError(RuntimeError):
@@ -681,6 +719,136 @@ class RAGOrchestrator:
             )
             return []
 
+    async def _comparison_evidence_pipeline(
+        self,
+        *,
+        extracted: str,
+        search_query: str,
+        intent_category: str,
+        resolution: Any,
+        taxonomy: Any,
+        product_filter: str | None,
+        channel: str,
+    ) -> tuple[list[Any], list[Any], dict[str, Any]]:
+        """比较证据管线(T-COMPARISON-EVIDENCE-CORRECTNESS;answer/stream 共用)。
+
+        RC1 per-target 检索 + C1 分层配额 + C3 按目标聚焦重排,三者一体的
+        最小共享抽象 —— 流式/非流式不得漂移:
+
+        1. 每 target 以自身资格标签集独立跑三路融合检索(RC1,不变);
+        2. 分层配额合并(C1/C2:官方产品证据先于代码占配额,`_merge_per_target_candidates`);
+        3. **按目标聚焦证据查询**分别重排(C3/H2:整句对比查询会系统性压制
+           单目标官方文档,冻结 RCA 实证 0.2237<0.3 vs 聚焦句式 0.7230);
+        4. 共享/平台 rest 槽位沿用生产语义以对比句重排(C2:supplement);
+        5. 逐侧幸存者轮转交错成最终证据(双侧均衡,≤ top_k)。
+
+        证据契约不变:缺失侧判定仍以最终证据(D-preflight)为准;本管线
+        不做任何盲降级(C6),代码证据不因此被全局过滤(AC6)。
+
+        Returns:
+            (merged_pre: 重排前分层合并候选(P1 兜底/纵深过滤的 fused 语义),
+             evidence: 聚焦重排后的最终证据,
+             stage_info: retrieve/rerank 真实耗时 + 逐侧池/幸存计数 + 紧凑候选诊断)
+        """
+        t0 = time.monotonic()
+        fused_per_target: list[list[Any]] = []
+        path_counts: dict[str, int] = {}
+        for target in resolution.targets:
+            results, pc = await self._retrieve_and_fuse(
+                extracted,
+                search_query,
+                intent_category,
+                product_filter=product_filter,
+                channel=channel,
+                product_labels=taxonomy.eligible_labels((target,)),
+            )
+            fused_per_target.append(results)
+            for k, v in pc.items():
+                path_counts[k] = path_counts.get(k, 0) + v
+        search_ms = int((time.monotonic() - t0) * 1000)
+
+        own_per_target, rest, quota_stage = _merge_per_target_candidates(
+            fused_per_target, resolution.targets, taxonomy, self._top_k
+        )
+
+        t1 = time.monotonic()
+        per_target_survivors: dict[str, list[Any]] = {}
+        per_target_stage: dict[str, dict[str, Any]] = {}
+        candidates_diag: list[dict[str, Any]] = []
+        for target in resolution.targets:
+            own = own_per_target[target]
+            focused_query = _target_evidence_query(taxonomy, target)
+            survivors = self._reranker.rerank(focused_query, own, top_k=self._top_k)
+            per_target_survivors[target] = survivors
+            survivor_keys = {(s.source_id, s.chunk_index) for s in survivors}
+            per_target_stage[target] = {
+                "pool": len(own),
+                "survivors": len(survivors),
+                "focused_query": focused_query,
+            }
+            for r in own:
+                candidates_diag.append(
+                    {
+                        "target": target,
+                        "source_id": r.source_id,
+                        "source_type": r.source_type,
+                        "product": r.product,
+                        "chunk_type": r.chunk_type,
+                        "score": _survivor_score(r, survivor_keys, survivors),
+                    }
+                )
+        # 共享/平台回填:沿用生产语义(对比句重排;仅 rest_cap>0 时存在)
+        rest_survivors: list[Any] = []
+        if rest:
+            rest_survivors = self._reranker.rerank(search_query, rest, top_k=self._top_k)
+            rest_keys = {(s.source_id, s.chunk_index) for s in rest_survivors}
+            for r in rest:
+                candidates_diag.append(
+                    {
+                        "target": None,
+                        "source_id": r.source_id,
+                        "source_type": r.source_type,
+                        "product": r.product,
+                        "chunk_type": r.chunk_type,
+                        "score": _survivor_score(r, rest_keys, rest_survivors),
+                    }
+                )
+        rerank_ms = int((time.monotonic() - t1) * 1000)
+
+        own_after_rerank = {t: len(per_target_survivors[t]) for t in resolution.targets}
+        missing_after_rerank = [t for t in resolution.targets if own_after_rerank[t] == 0]
+        quota_stage["per_target_quota"]["own_after_rerank"] = own_after_rerank
+        quota_stage["per_target_quota"]["missing_after_rerank"] = missing_after_rerank
+
+        # 重排前分层合并候选(P1 兜底/纵深过滤的 fused 语义;轮转交错保均衡)
+        pools = [list(own_per_target[t]) for t in resolution.targets]
+        merged_pre: list[Any] = []
+        while any(pools):
+            for pool in pools:
+                if pool:
+                    merged_pre.append(pool.pop(0))
+        merged_pre.extend(rest)
+
+        # 最终证据:逐侧幸存者轮转交错(双侧均衡)+ rest 幸存者,封顶 top_k
+        survivor_pools = [list(per_target_survivors[t]) for t in resolution.targets]
+        evidence: list[Any] = []
+        while any(survivor_pools):
+            for pool in survivor_pools:
+                if pool:
+                    evidence.append(pool.pop(0))
+        evidence.extend(rest_survivors)
+        evidence = evidence[: self._top_k]
+
+        stage_info = {
+            "search_ms": search_ms,
+            "rerank_ms": rerank_ms,
+            "path_counts": path_counts,
+            "per_target_quota": quota_stage["per_target_quota"],
+            "per_target": per_target_stage,
+            "candidates": candidates_diag,
+        }
+        return merged_pre, evidence, stage_info
+
     @staticmethod
     def _rerank_snippets(
         results: list[SearchResult], top: int = 5, text_preview: int = 300
@@ -999,30 +1167,71 @@ class RAGOrchestrator:
 
         # 统一检索 + 三路 RRF 融合(hybrid + symbol + intent boost 桶)
         t_ret = time.monotonic()
-        fused, path_counts = await self._retrieve_and_fuse(
-            extracted,
-            search_query,
-            intent.category,
-            product_filter=product_filter,
-            channel=channel,
-            product_labels=scope_labels,
-        )
-        stages["retrieve"] = {
-            "ms": int((time.monotonic() - t_ret) * 1000),
-            "hybrid_count": len(fused),
-            "min_results_met": len(fused) >= effective_min,
-            "effective_min": effective_min,
-            "path_counts": path_counts,
-        }
-
-        t_rr = time.monotonic()
-        reranked = self._reranker.rerank(search_query, fused, top_k=self._top_k)
+        cmp_stage_info: dict[str, Any] | None = None
+        pre_prune_count = 0
         pruned_count = 0
-        pre_prune_count = len(reranked)
+        if resolution.mode == MODE_COMPARISON and scope_labels:
+            # T-COMPARISON-EVIDENCE-CORRECTNESS:比较证据管线,与 stream_answer()
+            # 共用同一抽象(parity)—— per-target 检索 + 分层配额 + 按目标聚焦重排。
+            fused, reranked, cmp_stage_info = await self._comparison_evidence_pipeline(
+                extracted=extracted,
+                search_query=search_query,
+                intent_category=intent.category,
+                resolution=resolution,
+                taxonomy=taxonomy,
+                product_filter=product_filter,
+                channel=channel,
+            )
+            stages["retrieve"] = {
+                "ms": cmp_stage_info["search_ms"],
+                "hybrid_count": len(fused),
+                "effective_min": effective_min,
+                "path_counts": cmp_stage_info["path_counts"],
+                "per_target": {t: st["pool"] for t, st in cmp_stage_info["per_target"].items()},
+            }
+            stages["rerank"] = {
+                "ms": cmp_stage_info["rerank_ms"],
+                "top_score": reranked[0].score if reranked else None,
+                "count": len(reranked),
+                "pruned": 0,
+                "results": self._rerank_snippets(reranked),
+                "per_target": cmp_stage_info["per_target"],
+                "candidates": cmp_stage_info["candidates"],
+            }
+            product_scope_stage.update({"per_target_quota": cmp_stage_info["per_target_quota"]})
+            stages["product_scope"] = product_scope_stage
+        else:
+            fused, path_counts = await self._retrieve_and_fuse(
+                extracted,
+                search_query,
+                intent.category,
+                product_filter=product_filter,
+                channel=channel,
+                product_labels=scope_labels,
+            )
+            stages["retrieve"] = {
+                "ms": int((time.monotonic() - t_ret) * 1000),
+                "hybrid_count": len(fused),
+                "min_results_met": len(fused) >= effective_min,
+                "effective_min": effective_min,
+                "path_counts": path_counts,
+            }
+
+            t_rr = time.monotonic()
+            reranked = self._reranker.rerank(search_query, fused, top_k=self._top_k)
+            pre_prune_count = len(reranked)
+            stages["rerank"] = {
+                "ms": int((time.monotonic() - t_rr) * 1000),
+                "top_score": reranked[0].score if reranked else None,
+                "count": len(reranked),
+                "pruned": 0,
+                "results": self._rerank_snippets(reranked),
+            }
 
         if self._pruner:
             reranked = await self._pruner.prune(search_query, reranked)
             pruned_count = pre_prune_count - len(reranked)
+            stages["rerank"]["pruned"] = pruned_count
 
         # 防御性二次过滤(契约 §5 纵深):检索闸门在 Weaviate 侧;若闸门缺陷
         # 导致 sibling 泄漏进候选,此处强制出清(fused 一并过滤,兜底不可回流)。
@@ -1042,13 +1251,55 @@ class RAGOrchestrator:
                 product_scope_stage["ineligible_filtered"] = pre_defensive - len(reranked)
                 stages["product_scope"] = product_scope_stage
 
-        stages["rerank"] = {
-            "ms": int((time.monotonic() - t_rr) * 1000),
-            "top_score": reranked[0].score if reranked else None,
-            "count": len(reranked),
-            "pruned": pruned_count,
-            "results": self._rerank_snippets(reranked),
-        }
+        # 防御过滤/裁剪后的重排终态(不整块覆盖:保留比较管线的 per_target/candidates)
+        stages["rerank"]["top_score"] = reranked[0].score if reranked else None
+        stages["rerank"]["count"] = len(reranked)
+        stages["rerank"]["pruned"] = pruned_count
+        stages["rerank"]["results"] = self._rerank_snippets(reranked)
+
+        # Issue #19(D-preflight / Evidence Contract)parity:与 stream_answer()
+        # 同位同口径 —— comparison 模式下任一 target 缺自身标注证据 ⇒ 显式
+        # 不足语义(明示缺侧),禁止静默降级为单目标。以最终候选(经聚焦
+        # 重排/prune/纵深过滤)统计,是诚实口径。
+        if resolution.mode == MODE_COMPARISON and scope_labels:
+            _own_after = {
+                _t: sum(
+                    1
+                    for _r in reranked
+                    if (taxonomy.canonicalize(_r.product) or UNKNOWN_SLUG) == _t
+                )
+                for _t in resolution.targets
+            }
+            stages.setdefault("product_scope", product_scope_stage).setdefault(
+                "per_target_quota", {}
+            )["own_after_rerank"] = _own_after
+            _missing = tuple(_t for _t, _c in _own_after.items() if _c == 0)
+            if _missing:
+                elapsed = int((time.monotonic() - start) * 1000)
+                reject_text, reject_key = _comparison_insufficient_reply(
+                    language, resolution, taxonomy, _missing
+                )
+                return RAGAnswer(
+                    answer=reject_text,
+                    sources=[],
+                    is_answered=False,
+                    reranked_results=[],
+                    language=language,
+                    response_time_ms=elapsed,
+                    intent=intent.category,
+                    trace_payload={
+                        "type": "reject_short",
+                        "stages": stages,
+                        "total_ms": elapsed,
+                        "intent": intent.category,
+                        "confidence": intent.confidence,
+                        "config_snapshot": {
+                            **self._config_snapshot(),
+                            "result_key": reject_key,
+                        },
+                    },
+                    result_key=reject_key,
+                )
 
         if len(reranked) < effective_min:
             # P1 兜底:rerank 把候选全滤光(threshold 过高)但召回非空时,
@@ -1120,9 +1371,7 @@ class RAGOrchestrator:
         )
 
         t_gen = time.monotonic()
-        llm_response = await self._llm.generate(
-            messages, task="generation", thinking="disabled"
-        )
+        llm_response = await self._llm.generate(messages, task="generation", thinking="disabled")
         stages["generate"] = {
             "ms": int((time.monotonic() - t_gen) * 1000),
             "latency_ms": getattr(llm_response, "latency_ms", None),
@@ -1368,29 +1617,26 @@ class RAGOrchestrator:
 
         # 统一检索 + 三路 RRF 融合(与 answer 共用 _retrieve_and_fuse,保证 parity)
         t1 = time.monotonic()
+        cmp_stage_info: dict[str, Any] | None = None
         if resolution.mode == MODE_COMPARISON and scope_labels:
-            # Issue #19(RC1):comparison 结构化 per-target 证据获取 ——
-            # 每个 target 以「自身资格标签集」独立跑同一三路融合管线
-            # (共享/平台证据由各路资格集天然带回),再按轮转配额合并;
-            # 单查询语义排序不再决定哪侧证据进入上下文。
-            fused_per_target: list[list[Any]] = []
-            path_counts: dict[str, int] = {}
-            for _target in resolution.targets:
-                _results, _pc = await self._retrieve_and_fuse(
-                    extracted,
-                    search_query,
-                    intent.category,
-                    product_filter=product_filter,
-                    channel=channel,
-                    product_labels=taxonomy.eligible_labels((_target,)),
-                )
-                fused_per_target.append(_results)
-                for _k, _v in _pc.items():
-                    path_counts[_k] = path_counts.get(_k, 0) + _v
-            fused, quota_stage = _merge_per_target_candidates(
-                fused_per_target, resolution.targets, taxonomy, self._top_k
+            # T-COMPARISON-EVIDENCE-CORRECTNESS:比较证据管线(per-target 检索
+            # + 分层配额 + 按目标聚焦重排),与 answer() 共用同一抽象 ——
+            # 流式/非流式不得漂移。证据契约(D-preflight)位置与口径不变。
+            fused, reranked, cmp_stage_info = await self._comparison_evidence_pipeline(
+                extracted=extracted,
+                search_query=search_query,
+                intent_category=intent.category,
+                resolution=resolution,
+                taxonomy=taxonomy,
+                product_filter=product_filter,
+                channel=channel,
             )
-            product_scope_stage.update(quota_stage)
+            search_ms = cmp_stage_info["search_ms"]
+            rerank_ms = cmp_stage_info["rerank_ms"]
+            path_counts = cmp_stage_info["path_counts"]
+            product_scope_stage.update({"per_target_quota": cmp_stage_info["per_target_quota"]})
+            pre_prune_count = len(reranked)
+            pruned_count = 0
         else:
             fused, path_counts = await self._retrieve_and_fuse(
                 extracted,
@@ -1400,13 +1646,13 @@ class RAGOrchestrator:
                 channel=channel,
                 product_labels=scope_labels,
             )
-        search_ms = int((time.monotonic() - t1) * 1000)
+            search_ms = int((time.monotonic() - t1) * 1000)
 
-        t2 = time.monotonic()
-        reranked = self._reranker.rerank(search_query, fused, top_k=self._top_k)
-        rerank_ms = int((time.monotonic() - t2) * 1000)
-        pre_prune_count = len(reranked)
-        pruned_count = 0
+            t2 = time.monotonic()
+            reranked = self._reranker.rerank(search_query, fused, top_k=self._top_k)
+            rerank_ms = int((time.monotonic() - t2) * 1000)
+            pre_prune_count = len(reranked)
+            pruned_count = 0
         # MSW:page_context 软加分状态(实际应用在 rerank/fallback 定型之后;
         # 提前声明以便拒答路径的 trace 引用保持 None → 不出现 page_boost 键)
         page_boost_stage: dict | None = None
@@ -1432,6 +1678,28 @@ class RAGOrchestrator:
             if pre_defensive != len(reranked):
                 product_scope_stage["ineligible_filtered"] = pre_defensive - len(reranked)
 
+        # 真实阶段事实(AC10):短路拒答路径也必须携带已执行的 retrieve/rerank
+        # 证据(生产曾对执行过的阶段显示 0ms/缺失,误导诊断)。
+        retrieve_stage: dict[str, Any] = {
+            "ms": search_ms,
+            "hybrid_count": len(fused),
+            "effective_min": effective_min,
+            "path_counts": path_counts,
+        }
+        rerank_stage: dict[str, Any] = {
+            "ms": rerank_ms,
+            "top_score": reranked[0].score if reranked else None,
+            "count": len(reranked),
+            "pruned": pruned_count,
+            "results": self._rerank_snippets(reranked),
+        }
+        if cmp_stage_info is not None:
+            retrieve_stage["per_target"] = {
+                t: st["pool"] for t, st in cmp_stage_info["per_target"].items()
+            }
+            rerank_stage["per_target"] = cmp_stage_info["per_target"]
+            rerank_stage["candidates"] = cmp_stage_info["candidates"]
+
         # Issue #19(D-preflight / Evidence Contract):comparison 模式下任一
         # target 缺自身标注证据 ⇒ 显式不足语义(明示缺侧),禁止静默降级为
         # 单目标、也不进入必然证据饥饿的生成。以最终候选(经 rerank/prune/
@@ -1445,9 +1713,7 @@ class RAGOrchestrator:
                 )
                 for _t in resolution.targets
             }
-            product_scope_stage.setdefault("per_target_quota", {})[
-                "own_after_rerank"
-            ] = _own_after
+            product_scope_stage.setdefault("per_target_quota", {})["own_after_rerank"] = _own_after
             _missing = tuple(_t for _t, _c in _own_after.items() if _c == 0)
             if _missing:
                 elapsed = int((time.monotonic() - start) * 1000)
@@ -1497,6 +1763,9 @@ class RAGOrchestrator:
                                     "extracted": extracted,
                                     "rewritten": search_query,
                                 },
+                                # AC10:短路路径如实携带已执行阶段(不再 0ms/缺失)
+                                "retrieve": retrieve_stage,
+                                "rerank": rerank_stage,
                                 **(
                                     {"product_scope": product_scope_stage}
                                     if product_scope_in_trace
@@ -1607,13 +1876,10 @@ class RAGOrchestrator:
                 return
             # 降级:用 fused top-N 作上下文
             reranked = fallback
-            rerank_fallback = True
             logger.info(
                 "stream rerank 滤光但 fused 非空(%d),降级用 fused top-N",
                 len(fallback),
             )
-        else:
-            rerank_fallback = False
 
         # MSW:page_context 软加分(仅重排,不过滤;G009)。置于 rerank/fallback
         # 之后、sources 提取之前 —— sources 顺序即权威可见编号顺序。
@@ -1697,9 +1963,7 @@ class RAGOrchestrator:
         first_token_ms: int | None = None
         # Issue #23(QW-2 候选):generation 禁用思考 —— 准入以
         # FASTER × NOT LESS CORRECT 评估门为准(见执行报告 §6)。
-        async for chunk in self._llm.stream(
-            messages, task="generation", thinking="disabled"
-        ):
+        async for chunk in self._llm.stream(messages, task="generation", thinking="disabled"):
             if first_token_ms is None:
                 first_token_ms = int((time.monotonic() - t3) * 1000)
             out = citation_filter.feed(chunk)
@@ -1881,6 +2145,14 @@ class RAGOrchestrator:
                             "count": len(reranked),
                             "pruned": pruned_count,
                             "results": self._rerank_snippets(reranked),
+                            **(
+                                {
+                                    "per_target": cmp_stage_info["per_target"],
+                                    "candidates": cmp_stage_info["candidates"],
+                                }
+                                if cmp_stage_info is not None
+                                else {}
+                            ),
                         },
                         "generate": {
                             "ms": llm_ms,
@@ -1895,9 +2167,7 @@ class RAGOrchestrator:
                         },
                         **({"lead": lead_stage} if lead_stage else {}),
                         **(
-                            {"product_scope": product_scope_stage}
-                            if product_scope_in_trace
-                            else {}
+                            {"product_scope": product_scope_stage} if product_scope_in_trace else {}
                         ),
                     },
                     "total_ms": elapsed,

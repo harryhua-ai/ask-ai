@@ -426,9 +426,10 @@ async def test_int_g010_non_wiki_citations_unchanged():
     llm, _, _ = _gate_llm(intent="product", qualification=POTENTIAL_JSON)
     rag = _make_rag(llm, results)
 
-    ans = await rag.answer(
-        "NE301 与 NE503 的区别", "widget", lead_ctx=LeadTurnContext(session_id="s")
-    )
+    # INT-G010 断言目标是「非 wiki 引用的 URL 映射」;查询用单产品以聚焦该
+    # 契约(双产品查询自 T-COMPARISON-EVIDENCE-CORRECTNESS 起走比较证据
+    # 管线,要求逐侧证据,fake 数据不构成该场景)。
+    ans = await rag.answer("NE301 产品介绍", "widget", lead_ctx=LeadTurnContext(session_id="s"))
 
     by_type = {s["type"]: s for s in ans.sources}
     assert by_type["website"]["url"] == "https://www.camthink.ai/products/ne503"
