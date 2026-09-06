@@ -82,7 +82,64 @@ https://github.com/harryhua-ai/ask-ai/issues/25 — 记录机制(fetch_deleted �
 校验器如实)、本次事故、期望的 SOURCE-CONFIRMED 退休语义与安全要求(多次成功全量发现才可退休、
 绝不凭向量缺失删除、与过滤策略显式交互、幂等可审计);实现 HOW 留待 Planner Discovery/Contract。
 
-## 9. 最终状态
+## 9. 最终状态(原始验收记录,由 CLOSURE GATE 保留)
 
 **PASS** —— 授权范围内单一突变精确执行(deleted=26),最终真相
 179 docs / 481 expected / 481 actual / 0 missing / 0 mismatch / 0 orphan,Health=HEALTHY。
+
+---
+
+## 10. CLOSURE GATE — 任务关闭(2026-09-05,Planner FINAL REVIEW=PASS;纯治理,零生产变更)
+
+### 10.1 任务定稿状态
+
+> **KNOWLEDGE-STALE-LEDGER-PROD-REPAIR**
+> **Status: COMPLETE**
+> **Production Repair: PASS**
+> **Knowledge Health: HEALTHY**
+
+### 10.2 历史证据封存清单(全部保留,未改写未删除)
+
+| # | 证据 | 落点 |
+|---|---|---|
+| 1 | 原始状态 205 docs / 507 expected vs 481 actual | §2 Phase 1 表 |
+| 2 | 26 项显式 allowlist(逐一枚举) | §3 + 事务脚本 |
+| 3 | 26/26 文件缺失证明(present_count=0) | §2 |
+| 4 | 0 向量证明(逐项 Equal 精确查询均 0) | §2 |
+| 5 | 首次事务尝试失败(PL/pgSQL RAISE `%%` 转义笔误,DO 块编译期错误) | §5 |
+| 6 | 首次尝试零突变证明(ON_ERROR_STOP 于 COMMIT 前中止;随即实证账本 count=205) | §5 |
+| 7 | 成功的精确行数事务(`NOTICE: DELETED_OK rows=26` → COMMIT) | §5 |
+| 8 | 后验态 179 / 481 / 481(0 missing / 0 mismatch / 0 orphan) | §6 |
+| 9 | 正规 reconciliation 刷新(request_id=32 → sync_log status=success, items_unchanged=179) | §6 |
+| 10 | 零越界声明(无向量/文件/配置/代码突变) | §7 |
+
+首跑失败记录系 fail-closed 审计证据(不变量护栏真实拦截),按门指令永久保留。
+
+### 10.3 Issue #25 治理核验(实际元数据)
+
+- 状态:**OPEN**(保持;代表未来系统性防护,不构成本次一次性修复的未完成项)
+- URL:https://github.com/harryhua-ai/ask-ai/issues/25
+- 标题:Filesystem sources do not retire ledger entries when source files disappear
+- **标签核验**:issue 当前 labels=[](空);仓库实际标签集仅有 GitHub 默认集
+  (bug/documentation/duplicate/enhancement/good first issue/help wanted/invalid/question/wontfix),
+  **不存在** product/engineering/p1 标签。按门指令「仓库未使用则不为此门新建标签」,
+  未创建、未应用任何标签;正文内 P1/Backlog/Requires Contract 分类保留为文字记录。
+- **范围冻结**:Issue #25 现在与将来均限定 **FILESYSTEM SOURCE RETIREMENT**;
+  GitHub/Web Crawl/WooCommerce connector 及跨 connector 生命周期统一化不在其范围,
+  如需推进须另立 Planner Discovery/Contract;#25 实现**未授权**。
+
+### 10.4 生产边界确认
+
+本 Closure Gate **零生产变更**:无 DELETE/同步/reconciliation/重索引/向量删除/DB 清理/
+filesystem 变更/配置变更;未手动触发任何同步(例行调度同步属正常运营,不在本门范围)。
+生产状态即为已验收态:179 / 481 / 481 / 0 / 0 / 0,HEALTHY。
+
+### 10.5 报告权威身份
+
+- 仓库:ask-ai docs 仓库(独立本地仓,`/Users/harryhua/Documents/GitHub/ask-ai/docs`,无 remote,commit 即持久化)
+- 路径:`docs/engineering/tasks/KNOWLEDGE-STALE-LEDGER-PROD-REPAIR-execution.md`
+- 本文 Commit:见该文件所在提交(40 位 SHA 于提交后由执行端最终返回记录)
+
+### 10.6 Closure 最终状态
+
+**CLOSURE PASS**
