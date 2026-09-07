@@ -1,0 +1,926 @@
+{
+ "gate": "ASK-AI Answer Intelligence Benchmark v1 — Coverage Gap Completion Discovery",
+ "parent_issue": "GitHub Issue #32",
+ "authority": "DISCOVERY / EVALUATION DESIGN ONLY — READ ONLY（无生产/知识源/Answer Engine 变更）",
+ "date": "2026-09-07",
+ "scope_correction_ack": "#013 与 #026 为 migration_state B，不属于 C30 选择集，本 Gate 不扩选、不重释",
+ "accepted_state": {
+  "historical_corpus": 117,
+  "A": 35,
+  "B": 32,
+  "C": 30,
+  "D": 20,
+  "historical_active_pool": 97,
+  "gt_revalidation": "FINAL PASS（41 = 32B+9C）",
+  "c30_marking_contracts": "30 processed"
+ },
+ "real_evidence_acquisition_log": [
+  {
+   "order": 1,
+   "source": "生产回归 evidence（Issues #5/#19/#23/#26/#27/#28/#29/#31 全文取证）",
+   "yield": "8 真实问句/家族（#26/#27/#23/#28/#29 含逐字问句）"
+  },
+  {
+   "order": 2,
+   "source": "历史 ASK-AI 评测材料（optimize/results/ 6 快照）",
+   "yield": "题库=同一 117；旧评测器语义（有据率=[n] 引用比例、100% 通过）记录为假通过证据；无新问句家族 → 视为穷尽"
+  },
+  {
+   "order": 3,
+   "source": "TS_record / support 案例（247 行索引 + 全目录 diff）",
+   "yield": "以 NFC 规范化 diff 得 175 个未入库案例文件，逐案筛选（首轮 NFD 规范化产生假阳性已修正：sq-004/005/006/009/038/080/081/082 实为已入库）"
+  },
+  {
+   "order": 4,
+   "source": "sales 知识（真实用户问题 vs CRM 工作流状态）",
+   "yield": "问句型销售记录已被 117 收割（sq-101/103/104/105/108/109）；其余为 CRM 档案/冷开发/会议准备 → 排除"
+  },
+  {
+   "order": 5,
+   "source": "Knowledge 权威源真实会话语料",
+   "yield": "生产 widget 真实会话仅经 issue 留痕（#26/#27）；生产对话库不可从本机只读导出 → 记录为剩余缺口"
+  },
+  {
+   "order": 6,
+   "source": "其他已验证真实问句",
+   "yield": "wiki 快照复核（NE302 系列存在、NeoRuntime 于 NE503 文档在载）支撑 r01/r02 真值"
+  },
+  {
+   "order": 7,
+   "source": "合成（仅剩余语义缺口）",
+   "yield": "仅 1 条 adapted（cg-s01 ORIENT×EN），附 reason_real_case_unavailable"
+  }
+ ],
+ "counts": {
+  "REAL_CANDIDATES_ADDED": 23,
+  "SYNTHETIC_CANDIDATES_ADDED": 1,
+  "TOTAL_PROPOSED_ADDITIONS": 24,
+  "PROPOSED_ACTIVE_POOL_SIZE": 121,
+  "RECOMMENDED_FOR_V1": 24
+ },
+ "english_coverage": {
+  "EN_KNOWLEDGE_CASES_BEFORE": 0,
+  "EN_KNOWLEDGE_CASES_AFTER": 18,
+  "en_new_candidates": [
+   "cg-r01",
+   "cg-r03",
+   "cg-r07",
+   "cg-r08",
+   "cg-r09",
+   "cg-r10",
+   "cg-r11",
+   "cg-r12",
+   "cg-r13",
+   "cg-r14",
+   "cg-r16",
+   "cg-r17",
+   "cg-r18",
+   "cg-r19",
+   "cg-r21",
+   "cg-r22",
+   "cg-r23",
+   "cg-s01"
+  ],
+  "note": "历史 4 个 EN 案例=全部为 OFF_TOPIC 种子；新增 EN 案全部为真实知识载案（含 2 条合成前真实证据核查失败后保留的 adapted 候选除外——cg-s01 为 adapted）",
+  "untranslated_guarantee": "无中文题翻译充数：EN 案全部源自英文客户邮件/会话存档或生产英文问句"
+ },
+ "uncertainty_mapping": {
+  "UNCERTAINTY_CASES_BEFORE": 8,
+  "UNCERTAINTY_CASES_AFTER": 25,
+  "new_with_central_uncertainty": {
+   "cg-r05": "CONDITIONALLY_SUPPORTED（逐组合精确价依赖 Store 交互选择，页面只暴露区间+维度）",
+   "cg-r07": "CONDITIONALLY_SUPPORTED（方案依赖客户确认项：摄像头协议/点位/网络/预算）",
+   "cg-r08": "NOT_DOCUMENTED/NOT_TESTED（待验证子问显式有界）+NOT_SUPPORTED（无自动 failover）",
+   "cg-r09": "NOT_DOCUMENTED（畸变标定）+NOT_SUPPORTED（NE301 HDR）",
+   "cg-r10": "CONDITIONALLY_SUPPORTED（检测距离依赖镜头/分辨率/模型像素预算）",
+   "cg-r11": "NOT_DOCUMENTED（第三方栈特性依赖外部证据快照，不得凭记忆虚构版本/License 条款）",
+   "cg-r12": "NOT_DOCUMENTED（无预置异常检测应用≠不能做，自定义部署路径有界表述）",
+   "cg-r13": "NONE（根因有据；sq-014 的 NOT_TESTED 语义由此案获得真实部署证据但不转正）",
+   "cg-r14": "NOT_SUPPORTED（现固件不支持 name→hostname 联动）+PLANNED（修复已上报工程，时点不承诺）",
+   "cg-r15": "NOT_DOCUMENTED（PyPI/sdist 路径尚不存在）+PLANNED（roadmap 项）",
+   "cg-r16": "NOT_DOCUMENTED（竞品能力以外部核查快照为准）",
+   "cg-r17": "UNKNOWN/INSUFFICIENT（新固件可用性随版本变化，绑快照）",
+   "cg-r18": "NOT_SUPPORTED（现固件无 config mode 强制超时）+PLANNED（缺陷修复待版本）",
+   "cg-r20": "NOT_SUPPORTED（第三方 RTSP 抓帧不在现产品能力内）",
+   "cg-r21": "NOT_SUPPORTED（本地人脸识别/注册能力不存在；检测≠识别）",
+   "cg-r22": "CONTRADICTORY_EVIDENCE（文档 3.11/3.12 vs Dockerfile 3.10）+NOT_DOCUMENTED（无官方修复 tag）",
+   "cg-r23": "NOT_TESTED（最可能失败点为推断，未经客户环境验证，须显式标注）"
+  },
+  "semantics_covered": [
+   "NOT_DOCUMENTED",
+   "NOT_SUPPORTED",
+   "NOT_TESTED",
+   "PLANNED",
+   "CONDITIONALLY_SUPPORTED",
+   "CONTRADICTORY_EVIDENCE",
+   "UNKNOWN/INSUFFICIENT"
+  ],
+  "note": "七分类语义均有真实载体（CONTRADICTORY_EVIDENCE 首次有真实实例 cg-r22；PLANNED=cg-r14/r15/r18；NOT_SUPPORTED=cg-r14/r18/r20/r21 等）；不设百分比配额"
+ },
+ "before_matrix": {
+  "pool": 97,
+  "interaction_class": {
+   "CLARIFY": 1,
+   "COMMERCIAL": 2,
+   "COMPARE": 3,
+   "FACTUAL": 21,
+   "HOW_TO": 5,
+   "OFF_TOPIC": 5,
+   "ORIENT": 1,
+   "RECOMMEND": 27,
+   "SOLUTION": 9,
+   "TROUBLESHOOT": 23
+  },
+  "language": {
+   "zh": 93,
+   "en": 4
+  },
+  "product_subject": {
+   "NE101": 34,
+   "NE300-MB01": 1,
+   "NE301": 44,
+   "NE503": 7,
+   "NG4500": 6,
+   "OFF_TOPIC_SEED": 5
+  },
+  "truth_stability": {
+   "snapshot_bound": 45,
+   "stable": 37,
+   "contextual": 15
+  },
+  "documented_vs_undocumented": "uncertainty_required=Y 8 例 + GT INSUFFICIENT 2 例（sq-103/sq-109）+ 边界标志（moq 3/certification 2/baa_taa 1/halow_region 1/platform_integration 1/medical 1/shutter 1/bacnet 1）",
+  "single_vs_multi_role_evidence": "C30 已表征：28/30 为多角色(≥3)；A/B 未表征（B 轨契约工作时补全）",
+  "product_isolation": "无专门隔离案；分散于 product_scope_safety 维度与 sq-005/sq-080 版本错配案",
+  "comparison_behavior": "COMPARE=3",
+  "recommendation_solution": "RECOMMEND=27 SOLUTION=9",
+  "commercial_snapshot": "COMMERCIAL=2 + price/moq/certification 标志 6 例",
+  "clarification_behavior": "CLARIFY=1（sq-031）",
+  "orientation_behavior": "ORIENT=1（sq-035）",
+  "follow_up": "0",
+  "explicit_off_topic": "5（全部为注入种子，非真实 utterance）"
+ },
+ "after_matrix": {
+  "pool": 121,
+  "interaction_class": {
+   "CLARIFY": 2,
+   "COMMERCIAL": 3,
+   "COMPARE": 6,
+   "FACTUAL": 24,
+   "FOLLOW_UP": 1,
+   "HOW_TO": 7,
+   "OFF_TOPIC": 5,
+   "ORIENT": 3,
+   "RECOMMEND": 30,
+   "SOLUTION": 12,
+   "TROUBLESHOOT": 28
+  },
+  "language": {
+   "zh": 97,
+   "en": 22,
+   "ja": 1,
+   "vi": 1
+  },
+  "product_subject_expanded": "新增主题：NE302 产品线、NeoRuntime 运行时平台、NeoMind 服务器软件、ne301-model-converter 开源工具链、竞品（Milesight X1）、第三方 VMS 生态（Frigate/DeepStream）、车载外设集成",
+  "single_vs_multi_role_evidence": "新增候选 21/24 为多角色(≥3)；证据角色新增 CASE_STUDY/COMPARISON_TARGET_A/B/CALCULATOR/STORE 深化",
+  "product_isolation": "NE302 独立系列对比(r01)、NE503 能力盘点(r12)、竞品边界(r16)、NE301→NE503 量化升级推荐(r10)、HDR 对照对(r09)、人脸检测/识别之辨(r21)",
+  "comparison_behavior": "COMPARE 3→6（多目标/第三方/竞品三分）",
+  "recommendation_solution": "RECOMMEND 27→30; SOLUTION 9→12",
+  "commercial_snapshot": "COMMERCIAL 2→3（#28 变体/逐组合价 + Store 快照绑定）",
+  "clarification_behavior": "CLARIFY 1→2（域内欠指定 vs 需求模糊双形态）",
+  "orientation_behavior": "ORIENT 1→3（ZH+EN 路由对等）",
+  "follow_up": "0→1（真实前序上下文依赖案）",
+  "explicit_off_topic": "仍=5 种子（真实 off-topic 留痕缺失→剩余缺口）"
+ },
+ "production_regression_mapping": {
+  "#5_exact_product_isolation": {
+   "existing": [
+    "sq-081（NE101 远程抓拍 vs NE301 指令接口=反向兄弟陷阱）",
+    "sq-080（hw v1.2×fw v2.0 错配）",
+    "sq-005（v1/v1.2 PIR 缺位）",
+    "sq-009（NE300-MB01 板卡产品）"
+   ],
+   "new": [
+    "cg-r01（NE302 独立系列）",
+    "cg-r12（NE503 逐能力盘点）",
+    "cg-r16（竞品边界）",
+    "cg-r10（NE301→NE503 量化升级）",
+    "cg-r21（检测/识别之辨）"
+   ],
+   "note": "一个家族映射多案（Gate 明示允许）"
+  },
+  "#19_comparison_multi_target": {
+   "new": [
+    "cg-r01"
+   ],
+   "note": "多目标对比+真实对比不足信息路径（非 empty-generation）"
+  },
+  "#23_performance": {
+   "new": [
+    "cg-r02"
+   ],
+   "note": "真实问句纳入；29,747ms/TTFT 18,111ms 仅作 provenance；不冻结性能阈值"
+  },
+  "#26_underspecified": {
+   "new": [
+    "cg-r03"
+   ],
+   "note": "逐字生产问句；澄清/上下文解析≠off-topic"
+  },
+  "#27_capability_orientation": {
+   "new": [
+    "cg-r04",
+    "cg-s01"
+   ],
+   "note": "ZH 真实+EN adapted；与 #26 不合并"
+  },
+  "#28_variant_price": {
+   "new": [
+    "cg-r05"
+   ],
+   "existing": [
+    "sq-005",
+    "sq-080"
+   ],
+   "note": "变体维度+区间快照+逐组合价有界"
+  },
+  "#29_battery_calculator": {
+   "new": [
+    "cg-r06",
+    "cg-r10"
+   ],
+   "note": "计算器结构化证据+像素预算计算两种计算语义"
+  },
+  "#31_solution_composition": {
+   "new": [
+    "cg-r07"
+   ],
+   "existing": [
+    "sq-101"
+   ],
+   "note": "sq-101 已覆盖 OCR+BACnet 路径；cg-r07 增加 Solutions/Case/规模化 TCO 组合语义"
+  }
+ },
+ "duplicate_audit": {
+  "method": "候选与 97 活跃池逐案对比（问题语义+源文件+产品+交互类）；工具性 diff 以 Unicode NFC 规范化执行（修正 NFD 假阳性）",
+  "result": "0 DUPLICATE / 0 NEAR_DUPLICATE 入选；NEW_COVERAGE 12、COMPLEMENTARY_CONTRAST 5、USEFUL_VARIANT 6",
+  "rejected_duplicates_note": "关键去重发现：sq-038 即 Skywave 布局图跟进（已入库，类 FACTUAL）；sq-004/005/006/009/080/081/082 均已入库"
+ },
+ "rejected_candidates": [
+  {
+   "item": "MuditaCARE（巴西）产品咨询不匹配",
+   "reason": "REJECT：依赖隐藏 CRM 公司画像，无可恢复的具体问句"
+  },
+  {
+   "item": "support/2026-07/NE301-Sauter自控-水表OCR-BACnet方案.md",
+   "reason": "NEAR_DUPLICATE：即 sq-101 的支持侧详细版（同一询盘）；sq-101 契约已覆盖，冻结时作 sq-101 源快照引用"
+  },
+  {
+   "item": "Michelin/Kronospan/燃气表/ATAL-KROHNE/Beez-FM/Invinets/originate-HVAC/LINTI 抄表案",
+   "reason": "NEAR_DUPLICATE：抄表 OCR 簇已被 sq-101+#31(r07) 覆盖"
+  },
+  {
+   "item": "NE101-NE301-多水表同时测量能力分析",
+   "reason": "USEFUL_VARIANT 冗余：多目标计量语义由 sq-101/r07 覆盖"
+  },
+  {
+   "item": "Exowatt 6 项 / FrontierTowers 架构 / EdgeIoT 12 问（已入库）类伞形案",
+   "reason": "伞形家族已由 sq-090/cg-r08/cg-r09 代表，再增不添新行为语义"
+  },
+  {
+   "item": "iCondo 宠物检测 / PIR 入侵检测拍照 / PIR-Discord-Nestor / NE301-Petr-PIR 低功耗",
+   "reason": "PIR 家族冗余（sq-033/sq-019/C30 已覆盖触发与集成边界）"
+  },
+  {
+   "item": "Noema / NetQuori / Okaya 报价类",
+   "reason": "COMMERCIAL 询价族冗余（sq-093/sq-030/cg-r05 覆盖）+部分为 CRM 报价工作流"
+  },
+  {
+   "item": "OV5640-ESP32S3 图像绿线 / AlexRubenstein-OS04C10 曝光寄存器",
+   "reason": "第三方 MCU 集成/寄存器级深度超出 v1 核心行为面；寄存器级真值维护成本高（B05 显示基线曾正面判分，范围边界留 Planner 裁决）"
+  },
+  {
+   "item": "AlexRubenstein-J12 供电深度睡眠兼容 / Gaflarar 触发机制 / Massimo ST-Link / AVM MODEL_RELOAD_FAILED / Andrea ST-Link-486 / Okaya-PoE 转动故障 / MulgaMesh 镜头冷凝 / Lightbox 之外 HaLow 天线规格",
+   "reason": "TROUBLESHOOT/FACTUAL 家族内 USEFUL_VARIANT，行为语义已被入选案代表；不再增补同族"
+  },
+  {
+   "item": "内部-* 分析（Morse 开源组件/蜂窝 AP 机制/水表耗时/开发信模板）、各会议准备、Giga-concept/E-KOM/Wamasys/Mirasys/Partteam 合作评估、prospecting 批量分类、Dave-reply/Harry-reply 草稿",
+   "reason": "非真实用户问句（内部工作流状态/开发信/会议准备）"
+  },
+  {
+   "item": "AR-药品识别系统（2025.2）/ CamThink-医疗运动方向",
+   "reason": "会议待讨论格式+敏感域，问句与真值不可恢复"
+  },
+  {
+   "item": "sales/* 约 90 个 CRM 档案文件",
+   "reason": "CRM 档案/冷开发工作流状态，无评分类真实问句（问句型销售记录已在 117 内）"
+  },
+  {
+   "item": "EcoCounter-YOLO26 升级 / Murata-Noah 预装模型咨询（已入库）",
+   "reason": "模型目录语义由 C30 sq-014/核 r13 覆盖"
+  }
+ ],
+ "remaining_meaningful_gaps": [
+  "真实 OFF_TOPIC utterance 留痕缺失（现有 5 案均为注入种子；需授权的生产会话导出）",
+  "多轮有状态对话链基准（现有 FOLLOW_UP 仅单级前序依赖 cg-r23/sq-038；生产存在真实多轮排障会话但未导出）",
+  "CASE_BOUNDARY_ATTRIBUTION 评测家族（E03 跨客户误诊/F03·C10 案例嫁接/E01·D05 PII 泄漏——基线实证的真实行为族，但作为公平评测案需要『内部案例语料在场+相似症状提问者』的受控构造，属评测设计决策，上报 Planner 单列，本 Gate 不构造）",
+  "sq-108 T4 与 cg-r12 证据的真值调和（wiki/商店快照核对后由 Planner 裁决 sq-108 措辞；本 Gate 不静默修改已验收工件）",
+  "#013 安全契约（B 轨，上 Gate 已升级）",
+  "EN 覆盖仍为少数（0→12），持续按获取顺序补真实证据；不设配额",
+  "第三方/竞品证据快照管线（cg-r11/cg-r16 冻结时需外部证据快照机制）"
+ ],
+ "candidates": [
+  {
+   "candidate_id": "cg-r01",
+   "question": "NE302 和 NE301 有什么区别？（NE302 vs NE301 对比；生产对比问询，逐字问句未在 issue 留痕，冻结时随源核对）",
+   "language": "en",
+   "product_or_subject": "NE302 vs NE301（双目标对比）",
+   "interaction_class": "COMPARE",
+   "provenance_type": "PRODUCTION_REGRESSION",
+   "provenance_reference": "生产回归 issue（github.com/harryhua-ai/ask-ai） #19（CamThink v1.0.0 生产验收 0e6a8a3 期间发现）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "多目标显式对比/COMPARE 家族（before 仅 3）；对比意图的多目标证据范围语义",
+   "relationship_to_existing_cases": "NEW_COVERAGE",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "NE302 为 wiki 正式产品线（docs/8-neoeyes-ne302-series/ 全系列，@4ed5b32e 复核存在）；对比真值=两系列 wiki 规格快照逐项对照；生产缺陷（Store 元数据粒度过粗致 empty-generation）属引擎侧，不改变真值",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "COMPARISON_TARGET_A",
+    "COMPARISON_TARGET_B",
+    "SPECIFICATION",
+    "WIKI"
+   ],
+   "uncertainty_semantics": "NONE",
+   "production_regression_reference": "#19",
+   "recommended_for_v1": "YES",
+   "reason": "生产回归直接映射；wiki 已有 NE302 全系列文档，对比真值可复现；测试「对比意图≠单目标+兄弟排除」的正确行为"
+  },
+  {
+   "candidate_id": "cg-r02",
+   "question": "NeoRuntime 如何安装部署?",
+   "language": "zh",
+   "product_or_subject": "NE503 / NeoRuntime（应用运行时平台）",
+   "interaction_class": "HOW_TO",
+   "provenance_type": "PRODUCTION_REGRESSION",
+   "provenance_reference": "生产回归 issue（github.com/harryhua-ai/ask-ai） #23（2026-09-04 生产 trace：total 29,747ms，TTFT 18,111ms）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "运行时平台/软件栈安装部署主题（语料主题 diversity：语料无 NeoRuntime 案例）；性能回归家族载体",
+   "relationship_to_existing_cases": "NEW_COVERAGE",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "NeoRuntime 为 NE503 应用运行时平台，wiki 第一方有载：quick-start 引 neoruntime-apps releases（model-showcase bundle 安装包）、overview 引 neoruntime-sdks（C++ SDK API）、troubleshooting 引 neoruntime OpenAPI/swagger（@4ed5b32e 复核）；安装部署答案可从 NE503 quick-start + neoruntime 仓复现。历史性能数据仅作 provenance，本 Gate 不冻结 TTFT/E2E 阈值",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "WIKI",
+    "SDK",
+    "SPECIFICATION"
+   ],
+   "uncertainty_semantics": "NONE",
+   "production_regression_reference": "#23",
+   "recommended_for_v1": "YES",
+   "reason": "Gate 明确要求纳入该真实问题；主题多样性新增「运行时平台」；真值第一方可复现"
+  },
+  {
+   "candidate_id": "cg-r03",
+   "question": "What is included in the box?",
+   "language": "en",
+   "product_or_subject": "未指明产品（underspecified in-domain）",
+   "interaction_class": "CLARIFY",
+   "provenance_type": "PRODUCTION_REGRESSION",
+   "provenance_reference": "生产回归 issue（github.com/harryhua-ai/ask-ai） #26（2026-09-07 生产 widget 会话：intent=off_topic 85% 置信误拒，948ms 短路）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "「域内但欠指定」的澄清/上下文解析行为（区别于真 off-topic）；CLARIFY 家族第二案；EN 案",
+   "relationship_to_existing_cases": "NEW_COVERAGE",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "正确行为=澄清/上下文解析而非拒答；澄清后「盒内物品」真值=对应产品 Store/Wiki 装箱清单快照（绑定产品后可复现）；缺上下文时正确答案=一个有用的澄清问题",
+   "truth_stability": "contextual",
+   "required_evidence_roles": [
+    "STORE",
+    "WIKI",
+    "SPECIFICATION"
+   ],
+   "uncertainty_semantics": "NONE",
+   "production_regression_reference": "#26",
+   "recommended_for_v1": "YES",
+   "reason": "生产误拒直接映射；与 #27 明确区分（本例=欠指定需澄清，#27=能力导向）；CLARIFY 家族从 1→2 且新增 EN 形态"
+  },
+  {
+   "candidate_id": "cg-r04",
+   "question": "你会干什么",
+   "language": "zh",
+   "product_or_subject": "助手能力/导向（assistant capability/orientation）",
+   "interaction_class": "ORIENT",
+   "provenance_type": "PRODUCTION_REGRESSION",
+   "provenance_reference": "生产回归 issue（github.com/harryhua-ai/ask-ai） #27（2026-09-07 生产 widget 会话：intent=off_topic 95% 置信误拒）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "ORIENT 家族第二案；能力导向型交互不得塌缩为 off-topic 拒答",
+   "relationship_to_existing_cases": "NEW_COVERAGE",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "正确行为=欢迎/导向/邀请（如实描述助手能力范围：产品选型/功能/方案/配置/技术支持），真值=冻结时助手能力范围口径；不得虚构能力也不得拒答",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "WIKI",
+    "EXACT_PRODUCT"
+   ],
+   "uncertainty_semantics": "NONE",
+   "production_regression_reference": "#27",
+   "recommended_for_v1": "YES",
+   "reason": "生产误拒直接映射；ORIENT 独立表征（与 CLARIFY 不合并）；与 cg-s01 形成 ZH/EN 对"
+  },
+  {
+   "candidate_id": "cg-r05",
+   "question": "NE301 和 NE101 分别有什么配置，每个配置组合分别多少钱",
+   "language": "zh",
+   "product_or_subject": "NE301 + NE101（多产品变体/价格）",
+   "interaction_class": "COMMERCIAL",
+   "provenance_type": "PRODUCTION_REGRESSION",
+   "provenance_reference": "生产回归 issue（github.com/harryhua-ai/ask-ai） #28（真实 ASK-AI 会话；NE101 变体价格漏答）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "变体/配置/逐组合现价真值（#28 家族）；多产品并行商业事实组织",
+   "relationship_to_existing_cases": "NEW_COVERAGE",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "NE101 变体维度=Store 快照实证（连接 5 选项×镜头 4 选项，价格区间 $69.00–$112.00，5 SKU 家族及区域角色）；NE301 三配置及价格=Store 快照；正确答案须给出变体维度+区间快照，并对「每连接组合精确价」给出有界表述（Store 交互件，需页面/销售确认），不得宣称『官方无价格』也不得虚构逐组合价",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "STORE",
+    "CURRENT_COMMERCIAL",
+    "EXACT_PRODUCT",
+    "SPECIFICATION"
+   ],
+   "uncertainty_semantics": "CONDITIONALLY_SUPPORTED（逐组合精确价依赖 Store 交互选择，页面只暴露区间+维度）",
+   "production_regression_reference": "#28",
+   "recommended_for_v1": "YES",
+   "reason": "生产缺陷（把『官方资料未载明 NE101 各型号价格』说得太满）直接映射；跨案例规则 R1 的最佳试金石"
+  },
+  {
+   "candidate_id": "cg-r06",
+   "question": "NE301,NE101 功耗和续航分别多久",
+   "language": "zh",
+   "product_or_subject": "NE301 + NE101（功耗/续航 + 计算器证据）",
+   "interaction_class": "FACTUAL",
+   "provenance_type": "PRODUCTION_REGRESSION",
+   "provenance_reference": "生产回归 issue（github.com/harryhua-ai/ask-ai） #29（真实 ASK-AI 会话；NE101 数据被低估）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "结构化官方证据（Battery Life Calculator）使用行为；双产品功耗/续航对照；CALCULATOR 证据角色",
+   "relationship_to_existing_cases": "COMPLEMENTARY_CONTRAST",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "第一方证据=官方 Battery Life Calculator 页（camthink.ai/tools/battery-calculator，Lab Test Data · May 2026，NE101/NE301 双支持：网络模式/电池/每日张数→续航+日功耗+工作/睡眠电流+NE101 vs NE301 功耗画像对照）；正确答案须使用该结构化证据且不得低估 NE101（WiFi 5 次/天 >3 年之外还有计算器全维度数据）；计算器数值绑页面快照",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "CALCULATOR",
+    "WIKI",
+    "SPECIFICATION",
+    "EXACT_PRODUCT"
+   ],
+   "uncertainty_semantics": "NONE",
+   "production_regression_reference": "#29",
+   "recommended_for_v1": "YES",
+   "reason": "生产缺陷（漏用计算器结构化证据）直接映射；CALCULATOR 角色在 C30 仅 sq-049/sq-108 边缘出现，此处为核心语义"
+  },
+  {
+   "candidate_id": "cg-r07",
+   "question": "So we have 6 warehouses in India at 6 different locations where the cameras are advanced and we are looking for AI box which can enable the analytics for our future project. We have around 1000 CCTV cameras which would require AI box for enabling the VA and we are looking for the same option.",
+   "language": "en",
+   "product_or_subject": "NG4500 系列（大型仓储视频分析方案）",
+   "interaction_class": "SOLUTION",
+   "provenance_type": "SUPPORT_CASE",
+   "provenance_reference": "Knowledge support/2026-05/NG4500-BoschIndia-仓库视频分析方案.md（客户邮件原文存档；TS_record 2026-05-19）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "#31 家族：跨 Solution/Case/Wiki 证据角色的方案推荐组合；规模化（6 站点/1000 路）架构与 TCO 语义",
+   "relationship_to_existing_cases": "USEFUL_VARIANT",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "方案推荐评任务适配：集中式 vs 分布式取舍框架、NG4521 主推依据、确认问题清单（15 项）、糖厂参考案例引用须标注为案例证据；不冻结检索实现；CRM 跟进状态（待确认）非答案真值",
+   "truth_stability": "contextual",
+   "required_evidence_roles": [
+    "SOLUTION",
+    "CASE_STUDY",
+    "WIKI",
+    "SPECIFICATION",
+    "EXACT_PRODUCT"
+   ],
+   "uncertainty_semantics": "CONDITIONALLY_SUPPORTED（方案依赖客户确认项：摄像头协议/点位/网络/预算）",
+   "production_regression_reference": "#31",
+   "recommended_for_v1": "YES",
+   "reason": "#31 的最佳真实载体：需组合官方 Solutions 页 + Case + Wiki 证据的规模化推荐；EN 知识载案；与 sq-054（周界三场景）不重复（领域/规模/TCO 维度均新）"
+  },
+  {
+   "candidate_id": "cg-r08",
+   "question": "Ken Vowels 25 项深度技术追问（水表/阀门箱远程抄表 OCR：PoE+Cat-1 共存、网络切换、LTE 北美规格、流量、IP67/凝露、镜头调焦、MQTT/Webhook 安全、离线行为、看门狗、OTA 管理、批量定价、推荐测试配置等）",
+   "language": "en",
+   "product_or_subject": "NE301 PoE + Cat-1（北美抄表部署）",
+   "interaction_class": "SOLUTION",
+   "provenance_type": "SUPPORT_CASE",
+   "provenance_reference": "Knowledge support/2026-08/NE301-KenVowels-25项深度技术咨询.md（客户邮件线程；前置 2026-08 15 项咨询）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "EN 知识载案 + 伞形逐问评分形态（25 问）+ 舰队运维语义（OTA/看门狗/离线行为）+ PoE/蜂窝共存事实",
+   "relationship_to_existing_cases": "USEFUL_VARIANT",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "逐问结论有据（PoE 背面供电+Cat-1 正面蜂窝物理不冲突；EG915Q-NA 频段表；~20-30MB/月估算；IP67 接头口径）；部分子问显式有界（自动 failover 不支持=NOT_SUPPORTED；client cert/retry 待验证=NOT_TESTED；集中 OTA 管理面板无）；定价子问路由销售",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "SPECIFICATION",
+    "SDK",
+    "FIRMWARE",
+    "WIKI"
+   ],
+   "uncertainty_semantics": "NOT_DOCUMENTED/NOT_TESTED（待验证子问显式有界）+NOT_SUPPORTED（无自动 failover）",
+   "production_regression_reference": "",
+   "recommended_for_v1": "YES",
+   "reason": "EN 知识载案+25 问伞形可逐问评分（扩展现有 sq-090 的 12 问形态）；舰队运维语义族新覆盖"
+  },
+  {
+   "candidate_id": "cg-r09",
+   "question": "Pieterjan 8 项技术问题（草莓种植槽监测：太阳能架构、51° 镜头覆盖、畸变、支架、AI 功耗、HDR、原图上传、上传行为）",
+   "language": "en",
+   "product_or_subject": "NE301（农业垂直向下拍摄）",
+   "interaction_class": "SOLUTION",
+   "provenance_type": "SUPPORT_CASE",
+   "provenance_reference": "Knowledge support/2026-07/NE301-Pieterjan-草莓作物监测8项技术问题.md（飞书渠道，英文邮件草稿存档）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "EN 知识载案；产品隔离对照对（NE301 无 HDR vs NE503 有 HDR）；镜头覆盖计算（CALCULATOR）；无标定数据=NOT_DOCUMENTED",
+   "relationship_to_existing_cases": "COMPLEMENTARY_CONTRAST",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "太阳能套件 10W+7AH 与 AA 互斥；51° FOV 覆盖为基于对角角的计算值（非实测，须标注）；镜头畸变无标定数据（NOT_DOCUMENTED，双向界）；Q6 HDR：NE301 不支持（OS04C10 无 HDR）、NE503 支持（IMX678+Hailo ISP）=跨产品对照；2688×1520 全分辨率上传支持",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "SPECIFICATION",
+    "WIKI",
+    "MODEL_CATALOG",
+    "CALCULATOR"
+   ],
+   "uncertainty_semantics": "NOT_DOCUMENTED（畸变标定）+NOT_SUPPORTED（NE301 HDR）",
+   "production_regression_reference": "",
+   "recommended_for_v1": "YES",
+   "reason": "EN 载案+HDR 对照对是干净的产品隔离试金石（拿 NE503 的 HDR 答 NE301=兄弟污染）；CALCULATOR+NOT_DOCUMENTED 双语义"
+  },
+  {
+   "candidate_id": "cg-r10",
+   "question": "NE301 88° 镜头能否实现 40m（120ft）人体检测？（建筑工地周界安防）",
+   "language": "en",
+   "product_or_subject": "NE301 88° → NE503（检测距离切换）",
+   "interaction_class": "RECOMMEND",
+   "provenance_type": "SUPPORT_CASE",
+   "provenance_reference": "Knowledge support/2026-07/NE301-SirixMonitoring-JS-人体检测距离咨询.md（官网留言，英文回复存档）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "量化否定+替代推荐（像素预算计算器语义）；检测距离边界家族",
+   "relationship_to_existing_cases": "NEW_COVERAGE",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "88°@40m 覆盖约 77m 宽、256×256 输入≈0.3m/像素、1.7m 人≈5-6 像素<20 像素启发阈值→NE301 实用极限约 10-12m；NE503 32mm 长焦端 40m≈30+ 像素+20 TOPS；「20+ 像素」为工程启发值须标注非官方规格；像素预算计算可复现",
+   "truth_stability": "stable",
+   "required_evidence_roles": [
+    "SPECIFICATION",
+    "CALCULATOR",
+    "MODEL_CATALOG",
+    "EXACT_PRODUCT"
+   ],
+   "uncertainty_semantics": "CONDITIONALLY_SUPPORTED（检测距离依赖镜头/分辨率/模型像素预算）",
+   "production_regression_reference": "",
+   "recommended_for_v1": "YES",
+   "reason": "量化否定+正确的兄弟产品升级推荐（由像素计算支撑而非话术）；与 #5 相反方向的正确产品隔离示范"
+  },
+  {
+   "candidate_id": "cg-r11",
+   "question": "客户欲避开 Nx Witness License 费用，在 NG4500 上实现 AI IPC 联动（Frigate / DeepStream / Scrypted / Nx 对比及推荐架构）",
+   "language": "en",
+   "product_or_subject": "NG4500（第三方 VMS/推理栈生态）",
+   "interaction_class": "COMPARE",
+   "provenance_type": "SUPPORT_CASE",
+   "provenance_reference": "Knowledge support/2026-06/NG4500-AI-IPC联动方案-Frigate-vs-DeepStream.md（技术方案记录；客户方案讨论）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "第三方软件生态对比（Frigate/DeepStream/Nx License 语义）；「只卖推理引擎+I/O 盒子」架构组合语义",
+   "relationship_to_existing_cases": "NEW_COVERAGE",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "NG4500 侧事实（Docker 容器、RTSP 接入、DO 干接点）为第一方；Frigate/DeepStream/Scrypted/Nx 的 License/特性为外部第三方事实，冻结时须做外部证据快照并绑定日期；推荐架构（RTSP→Frigate→MQTT→GPIO Bridge）为分析性方案非产品承诺",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "COMPARISON_TARGET_A",
+    "COMPARISON_TARGET_B",
+    "EXACT_PRODUCT",
+    "SPECIFICATION",
+    "SOLUTION"
+   ],
+   "uncertainty_semantics": "NOT_DOCUMENTED（第三方栈特性依赖外部证据快照，不得凭记忆虚构版本/License 条款）",
+   "production_regression_reference": "",
+   "recommended_for_v1": "YES",
+   "reason": "第三方生态对比是 0 覆盖语义族；测试「外部事实绑定+第一方/外部证据分层」行为"
+  },
+  {
+   "candidate_id": "cg-r12",
+   "question": "NE503 是否带 IR 补光灯？人员检测计数/视频异常检测/车牌识别 LPR 是否支持？",
+   "language": "en",
+   "product_or_subject": "NE503（能力清单盘点）",
+   "interaction_class": "RECOMMEND",
+   "provenance_type": "SUPPORT_CASE",
+   "provenance_reference": "Knowledge support/2026-06/NE503-Videam-Tommaso-LPR功能咨询.md（邮件咨询，英文回复存档）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "多能力逐项盘点（有据肯定/无预置应用的有界否定）；STORE 预置应用语义",
+   "relationship_to_existing_cases": "COMPLEMENTARY_CONTRAST",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "IR 补光=supported/white reserved（wiki overview L254，客户疑虑被证据纠正）；<0.01 LUX 夜视三处确认；people-counting/LPR=商店已发布应用（wiki+靠谱度评估）；异常检测=无预置应用，20 TOPS+containerd 可自部署（不得暗示有预置方案）",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "WIKI",
+    "MODEL_CATALOG",
+    "STORE",
+    "SPECIFICATION"
+   ],
+   "uncertainty_semantics": "NOT_DOCUMENTED（无预置异常检测应用≠不能做，自定义部署路径有界表述）",
+   "production_regression_reference": "",
+   "recommended_for_v1": "YES",
+   "reason": "多能力盘点形态干净（逐项有据/有界）；⚠️与 sq-108 T4（官方无预装 ALPR 应用记载）存在真值张力——wiki/商店快照核对后由 Planner 裁决 sq-108 T4 措辞，本 Gate 不静默修改 sq-108（见报告真值调和节）"
+  },
+  {
+   "candidate_id": "cg-r13",
+   "question": "自定义火灾烟雾检测模型（fire_smoke_yolov8n.hef）部署后 NE503 app 启动失败，日志报 No tensor with name hailo_yolov8n_384_640/yolov8_nms_postprocess",
+   "language": "en",
+   "product_or_subject": "NE503（自定义模型部署诊断）",
+   "interaction_class": "TROUBLESHOOT",
+   "provenance_type": "SUPPORT_CASE",
+   "provenance_reference": "Knowledge support/2026-09/NE503-ArshadKhan-自定义火灾烟雾模型tensor名不匹配.md（WhatsApp，support bundle 证据链，英文回复存档）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "自定义模型部署排障（hef tensor 命名/后处理配置）；sq-014「自定义部署 NOT_TESTED」的真实证据延伸",
+   "relationship_to_existing_cases": "COMPLEMENTARY_CONTRAST",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "根因=app 后处理配置指向内置模型 tensor 名，自定义 HEF 网络组名默认 model（parse-hef 对比实证）；编译器版本差与输入格式差被证据排除为非根因（反编造门范例）；修复=配置改用 model/yolov8_nms_postprocess；证明自定义火灾模型部署路径真实存在（仍在客户环境验证，官方支持状态未转变）",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "SDK",
+    "FIRMWARE",
+    "MODEL_CATALOG",
+    "SUPPORT_CASE"
+   ],
+   "uncertainty_semantics": "NONE（根因有据；sq-014 的 NOT_TESTED 语义由此案获得真实部署证据但不转正）",
+   "production_regression_reference": "",
+   "recommended_for_v1": "YES",
+   "reason": "sq-014（无火灾预训练模型/自定义路径 NOT_TESTED）的真实世界续篇：排障结论必须与内置模型命名证据一致，编造根因即 critical fail"
+  },
+  {
+   "candidate_id": "cg-r14",
+   "question": "多台 NE101 在网络上都显示为 espressif，Web UI 修改 Device Name 后网络 hostname 不变",
+   "language": "en",
+   "product_or_subject": "NE101（固件缺陷：device name≠hostname）",
+   "interaction_class": "TROUBLESHOOT",
+   "provenance_type": "SUPPORT_CASE",
+   "provenance_reference": "Knowledge support/2026-06/NE101-Steiner-Gabe-hostname无法修改.md（英文快速回复存档）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "缺陷确认型回答（承认缺陷+变通方案）行为；配置项语义误解澄清",
+   "relationship_to_existing_cases": "NEW_COVERAGE",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "固件事实：apply_str_value 仅写 NVS、未调 esp_netif_set_hostname，默认 hostname=espressif（源码定位）；变通=AP SSID 含 MAC 后 3 字节（NE101_A3B2C1）+DHCP 列表匹配；修复标记为提交工程规划（PLANNED，不得承诺版本时点）",
+   "truth_stability": "stable",
+   "required_evidence_roles": [
+    "FIRMWARE",
+    "SDK",
+    "SOLUTION"
+   ],
+   "uncertainty_semantics": "NOT_SUPPORTED（现固件不支持 name→hostname 联动）+PLANNED（修复已上报工程，时点不承诺）",
+   "production_regression_reference": "",
+   "recommended_for_v1": "YES",
+   "reason": "「承认缺陷+变通」是独特回答行为（不否认、不虚构已修复、不承诺时点）；PLANNED 不确定语义的真实载体"
+  },
+  {
+   "candidate_id": "cg-r15",
+   "question": "NE503 Python SDK 在 Ubuntu 24.04 安装：pip install hailo-ipc-sdk 报错，tarball 找不到文件",
+   "language": "ja",
+   "product_or_subject": "NE503 SDK（安装路径/分发渠道）",
+   "interaction_class": "HOW_TO",
+   "provenance_type": "SUPPORT_CASE",
+   "provenance_reference": "Knowledge support/2026-07/NE503-日本客户-SDK安装咨询.md（安装咨询+文档缺陷反馈）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "SDK 分发/安装主题（#31 相邻的 SDK 证据角色深化）；文档缺陷指认行为",
+   "relationship_to_existing_cases": "NEW_COVERAGE",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "源码安装可行（git clone+pip install -e，81 测试过，v0.3.0 实证）；PyPI 包名已注册但发布未完成（README 过早列出）；CI 仅构建 wheel 无 sdist（--wheel flag）；两路径均在 roadmap（PLANNED 不得说成立）",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "SDK",
+    "SPECIFICATION"
+   ],
+   "uncertainty_semantics": "NOT_DOCUMENTED（PyPI/sdist 路径尚不存在）+PLANNED（roadmap 项）",
+   "production_regression_reference": "",
+   "recommended_for_v1": "YES",
+   "reason": "SDK 安装/分发是 #31 证据角色（SDK）的落地行为面；「文档缺陷如实指认+可行路径引导」行为独特"
+  },
+  {
+   "candidate_id": "cg-r16",
+   "question": "1) Milesight AIoT Inference 平台是否强制用于数值识别？2) 相机能否不经 Milesight 云直接 MQTT 发布识别数值？3) WiFi 版 X1 连 UG65 网关 WiFi 共享蜂窝是否可行/推荐？",
+   "language": "en",
+   "product_or_subject": "NE301 vs Milesight X1（竞品对比）",
+   "interaction_class": "COMPARE",
+   "provenance_type": "SUPPORT_CASE",
+   "provenance_reference": "Knowledge support/2026-08/EBDS-NE301-X1竞品替代方案.md（客户三问，邮件存档；Milesight 官方页核查 2026-08-18）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "竞品对比家族（0 覆盖）；外部竞品事实的绑定与不虚构",
+   "relationship_to_existing_cases": "NEW_COVERAGE",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "竞品事实=X1 仅拍图、识别在平台侧（Milesight 官方博客原文）；X1 支持第三方平台集成但上传的是图片；UG65=LoRaWAN 网关且 WiFi 为 AP 模式；NE301 侧=端侧 OCR（STM32N6 NPU）+MQTT 直出 reading；外部竞品事实须绑核查日期快照，不得凭印象虚构竞品能力",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "COMPARISON_TARGET_A",
+    "COMPARISON_TARGET_B",
+    "EXACT_PRODUCT",
+    "SPECIFICATION"
+   ],
+   "uncertainty_semantics": "NOT_DOCUMENTED（竞品能力以外部核查快照为准）",
+   "production_regression_reference": "",
+   "recommended_for_v1": "YES",
+   "reason": "竞品对比=全新语义族；测试「外部竞品事实不虚构+对比公平性」行为"
+  },
+  {
+   "candidate_id": "cg-r17",
+   "question": "五问：1) CEREG 为何只轮询 10 秒？2) v1.8 注册成功后是否重试 PPP？3) EG912U 有无已知注册时序问题？4) 有无加长超时的新固件/配置？5) AT+QCFG=\\\"roamservice\\\",2,1 报 +CME ERROR: 3 是否正常？（前提：最终能注册成功，SIM/APN/LTE 正常）",
+   "language": "en",
+   "product_or_subject": "NE101 Cat-1（注册时序窗口/重试语义）",
+   "interaction_class": "TROUBLESHOOT",
+   "provenance_type": "SUPPORT_CASE",
+   "provenance_reference": "Knowledge support/2026-09/NE101-Lackagespecialisten-CEREG注册超时.md（+同日 -email.md，cat1.c 源码验证）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "固件时序窗口/重试语义诊断（与 sq-006 的注册被拒机制不同：时序 vs 授权）；版本绑定修复可用性",
+   "relationship_to_existing_cases": "USEFUL_VARIANT",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "10 秒窗口/cat1.c 轮询逻辑=源码级有据；EG912U 时序问题与加长超时固件的可用性=版本绑定事实（冻结时对 releases 快照）；AT 命令 CME ERROR 语义=模组文档口径；客户前提（最终注册成功）须纳入诊断而非套用「SIM 不匹配」模板",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "FIRMWARE",
+    "SPECIFICATION",
+    "SUPPORT_CASE"
+   ],
+   "uncertainty_semantics": "UNKNOWN/INSUFFICIENT（新固件可用性随版本变化，绑快照）",
+   "production_regression_reference": "",
+   "recommended_for_v1": "YES",
+   "reason": "五问逐问诊断形态；与 sq-006 构成同域反差对（denied vs timeout），防止诊断模板化"
+  },
+  {
+   "candidate_id": "cg-r18",
+   "question": "NE101 换新电池后设 1 小时 WiFi 定时拍照，一夜之间电池从 88% 掉到 1%",
+   "language": "en",
+   "product_or_subject": "NE101（config mode 滞留耗电）",
+   "interaction_class": "TROUBLESHOOT",
+   "provenance_type": "SUPPORT_CASE",
+   "provenance_reference": "Knowledge support/2026-06/NE101-James-电池一夜耗尽-config-mode未退出.md（WhatsApp+session log 证据，英文回复存档）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "缺陷机制型耗电诊断（config mode 客户端活跃→不休眠）；与电量计饱和（sq-029）机制对照",
+   "relationship_to_existing_cases": "COMPLEMENTARY_CONTRAST",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "根因=config mode 长时间不退出（web timeout 5min/AP timeout 60s 被活跃客户端不断重置；WiFi AP+sensor+encoder+web server 约 300-400mA 持续）；固件缺陷两点有据（sleep_has_wakeup_todo→1 秒 sleep timer；config mode 无强制超时）；anchor 调度与 Cat-1 probe 被证据排除为主因；现固件行为=NOT_SUPPORTED（无强制超时），修复=PLANNED",
+   "truth_stability": "stable",
+   "required_evidence_roles": [
+    "FIRMWARE",
+    "SOLUTION",
+    "SUPPORT_CASE"
+   ],
+   "uncertainty_semantics": "NOT_SUPPORTED（现固件无 config mode 强制超时）+PLANNED（缺陷修复待版本）",
+   "production_regression_reference": "",
+   "recommended_for_v1": "YES",
+   "reason": "耗电诊断第三机制（config 滞留 vs 电量计饱和 sq-029 vs hw/fw 错配 sq-080）构成机制对照组；缺陷披露行为与 r14 同族"
+  },
+  {
+   "candidate_id": "cg-r19",
+   "question": "NE301 PoE 版是否支持设置固定 IP（静态 IP）？",
+   "language": "en",
+   "product_or_subject": "NE301 PoE（网络配置能力）",
+   "interaction_class": "FACTUAL",
+   "provenance_type": "SUPPORT_CASE",
+   "provenance_reference": "Knowledge support/2026-08/Murata-Noah-PoE固定IP支持咨询.md（WhatsApp；固件源码级证据）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "正向单点能力事实（firmware 级证据）；网络配置能力族",
+   "relationship_to_existing_cases": "NEW_COVERAGE",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "支持：W5500+lwIP 原生 DHCP/静态双模式（默认 DHCP），Web UI 与 REST API（GET/POST /api/v1/system/network/poe/config：ip_mode/ip_address/netmask/gateway/dns…）可配，NVS 持久化断电保留（源码行级证据存档）",
+   "truth_stability": "stable",
+   "required_evidence_roles": [
+    "FIRMWARE",
+    "SDK",
+    "SPECIFICATION"
+   ],
+   "uncertainty_semantics": "NONE",
+   "production_regression_reference": "",
+   "recommended_for_v1": "YES",
+   "reason": "干净的正向能力事实案（与大量否定型边界形成平衡）；firmware 级真值可复现，防「把支持说成不支持/反向虚构」双向错误"
+  },
+  {
+   "candidate_id": "cg-r20",
+   "question": "NeoMind 能否从第三方 IP 摄像头的 RTSP 流中抓帧做 OCR 读数并输出 MQTT？（不想购买 CamThink 硬件）",
+   "language": "vi",
+   "product_or_subject": "NeoMind（服务器软件平台）",
+   "interaction_class": "FACTUAL",
+   "provenance_type": "SUPPORT_CASE",
+   "provenance_reference": "Knowledge support/2026-06/HomeFlow-Hoang-NeoMind-OCR-三方RTSP方案咨询.md（Control4 集成商咨询）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "NeoMind 服务器平台主题（语料主题 diversity：仅 sq-078 提及）；负向能力边界（NeoMind OCR 绑定 NE101/NE301 设备）",
+   "relationship_to_existing_cases": "NEW_COVERAGE",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "NeoMind 当前 OCR 方案绑定 NE101/NE301 设备，不支持从第三方 RTSP 流主动抓帧（NOT_SUPPORTED，双向界：不说「永远不可能」，开源+ONVIF 扩展框架可自行开发）；正确回答=如实边界+自建扩展方向，不强行推硬件",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "SDK",
+    "SPECIFICATION",
+    "SOLUTION"
+   ],
+   "uncertainty_semantics": "NOT_SUPPORTED（第三方 RTSP 抓帧不在现产品能力内）",
+   "production_regression_reference": "",
+   "recommended_for_v1": "YES",
+   "reason": "NeoMind 软件平台主题首案；「诚实边界+开源自建方向」行为与强行推销/含糊其辞形成区分"
+  },
+  {
+   "candidate_id": "cg-r21",
+   "question": "车内装 NE301 面向驾驶员，人脸检测触发继电器（未注册人脸断开继电器防盗），经 Type-C 连 VL863 车载终端，Type-C 传图+供电是否可行？MQTT 如何配置？",
+   "language": "en",
+   "product_or_subject": "NE301 WiFi（隐私敏感能力 + 外设集成）",
+   "interaction_class": "RECOMMEND",
+   "provenance_type": "SUPPORT_CASE",
+   "provenance_reference": "Knowledge support/2026-07/NE301-Paul-菲律宾-人脸检测Type-C继电器方案.md（邮件/会话记录）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "隐私敏感能力边界（人脸识别≠人脸检测）+跨设备方案组合（Type-C CDC/继电器/车载终端）",
+   "relationship_to_existing_cases": "NEW_COVERAGE",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "NE301 默认 person 检测模型不区分个体、无本地人脸注册/比对（NOT_SUPPORTED）；可行架构=检测事件 MQTT 上报→平台侧人脸比对→继电器控制；Type-C USB CDC 需固件调整路由检测输出；隐私合规提示属正确行为",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "MODEL_CATALOG",
+    "FIRMWARE",
+    "SDK",
+    "SOLUTION"
+   ],
+   "uncertainty_semantics": "NOT_SUPPORTED（本地人脸识别/注册能力不存在；检测≠识别）",
+   "production_regression_reference": "",
+   "recommended_for_v1": "YES",
+   "reason": "隐私敏感能力边界（检测/识别之辨）是产品范围安全的新语义面；平台侧组合架构测试多源证据组织"
+  },
+  {
+   "candidate_id": "cg-r22",
+   "question": "ne301-model-converter 本地 Docker Compose 量化报 float32/期望 uint8 错误，且重启后 API 容器 ImportError: cannot import name 'Sentinel' from 'typing_extensions' 无限崩溃循环",
+   "language": "en",
+   "product_or_subject": "ne301-model-converter（开源工具链运维）",
+   "interaction_class": "TROUBLESHOOT",
+   "provenance_type": "SUPPORT_CASE",
+   "provenance_reference": "Knowledge support/2026-09/NE301-model-converter-Loris-量化失败与容器启动循环.md（官方仓 6b34514 源码验证 2026-09-02）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "开源工具链/模型转换运维主题；CONTRADICTORY_EVIDENCE 不确定语义（文档与 Dockerfile 矛盾）",
+   "relationship_to_existing_cases": "NEW_COVERAGE",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "Sentinel 崩溃根因=Dockerfile 固定 python:3.10-slim 而文档声明需 3.11/3.12（文档与构建配置矛盾=CONTRADICTORY_EVIDENCE 实例）+requirements 未显式声明 typing-extensions；量化失败=校准输入 dtype 校验（docker_adapter.py:861 要求 uint8）；官方仓无 release/tag（版本绑定）；诊断为思路建议非官方修复（诚实边界）",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "SDK",
+    "FIRMWARE",
+    "SPECIFICATION"
+   ],
+   "uncertainty_semantics": "CONTRADICTORY_EVIDENCE（文档 3.11/3.12 vs Dockerfile 3.10）+NOT_DOCUMENTED（无官方修复 tag）",
+   "production_regression_reference": "",
+   "recommended_for_v1": "YES",
+   "reason": "不确定性七分类中 CONTRADICTORY_EVIDENCE 此前无真实载体；开源工具运维是新主题面"
+  },
+  {
+   "candidate_id": "cg-r23",
+   "question": "（Darren 回复 7/14 方案邮件）已购 NE101 正在测试 Morse Micro HaLowLink 2 网关：NE101 能看到 HaLow SSID 但连接持续失败；同时确认自身定位：个人用户、要 turnkey 方案",
+   "language": "en",
+   "product_or_subject": "NE101 + HaLowLink 2（HaLow 关联排查，跟进上下文）",
+   "interaction_class": "FOLLOW_UP",
+   "provenance_type": "SUPPORT_CASE",
+   "provenance_reference": "Knowledge support/2026-08/NE101-Lightbox-Darren-HaLow连接排查.md（显式引用 2026-07-13/14 评估案）",
+   "real_or_synthetic": "REAL",
+   "coverage_gap": "FOLLOW_UP 家族（0 覆盖）：须使用前序方案上下文的追问；Turnkey 用户画像适配",
+   "relationship_to_existing_cases": "NEW_COVERAGE",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "wiki 优先：NE101+HaLowLink 2=已部署验证配置（WiFi HaLow Solution 页）；安全模式 WPA3-SAE 匹配（morse.c:627）；Region 须选 AU（AU-2020）+网关 915MHz 段；固件 v1.9(hw-v2.0) 新增 AU region 选项（版本绑定）；最可能失败点=旧固件/Region 未设/频段变体（推断须标注，需客户固件版本验证）",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "WIKI",
+    "FIRMWARE",
+    "SPECIFICATION",
+    "SUPPORT_CASE"
+   ],
+   "uncertainty_semantics": "NOT_TESTED（最可能失败点为推断，未经客户环境验证，须显式标注）",
+   "production_regression_reference": "",
+   "recommended_for_v1": "YES",
+   "reason": "首个真实 FOLLOW_UP：正确答案必须消费前序方案上下文（7/14 双配置）+当前故障，不能当全新问题答；turnkey 用户画像影响建议深度"
+  },
+  {
+   "candidate_id": "cg-s01",
+   "question": "What can you do?",
+   "language": "en",
+   "product_or_subject": "助手能力/导向（assistant capability/orientation）",
+   "interaction_class": "ORIENT",
+   "provenance_type": "ADAPTED_FROM_PRODUCTION",
+   "provenance_reference": "生产回归 issue（github.com/harryhua-ai/ask-ai） #27（真实生产案例为 ZH「你会干什么」；EN 同族问句在 issue #27 正文被枚举但无留痕会话）",
+   "real_or_synthetic": "SYNTHETIC",
+   "coverage_gap": "ORIENT×EN 路由对等（语言路由正确性：EN 能力导向问句不得路由 off_topic）",
+   "relationship_to_existing_cases": "USEFUL_VARIANT",
+   "ground_truth_status": "YES",
+   "ground_truth_summary": "与 cg-r04 同契约语义（欢迎/导向/邀请，如实能力范围，EN 呈现）；真值=冻结时助手能力范围口径的 EN 表述",
+   "truth_stability": "snapshot_bound",
+   "required_evidence_roles": [
+    "WIKI",
+    "EXACT_PRODUCT"
+   ],
+   "uncertainty_semantics": "NONE",
+   "production_regression_reference": "#27",
+   "recommended_for_v1": "YES",
+   "reason": "synthetic=true（adapted）：真实 EN 实例未在捕获证据中留痕，但 ORIENT 的语言路由对等是 issue #27 明示语义族；获取顺序上真实证据已穷尽（生产留痕仅 ZH 实例）",
+   "reason_real_case_unavailable": "生产 widget 留痕仅 ZH 实例；EN 实例仅以枚举形式存在于 issue #27 正文，无完整会话证据",
+   "coverage_gap_being_filled": "ORIENT×EN 路由对等"
+  }
+ ]
+}
