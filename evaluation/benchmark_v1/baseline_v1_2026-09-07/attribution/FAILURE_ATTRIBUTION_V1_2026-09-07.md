@@ -1,5 +1,9 @@
 # Failure Attribution v1 — ASK-AI Answer Intelligence Benchmark v1
 
+> **REV2 AMENDMENT 2026-09-07**: K-distribution and semantics on this report are superseded by
+> `FAILURE_ATTRIBUTION_AMENDMENT_2026-09-07.md` (PII K1→K6/K7; C1 K3→K9[K3,K4]; C6 K7→K9 per source-pattern evidence;
+> denominator semantics 63 vs 73; capability-gap normalization). Cluster membership unchanged. rev1 kept for lineage.
+
 - **Baseline**: `PB-V1-20260907-CDBCAD3` (ACCEPT_WITH_QUALIFICATIONS; review commit `e96a63d9`)
 - **Production code inspected at**: `cdbcad38fc3512561e12c71ff6eda067d06257b5` (= local main HEAD, tag v1.1.2) — no production contact, no reruns, no mutations
 - **Unit of analysis**: 73 inventory entries → 10 attribution groups → 7 clusters → 8 systemic capability gaps

@@ -148,12 +148,13 @@
    "actual_behavior": "identities from internal support-case documents surfaced in customer-facing answers (1 of 3 runs each)",
    "relevant_evidence": "citation.py:119-149: filesystem internal case chunks 虽参与检索与生成 → 背景资料 section (unlabeled provenance, hidden from sources whitelist rag.py:1133); routes.py:128 mask_pii applies to the USER message only, never to retrieved context; the leaked names/addresses are absent from the frozen questions → entered via retrieved case docs",
    "pipeline_stage": "ingestion (PII present in indexed case docs) → retrieval → context composition → generation surfacing",
-   "primary_attribution": "K1",
+   "primary_attribution": "K6",
    "secondary_attribution": "K7",
    "confidence": "HIGH for provenance path; MEDIUM/UNKNOWN for why only r3 surfaced (generation variance)",
    "supporting_trace_code_evidence": "citation.py PUBLIC_SOURCE_TYPES + background section; rag.py:1106-1151 _extract_sources; routes.py:128",
    "regression_family": [],
-   "unresolved_evidence": "exact ingested doc fields retaining PII requires read-only production corpus access (not exercised in this Gate); severity policy deliberately NOT decided"
+   "unresolved_evidence": "exact ingested doc fields retaining PII requires read-only production corpus access (not exercised in this Gate); severity policy deliberately NOT decided",
+   "amendment_note": "REV2: re-adjudicated from K1. Frozen K1 semantics = information exists upstream but NOT ingested/available; here the case documents WERE ingested and reached generation — ingestion succeeded, so the failure is not K1. The identity-bearing content is a property of the composed evidence set (background channel composition/trust boundary) → PRIMARY K6; the act of surfacing identities is generation strategy → SECONDARY K7. Direction per amendment instruction; no contrary evidence found."
   },
   {
    "failure_id": "F-ATTR-07",
@@ -200,8 +201,8 @@
    "actual_behavior": "split verdicts (19 cases show P/F patterns across n=3)",
    "relevant_evidence": "judged interaction runs per case (baseline_judged_results.jsonl); retained answers differ in strategy (refuse vs relay-background vs answer) with similar/zero sources; generation temperature/config not exposed by /health (UNKNOWN)",
    "pipeline_stage": "generation response-strategy selection (post-composition)",
-   "primary_attribution": "K7",
-   "secondary_attribution": "K9",
+   "primary_attribution": "K9",
+   "secondary_attribution": null,
    "confidence": "MEDIUM (instability established; exact driver — sampling params — UNKNOWN)",
    "supporting_trace_code_evidence": "judged split patterns; e.g. sq-069 r2 strong vs r1/r3 honest-empty; cg-r08 r2 strong vs r1/r3 refuse",
    "regression_family": [
@@ -209,7 +210,13 @@
     "#23",
     "#26 adjacent"
    ],
-   "unresolved_evidence": "server-side generation params + per-run trace stages (not retained client-side)"
+   "unresolved_evidence": "server-side generation params + per-run trace stages (not retained client-side)",
+   "candidates": {
+    "src_same=False cases (12)": "[K3,K4] — public-source counts differ between PASS and FAIL runs; retrieval-stage variance evidenced, split unresolved",
+    "src_same=True cases (7)": "[K6,K7] — identical public-source state; background set unobservable, so generation divergence cannot be isolated",
+    "src-inverted FAIL runs (sq-032 r1, sq-080 r1: FAIL with evidence while sibling PASSed without)": "[K4,K6,K7]"
+   },
+   "amendment_note": "REV2: K7 may only be assigned when generation-stage divergence is evidenced (same routing + materially equivalent context + divergence at generation). Retained per-run source counts prove upstream retrieval variance in 12 of 19 split cases (FAIL runs mostly src=0 while PASS siblings retrieved sources); in the remaining 7 the public-source state is identical but the background set is not retained, so context equivalence cannot be proven. Primary is therefore K9 with candidates everywhere; K7 survives only as content-level overreach (C7, sq-093 r3) and as secondary in C4."
   },
   {
    "failure_id": "F-ATTR-09",
@@ -225,7 +232,7 @@
    "actual_behavior": "internal case chunks dominate; public spec/price/battery docs not selected despite existing (proven by spec-style sibling cases cg-r05/cg-r06/cg-r10 retrieving them)",
    "relevant_evidence": "118 zero-source runs split: 15 EXPECTED (seeds/off_topic/injection), 9 misrouted short-circuits (C3), 22 short honest refusals, 72 substantive-from-background; sq-013 r1 src=1 irrelevant (AI ToolStack quantization doc for a login question → K3 miss of NE301 wiki credential doc)",
    "pipeline_stage": "retrieval selection (K3/K4 unresolved split) → composition (citable section empty, background-only)",
-   "primary_attribution": "K3",
+   "primary_attribution": "K9",
    "secondary_attribution": "K6",
    "confidence": "HIGH mechanism; K3-vs-K4 split UNRESOLVED",
    "supporting_trace_code_evidence": "zero_source_analysis_v1.json; sibling PASS cases with spec-style queries on same topics",
@@ -233,7 +240,9 @@
     "#19",
     "#5"
    ],
-   "unresolved_evidence": "K3 vs K4 stage split; rewrite quality for narrative queries (rewrite stage trace not retained)"
+   "unresolved_evidence": "K3 vs K4 stage split; rewrite quality for narrative queries (rewrite stage trace not retained)",
+   "candidates": "[K3,K4]",
+   "amendment_note": "REV2: rev1 assigned K3 primary while declaring the stage split unresolved — inconsistent. No per-run fused/rerank traces are retained, so retrieval failure is not evidenced at stage granularity for any C1 entry (sq-013 r1 evidences an irrelevant SOURCE in the visible set, but the relevant doc could have been fused-then-displaced). Primary becomes K9 with candidates [K3,K4]; K6 remains the evidenced composition consequence (secondary)."
   },
   {
    "failure_id": "F-ATTR-10",
@@ -334,5 +343,11 @@
   "OF-cg-r22-2": "C6",
   "OF-cg-r22-3": "C6"
  },
- "coverage": "73/73 inventory entries assigned (double-count-free: one primary cluster per entry)"
+ "coverage": "73/73 inventory entries assigned (double-count-free: one primary cluster per entry)",
+ "revision": "2 (Amendment 2026-09-07; base commit 74ffb53e; taxonomy/aggregation semantics only, no re-investigation)",
+ "revision_lineage": [
+  "rev1 = 74ffb53e (original attribution)",
+  "rev2 = amendment: PII K1→K6/K7; C1 K3→K9[candidates K3,K4]; C6 K7→K9[candidates per retained source-pattern evidence]; denominator semantics defined; capability-gap normalization"
+ ],
+ "entry_to_cluster_revision": "unchanged in REV2 (cluster membership preserved; K semantics corrected within clusters)"
 }

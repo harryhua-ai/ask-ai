@@ -1,27 +1,16 @@
 {
  "artifact": "systemic_capability_gaps_v1",
  "baseline_run_id": "PB-V1-20260907-CDBCAD3",
- "dominance_assessment": "No single dominant gap: TWO materially independent systemic axes dominate — (A) evidence-layer currency/authority semantics (G1+G3+G4, explains stale/current criticals and zero-source honest/relit choices) and (B) interaction-layer task-type routing (G2, explains #26/#27/#31 residuals) — plus one trust axis (G5) and one reliability axis (G6). Axes A and B fail in different pipeline stages with disjoint case populations (A: troubleshooting/commercial narratives; B: no-model/scenario/greeting inputs).",
+ "dominance_assessment": "REV2: unchanged conclusion — two materially independent axes (Evidence Semantics/Composition [SC-2/3/4/5] and Interaction Understanding [SC-1]) plus Response Decision Stability [SC-6]; stage-resolved attribution of SC-6 is itself an instrumentation capability gap.",
  "gaps": [
   {
-   "gap_id": "G1",
-   "statement": "The answering stage lacks reliable current-vs-historical evidence semantics: case documents, historical quotes and authoritative current pages compete in one context with no temporal/authority ordering, and no marking survives into generation.",
-   "evidence_clusters": [
-    "C2"
-   ],
-   "affected_baseline_dims": [
-    "factuality (stale-baseline criticals)",
-    "#28"
-   ],
-   "note": "capability description, not a solution"
-  },
-  {
-   "gap_id": "G2",
-   "statement": "Task-type routing is decided by surface-form gates (verbatim social patterns, substring deixis, four-label intent) that cannot distinguish 'product unclear' from 'scenario/recommendation task' and cannot escalate domain-adjacent questions to retrieval-with-clarification.",
+   "gap_id": "SC-1",
+   "capability": "Interaction Understanding",
+   "statement": "The system cannot reliably classify task type from surface form: anchored pattern lists miss common paraphrases, deixis detection substring-matches, and the four-label intent taxonomy has no clarify/escalation path for domain-adjacent or scenario-complete inputs.",
    "evidence_clusters": [
     "C3"
    ],
-   "affected_baseline_dims": [
+   "baseline_dims": [
     "interaction_correctness",
     "#26",
     "#27",
@@ -29,72 +18,71 @@
    ]
   },
   {
-   "gap_id": "G3",
-   "statement": "Citation integrity validates numeric presence, not claim-source correspondence or currency: a stale claim can acquire a legitimate-looking citation to a current page whenever its numbers appear anywhere in that page.",
-   "evidence_clusters": [
-    "C2"
-   ],
-   "affected_baseline_dims": [
-    "citation_quality",
-    "#28"
-   ]
-  },
-  {
-   "gap_id": "G4",
-   "statement": "Retrieval selection has no authoritative-source preference for narrative/troubleshooting phrasing: symptom-similar internal case documents outrank (or displace) existing authoritative spec pages, and the public-vs-background split is invisible to selection quality.",
+   "gap_id": "SC-2",
+   "capability": "Evidence Selection / Authority",
+   "statement": "Selection exhibits no authoritative-source preference for narrative/troubleshooting phrasing, and the pipeline retains no stage-level visibility (fused vs reranked) that would allow locating selection losses — an instrumentation capability gap in itself.",
    "evidence_clusters": [
     "C1"
    ],
-   "affected_baseline_dims": [
+   "baseline_dims": [
     "evidence_coverage",
     "#19",
     "#5"
    ]
   },
   {
-   "gap_id": "G5",
-   "statement": "The background channel (internal case documents) participates in generation with identity-bearing content and no provenance shown to the user; PII redaction exists only on the user's own message, and suppression of case identities is prompt-level rather than deterministic.",
+   "gap_id": "SC-3",
+   "capability": "Evidence Semantics (currency)",
+   "statement": "The evidence set carries no current-vs-historical semantics: historical quotes and current authoritative pages are composed without temporal ordering or marking, and generation receives no machine-enforced currency signal.",
    "evidence_clusters": [
-    "C4"
+    "C2"
    ],
-   "affected_baseline_dims": [
-    "scope_safety",
-    "privacy qualifications"
+   "baseline_dims": [
+    "factuality",
+    "#28"
    ]
   },
   {
-   "gap_id": "G6",
-   "statement": "Response strategy (answer vs bound refusal vs background relay) is unstable across identical-intent runs; reliability of any single-run outcome is not guaranteed by the pipeline.",
+   "gap_id": "SC-4",
+   "capability": "Evidence Composition / Trust Boundary",
+   "statement": "The background channel composes identity-bearing internal case documents into generation context with presentation-only visibility control; provenance of the actually-used evidence is invisible to the user, and identity suppression is prompt-level rather than deterministic.",
+   "evidence_clusters": [
+    "C4",
+    "C1"
+   ],
+   "baseline_dims": [
+    "scope_safety",
+    "citation_quality"
+   ]
+  },
+  {
+   "gap_id": "SC-5",
+   "capability": "Claim–Evidence Integrity",
+   "statement": "Citation validation verifies numeric presence, not claim-source correspondence or currency, allowing stale claims to acquire legitimate-looking citations to current pages.",
+   "evidence_clusters": [
+    "C2"
+   ],
+   "baseline_dims": [
+    "citation_quality",
+    "#28"
+   ]
+  },
+  {
+   "gap_id": "SC-6",
+   "capability": "Response Decision Stability",
+   "statement": "Whether a run answers, bound-refuses, or relays background is not stable across equivalent-intent runs; retained evidence shows upstream retrieval variance participates (12/19 split cases with differing source states), so stability requires stage-attributable instrumentation before generation-side decisions can be relied on.",
    "evidence_clusters": [
     "C6"
    ],
-   "affected_baseline_dims": [
-    "interaction stability",
-    "cross-run variance"
-   ]
-  },
-  {
-   "gap_id": "G7",
-   "statement": "The corpus lacks third-party/competitive knowledge entirely; ecosystem questions admit only bounded refusal.",
-   "evidence_clusters": [
-    "C5"
-   ],
-   "affected_baseline_dims": [
-    "completeness",
-    "#5 residual"
-   ]
-  },
-  {
-   "gap_id": "G8",
-   "statement": "Zero-source outcomes are structurally invisible to users: the sources event hides the internal evidence actually used, so answers can cite nothing while asserting case-derived specifics (or refuse) without the user learning why.",
-   "evidence_clusters": [
-    "C1",
-    "C4"
-   ],
-   "affected_baseline_dims": [
-    "citation_quality",
-    "transparency"
+   "baseline_dims": [
+    "interaction stability"
    ]
   }
- ]
+ ],
+ "revision": "2 (Amendment 2026-09-07; base commit 74ffb53e; taxonomy/aggregation semantics only, no re-investigation)",
+ "revision_lineage": [
+  "rev1 = 74ffb53e (original attribution)",
+  "rev2 = amendment: PII K1→K6/K7; C1 K3→K9[candidates K3,K4]; C6 K7→K9[candidates per retained source-pattern evidence]; denominator semantics defined; capability-gap normalization"
+ ],
+ "corpus_coverage_note": "Competitor/external absence (cg-r16, K0) is retained as a CORPUS COVERAGE observation, not an Answer Engine capability gap: the engine honestly refused on absent sources; no evidence shows a structural Answer Engine deficiency. Removed from the capability list per amendment rule (rev1 G7)."
 }

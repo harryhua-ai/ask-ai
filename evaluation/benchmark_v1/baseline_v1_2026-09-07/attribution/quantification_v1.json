@@ -12,16 +12,16 @@
  },
  "primary_K_distribution_by_entries": {
   "K0": 3,
-  "K1": 3,
-  "K3": 21,
+  "K3": 0,
   "K5": 9,
-  "K6": 8,
-  "K7": 28,
-  "K9": 0,
+  "K6": 11,
+  "K7": 1,
+  "K9": 49,
+  "K1": 0,
   "K2": 0,
   "K4": 0,
   "K8": 0,
-  "note": "K4/K8 appear only as SECONDARY (C1 secondary K6; C2 secondary K8; C1 primary carries K3/K4-unresolved annotation). Secondary counts: K6 secondary in C1/C7=22 entries, K8 secondary in C2=8, K7 secondary in C4=3, K9 secondary in C6=28."
+  "note": "K6 = C2(8) + C4(3, amendment PII ruling). K9 = C1(21, candidates [K3,K4]) + C6(28, candidates per source-pattern evidence). K7 = C7 only (1). Secondary counts: K3/K4 candidates inside K9; K6 secondary in C1/C7; K8 secondary in C2; K7 secondary in C4."
  },
  "cases_by_primary_K": {
   "K3(C1)": [
@@ -91,23 +91,21 @@
   "SUBSTANTIVE_FROM_BACKGROUND": 68
  },
  "confidence_counts": {
-  "HIGH": [
-   "F-ATTR-01",
-   "F-ATTR-03",
-   "F-ATTR-04",
-   "F-ATTR-05",
-   "F-ATTR-06",
-   "F-ATTR-07(confidence MEDIUM per-group)",
-   "F-ATTR-10"
-  ],
-  "MEDIUM": [
-   "F-ATTR-08",
-   "F-ATTR-09 stage-split",
-   "F-ATTR-02 behavioral"
-  ],
-  "UNKNOWN": [
-   "per-run surfacing trigger (C4)",
-   "sampling params (C6)"
-  ]
+  "HIGH": 21,
+  "MEDIUM": 3,
+  "K9_candidates_entries": 49,
+  "note": "HIGH = C3(9)+C2(8)+C4(3)+C7(1); MEDIUM = C5(3); the 49 K9 entries are confident UNRESOLVED assignments with explicit candidates — resolving them requires server-side fused/rerank lists and generation configs (not retained)."
+ },
+ "revision": "2 (Amendment 2026-09-07; base commit 74ffb53e; taxonomy/aggregation semantics only, no re-investigation)",
+ "revision_lineage": [
+  "rev1 = 74ffb53e (original attribution)",
+  "rev2 = amendment: PII K1→K6/K7; C1 K3→K9[candidates K3,K4]; C6 K7→K9[candidates per retained source-pattern evidence]; denominator semantics defined; capability-gap normalization"
+ ],
+ "denominator_semantics": {
+  "baseline_interaction_FAIL_runs": 63,
+  "critical_flagged_runs": 10,
+  "overlap": 0,
+  "material_observations": 73,
+  "definition": "one material observation = one RUN carrying EITHER interaction FAIL OR a CRITICAL_FAIL flag (criticals are independent of interaction verdict; all 10 flagged runs are interaction-PASS). Multiple observations per run: none (one primary cluster per entry). PASS-interaction runs CAN be material observations via critical flags — evidence/citation/privacy failures need not surface as interaction FAIL. The two denominators (63 baseline reporting vs 73 attribution) must not be used interchangeably."
  }
 }

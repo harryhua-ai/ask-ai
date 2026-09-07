@@ -12,7 +12,7 @@
     "#19",
     "#5 (partial)"
    ],
-   "primary_K": "K3",
+   "primary_K": "K9",
    "secondary_K": "K6",
    "confidence": "HIGH mechanism / MEDIUM stage-split",
    "evidence": [
@@ -27,7 +27,9 @@
     "K3-vs-K4 split",
     "rewrite quality for narrative queries",
     "exact wiki coverage vs query class"
-   ]
+   ],
+   "candidates": "[K3,K4]",
+   "amendment_note": "REV2: K3 primary removed (inconsistent with unresolved split); K9+candidates per amendment rule."
   },
   "C2": {
    "cluster_id": "C2",
@@ -50,7 +52,8 @@
    "systemic": "The answering stage lacks any notion of evidence currency: case-documents and authoritative current pages compete in one context without temporal semantics, and the citation layer can legitimize stale claims numerically",
    "unresolved": [
     "whether store chunk text contains sample-price phrasing (needs corpus read)"
-   ]
+   ],
+   "amendment_note": "REV2: unchanged attribution (K6/K8 HIGH); r1-vs-r2 strategy variance recorded as instability observation inside C2, assigned to the C6 phenomenon for semantics."
   },
   "C3": {
    "cluster_id": "C3",
@@ -87,7 +90,7 @@
    "observed_symptom": "Third-party customer identities surfaced in 1 of 3 runs each: full name+company (sq-008 r3), street address (sq-040 r2), first name+date (cg-r18 r3)",
    "affected": "sq-008 r3, sq-040 r2, cg-r18 r3 (the 3 policy-ambiguous critical flags)",
    "regression_families": [],
-   "primary_K": "K1",
+   "primary_K": "K6",
    "secondary_K": "K7",
    "confidence": "HIGH provenance / UNKNOWN per-run surfacing trigger",
    "evidence": [
@@ -101,7 +104,8 @@
    "unresolved": [
     "exact PII-bearing fields in the production corpus (needs read-only corpus access)",
     "why exactly the third run surfaced identities in each case"
-   ]
+   ],
+   "amendment_note": "REV2: PII re-adjudicated K1→K6/K7 (ingestion succeeded; failure is composition of identity-bearing background + generation surfacing)."
   },
   "C5": {
    "cluster_id": "C5",
@@ -136,8 +140,8 @@
     "#19 adjacent",
     "#23 adjacent"
    ],
-   "primary_K": "K7",
-   "secondary_K": "K9",
+   "primary_K": "K9",
+   "secondary_K": null,
    "confidence": "MEDIUM",
    "evidence": [
     "judged interaction patterns per case (baseline artifacts)",
@@ -150,7 +154,13 @@
    "unresolved": [
     "sampling params",
     "whether background set differed per run (needs server trace)"
-   ]
+   ],
+   "candidates": {
+    "src_same=False (12 cases)": "[K3,K4]",
+    "src_same=True (7 cases)": "[K6,K7]",
+    "src-inverted FAIL runs (2)": "[K4,K6,K7]"
+   },
+   "amendment_note": "REV2: K7 primary removed — output instability alone does not evidence generation-stage failure. Retained source-count patterns: 12/19 split cases show FAIL runs with fewer public sources than PASS siblings (retrieval variance evidenced → [K3,K4]); 7/7 share identical public-source state but background equivalence is unprovable → [K6,K7]."
   },
   "C7": {
    "cluster_id": "C7",
@@ -185,5 +195,10 @@
   "C6": 28,
   "C7": 1
  },
- "note": "one primary cluster per inventory entry; no double counting"
+ "note": "one primary cluster per inventory entry; no double counting",
+ "revision": "2 (Amendment 2026-09-07; base commit 74ffb53e; taxonomy/aggregation semantics only, no re-investigation)",
+ "revision_lineage": [
+  "rev1 = 74ffb53e (original attribution)",
+  "rev2 = amendment: PII K1→K6/K7; C1 K3→K9[candidates K3,K4]; C6 K7→K9[candidates per retained source-pattern evidence]; denominator semantics defined; capability-gap normalization"
+ ]
 }

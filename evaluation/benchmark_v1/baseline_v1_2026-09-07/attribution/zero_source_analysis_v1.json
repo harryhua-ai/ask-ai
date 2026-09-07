@@ -95,5 +95,11 @@
  "unresolved": [
   "server-side fused/rerank lists per zero-source run (K3 vs K4 split)",
   "production embedding/rerank config"
- ]
+ ],
+ "revision": "2 (Amendment 2026-09-07; base commit 74ffb53e; taxonomy/aggregation semantics only, no re-investigation)",
+ "revision_lineage": [
+  "rev1 = 74ffb53e (original attribution)",
+  "rev2 = amendment: PII K1→K6/K7; C1 K3→K9[candidates K3,K4]; C6 K7→K9[candidates per retained source-pattern evidence]; denominator semantics defined; capability-gap normalization"
+ ],
+ "amendment_note": "REV2: category split and counts unchanged; stage attribution inside HONEST/SUBSTANTIVE classes now carried by K9[candidates K3,K4] instead of K3 primary (see failure_clusters_v1.json C1)."
 }
