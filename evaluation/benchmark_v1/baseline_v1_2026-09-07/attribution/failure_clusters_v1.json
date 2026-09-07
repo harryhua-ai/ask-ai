@@ -1,0 +1,189 @@
+{
+ "artifact": "failure_clusters_v1",
+ "baseline_run_id": "PB-V1-20260907-CDBCAD3",
+ "n_clusters": 7,
+ "clusters": {
+  "C1": {
+   "cluster_id": "C1",
+   "name": "Zero-source background dependence (public-evidence retrieval miss + provenance-free background channel)",
+   "observed_symptom": "94 of 118 zero-source runs are case-narrative queries that retrieve zero PUBLIC sources; internal case chunks (背景资料) dominate context; 22 runs honestly refuse, 72 answer substantively from background with weak/no provenance",
+   "affected": "31 inventory FAIL entries (all-FAIL honest/insufficient cases: sq-013, sq-014, sq-017, sq-031, sq-070, sq-108, sq-029, sq-011, sq-035, …) + 8 UNLABELED_SUBSTANTIVE entries",
+   "regression_families": [
+    "#19",
+    "#5 (partial)"
+   ],
+   "primary_K": "K3",
+   "secondary_K": "K6",
+   "confidence": "HIGH mechanism / MEDIUM stage-split",
+   "evidence": [
+    "zero-source split 118 = 15 expected + 9 misrouted + 22 honest-short + 72 background-substantive",
+    "sq-013 r1 retrieved AI-ToolStack quantization doc for a NE301 login question (K3 miss)",
+    "spec-style sibling queries on the SAME topics retrieve the authoritative docs (cg-r05 store prices src=4, cg-r06 battery matrix src=2, cg-r10 overview src=1) → the evidence exists and is indexed",
+    "citable section renders '(无可引用资料)' while background chunks still reach generation (citation.py:164-172)"
+   ],
+   "divergence_point": "retrieval selection (K3) vs rerank/prune displacement (K4) — UNRESOLVED without server traces; composition consequence certain (K6)",
+   "systemic": "No current/authoritative-source preference anywhere in the select→compose path; the background channel was designed for context but became the primary evidence source for an entire query class, with per-run strategy left to the generator",
+   "unresolved": [
+    "K3-vs-K4 split",
+    "rewrite quality for narrative queries",
+    "exact wiki coverage vs query class"
+   ]
+  },
+  "C2": {
+   "cluster_id": "C2",
+   "name": "Stale/current evidence composition failure (historical facts as current; numeric-only citation support)",
+   "observed_symptom": "Expired battery baseline (2.1y/1.1y) and historical sample prices ($59/$109) presented as current, sq-026 with spurious [2] citations to CURRENT Store pages",
+   "affected": "sq-045 r1/r2/r3, sq-026 r1/r2/r3, sq-080 r1 (8 entries; 4 of the 5 confirmed critical runs)",
+   "regression_families": [
+    "#28"
+   ],
+   "primary_K": "K6",
+   "secondary_K": "K8",
+   "confidence": "HIGH",
+   "evidence": [
+    "retained r1 sources = current Store pages; $59 ⊂ $59.9 (Dev Kit) and $109 within $69.00–$112.00 SKU range → citation.py numbers_supported passes on number-presence alone",
+    "historical numbers arrive via 背景资料 case chunks (citation.py:148-149); no currentness marking on background content",
+    "r2 labeled+disclaimed while r1/r3 asserted (strategy variance, see C6)",
+    "PASS-vs-FAIL: cg-r05 (prices, src=4, PASS) vs sq-026 r1 (FAIL) — same intent, different query framing → different composition mix"
+   ],
+   "divergence_point": "composition (no current-vs-historical separation) + citation validation (numeric presence ≠ claim correspondence) + generation currentness interpretation",
+   "systemic": "The answering stage lacks any notion of evidence currency: case-documents and authoritative current pages compete in one context without temporal semantics, and the citation layer can legitimize stale claims numerically",
+   "unresolved": [
+    "whether store chunk text contains sample-price phrasing (needs corpus read)"
+   ]
+  },
+  "C3": {
+   "cluster_id": "C3",
+   "name": "Interaction/routing misclassification (deterministic gates with narrow verbatim/substring semantics)",
+   "observed_symptom": "9 FAIL runs: ZH capability paraphrase rejected as off-topic (cg-r04); commerce question rejected instead of clarified (cg-r03); full solution scenario killed by canned model clarification (cg-r07)",
+   "affected": [
+    "cg-r03 ×3",
+    "cg-r04 ×3",
+    "cg-r07 ×3"
+   ],
+   "regression_families": [
+    "#26",
+    "#27",
+    "#31"
+   ],
+   "primary_K": "K5",
+   "secondary_K": null,
+   "confidence": "HIGH",
+   "evidence": [
+    "social.py ZH capability pattern list omits 你会干什么 (cg-r04 input); identical-layer EN canonical 'What can you do?' (cg-s01) matches → PASS — the asymmetry is pattern-coverage, not language competence",
+    "product_taxonomy.yaml deixis_patterns 'the camera' substring-matches 'the cameras' in cg-r07 → has_device_deixis=True → no product + no history → MODE_AMBIGUOUS → canned clarify before retrieval/LLM (170ms ×3, code-verified)",
+    "intent taxonomy has no clarify/commerce-adjacent path: 'What is included in the box?' → off_topic rejection",
+    "15 expected short-circuits (o001-o004, x001) behave correctly — the layer works for canonical phrasing"
+   ],
+   "divergence_point": "pre-retrieval routing gates (social matcher / product boundary / intent classifier)",
+   "systemic": "Three independent deterministic/LLM gates decide task-type from surface form; each has verbatim/substring/label bias and none can escalate to retrieval-with-clarification for domain-adjacent or scenario inputs",
+   "unresolved": [
+    "intent LLM literal reason for cg-r03 (trace not retained)"
+   ]
+  },
+  "C4": {
+   "cluster_id": "C4",
+   "name": "PII provenance via internal case channel (provenance only; severity policy NOT decided here)",
+   "observed_symptom": "Third-party customer identities surfaced in 1 of 3 runs each: full name+company (sq-008 r3), street address (sq-040 r2), first name+date (cg-r18 r3)",
+   "affected": "sq-008 r3, sq-040 r2, cg-r18 r3 (the 3 policy-ambiguous critical flags)",
+   "regression_families": [],
+   "primary_K": "K1",
+   "secondary_K": "K7",
+   "confidence": "HIGH provenance / UNKNOWN per-run surfacing trigger",
+   "evidence": [
+    "citation.py:119-149 — filesystem internal case chunks 虽参与检索与生成 → unlabeled-in-provenance 背景资料 section; _extract_sources whitelist (rag.py:1133) excludes them from the visible source list",
+    "routes.py:128 — mask_pii applies only to the user message; retrieved context is never scrubbed",
+    "leaked identities are absent from the frozen questions → entered via retrieved ingested case docs",
+    "prompt rule (rag.py:1093-1095) instructs case content is 历史参考 — partially effective (sq-045 r2 IMSI disclaimer; 2 of 3 runs per case did not leak) but not deterministic"
+   ],
+   "divergence_point": "ingestion corpus hygiene (PII in indexed case docs) → composition (background channel) → generation (identity surfacing variance)",
+   "systemic": "The system ingests and replays human-authored support tickets without PII redaction at ingestion and without identity-suppression semantics at generation; visibility is managed only at the presentation layer",
+   "unresolved": [
+    "exact PII-bearing fields in the production corpus (needs read-only corpus access)",
+    "why exactly the third run surfaced identities in each case"
+   ]
+  },
+  "C5": {
+   "cluster_id": "C5",
+   "name": "External/competitor knowledge absence",
+   "observed_symptom": "cg-r16 ×3 honest refusal on Milesight X1/UG65 questions",
+   "affected": [
+    "cg-r16 ×3"
+   ],
+   "regression_families": [
+    "#5"
+   ],
+   "primary_K": "K0",
+   "secondary_K": null,
+   "confidence": "MEDIUM",
+   "evidence": [
+    "all 3 runs retrieved only CamThink-adjacent pages (brand news, Beaver IoT docs)",
+    "archived Milesight blog was admission-time external evidence, never ingested",
+    "no fabrication occurred (critical constraint upheld)"
+   ],
+   "divergence_point": "corpus coverage (ingestion scope decision)",
+   "systemic": "The knowledge base has no third-party/competitive corpus; questions referencing competitor ecosystems can only be bounded-refusals",
+   "unresolved": [
+    "definitive negative proof requires index inspection"
+   ]
+  },
+  "C6": {
+   "cluster_id": "C6",
+   "name": "Generation strategy instability on near-identical context",
+   "observed_symptom": "19 cases show split verdicts across n=3 (e.g. sq-069 r2 strong vs r1/r3 honest-empty; cg-r08 r2 strong vs r1/r3 refuse)",
+   "affected": "28 inventory entries (FAIL runs of split-verdict cases)",
+   "regression_families": [
+    "#19 adjacent",
+    "#23 adjacent"
+   ],
+   "primary_K": "K7",
+   "secondary_K": "K9",
+   "confidence": "MEDIUM",
+   "evidence": [
+    "judged interaction patterns per case (baseline artifacts)",
+    "strategy varies (refuse vs relay-background vs answer) with similar/zero sources",
+    "production generation params not exposed (/health) — sampling config UNKNOWN",
+    "EVAL_V1 judge note recommended temperature 0 for judging; production setting unverifiable in this Gate"
+   ],
+   "divergence_point": "generation response-strategy selection",
+   "systemic": "Response strategy (answer vs bound-refusal) is not deterministic given the context; reliability improvements cannot be verified per-run while strategy is unstable",
+   "unresolved": [
+    "sampling params",
+    "whether background set differed per run (needs server trace)"
+   ]
+  },
+  "C7": {
+   "cluster_id": "C7",
+   "name": "Unsupported claim generation beyond evidence",
+   "observed_symptom": "sq-093 r3: positive Paraguay availability assertion + negative NE301-HaLow '当前不可用' + unanchored 99%",
+   "affected": [
+    "sq-093 r3"
+   ],
+   "regression_families": [
+    "#5 adjacent"
+   ],
+   "primary_K": "K7",
+   "secondary_K": "K6",
+   "confidence": "HIGH",
+   "evidence": [
+    "frozen T2 NOT_DOCUMENTED double-bind; r1/r2 bounded, r3 asserted",
+    "no retrieved source (src=4) contains PY availability or NE301-HaLow readiness"
+   ],
+   "divergence_point": "generation claim construction",
+   "systemic": "Generation can extrapolate availability/region conclusions beyond evidence when background mentions adjacent facts (AU region, 915 MHz)",
+   "unresolved": [
+    "whether background chunks contained adjacent-region content (unobservable)"
+   ]
+  }
+ },
+ "assignment_summary": {
+  "C1": 21,
+  "C2": 8,
+  "C3": 9,
+  "C4": 3,
+  "C5": 3,
+  "C6": 28,
+  "C7": 1
+ },
+ "note": "one primary cluster per inventory entry; no double counting"
+}

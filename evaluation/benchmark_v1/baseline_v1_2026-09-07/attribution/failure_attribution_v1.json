@@ -1,0 +1,338 @@
+{
+ "artifact": "failure_attribution_v1",
+ "baseline_run_id": "PB-V1-20260907-CDBCAD3",
+ "production_sha": "cdbcad38fc3512561e12c71ff6eda067d06257b5 (= local main HEAD; code inspected at this SHA)",
+ "method": "observed_failure_inventory_v1 (73 entries) → mechanism grouping → clusters; code traced at production SHA; retained artifacts (raw sources/answers, judged dims) as behavioral evidence; PASS-vs-FAIL sibling comparisons used; no production contact, no reruns",
+ "qualifications_preserved": [
+  "EVIDENCE 1.4637 judge-leniency qualification",
+  "sq-090 frozen-input defect (not reinterpreted)",
+  "PII policy severity NOT decided — mechanism/provenance only"
+ ],
+ "attribution_groups": [
+  {
+   "failure_id": "F-ATTR-01",
+   "cluster": "C3",
+   "case_ids": [
+    "cg-r04"
+   ],
+   "run_ids": [
+    "1",
+    "2",
+    "3"
+   ],
+   "observable_symptom": "ZH capability/orientation question answered with generic off-topic rejection",
+   "expected_behavior": "capability welcome template (social short-circuit)",
+   "actual_behavior": "off_topic rejection template",
+   "relevant_evidence": "social.py:125-127 ZH capability pattern list lacks the paraphrase 你会干什么 (patterns: 你能做什么/你能干什么/你会什么/…); input '你会干什么' fails anchored match; rag.py:1220-1224 short-circuit skipped → rag.py:1719 intent=off_topic → rejection",
+   "pipeline_stage": "interaction pre-routing (deterministic social matcher) → intent LLM",
+   "primary_attribution": "K5",
+   "secondary_attribution": null,
+   "confidence": "HIGH",
+   "supporting_trace_code_evidence": "backend/pipeline/social.py _PATTERNS; backend/pipeline/rag.py stream_answer order",
+   "regression_family": [
+    "#27"
+   ],
+   "unresolved_evidence": "none (code-level)"
+  },
+  {
+   "failure_id": "F-ATTR-02",
+   "cluster": "C3",
+   "case_ids": [
+    "cg-r03"
+   ],
+   "run_ids": [
+    "1",
+    "2",
+    "3"
+   ],
+   "observable_symptom": "EN commerce-adjacent product question ('What is included in the box?') answered with scope rejection",
+   "expected_behavior": "clarify/context resolution + bind to product (contract)",
+   "actual_behavior": "generic off_topic rejection",
+   "relevant_evidence": "intent prompt (backend/pipeline/intent.py) has no commerce-adjacent/clarify category; off_topic rejection path rag.py:1719-1752; rejection text matches EN off-topic template verbatim",
+   "pipeline_stage": "intent classification → rejection short-circuit",
+   "primary_attribution": "K5",
+   "secondary_attribution": "K9",
+   "confidence": "HIGH (behavioral; intent LLM reason string not retained client-side)",
+   "supporting_trace_code_evidence": "backend/pipeline/intent.py _INTENT_PROMPT; rag.py off_topic branch",
+   "regression_family": [
+    "#26"
+   ],
+   "unresolved_evidence": "intent model's literal reason (server trace not retained)"
+  },
+  {
+   "failure_id": "F-ATTR-03",
+   "cluster": "C3",
+   "case_ids": [
+    "cg-r07"
+   ],
+   "run_ids": [
+    "1",
+    "2",
+    "3"
+   ],
+   "observable_symptom": "Full 6-warehouse/1000-camera solution scenario answered by canned 'which product model' clarification (e2e ~170ms, identical ×3)",
+   "expected_behavior": "task-fit recommendation (centralized vs distributed, NG4521 basis, checklist)",
+   "actual_behavior": "PRODUCT_AMBIGUOUS canned clarification without retrieval or LLM",
+   "relevant_evidence": "config/product_taxonomy.yaml deixis_patterns contains 'the camera'; query contains 'the cameras' (substring match, no word boundary) → has_device_deixis=True; taxonomy.extract_products finds no CamThink slug; single-turn (no history) → product_resolver.py:126 MODE_AMBIGUOUS → rag.py:1669-1705 canned PRODUCT_AMBIGUOUS_KEY before retrieval",
+   "pipeline_stage": "product boundary resolution (pre-retrieval short-circuit)",
+   "primary_attribution": "K5",
+   "secondary_attribution": null,
+   "confidence": "HIGH (deterministic code path reproduced by inspection)",
+   "supporting_trace_code_evidence": "product_resolver.py:107-128; product_taxonomy.yaml ambiguity.deixis_patterns; rag.py MODE_AMBIGUOUS branch",
+   "regression_family": [
+    "#31"
+   ],
+   "unresolved_evidence": "none (code-level)"
+  },
+  {
+   "failure_id": "F-ATTR-04",
+   "cluster": "C2",
+   "case_ids": [
+    "sq-026"
+   ],
+   "run_ids": [
+    "1",
+    "2"
+   ],
+   "observable_symptom": "Historical sample prices $59/$109 presented as current sample price with [2] citation to CURRENT Store pages",
+   "expected_behavior": "date-bound historical pricing + current Store snapshot ($69.00–$112.00) as present price",
+   "actual_behavior": "stale numbers as current, spuriously grounded on store citations",
+   "relevant_evidence": "retained sources for r1 = store/neoeyes-ne101, store/ne101-dev-kit ($59.9 present → '59' passes digit-boundary regex), store/ne101-mb01; citation.py numbers_supported validates number-presence only (159-line numeric regex), not claim-source correspondence; $109 present in $69.00–$112.00 SKU range; historical $59/$109 arrive via 背景资料 case chunks (citation.py:148-149)",
+   "pipeline_stage": "evidence composition (stale case chunks + current store chunks mixed) → generation selection → citation validation",
+   "primary_attribution": "K6",
+   "secondary_attribution": "K8",
+   "confidence": "HIGH",
+   "supporting_trace_code_evidence": "baseline_results_raw.jsonl sq-026 r1 sources; backend/pipeline/citation.py:227-236; backend/pipeline/citation.py:139-172",
+   "regression_family": [
+    "#28"
+   ],
+   "unresolved_evidence": "whether store chunk text itself contains sample-price phrasing (would strengthen K0-adjacent content issue) — requires corpus read access"
+  },
+  {
+   "failure_id": "F-ATTR-05",
+   "cluster": "C2",
+   "case_ids": [
+    "sq-045"
+   ],
+   "run_ids": [
+    "1",
+    "3"
+   ],
+   "observable_symptom": "Expired battery baseline (WiFi 2.1y / Cat-1 1.1y) presented un-labeled as the current baseline",
+   "expected_behavior": "frozen wiki battery matrix (e.g. '5/day WiFi >3y') as baseline",
+   "actual_behavior": "historical case numbers stated as normal baseline",
+   "relevant_evidence": "r1/r3 sources=[] (zero public); same-topic spec query cg-r06 retrieved wiki battery-life doc (src=2) → current baseline IS indexed; sq-045 narrative query selected internal case chunks instead; no freshness/authority preference exists in retrieve/rerank/prune composition (rag.py:1769-1846) and 背景资料 has no currentness marking",
+   "pipeline_stage": "retrieval selection → evidence composition → generation currentness interpretation",
+   "primary_attribution": "K6",
+   "secondary_attribution": "K3",
+   "confidence": "HIGH (composition); K3/K4 split UNRESOLVED (no server traces)",
+   "supporting_trace_code_evidence": "raw sources=[]; judged content vs frozen T1; comparison case cg-r06 (PASS, src=2, same topic)",
+   "regression_family": [],
+   "unresolved_evidence": "K3 vs K4: whether battery-life doc was in fused set but displaced by rerank/prune — server-side trace not retained"
+  },
+  {
+   "failure_id": "F-ATTR-06",
+   "cluster": "C4",
+   "case_ids": [
+    "sq-008",
+    "sq-040",
+    "cg-r18"
+   ],
+   "run_ids": [
+    "sq-008 r3",
+    "sq-040 r2",
+    "cg-r18 r3"
+   ],
+   "observable_symptom": "Third-party customer identities (full name+company; street address; first name+date) appear in answers",
+   "expected_behavior": "case content usable as context without surfacing customer identities",
+   "actual_behavior": "identities from internal support-case documents surfaced in customer-facing answers (1 of 3 runs each)",
+   "relevant_evidence": "citation.py:119-149: filesystem internal case chunks 虽参与检索与生成 → 背景资料 section (unlabeled provenance, hidden from sources whitelist rag.py:1133); routes.py:128 mask_pii applies to the USER message only, never to retrieved context; the leaked names/addresses are absent from the frozen questions → entered via retrieved case docs",
+   "pipeline_stage": "ingestion (PII present in indexed case docs) → retrieval → context composition → generation surfacing",
+   "primary_attribution": "K1",
+   "secondary_attribution": "K7",
+   "confidence": "HIGH for provenance path; MEDIUM/UNKNOWN for why only r3 surfaced (generation variance)",
+   "supporting_trace_code_evidence": "citation.py PUBLIC_SOURCE_TYPES + background section; rag.py:1106-1151 _extract_sources; routes.py:128",
+   "regression_family": [],
+   "unresolved_evidence": "exact ingested doc fields retaining PII requires read-only production corpus access (not exercised in this Gate); severity policy deliberately NOT decided"
+  },
+  {
+   "failure_id": "F-ATTR-07",
+   "cluster": "C5",
+   "case_ids": [
+    "cg-r16"
+   ],
+   "run_ids": [
+    "1",
+    "2",
+    "3"
+   ],
+   "observable_symptom": "Milesight X1/UG65 competitor questions answered entirely 未载明 (honest refusal ×3)",
+   "expected_behavior": "competitor capability contrast from archived Milesight blog (admission-time GT authority)",
+   "actual_behavior": "retrieval returns only CamThink-adjacent pages (brand news, Beaver IoT integration); no competitor content available",
+   "relevant_evidence": "retained sources across all 3 runs = CamThink news + integration docs; archived Milesight blog was external admission evidence, never ingested; zero fabrication held (CRITICAL constraint upheld)",
+   "pipeline_stage": "corpus coverage (ingestion scope)",
+   "primary_attribution": "K0",
+   "secondary_attribution": null,
+   "confidence": "MEDIUM (absence established behaviorally; negative corpus proof would require index inspection)",
+   "supporting_trace_code_evidence": "raw sources ×3; admission ground truth provenance (external archive)",
+   "regression_family": [
+    "#5"
+   ],
+   "unresolved_evidence": "definitive corpus absence check against production Weaviate not performed (read-only DB access not exercised)"
+  },
+  {
+   "failure_id": "F-ATTR-08",
+   "cluster": "C6",
+   "case_ids": [
+    "sq-069",
+    "cg-r08",
+    "sq-054",
+    "cg-r09",
+    "sq-049",
+    "sq-074",
+    "sq-005"
+   ],
+   "run_ids": [
+    "FAIL runs of split-verdict cases (see inventory)"
+   ],
+   "observable_symptom": "Within one case, ≥1 run answers substantively while sibling run(s) honestly refuse or under-answer on near-identical context",
+   "expected_behavior": "consistent response strategy for equivalent context",
+   "actual_behavior": "split verdicts (19 cases show P/F patterns across n=3)",
+   "relevant_evidence": "judged interaction runs per case (baseline_judged_results.jsonl); retained answers differ in strategy (refuse vs relay-background vs answer) with similar/zero sources; generation temperature/config not exposed by /health (UNKNOWN)",
+   "pipeline_stage": "generation response-strategy selection (post-composition)",
+   "primary_attribution": "K7",
+   "secondary_attribution": "K9",
+   "confidence": "MEDIUM (instability established; exact driver — sampling params — UNKNOWN)",
+   "supporting_trace_code_evidence": "judged split patterns; e.g. sq-069 r2 strong vs r1/r3 honest-empty; cg-r08 r2 strong vs r1/r3 refuse",
+   "regression_family": [
+    "#19",
+    "#23",
+    "#26 adjacent"
+   ],
+   "unresolved_evidence": "server-side generation params + per-run trace stages (not retained client-side)"
+  },
+  {
+   "failure_id": "F-ATTR-09",
+   "cluster": "C1",
+   "case_ids": [
+    "31 all-FAIL honest/insufficient cases (sq-013, sq-014, sq-017, sq-031, sq-054→C6 split excluded, sq-070, sq-108, …)"
+   ],
+   "run_ids": [
+    "see inventory C1 entries"
+   ],
+   "observable_symptom": "Case-narrative queries retrieve zero PUBLIC sources; 31 runs honestly refuse (可引用资料为空), 8 relay background content substantively but weakly provenanced",
+   "expected_behavior": "authoritative public wiki/store evidence selected, or honest absence",
+   "actual_behavior": "internal case chunks dominate; public spec/price/battery docs not selected despite existing (proven by spec-style sibling cases cg-r05/cg-r06/cg-r10 retrieving them)",
+   "relevant_evidence": "118 zero-source runs split: 15 EXPECTED (seeds/off_topic/injection), 9 misrouted short-circuits (C3), 22 short honest refusals, 72 substantive-from-background; sq-013 r1 src=1 irrelevant (AI ToolStack quantization doc for a login question → K3 miss of NE301 wiki credential doc)",
+   "pipeline_stage": "retrieval selection (K3/K4 unresolved split) → composition (citable section empty, background-only)",
+   "primary_attribution": "K3",
+   "secondary_attribution": "K6",
+   "confidence": "HIGH mechanism; K3-vs-K4 split UNRESOLVED",
+   "supporting_trace_code_evidence": "zero_source_analysis_v1.json; sibling PASS cases with spec-style queries on same topics",
+   "regression_family": [
+    "#19",
+    "#5"
+   ],
+   "unresolved_evidence": "K3 vs K4 stage split; rewrite quality for narrative queries (rewrite stage trace not retained)"
+  },
+  {
+   "failure_id": "F-ATTR-10",
+   "cluster": "C7",
+   "case_ids": [
+    "sq-093"
+   ],
+   "run_ids": [
+    "3"
+   ],
+   "observable_symptom": "'巴拉圭适用的 915 MHz 频段对应型号为 NE101-HL01' positive PY assertion + 'NE301 HaLow 当前不可用' negative overreach + unanchored 99% claim",
+   "expected_behavior": "CONDITIONALLY_SUPPORTED framing; no directional PY availability claim",
+   "actual_behavior": "unsupported directional claims stated as fact",
+   "relevant_evidence": "frozen contract T2 (NOT_DOCUMENTED 双向禁令); r1/r2 handled boundedly, r3 asserted — also a C6 variance instance but claim content is generation overreach beyond any retrieved evidence",
+   "pipeline_stage": "generation claim construction",
+   "primary_attribution": "K7",
+   "secondary_attribution": "K6",
+   "confidence": "HIGH",
+   "supporting_trace_code_evidence": "judged content vs frozen claims; raw answer r3",
+   "regression_family": [
+    "#5 adjacent"
+   ],
+   "unresolved_evidence": "whether any retrieved chunk mentioned PY (none retained in sources) — background channel content unobservable"
+  }
+ ],
+ "entry_to_cluster": {
+  "OF-sq-045-1": "C2",
+  "OF-sq-045-2": "C2",
+  "OF-sq-045-3": "C2",
+  "OF-sq-049-2": "C6",
+  "OF-sq-049-3": "C6",
+  "OF-sq-093-3": "C7",
+  "OF-sq-008-3": "C4",
+  "OF-sq-063-1": "C1",
+  "OF-sq-063-3": "C1",
+  "OF-sq-070-1": "C1",
+  "OF-sq-070-3": "C1",
+  "OF-sq-104-1": "C6",
+  "OF-sq-104-2": "C6",
+  "OF-sq-104-3": "C6",
+  "OF-sq-001-2": "C1",
+  "OF-sq-001-3": "C6",
+  "OF-sq-005-2": "C6",
+  "OF-sq-013-1": "C6",
+  "OF-sq-013-2": "C6",
+  "OF-sq-013-3": "C6",
+  "OF-sq-026-1": "C2",
+  "OF-sq-026-2": "C2",
+  "OF-sq-026-3": "C2",
+  "OF-sq-034-2": "C1",
+  "OF-sq-034-3": "C1",
+  "OF-sq-040-2": "C4",
+  "OF-sq-040-3": "C1",
+  "OF-sq-048-1": "C1",
+  "OF-sq-048-3": "C6",
+  "OF-sq-080-1": "C2",
+  "OF-sq-080-2": "C2",
+  "OF-sq-082-1": "C1",
+  "OF-sq-082-2": "C6",
+  "OF-sq-086-1": "C6",
+  "OF-sq-086-2": "C1",
+  "OF-sq-086-3": "C1",
+  "OF-sq-028-1": "C6",
+  "OF-sq-028-2": "C1",
+  "OF-sq-028-3": "C6",
+  "OF-sq-032-1": "C6",
+  "OF-sq-037-3": "C6",
+  "OF-sq-053-1": "C1",
+  "OF-sq-069-1": "C6",
+  "OF-sq-069-3": "C6",
+  "OF-sq-076-1": "C1",
+  "OF-sq-076-2": "C1",
+  "OF-sq-076-3": "C1",
+  "OF-sq-058-2": "C1",
+  "OF-cg-r03-1": "C3",
+  "OF-cg-r03-2": "C3",
+  "OF-cg-r03-3": "C3",
+  "OF-cg-r04-1": "C3",
+  "OF-cg-r04-2": "C3",
+  "OF-cg-r04-3": "C3",
+  "OF-cg-r07-1": "C3",
+  "OF-cg-r07-2": "C3",
+  "OF-cg-r07-3": "C3",
+  "OF-cg-r08-1": "C6",
+  "OF-cg-r08-3": "C6",
+  "OF-cg-r09-1": "C6",
+  "OF-cg-r09-2": "C6",
+  "OF-cg-r11-2": "C1",
+  "OF-cg-r14-2": "C6",
+  "OF-cg-r16-1": "C5",
+  "OF-cg-r16-2": "C5",
+  "OF-cg-r16-3": "C5",
+  "OF-cg-r17-1": "C6",
+  "OF-cg-r17-2": "C1",
+  "OF-cg-r17-3": "C1",
+  "OF-cg-r18-3": "C4",
+  "OF-cg-r22-1": "C6",
+  "OF-cg-r22-2": "C6",
+  "OF-cg-r22-3": "C6"
+ },
+ "coverage": "73/73 inventory entries assigned (double-count-free: one primary cluster per entry)"
+}

@@ -1,0 +1,99 @@
+{
+ "artifact": "zero_source_analysis_v1",
+ "total_zero_source_runs": 118,
+ "fraction": "118/363 = 32.5%",
+ "headline": "zero-source ≠ no-context: the sources event carries only PUBLIC source types (citation.py PUBLIC_SOURCE_TYPES); internal case chunks feed generation as unlabeled 背景资料 regardless",
+ "categories": {
+  "HONEST_EVIDENCE_ABSENCE": {
+   "runs": 26,
+   "share": "22.0%",
+   "examples": [
+    "sq-014 r1",
+    "sq-014 r2",
+    "sq-014 r3",
+    "sq-049 r2",
+    "sq-030 r1",
+    "sq-054 r1",
+    "sq-063 r1",
+    "sq-063 r3",
+    "sq-070 r1",
+    "sq-034 r2",
+    "sq-034 r3",
+    "sq-040 r2"
+   ]
+  },
+  "SUBSTANTIVE_FROM_BACKGROUND": {
+   "runs": 68,
+   "share": "57.6%",
+   "examples": [
+    "sq-045 r1",
+    "sq-045 r2",
+    "sq-045 r3",
+    "sq-049 r3",
+    "sq-074 r1",
+    "sq-074 r2",
+    "sq-108 r1",
+    "sq-108 r2",
+    "sq-108 r3",
+    "sq-008 r1",
+    "sq-008 r2",
+    "sq-008 r3"
+   ]
+  },
+  "EXPECTED_ZERO_SOURCE": {
+   "runs": 15,
+   "share": "12.7%",
+   "examples": [
+    "o001 r1",
+    "o001 r2",
+    "o001 r3",
+    "o002 r1",
+    "o002 r2",
+    "o002 r3",
+    "o003 r1",
+    "o003 r2",
+    "o003 r3",
+    "o004 r1",
+    "o004 r2",
+    "o004 r3"
+   ]
+  },
+  "ROUTING_SHORT_CIRCUIT": {
+   "runs": 9,
+   "share": "7.6%",
+   "examples": [
+    "cg-r03 r1",
+    "cg-r03 r2",
+    "cg-r03 r3",
+    "cg-r04 r1",
+    "cg-r04 r2",
+    "cg-r04 r3",
+    "cg-r07 r1",
+    "cg-r07 r2",
+    "cg-r07 r3"
+   ]
+  }
+ },
+ "category_definitions": {
+  "EXPECTED_ZERO_SOURCE": "genuine off-topic/injection seeds (o001-o004, x001) — routing correct by design",
+  "ROUTING_SHORT_CIRCUIT": "pre-retrieval gates (off_topic / product_clarify) — correct for seeds, MISROUTED for cg-r03/cg-r04 (6 runs) and over-eager for cg-r07 (3 runs) → cluster C3",
+  "HONEST_EVIDENCE_ABSENCE": "short bound refusals (可引用资料为空/未载明) — truthful but zero-utility outcomes of background-only retrieval → cluster C1",
+  "SUBSTANTIVE_FROM_BACKGROUND": "substantive answers whose specifics come from internal case chunks in the 背景资料 section — the dominant zero-source mode (72 runs) and the enabling condition for C2/C4 failures"
+ },
+ "key_numbers": {
+  "public_source_whitelist_excludes_filesystem": "citation.py:54-56",
+  "internal cases authorized into generation": "citation.py:119-149"
+ },
+ "pass_vs_fail_comparison": "cg-r06 (battery spec question) → src=2 wiki battery doc; sq-045 (battery troubleshooting narrative) → src=0 case chunks: same topic family, query style decides selection (K3 candidate)",
+ "families_touched": [
+  "#19",
+  "#23(latency PASS)",
+  "#26",
+  "#27",
+  "#28"
+ ],
+ "unresolved": [
+  "server-side fused/rerank lists per zero-source run (K3 vs K4 split)",
+  "production embedding/rerank config"
+ ]
+}

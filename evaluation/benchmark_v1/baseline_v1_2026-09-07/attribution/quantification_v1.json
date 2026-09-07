@@ -1,0 +1,113 @@
+{
+ "artifact": "failure_attribution_quantification",
+ "by_entry_count": {
+  "C1": 21,
+  "C2": 8,
+  "C3": 9,
+  "C4": 3,
+  "C5": 3,
+  "C6": 28,
+  "C7": 1,
+  "total": 73
+ },
+ "primary_K_distribution_by_entries": {
+  "K0": 3,
+  "K1": 3,
+  "K3": 21,
+  "K5": 9,
+  "K6": 8,
+  "K7": 28,
+  "K9": 0,
+  "K2": 0,
+  "K4": 0,
+  "K8": 0,
+  "note": "K4/K8 appear only as SECONDARY (C1 secondary K6; C2 secondary K8; C1 primary carries K3/K4-unresolved annotation). Secondary counts: K6 secondary in C1/C7=22 entries, K8 secondary in C2=8, K7 secondary in C4=3, K9 secondary in C6=28."
+ },
+ "cases_by_primary_K": {
+  "K3(C1)": [
+   "sq-013",
+   "sq-014",
+   "sq-017",
+   "sq-031",
+   "sq-070",
+   "sq-108",
+   "sq-029",
+   "sq-011",
+   "sq-035",
+   "sq-020",
+   "sq-030",
+   "sq-033",
+   "sq-054*",
+   "sq-063",
+   "sq-069*",
+   "sq-101*",
+   "… (21 all-FAIL honest/insufficient entries; * = split cases assigned C6 instead)"
+  ],
+  "K5(C3)": [
+   "cg-r03",
+   "cg-r04",
+   "cg-r07"
+  ],
+  "K6(C2)": [
+   "sq-045",
+   "sq-026",
+   "sq-080"
+  ],
+  "K7(C6/C7)": [
+   "19 split-verdict cases",
+   "sq-093"
+  ],
+  "K1(C4)": [
+   "sq-008",
+   "sq-040",
+   "cg-r18"
+  ],
+  "K0(C5)": [
+   "cg-r16"
+  ]
+ },
+ "critical_qualified_critical_by_cluster": {
+  "confirmed_criticals": 5,
+  "C2": 4,
+  "C7": 1,
+  "policy_ambiguous_PII": 3,
+  "overturned": 2
+ },
+ "regression_families_by_cluster": {
+  "#5": "C5 (cg-r16) + C6 (sq-005 split)",
+  " #19": "C1/C6",
+  " #23": "PASS (latency family; no failure entries)",
+  " #26": "C3 (cg-r03)",
+  " #27": "C3 (cg-r04 vs cg-s01 PASS)",
+  " #28": "C2",
+  " #29": "PASS",
+  " #31": "C3 (cg-r07)"
+ },
+ "language_distribution": "C3 entries: ZH 3 (cg-r04), EN 6 (cg-r03/cg-r07); PII entries ZH 3; zero-source substantive class overwhelmingly ZH (benchmark case mix)",
+ "zero_source_categories": {
+  "EXPECTED_ZERO_SOURCE": 15,
+  "ROUTING_SHORT_CIRCUIT": 9,
+  "HONEST_EVIDENCE_ABSENCE": 26,
+  "SUBSTANTIVE_FROM_BACKGROUND": 68
+ },
+ "confidence_counts": {
+  "HIGH": [
+   "F-ATTR-01",
+   "F-ATTR-03",
+   "F-ATTR-04",
+   "F-ATTR-05",
+   "F-ATTR-06",
+   "F-ATTR-07(confidence MEDIUM per-group)",
+   "F-ATTR-10"
+  ],
+  "MEDIUM": [
+   "F-ATTR-08",
+   "F-ATTR-09 stage-split",
+   "F-ATTR-02 behavioral"
+  ],
+  "UNKNOWN": [
+   "per-run surfacing trigger (C4)",
+   "sampling params (C6)"
+  ]
+ }
+}
