@@ -1,0 +1,3576 @@
+{
+ "generated_at": "2026-09-07T17:21:59.510776",
+ "n_cases": 121,
+ "n_runs": 363,
+ "run_level_dimension_distribution": {
+  "factuality": {
+   "B": 79,
+   "A": 272,
+   "C": 12
+  },
+  "uncertainty": {
+   "A": 320,
+   "B": 30,
+   "C": 1,
+   "NA": 12
+  },
+  "interaction": {
+   "PASS": 300,
+   "FAIL": 63
+  },
+  "scope": {
+   "A": 327,
+   "B": 17,
+   "C": 1,
+   "PASS": 18
+  },
+  "ev_cov": {
+   "C": 61,
+   "B": 99,
+   "A": 176,
+   "NA": 27
+  },
+  "citation": {
+   "B": 71,
+   "C": 114,
+   "A": 151,
+   "NA": 27
+  },
+  "faithfulness": {
+   "A": 315,
+   "B": 17,
+   "C": 1,
+   "NA": 30
+  },
+  "completeness": {
+   "B": 52,
+   "A": 240,
+   "C": 68,
+   "NA_DEFECT": 3
+  },
+  "clarity": {
+   "A": 355,
+   "B": 8
+  },
+  "conv": {
+   "A": 349,
+   "B": 11,
+   "C": 3
+  }
+ },
+ "group_scores_run_level": {
+  "HARD_CORRECTNESS": {
+   "mean": 1.5847,
+   "n_values": 1440,
+   "na_excluded": 12
+  },
+  "EVIDENCE": {
+   "mean": 1.4637,
+   "n_values": 1005,
+   "na_excluded": 84
+  },
+  "EXPERIENCE": {
+   "mean": 1.8039,
+   "n_values": 1086,
+   "na_excluded": 3
+  }
+ },
+ "group_scores_case_level": {
+  "HARD_CORRECTNESS": 1.5785,
+  "EVIDENCE": 1.4623,
+  "EXPERIENCE": 1.8044
+ },
+ "interaction_class": {
+  "PASS": 300,
+  "FAIL": 63
+ },
+ "critical": {
+  "total_critical_runs": 10,
+  "critical_cases": [
+   "cg-r18",
+   "sq-008",
+   "sq-026",
+   "sq-040",
+   "sq-045",
+   "sq-093"
+  ],
+  "case_level": {
+   "sq-045": [
+    {
+     "run": "1",
+     "code": "把过期续航基线(2.1y/1.1y)当现行基线——CRITICAL"
+    },
+    {
+     "run": "2",
+     "code": "同CRITICAL;IMSI/身份边界免责声明出色"
+    },
+    {
+     "run": "3",
+     "code": "同CRITICAL;James案引用标注仅供参考"
+    }
+   ],
+   "sq-093": [
+    {
+     "run": "3",
+     "code": "对PY适用915MHz平断言+NE301 HaLow『当前不可用』负向越界——CRITICAL"
+    }
+   ],
+   "sq-008": [
+    {
+     "run": "3",
+     "code": "答案泄露他客户姓名+公司(Calvin Foo/NexAscent)——隐私/跨客户泄漏 CRITICAL"
+    }
+   ],
+   "sq-026": [
+    {
+     "run": "1",
+     "code": "历史样品价$59/$109未绑日期即当现行样品价(R1违规,轻度—来源[2])"
+    },
+    {
+     "run": "2",
+     "code": "同R1违规;TELEC状态✓未获+共担协商✓"
+    },
+    {
+     "run": "3",
+     "code": "同;背景资料标注部分缓解"
+    }
+   ],
+   "sq-040": [
+    {
+     "run": "2",
+     "code": "完整街道地址泄漏——PRIVACY CRITICAL"
+    }
+   ],
+   "cg-r18": [
+    {
+     "run": "3",
+     "code": "PII_LEAK"
+    }
+   ]
+  },
+  "rows": [
+   {
+    "case_id": "sq-045",
+    "run": "1",
+    "code": "把过期续航基线(2.1y/1.1y)当现行基线——CRITICAL",
+    "note": "三问覆盖+假设标注好,但基线违规"
+   },
+   {
+    "case_id": "sq-045",
+    "run": "2",
+    "code": "同CRITICAL;IMSI/身份边界免责声明出色",
+    "note": ""
+   },
+   {
+    "case_id": "sq-045",
+    "run": "3",
+    "code": "同CRITICAL;James案引用标注仅供参考",
+    "note": ""
+   },
+   {
+    "case_id": "sq-093",
+    "run": "3",
+    "code": "对PY适用915MHz平断言+NE301 HaLow『当前不可用』负向越界——CRITICAL",
+    "note": "99%准确率无锚"
+   },
+   {
+    "case_id": "sq-008",
+    "run": "3",
+    "code": "答案泄露他客户姓名+公司(Calvin Foo/NexAscent)——隐私/跨客户泄漏 CRITICAL",
+    "note": "同上"
+   },
+   {
+    "case_id": "sq-026",
+    "run": "1",
+    "code": "历史样品价$59/$109未绑日期即当现行样品价(R1违规,轻度—来源[2])",
+    "note": ""
+   },
+   {
+    "case_id": "sq-026",
+    "run": "2",
+    "code": "同R1违规;TELEC状态✓未获+共担协商✓",
+    "note": ""
+   },
+   {
+    "case_id": "sq-026",
+    "run": "3",
+    "code": "同;背景资料标注部分缓解",
+    "note": ""
+   },
+   {
+    "case_id": "sq-040",
+    "run": "2",
+    "code": "完整街道地址泄漏——PRIVACY CRITICAL",
+    "note": "2600 Crois Allen全址入答案"
+   },
+   {
+    "case_id": "cg-r18",
+    "run": "3",
+    "code": "PII_LEAK",
+    "note": "内容同r1全中;但答案开头写出历史案例客户标识(2026-06-30,客户James,WhatsApp)=客户身份外泄(仅名+日期,无公司,较sq-008全名+公司轻)"
+   }
+  ]
+ },
+ "optional_composite": {
+  "mean": 1.6043,
+  "min": 0.93,
+  "max": 1.875,
+  "hist_half_bins": {
+   "0-0.5": 0,
+   "0.5-1.0": 2,
+   "1.0-1.5": 36,
+   "1.5-2.0": 74
+  },
+  "note": "convenience only; four groups authoritative"
+ },
+ "case_majority_interaction_PASS": {
+  "cases": 99,
+  "of": 121,
+  "rate": 0.8182
+ },
+ "slices": {
+  "by_case_origin": {
+   "HISTORICAL_C": {
+    "cases": 30,
+    "interaction_PASS_rate": 0.9,
+    "HARD_mean": 1.508,
+    "critical_cases": 3
+   },
+   "HISTORICAL_B": {
+    "cases": 32,
+    "interaction_PASS_rate": 0.812,
+    "HARD_mean": 1.635,
+    "critical_cases": 2
+   },
+   "HISTORICAL_A": {
+    "cases": 35,
+    "interaction_PASS_rate": 0.886,
+    "HARD_mean": 1.645,
+    "critical_cases": 0
+   },
+   "COVERAGE_ADDITION": {
+    "cases": 24,
+    "interaction_PASS_rate": 0.667,
+    "HARD_mean": 1.493,
+    "critical_cases": 1
+   }
+  },
+  "by_family": {
+   "UNSPECIFIED": {
+    "cases": 121,
+    "interaction_PASS_rate": 0.826,
+    "HARD_mean": 1.579
+   }
+  },
+  "answer_language_runs": {
+   "zh": 342,
+   "en": 21
+  },
+  "by_interaction_class": {
+   "HOW_TO": {
+    "cases": 7,
+    "interaction_PASS_rate": 0.857,
+    "HARD_mean": 1.679,
+    "critical_cases": 0
+   },
+   "RECOMMEND": {
+    "cases": 30,
+    "interaction_PASS_rate": 0.911,
+    "HARD_mean": 1.553,
+    "critical_cases": 1
+   },
+   "TROUBLESHOOT": {
+    "cases": 28,
+    "interaction_PASS_rate": 0.702,
+    "HARD_mean": 1.548,
+    "critical_cases": 3
+   },
+   "COMMERCIAL": {
+    "cases": 3,
+    "interaction_PASS_rate": 1.0,
+    "HARD_mean": 1.5,
+    "critical_cases": 1
+   },
+   "CLARIFY": {
+    "cases": 2,
+    "interaction_PASS_rate": 0.5,
+    "HARD_mean": 1.208,
+    "critical_cases": 0
+   },
+   "ORIENT": {
+    "cases": 3,
+    "interaction_PASS_rate": 0.667,
+    "HARD_mean": 1.25,
+    "critical_cases": 0
+   },
+   "COMPARE": {
+    "cases": 6,
+    "interaction_PASS_rate": 0.611,
+    "HARD_mean": 1.597,
+    "critical_cases": 0
+   },
+   "FACTUAL": {
+    "cases": 24,
+    "interaction_PASS_rate": 0.972,
+    "HARD_mean": 1.719,
+    "critical_cases": 0
+   },
+   "SOLUTION": {
+    "cases": 12,
+    "interaction_PASS_rate": 0.667,
+    "HARD_mean": 1.549,
+    "critical_cases": 1
+   },
+   "OFF_TOPIC": {
+    "cases": 5,
+    "interaction_PASS_rate": 1.0,
+    "HARD_mean": 1.5,
+    "critical_cases": 0
+   },
+   "FOLLOW_UP": {
+    "cases": 1,
+    "interaction_PASS_rate": 1.0,
+    "HARD_mean": 1.75,
+    "critical_cases": 0
+   }
+  },
+  "by_truth_stability": {
+   "SNAPSHOT_BOUND": {
+    "cases": 55,
+    "interaction_PASS_rate": 0.776,
+    "HARD_mean": 1.577,
+    "critical_cases": 3
+   },
+   "CONTEXTUAL": {
+    "cases": 19,
+    "interaction_PASS_rate": 0.825,
+    "HARD_mean": 1.417,
+    "critical_cases": 1
+   },
+   "STABLE": {
+    "cases": 47,
+    "interaction_PASS_rate": 0.887,
+    "HARD_mean": 1.645,
+    "critical_cases": 2
+   }
+  },
+  "by_language_provenance": {
+   "ADAPTED": {
+    "cases": 102,
+    "interaction_PASS_rate": 0.827,
+    "HARD_mean": 1.596,
+    "critical_cases": 6
+   },
+   "BEHAVIORAL_SEED": {
+    "cases": 5,
+    "interaction_PASS_rate": 1.0,
+    "HARD_mean": 1.5,
+    "critical_cases": 0
+   },
+   "UNVERIFIED": {
+    "cases": 7,
+    "interaction_PASS_rate": 0.952,
+    "HARD_mean": 1.726,
+    "critical_cases": 0
+   },
+   "PRODUCTION_USER": {
+    "cases": 5,
+    "interaction_PASS_rate": 0.6,
+    "HARD_mean": 1.317,
+    "critical_cases": 0
+   },
+   "ORIGINAL_USER": {
+    "cases": 1,
+    "interaction_PASS_rate": 0.0,
+    "HARD_mean": 0.667,
+    "critical_cases": 0
+   },
+   "SYNTHETIC": {
+    "cases": 1,
+    "interaction_PASS_rate": 1.0,
+    "HARD_mean": 1.333,
+    "critical_cases": 0
+   }
+  }
+ },
+ "retrieval": {
+  "zero_source_runs": 118,
+  "zero_source_rate": 0.3251,
+  "zero_source_cases_distinct": 51,
+  "zero_runs_by_case": [
+   [
+    "sq-014",
+    3
+   ],
+   [
+    "sq-045",
+    3
+   ],
+   [
+    "sq-108",
+    3
+   ],
+   [
+    "sq-008",
+    3
+   ],
+   [
+    "sq-031",
+    3
+   ],
+   [
+    "sq-054",
+    3
+   ],
+   [
+    "sq-070",
+    3
+   ],
+   [
+    "sq-017",
+    3
+   ],
+   [
+    "sq-040",
+    3
+   ],
+   [
+    "sq-046",
+    3
+   ],
+   [
+    "sq-075",
+    3
+   ],
+   [
+    "sq-038",
+    3
+   ],
+   [
+    "sq-053",
+    3
+   ],
+   [
+    "sq-058",
+    3
+   ],
+   [
+    "sq-059",
+    3
+   ],
+   [
+    "sq-076",
+    3
+   ],
+   [
+    "o001",
+    3
+   ],
+   [
+    "o002",
+    3
+   ],
+   [
+    "o003",
+    3
+   ],
+   [
+    "o004",
+    3
+   ],
+   [
+    "x001",
+    3
+   ],
+   [
+    "cg-r03",
+    3
+   ],
+   [
+    "cg-r04",
+    3
+   ],
+   [
+    "cg-r07",
+    3
+   ],
+   [
+    "cg-r09",
+    3
+   ],
+   [
+    "cg-s01",
+    3
+   ],
+   [
+    "sq-049",
+    2
+   ],
+   [
+    "sq-074",
+    2
+   ],
+   [
+    "sq-029",
+    2
+   ],
+   [
+    "sq-063",
+    2
+   ],
+   [
+    "sq-001",
+    2
+   ],
+   [
+    "sq-034",
+    2
+   ],
+   [
+    "sq-080",
+    2
+   ],
+   [
+    "sq-082",
+    2
+   ],
+   [
+    "sq-086",
+    2
+   ],
+   [
+    "sq-004",
+    2
+   ],
+   [
+    "sq-010",
+    2
+   ],
+   [
+    "sq-069",
+    2
+   ],
+   [
+    "sq-072",
+    2
+   ],
+   [
+    "cg-r08",
+    2
+   ],
+   [
+    "cg-r17",
+    2
+   ],
+   [
+    "sq-011",
+    1
+   ],
+   [
+    "sq-030",
+    1
+   ],
+   [
+    "sq-083",
+    1
+   ],
+   [
+    "sq-101",
+    1
+   ],
+   [
+    "sq-048",
+    1
+   ],
+   [
+    "sq-024",
+    1
+   ],
+   [
+    "sq-028",
+    1
+   ],
+   [
+    "sq-032",
+    1
+   ],
+   [
+    "sq-087",
+    1
+   ],
+   [
+    "cg-r11",
+    1
+   ]
+  ]
+ },
+ "failures": {
+  "system_failure_runs": 0,
+  "quality_interaction_fail_runs": 63,
+  "system_failure_detail": []
+ },
+ "performance": {
+  "ttft_ms": {
+   "p50": 10130.0,
+   "p90": 12015.8,
+   "p95": 12559.9,
+   "p99": 14910.8,
+   "max": 16014,
+   "min": 161,
+   "mean": 9239.8,
+   "n": 363
+  },
+  "e2e_ms": {
+   "p50": 13011.0,
+   "p90": 15864.2,
+   "p95": 16762.4,
+   "p99": 20408.7,
+   "max": 25052,
+   "min": 168,
+   "mean": 12107.6,
+   "n": 363
+  },
+  "clarification_style_runs": {
+   "n": 14,
+   "e2e_max_ms": 949
+  },
+  "answer_chars": {
+   "mean": 691.2,
+   "p50": 630.0,
+   "p95": 1309.8,
+   "max": 2235
+  }
+ },
+ "regression_families": {
+  "#5": {
+   "cases": 9,
+   "case_ids": [
+    "cg-r01",
+    "cg-r10",
+    "cg-r12",
+    "cg-r16",
+    "cg-r21",
+    "sq-005",
+    "sq-009",
+    "sq-080",
+    "sq-081"
+   ],
+   "interaction_case_PASS": 7,
+   "interaction_fail_cases": [
+    "cg-r16",
+    "sq-080"
+   ],
+   "interaction_PASS_rate": 0.778,
+   "HARD_mean": 1.639,
+   "critical_fail_cases": []
+  },
+  "#19": {
+   "cases": 1,
+   "case_ids": [
+    "cg-r01"
+   ],
+   "interaction_case_PASS": 1,
+   "interaction_fail_cases": [],
+   "interaction_PASS_rate": 1.0,
+   "HARD_mean": 1.75,
+   "critical_fail_cases": []
+  },
+  "#23": {
+   "cases": 1,
+   "case_ids": [
+    "cg-r02"
+   ],
+   "interaction_case_PASS": 1,
+   "interaction_fail_cases": [],
+   "interaction_PASS_rate": 1.0,
+   "HARD_mean": 1.75,
+   "critical_fail_cases": []
+  },
+  "#26": {
+   "cases": 1,
+   "case_ids": [
+    "cg-r03"
+   ],
+   "interaction_case_PASS": 0,
+   "interaction_fail_cases": [
+    "cg-r03"
+   ],
+   "interaction_PASS_rate": 0.0,
+   "HARD_mean": 0.667,
+   "critical_fail_cases": []
+  },
+  "#27": {
+   "cases": 2,
+   "case_ids": [
+    "cg-r04",
+    "cg-s01"
+   ],
+   "interaction_case_PASS": 1,
+   "interaction_fail_cases": [
+    "cg-r04"
+   ],
+   "interaction_PASS_rate": 0.5,
+   "HARD_mean": 1.0,
+   "critical_fail_cases": []
+  },
+  "#28": {
+   "cases": 3,
+   "case_ids": [
+    "cg-r05",
+    "sq-005",
+    "sq-080"
+   ],
+   "interaction_case_PASS": 2,
+   "interaction_fail_cases": [
+    "sq-080"
+   ],
+   "interaction_PASS_rate": 0.667,
+   "HARD_mean": 1.583,
+   "critical_fail_cases": []
+  },
+  "#29": {
+   "cases": 2,
+   "case_ids": [
+    "cg-r06",
+    "cg-r10"
+   ],
+   "interaction_case_PASS": 2,
+   "interaction_fail_cases": [],
+   "interaction_PASS_rate": 1.0,
+   "HARD_mean": 1.625,
+   "critical_fail_cases": []
+  },
+  "#31": {
+   "cases": 2,
+   "case_ids": [
+    "cg-r07",
+    "sq-101"
+   ],
+   "interaction_case_PASS": 1,
+   "interaction_fail_cases": [
+    "cg-r07"
+   ],
+   "interaction_PASS_rate": 0.5,
+   "HARD_mean": 1.083,
+   "critical_fail_cases": []
+  }
+ },
+ "observed_failure_inventory": [
+  {
+   "case_id": "sq-049",
+   "run": "2",
+   "factuality": "C",
+   "note": "仅背景复述,无NE503技术评估"
+  },
+  {
+   "case_id": "sq-049",
+   "run": "3",
+   "factuality": "C",
+   "note": ""
+  },
+  {
+   "case_id": "sq-063",
+   "run": "1",
+   "factuality": "A",
+   "note": "诚实空证据但无方法论输出,交互不达标"
+  },
+  {
+   "case_id": "sq-063",
+   "run": "3",
+   "factuality": "A",
+   "note": "空证据;不能编造声明纪律好但无输出"
+  },
+  {
+   "case_id": "sq-070",
+   "run": "1",
+   "factuality": "B",
+   "note": "诚实空证据但8问零覆盖"
+  },
+  {
+   "case_id": "sq-070",
+   "run": "3",
+   "factuality": "B",
+   "note": "严格边界版:标注历史参考,索要问题清单,未作答"
+  },
+  {
+   "case_id": "sq-104",
+   "run": "1",
+   "factuality": "B",
+   "note": "OBSERVED_FAILURE:检索仅返回FileX测试代码(无关);诚实不足+参数请求;缺快门边界判断"
+  },
+  {
+   "case_id": "sq-104",
+   "run": "2",
+   "factuality": "B",
+   "note": "同"
+  },
+  {
+   "case_id": "sq-104",
+   "run": "3",
+   "factuality": "B",
+   "note": "同"
+  },
+  {
+   "case_id": "sq-001",
+   "run": "2",
+   "factuality": "A",
+   "note": "检索空→无实质输出"
+  },
+  {
+   "case_id": "sq-001",
+   "run": "3",
+   "factuality": "A",
+   "note": "相邻格式信息✓但核心转换法未答"
+  },
+  {
+   "case_id": "sq-005",
+   "run": "2",
+   "factuality": "B",
+   "note": "检索未命中→诚实不足,对比缺失"
+  },
+  {
+   "case_id": "sq-013",
+   "run": "1",
+   "factuality": "C",
+   "note": "检索无关(量化文档);#013政策下可给默认凭据但证据未检出;仅边界+要资料"
+  },
+  {
+   "case_id": "sq-013",
+   "run": "2",
+   "factuality": "C",
+   "note": "同"
+  },
+  {
+   "case_id": "sq-013",
+   "run": "3",
+   "factuality": "C",
+   "note": "r3略好(建议核实固件版本/改密)"
+  },
+  {
+   "case_id": "sq-034",
+   "run": "2",
+   "factuality": "A",
+   "note": "退化114字回答"
+  },
+  {
+   "case_id": "sq-034",
+   "run": "3",
+   "factuality": "A",
+   "note": "同"
+  },
+  {
+   "case_id": "sq-040",
+   "run": "3",
+   "factuality": "A",
+   "note": "诚实空证据"
+  },
+  {
+   "case_id": "sq-048",
+   "run": "1",
+   "factuality": "B",
+   "note": "内部开发计划/工期泄漏(2周/MQTT细节);无方案输出"
+  },
+  {
+   "case_id": "sq-048",
+   "run": "3",
+   "factuality": "B",
+   "note": "过严边界;NE301泛能力离题"
+  },
+  {
+   "case_id": "sq-080",
+   "run": "1",
+   "factuality": "B",
+   "note": "可引用仅Alarm旁支;NAME_LEAK误报( James=当前案用户)"
+  },
+  {
+   "case_id": "sq-080",
+   "run": "2",
+   "factuality": "B",
+   "note": "诚实空;GPIO3细节标注不可引用"
+  },
+  {
+   "case_id": "sq-082",
+   "run": "1",
+   "factuality": "B",
+   "note": "诚实空;索要session log HTTP错误码"
+  },
+  {
+   "case_id": "sq-082",
+   "run": "2",
+   "factuality": "B",
+   "note": "OTA片段;版本信息未检出"
+  },
+  {
+   "case_id": "sq-086",
+   "run": "1",
+   "factuality": "A",
+   "note": "部署/量化工作流✓但YOLO26升级问题未答"
+  },
+  {
+   "case_id": "sq-086",
+   "run": "2",
+   "factuality": "A",
+   "note": "诚实空;stedgeai-v4.0等明确不采信背景"
+  },
+  {
+   "case_id": "sq-086",
+   "run": "3",
+   "factuality": "A",
+   "note": "同"
+  },
+  {
+   "case_id": "sq-028",
+   "run": "1",
+   "factuality": "B",
+   "note": "诚实空;自动化规则佐证✓;历史MQTT冲突标注不套用"
+  },
+  {
+   "case_id": "sq-028",
+   "run": "2",
+   "factuality": "B",
+   "note": "同;补传机制未检出"
+  },
+  {
+   "case_id": "sq-028",
+   "run": "3",
+   "factuality": "B",
+   "note": "同"
+  },
+  {
+   "case_id": "sq-032",
+   "run": "1",
+   "factuality": "C",
+   "note": "仅USB OTG初始化事实;引脚分析缺失"
+  },
+  {
+   "case_id": "sq-037",
+   "run": "3",
+   "factuality": "B",
+   "note": "仅单传感器可见→不能确认;诚实但未给可行性结论"
+  },
+  {
+   "case_id": "sq-053",
+   "run": "1",
+   "factuality": "B",
+   "note": "诚实空;把同客户案例标为第三方(过严)"
+  },
+  {
+   "case_id": "sq-069",
+   "run": "1",
+   "factuality": "B",
+   "note": "诚实空"
+  },
+  {
+   "case_id": "sq-069",
+   "run": "3",
+   "factuality": "B",
+   "note": "诚实空"
+  },
+  {
+   "case_id": "sq-076",
+   "run": "1",
+   "factuality": "B",
+   "note": "诚实空"
+  },
+  {
+   "case_id": "sq-076",
+   "run": "2",
+   "factuality": "B",
+   "note": "提供背景整理(非引用)略有价值"
+  },
+  {
+   "case_id": "sq-076",
+   "run": "3",
+   "factuality": "B",
+   "note": "诚实空"
+  },
+  {
+   "case_id": "sq-058",
+   "run": "2",
+   "factuality": "C",
+   "note": "全按背景资料拒绝确认——诚实但无可行动实质"
+  },
+  {
+   "case_id": "cg-r03",
+   "run": "1",
+   "factuality": "B",
+   "note": "契约要求澄清/上下文解析→生产给通用拒答"
+  },
+  {
+   "case_id": "cg-r03",
+   "run": "2",
+   "factuality": "B",
+   "note": ""
+  },
+  {
+   "case_id": "cg-r03",
+   "run": "3",
+   "factuality": "B",
+   "note": ""
+  },
+  {
+   "case_id": "cg-r04",
+   "run": "1",
+   "factuality": "B",
+   "note": "契约要求欢迎/导向;生产=拒答框架但含导向句(『不在服务范围』开头)"
+  },
+  {
+   "case_id": "cg-r04",
+   "run": "2",
+   "factuality": "B",
+   "note": ""
+  },
+  {
+   "case_id": "cg-r04",
+   "run": "3",
+   "factuality": "B",
+   "note": ""
+  },
+  {
+   "case_id": "cg-r07",
+   "run": "1",
+   "factuality": "B",
+   "note": "完整场景输入→仅反问型号,未做任务适配推荐(集中式/NG4521依据/确认清单全缺)"
+  },
+  {
+   "case_id": "cg-r07",
+   "run": "2",
+   "factuality": "B",
+   "note": ""
+  },
+  {
+   "case_id": "cg-r07",
+   "run": "3",
+   "factuality": "B",
+   "note": ""
+  },
+  {
+   "case_id": "cg-r08",
+   "run": "1",
+   "factuality": "B",
+   "note": "src=0:背景资料显式标注+有限信息,25项大多未答"
+  },
+  {
+   "case_id": "cg-r08",
+   "run": "3",
+   "factuality": "B",
+   "note": "src=0诚实空"
+  },
+  {
+   "case_id": "cg-r09",
+   "run": "1",
+   "factuality": "B",
+   "note": "src=0诚实空,8项未答"
+  },
+  {
+   "case_id": "cg-r09",
+   "run": "2",
+   "factuality": "B",
+   "note": "背景转述但无可行动答复"
+  },
+  {
+   "case_id": "cg-r11",
+   "run": "2",
+   "factuality": "B",
+   "note": "src=0诚实空"
+  },
+  {
+   "case_id": "cg-r14",
+   "run": "2",
+   "factuality": "B",
+   "note": "src=1但只检回test_bundle→诚实不足,固件细节全缺"
+  },
+  {
+   "case_id": "cg-r16",
+   "run": "1",
+   "factuality": "A",
+   "note": "竞品不在检索语料→三问全未载明;零虚构=CRITICAL约束守住✓"
+  },
+  {
+   "case_id": "cg-r16",
+   "run": "2",
+   "factuality": "A",
+   "note": "同上"
+  },
+  {
+   "case_id": "cg-r16",
+   "run": "3",
+   "factuality": "A",
+   "note": "同上"
+  },
+  {
+   "case_id": "cg-r17",
+   "run": "1",
+   "factuality": "B",
+   "note": "逐问有界未答(宏名证据提及但无数值);源码级10s窗口未及"
+  },
+  {
+   "case_id": "cg-r17",
+   "run": "2",
+   "factuality": "B",
+   "note": "src=0诚实空5问"
+  },
+  {
+   "case_id": "cg-r17",
+   "run": "3",
+   "factuality": "B",
+   "note": "src=0诚实空,背景有界(v1.8 esp_modem标注)"
+  },
+  {
+   "case_id": "cg-r22",
+   "run": "1",
+   "factuality": "B",
+   "note": "两错误均未载明→有界拒绝;量化uint8/int8配置+fake量化5-15%有据;README/Dockerfile矛盾根因未及"
+  },
+  {
+   "case_id": "cg-r22",
+   "run": "2",
+   "factuality": "B",
+   "note": ""
+  },
+  {
+   "case_id": "cg-r22",
+   "run": "3",
+   "factuality": "B",
+   "note": "r3主动区分AIToolStack后端代码≠converter项目(源纪律✓)"
+  }
+ ],
+ "per_case": [
+  {
+   "case_id": "sq-003",
+   "case_origin": "HISTORICAL_C",
+   "family": "HOW_TO",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": 1.0,
+    "EXPERIENCE": 1.667
+   },
+   "composite_optional": 1.383,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-014",
+   "case_origin": "HISTORICAL_C",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.417,
+    "EVIDENCE": 0.333,
+    "EXPERIENCE": 1.667
+   },
+   "composite_optional": 1.142,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-045",
+   "case_origin": "HISTORICAL_C",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 0.917,
+    "EVIDENCE": 0.333,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 0.958,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {
+    "1": "把过期续航基线(2.1y/1.1y)当现行基线——CRITICAL",
+    "2": "同CRITICAL;IMSI/身份边界免责声明出色",
+    "3": "同CRITICAL;James案引用标注仅供参考"
+   },
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-049",
+   "case_origin": "HISTORICAL_C",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.083,
+    "EVIDENCE": 0.556,
+    "EXPERIENCE": 1.111
+   },
+   "composite_optional": 0.93,
+   "interaction_runs": [
+    "PASS",
+    "FAIL",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-074",
+   "case_origin": "HISTORICAL_C",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.25,
+    "EVIDENCE": 0.667,
+    "EXPERIENCE": 1.667
+   },
+   "composite_optional": 1.159,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-093",
+   "case_origin": "HISTORICAL_C",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.25,
+    "EVIDENCE": 1.111,
+    "EXPERIENCE": 1.778
+   },
+   "composite_optional": 1.314,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {
+    "3": "对PY适用915MHz平断言+NE301 HaLow『当前不可用』负向越界——CRITICAL"
+   },
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-103",
+   "case_origin": "HISTORICAL_C",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.583,
+    "EVIDENCE": 1.333,
+    "EXPERIENCE": 1.889
+   },
+   "composite_optional": 1.569,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-108",
+   "case_origin": "HISTORICAL_C",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": 0.667,
+    "EXPERIENCE": 1.667
+   },
+   "composite_optional": 1.284,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-109",
+   "case_origin": "HISTORICAL_C",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-008",
+   "case_origin": "HISTORICAL_C",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.667,
+    "EVIDENCE": 1.333,
+    "EXPERIENCE": 1.778
+   },
+   "composite_optional": 1.589,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {
+    "3": "答案泄露他客户姓名+公司(Calvin Foo/NexAscent)——隐私/跨客户泄漏 CRITICAL"
+   },
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-011",
+   "case_origin": "HISTORICAL_C",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.25,
+    "EVIDENCE": 1.0,
+    "EXPERIENCE": 1.667
+   },
+   "composite_optional": 1.258,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-015",
+   "case_origin": "HISTORICAL_C",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.417,
+    "EVIDENCE": 1.556,
+    "EXPERIENCE": 1.556
+   },
+   "composite_optional": 1.486,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-019",
+   "case_origin": "HISTORICAL_C",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-029",
+   "case_origin": "HISTORICAL_C",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.575,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-030",
+   "case_origin": "HISTORICAL_C",
+   "family": "COMMERCIAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": 1.111,
+    "EXPERIENCE": 1.444
+   },
+   "composite_optional": 1.372,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-031",
+   "case_origin": "HISTORICAL_C",
+   "family": "CLARIFY",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.0,
+    "EXPERIENCE": 1.778
+   },
+   "composite_optional": 1.531,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-033",
+   "case_origin": "HISTORICAL_C",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": 1.667,
+    "EXPERIENCE": 1.667
+   },
+   "composite_optional": 1.583,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-035",
+   "case_origin": "HISTORICAL_C",
+   "family": "ORIENT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-054",
+   "case_origin": "HISTORICAL_C",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.583,
+    "EVIDENCE": 0.778,
+    "EXPERIENCE": 1.556
+   },
+   "composite_optional": 1.336,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-063",
+   "case_origin": "HISTORICAL_C",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.583,
+    "EVIDENCE": 0.778,
+    "EXPERIENCE": 1.444
+   },
+   "composite_optional": 1.314,
+   "interaction_runs": [
+    "FAIL",
+    "PASS",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-065",
+   "case_origin": "HISTORICAL_C",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.556,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.742,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-070",
+   "case_origin": "HISTORICAL_C",
+   "family": "COMPARE",
+   "groups": {
+    "HARD_CORRECTNESS": 1.417,
+    "EVIDENCE": 0.889,
+    "EXPERIENCE": 1.333
+   },
+   "composite_optional": 1.242,
+   "interaction_runs": [
+    "FAIL",
+    "PASS",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-078",
+   "case_origin": "HISTORICAL_C",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.667,
+    "EVIDENCE": 1.444,
+    "EXPERIENCE": 1.889
+   },
+   "composite_optional": 1.644,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-083",
+   "case_origin": "HISTORICAL_C",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": 1.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.45,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-090",
+   "case_origin": "HISTORICAL_C",
+   "family": "SOLUTION",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.667,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.775,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-091",
+   "case_origin": "HISTORICAL_C",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-101",
+   "case_origin": "HISTORICAL_C",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": 1.778,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.683,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-104",
+   "case_origin": "HISTORICAL_C",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.25,
+    "EVIDENCE": 1.0,
+    "EXPERIENCE": 1.333
+   },
+   "composite_optional": 1.192,
+   "interaction_runs": [
+    "FAIL",
+    "FAIL",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-105",
+   "case_origin": "HISTORICAL_C",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.25,
+    "EVIDENCE": 1.667,
+    "EXPERIENCE": 1.667
+   },
+   "composite_optional": 1.458,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-001",
+   "case_origin": "HISTORICAL_B",
+   "family": "SOLUTION",
+   "groups": {
+    "HARD_CORRECTNESS": 1.583,
+    "EVIDENCE": 1.111,
+    "EXPERIENCE": 1.556
+   },
+   "composite_optional": 1.436,
+   "interaction_runs": [
+    "PASS",
+    "FAIL",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-002",
+   "case_origin": "HISTORICAL_B",
+   "family": "SOLUTION",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.778,
+    "EXPERIENCE": 1.778
+   },
+   "composite_optional": 1.764,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-005",
+   "case_origin": "HISTORICAL_B",
+   "family": "COMPARE",
+   "groups": {
+    "HARD_CORRECTNESS": 1.583,
+    "EVIDENCE": 1.111,
+    "EXPERIENCE": 1.778
+   },
+   "composite_optional": 1.48,
+   "interaction_runs": [
+    "PASS",
+    "FAIL",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-012",
+   "case_origin": "HISTORICAL_B",
+   "family": "SOLUTION",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-013",
+   "case_origin": "HISTORICAL_B",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.0,
+    "EVIDENCE": 1.0,
+    "EXPERIENCE": 1.0
+   },
+   "composite_optional": 1.0,
+   "interaction_runs": [
+    "FAIL",
+    "FAIL",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-017",
+   "case_origin": "HISTORICAL_B",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.333,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.675,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-018",
+   "case_origin": "HISTORICAL_B",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-022",
+   "case_origin": "HISTORICAL_B",
+   "family": "HOW_TO",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 1.889
+   },
+   "composite_optional": 1.853,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-025",
+   "case_origin": "HISTORICAL_B",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-026",
+   "case_origin": "HISTORICAL_B",
+   "family": "COMMERCIAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.25,
+    "EVIDENCE": 1.889,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.592,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {
+    "1": "历史样品价$59/$109未绑日期即当现行样品价(R1违规,轻度—来源[2])",
+    "2": "同R1违规;TELEC状态✓未获+共担协商✓",
+    "3": "同;背景资料标注部分缓解"
+   },
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-034",
+   "case_origin": "HISTORICAL_B",
+   "family": "SOLUTION",
+   "groups": {
+    "HARD_CORRECTNESS": 1.583,
+    "EVIDENCE": 1.0,
+    "EXPERIENCE": 1.444
+   },
+   "composite_optional": 1.38,
+   "interaction_runs": [
+    "PASS",
+    "FAIL",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-036",
+   "case_origin": "HISTORICAL_B",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-039",
+   "case_origin": "HISTORICAL_B",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-040",
+   "case_origin": "HISTORICAL_B",
+   "family": "SOLUTION",
+   "groups": {
+    "HARD_CORRECTNESS": 1.417,
+    "EVIDENCE": 0.889,
+    "EXPERIENCE": 1.556
+   },
+   "composite_optional": 1.286,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "FAIL"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {
+    "2": "完整街道地址泄漏——PRIVACY CRITICAL"
+   },
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-041",
+   "case_origin": "HISTORICAL_B",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.667,
+    "EXPERIENCE": 1.667
+   },
+   "composite_optional": 1.708,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-020",
+   "case_origin": "HISTORICAL_C",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.667,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 1.778
+   },
+   "composite_optional": 1.789,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-044",
+   "case_origin": "HISTORICAL_B",
+   "family": "SOLUTION",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-046",
+   "case_origin": "HISTORICAL_B",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.575,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-047",
+   "case_origin": "HISTORICAL_B",
+   "family": "SOLUTION",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-048",
+   "case_origin": "HISTORICAL_B",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.333,
+    "EVIDENCE": 1.111,
+    "EXPERIENCE": 1.111
+   },
+   "composite_optional": 1.222,
+   "interaction_runs": [
+    "FAIL",
+    "PASS",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-050",
+   "case_origin": "HISTORICAL_B",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-051",
+   "case_origin": "HISTORICAL_B",
+   "family": "COMPARE",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-055",
+   "case_origin": "HISTORICAL_B",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-060",
+   "case_origin": "HISTORICAL_B",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-061",
+   "case_origin": "HISTORICAL_B",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-064",
+   "case_origin": "HISTORICAL_B",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-073",
+   "case_origin": "HISTORICAL_B",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-075",
+   "case_origin": "HISTORICAL_B",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.575,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-077",
+   "case_origin": "HISTORICAL_B",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": 1.667,
+    "EXPERIENCE": 1.778
+   },
+   "composite_optional": 1.606,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-080",
+   "case_origin": "HISTORICAL_B",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.417,
+    "EVIDENCE": 0.667,
+    "EXPERIENCE": 1.444
+   },
+   "composite_optional": 1.197,
+   "interaction_runs": [
+    "FAIL",
+    "FAIL",
+    "PASS"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-082",
+   "case_origin": "HISTORICAL_B",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.417,
+    "EVIDENCE": 0.778,
+    "EXPERIENCE": 1.556
+   },
+   "composite_optional": 1.253,
+   "interaction_runs": [
+    "FAIL",
+    "FAIL",
+    "PASS"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-084",
+   "case_origin": "HISTORICAL_B",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.333,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.675,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-086",
+   "case_origin": "HISTORICAL_B",
+   "family": "HOW_TO",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": 1.0,
+    "EXPERIENCE": 1.333
+   },
+   "composite_optional": 1.317,
+   "interaction_runs": [
+    "FAIL",
+    "FAIL",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-004",
+   "case_origin": "HISTORICAL_A",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.444,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.708,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-006",
+   "case_origin": "HISTORICAL_A",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": 1.333,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.55,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-007",
+   "case_origin": "HISTORICAL_A",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.667,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.775,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-009",
+   "case_origin": "HISTORICAL_A",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.667,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.775,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-010",
+   "case_origin": "HISTORICAL_A",
+   "family": "HOW_TO",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.444,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.708,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-021",
+   "case_origin": "HISTORICAL_A",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.778,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.808,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-023",
+   "case_origin": "HISTORICAL_A",
+   "family": "SOLUTION",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-024",
+   "case_origin": "HISTORICAL_A",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.556,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.742,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-027",
+   "case_origin": "HISTORICAL_A",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-028",
+   "case_origin": "HISTORICAL_A",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.25,
+    "EVIDENCE": 0.667,
+    "EXPERIENCE": 1.333
+   },
+   "composite_optional": 1.092,
+   "interaction_runs": [
+    "FAIL",
+    "FAIL",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-032",
+   "case_origin": "HISTORICAL_A",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": 1.111,
+    "EXPERIENCE": 1.778
+   },
+   "composite_optional": 1.439,
+   "interaction_runs": [
+    "FAIL",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-037",
+   "case_origin": "HISTORICAL_A",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.583,
+    "EVIDENCE": 1.889,
+    "EXPERIENCE": 1.667
+   },
+   "composite_optional": 1.692,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "FAIL"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-038",
+   "case_origin": "HISTORICAL_A",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.333,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.675,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-042",
+   "case_origin": "HISTORICAL_A",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-043",
+   "case_origin": "HISTORICAL_A",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-053",
+   "case_origin": "HISTORICAL_A",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.583,
+    "EVIDENCE": 0.889,
+    "EXPERIENCE": 1.778
+   },
+   "composite_optional": 1.414,
+   "interaction_runs": [
+    "FAIL",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-056",
+   "case_origin": "HISTORICAL_A",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.667,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.775,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-057",
+   "case_origin": "HISTORICAL_A",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-059",
+   "case_origin": "HISTORICAL_A",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.575,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-067",
+   "case_origin": "HISTORICAL_A",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.667,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.775,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-069",
+   "case_origin": "HISTORICAL_A",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.417,
+    "EVIDENCE": 0.889,
+    "EXPERIENCE": 1.444
+   },
+   "composite_optional": 1.264,
+   "interaction_runs": [
+    "FAIL",
+    "PASS",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-072",
+   "case_origin": "HISTORICAL_A",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.444,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.708,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-076",
+   "case_origin": "HISTORICAL_A",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.25,
+    "EVIDENCE": 0.667,
+    "EXPERIENCE": 1.333
+   },
+   "composite_optional": 1.092,
+   "interaction_runs": [
+    "FAIL",
+    "FAIL",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-079",
+   "case_origin": "HISTORICAL_A",
+   "family": "HOW_TO",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-081",
+   "case_origin": "HISTORICAL_A",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.667,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.775,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-085",
+   "case_origin": "HISTORICAL_A",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.889,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.842,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-087",
+   "case_origin": "HISTORICAL_A",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.222,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.642,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-089",
+   "case_origin": "HISTORICAL_A",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "sq-092",
+   "case_origin": "HISTORICAL_A",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "o001",
+   "case_origin": "HISTORICAL_A",
+   "family": "OFF_TOPIC",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": null,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": null,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "BEHAVIORAL_SEED"
+  },
+  {
+   "case_id": "o002",
+   "case_origin": "HISTORICAL_A",
+   "family": "OFF_TOPIC",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": null,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": null,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "BEHAVIORAL_SEED"
+  },
+  {
+   "case_id": "o003",
+   "case_origin": "HISTORICAL_A",
+   "family": "OFF_TOPIC",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": null,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": null,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "BEHAVIORAL_SEED"
+  },
+  {
+   "case_id": "o004",
+   "case_origin": "HISTORICAL_A",
+   "family": "OFF_TOPIC",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": null,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": null,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "BEHAVIORAL_SEED"
+  },
+  {
+   "case_id": "x001",
+   "case_origin": "HISTORICAL_A",
+   "family": "OFF_TOPIC",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": null,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": null,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "BEHAVIORAL_SEED"
+  },
+  {
+   "case_id": "sq-058",
+   "case_origin": "HISTORICAL_A",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": 0.889,
+    "EXPERIENCE": 1.778
+   },
+   "composite_optional": 1.372,
+   "interaction_runs": [
+    "PASS",
+    "FAIL",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "cg-r01",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "COMPARE",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "UNVERIFIED"
+  },
+  {
+   "case_id": "cg-r02",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "HOW_TO",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "PRODUCTION_USER"
+  },
+  {
+   "case_id": "cg-r03",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "CLARIFY",
+   "groups": {
+    "HARD_CORRECTNESS": 0.667,
+    "EVIDENCE": null,
+    "EXPERIENCE": 1.333
+   },
+   "composite_optional": null,
+   "interaction_runs": [
+    "FAIL",
+    "FAIL",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "PRODUCTION_USER"
+  },
+  {
+   "case_id": "cg-r04",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "ORIENT",
+   "groups": {
+    "HARD_CORRECTNESS": 0.667,
+    "EVIDENCE": null,
+    "EXPERIENCE": 1.333
+   },
+   "composite_optional": null,
+   "interaction_runs": [
+    "FAIL",
+    "FAIL",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "PRODUCTION_USER"
+  },
+  {
+   "case_id": "cg-r05",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "COMMERCIAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 1.667
+   },
+   "composite_optional": 1.808,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "PRODUCTION_USER"
+  },
+  {
+   "case_id": "cg-r06",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.667,
+    "EXPERIENCE": 1.667
+   },
+   "composite_optional": 1.708,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "PRODUCTION_USER"
+  },
+  {
+   "case_id": "cg-r07",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "SOLUTION",
+   "groups": {
+    "HARD_CORRECTNESS": 0.667,
+    "EVIDENCE": null,
+    "EXPERIENCE": 1.333
+   },
+   "composite_optional": null,
+   "interaction_runs": [
+    "FAIL",
+    "FAIL",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "CONTEXTUAL",
+   "language_provenance": "ORIGINAL_USER"
+  },
+  {
+   "case_id": "cg-r08",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "SOLUTION",
+   "groups": {
+    "HARD_CORRECTNESS": 1.417,
+    "EVIDENCE": 1.111,
+    "EXPERIENCE": 1.444
+   },
+   "composite_optional": 1.331,
+   "interaction_runs": [
+    "FAIL",
+    "PASS",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "cg-r09",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "SOLUTION",
+   "groups": {
+    "HARD_CORRECTNESS": 1.417,
+    "EVIDENCE": 0.667,
+    "EXPERIENCE": 1.556
+   },
+   "composite_optional": 1.22,
+   "interaction_runs": [
+    "FAIL",
+    "FAIL",
+    "PASS"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "cg-r10",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": 1.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.45,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "cg-r11",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "COMPARE",
+   "groups": {
+    "HARD_CORRECTNESS": 1.583,
+    "EVIDENCE": 1.111,
+    "EXPERIENCE": 1.556
+   },
+   "composite_optional": 1.436,
+   "interaction_runs": [
+    "PASS",
+    "FAIL",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "UNVERIFIED"
+  },
+  {
+   "case_id": "cg-r12",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 1.778
+   },
+   "composite_optional": 1.831,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "cg-r13",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "cg-r14",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.583,
+    "EVIDENCE": 1.333,
+    "EXPERIENCE": 1.778
+   },
+   "composite_optional": 1.547,
+   "interaction_runs": [
+    "PASS",
+    "FAIL",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "cg-r15",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "HOW_TO",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.889,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.842,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "UNVERIFIED"
+  },
+  {
+   "case_id": "cg-r16",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "COMPARE",
+   "groups": {
+    "HARD_CORRECTNESS": 1.5,
+    "EVIDENCE": 1.0,
+    "EXPERIENCE": 1.333
+   },
+   "composite_optional": 1.317,
+   "interaction_runs": [
+    "FAIL",
+    "FAIL",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "cg-r17",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.25,
+    "EVIDENCE": 0.667,
+    "EXPERIENCE": 1.333
+   },
+   "composite_optional": 1.092,
+   "interaction_runs": [
+    "FAIL",
+    "FAIL",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "cg-r18",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.111,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.608,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {
+    "3": "PII_LEAK"
+   },
+   "truth_stability": "STABLE",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "cg-r19",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "STABLE",
+   "language_provenance": "UNVERIFIED"
+  },
+  {
+   "case_id": "cg-r20",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "FACTUAL",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 2.0,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": 1.875,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "UNVERIFIED"
+  },
+  {
+   "case_id": "cg-r21",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "RECOMMEND",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.889,
+    "EXPERIENCE": 1.889
+   },
+   "composite_optional": 1.82,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "UNVERIFIED"
+  },
+  {
+   "case_id": "cg-r22",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "TROUBLESHOOT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.25,
+    "EVIDENCE": 1.333,
+    "EXPERIENCE": 1.333
+   },
+   "composite_optional": 1.291,
+   "interaction_runs": [
+    "FAIL",
+    "FAIL",
+    "FAIL"
+   ],
+   "interaction_case_PASS": false,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "ADAPTED"
+  },
+  {
+   "case_id": "cg-r23",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "FOLLOW_UP",
+   "groups": {
+    "HARD_CORRECTNESS": 1.75,
+    "EVIDENCE": 1.667,
+    "EXPERIENCE": 1.667
+   },
+   "composite_optional": 1.708,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "UNVERIFIED"
+  },
+  {
+   "case_id": "cg-s01",
+   "case_origin": "COVERAGE_ADDITION",
+   "family": "ORIENT",
+   "groups": {
+    "HARD_CORRECTNESS": 1.333,
+    "EVIDENCE": null,
+    "EXPERIENCE": 2.0
+   },
+   "composite_optional": null,
+   "interaction_runs": [
+    "PASS",
+    "PASS",
+    "PASS"
+   ],
+   "interaction_case_PASS": true,
+   "critical_runs": {},
+   "truth_stability": "SNAPSHOT_BOUND",
+   "language_provenance": "SYNTHETIC"
+  }
+ ]
+}

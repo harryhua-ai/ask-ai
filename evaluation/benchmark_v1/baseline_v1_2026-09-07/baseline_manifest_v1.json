@@ -1,0 +1,75 @@
+{
+ "artifact": "ASK-AI Answer Intelligence Benchmark v1 — CURRENT PRODUCTION BASELINE MEASUREMENT",
+ "BASELINE_RUN_ID": "PB-V1-20260907-CDBCAD3",
+ "authority": "MEASUREMENT / EVALUATION ONLY (production READ-ONLY /api/ask execution authorized; no production mutation; no failure attribution; no fixes)",
+ "BASELINE_EXECUTED": true,
+ "measured_window": {
+  "first_run": "2026-09-07T15:29:12+0800",
+  "last_run": "2026-09-07T17:03:36+0800",
+  "n_runs": 363,
+  "n_cases": 121,
+  "runs_per_case": 3
+ },
+ "production_baseline_id": {
+  "endpoint": "https://wiki-data.camthink.ai/api/ask",
+  "version": "1.1.2",
+  "git_sha": "cdbcad38fc3512561e12c71ff6eda067d06257b5",
+  "app_mode": "production",
+  "verified_at_start": "2026-09-07 pre-execution /health",
+  "verified_at_close": "2026-09-07 post-judging /health re-verification"
+ },
+ "frozen_binding": {
+  "benchmark_version": "ASK_AI_ANSWER_INTELLIGENCE_BENCHMARK_V1 = FROZEN",
+  "case_set_hash": "8685e198cb6b41abbd3b3edef667c090435a8090323307f5a320df943f73283a",
+  "contracts_frozen_v1_sha256": "5a436f053804f9cd1ac1252f9815fd6cdb655e3d938138e1fc2e56dfc28e9946",
+  "executable_corpus_v1_sha256": "a1f920c0972d74cf8a6bbd4c46fc36e2b1bfaed0a5b3600f80e2a8ada4680f50",
+  "evidence_manifest_v1_sha256": "d638685fc621b4d9be7811e193dbbb76e9cab8c6c1e8c578f833b673b1fa8a5b",
+  "benchmark_manifest_v1_sha256": "f49adfd5f7579945dd305bf2b4eb715fa0963802e65e50b1a2a14b44bad83969",
+  "freeze_commit": "f987e0878b80f607d08af0614b1e1ae2226cf41f",
+  "ratification_commit": "e93daf824175895ed33aa3784be0e9e3589a4fca",
+  "hash_verification": "all four frozen artifact hashes re-verified pre- and post-measurement — unchanged"
+ },
+ "run_policy": {
+  "channel": "widget",
+  "payload": {
+   "message": "<frozen question verbatim>",
+   "channel": "widget"
+  },
+  "sse_capture": [
+   "sources",
+   "token(first-token TTFT)",
+   "declined",
+   "done"
+  ],
+  "timeouts": "connect 15s / read 180s",
+  "inter_run_sleep_s": 3.5,
+  "infra_retry_policy": "1 retry on transport failure, recorded",
+  "infra_retries_used": 0,
+  "mutation": "none — no production data, knowledge, or config touched"
+ },
+ "judge_identity": {
+  "judge": "Executor session (LLM-assisted), per-run 10-dimension judging against frozen contracts per EVAL_V1 protocol",
+  "method": "full answer read per run; deterministic signal extraction assist only; every dimension graded independently; A/B/C + PASS/FAIL encoding per SCORE_V1",
+  "human_calibration": "NOT PERFORMED in this Gate — EVAL_V1 requires >=10% human calibration + review of all CRITICAL_FAIL runs; the 10 CRITICAL_FAIL runs are single-listed and flagged for Planner-arranged human re-review. Recorded as OPEN EVAL_V1 obligation, not silently waived."
+ },
+ "artifact_hashes": {
+  "baseline_results_raw.jsonl": "2b103e238ad2241faed213fc97b4b5b85e87f8088754536931f770ad3a64a15c",
+  "baseline_judged_results.jsonl": "1780efab13796e0bbed91be977642a57f4fa90012656eb4492e75824d125f0c6",
+  "baseline_score_summary_v1.json": "ca1dd24a865049432905ca57ad59262c891abe623fc79f301d961aeb0e6786ea"
+ },
+ "benchmark_defect_suspected": [
+  {
+   "case_id": "sq-090",
+   "observation": "frozen executable question truncated mid-sentence at 210 chars ('...没有外部 USB-'); the referenced 12-question list is absent from the executable input",
+   "scope": "defect in frozen corpus source (normalization), NOT in the runner — runner sent the frozen question verbatim (210 chars)",
+   "handling": "case graded as executed; flagged for future benchmark REV; not silently repaired (immutability rule)"
+  }
+ ],
+ "non_goals": [
+  "failure attribution/RCA",
+  "fixes",
+  "benchmark mutation",
+  "claiming historical 117/117 equivalence to this baseline"
+ ],
+ "immutability": "this baseline measures the FROZEN benchmark against production identity cdbcad3 at the measured window; re-runs require a new BASELINE_RUN_ID"
+}
