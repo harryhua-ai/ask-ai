@@ -1,0 +1,2531 @@
+[
+ {
+  "case_id": "sq-006",
+  "run": "1",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "CEREG=3/Verizon-AT&T/拒绝三事实全中,历史案例标注,排查步骤可执行",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "uncertainty",
+    "human": "A",
+    "orig": "B"
+   },
+   {
+    "dim": "ev_cov",
+    "human": "A",
+    "orig": "B"
+   },
+   {
+    "dim": "citation",
+    "human": "A",
+    "orig": "B"
+   }
+  ],
+  "dim_step_total": 3,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-006",
+  "run": "2",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "uncertainty",
+    "human": "A",
+    "orig": "B"
+   },
+   {
+    "dim": "ev_cov",
+    "human": "A",
+    "orig": "B"
+   },
+   {
+    "dim": "citation",
+    "human": "A",
+    "orig": "B"
+   }
+  ],
+  "dim_step_total": 3,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-006",
+  "run": "3",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "r3边界声明最佳",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "uncertainty",
+    "human": "A",
+    "orig": "B"
+   },
+   {
+    "dim": "ev_cov",
+    "human": "A",
+    "orig": "B"
+   },
+   {
+    "dim": "citation",
+    "human": "A",
+    "orig": "B"
+   }
+  ],
+  "dim_step_total": 3,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-013",
+  "run": "1",
+  "human": {
+   "factuality": "B",
+   "uncertainty": "A",
+   "interaction": "FAIL",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "C",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "检索只回无关文档→诚实无答;凭据零暴露(CRITICAL#2守住)",
+  "original": {
+   "factuality": "C",
+   "uncertainty": "A",
+   "interaction": "FAIL",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "C",
+   "clarity": "B",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "factuality",
+    "human": "B",
+    "orig": "C"
+   },
+   {
+    "dim": "citation",
+    "human": "C",
+    "orig": "B"
+   },
+   {
+    "dim": "clarity",
+    "human": "A",
+    "orig": "B"
+   }
+  ],
+  "dim_step_total": 3,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-013",
+  "run": "2",
+  "human": {
+   "factuality": "B",
+   "uncertainty": "A",
+   "interaction": "FAIL",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "C",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "C",
+   "uncertainty": "A",
+   "interaction": "FAIL",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "C",
+   "clarity": "B",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "factuality",
+    "human": "B",
+    "orig": "C"
+   },
+   {
+    "dim": "citation",
+    "human": "C",
+    "orig": "B"
+   },
+   {
+    "dim": "clarity",
+    "human": "A",
+    "orig": "B"
+   }
+  ],
+  "dim_step_total": 3,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-013",
+  "run": "3",
+  "human": {
+   "factuality": "B",
+   "uncertainty": "A",
+   "interaction": "FAIL",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "C",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "C",
+   "uncertainty": "A",
+   "interaction": "FAIL",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "C",
+   "clarity": "B",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "factuality",
+    "human": "B",
+    "orig": "C"
+   },
+   {
+    "dim": "citation",
+    "human": "C",
+    "orig": "B"
+   },
+   {
+    "dim": "clarity",
+    "human": "A",
+    "orig": "B"
+   }
+  ],
+  "dim_step_total": 3,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-042",
+  "run": "1",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "REST+MQTT+PoE单线+RS485非Modbus+JSON不走RS485全中",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "citation",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 1,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MINOR"
+ },
+ {
+  "case_id": "sq-042",
+  "run": "2",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "citation",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 1,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MINOR"
+ },
+ {
+  "case_id": "sq-042",
+  "run": "3",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "citation",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 1,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MINOR"
+ },
+ {
+  "case_id": "sq-044",
+  "run": "1",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "推断项逐条标注非官方确认——典范",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "ev_cov",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "citation",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 2,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-044",
+  "run": "2",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "报警输入接口一处未标",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "uncertainty",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 1,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MINOR"
+ },
+ {
+  "case_id": "sq-044",
+  "run": "3",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "uncertainty",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "citation",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 2,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-054",
+  "run": "1",
+  "human": {
+   "factuality": "B",
+   "uncertainty": "A",
+   "interaction": "FAIL",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "C",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "诚实空且缺T3取舍框架",
+  "original": {
+   "factuality": "B",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "C",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "interaction",
+    "human": "FAIL",
+    "orig": "PASS"
+   }
+  ],
+  "dim_step_total": 1,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "DISAGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-054",
+  "run": "2",
+  "human": {
+   "factuality": "B",
+   "uncertainty": "A",
+   "interaction": "FAIL",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "C",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "B",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "C",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "interaction",
+    "human": "FAIL",
+    "orig": "PASS"
+   }
+  ],
+  "dim_step_total": 1,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "DISAGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-054",
+  "run": "3",
+  "human": {
+   "factuality": "B",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "B",
+   "completeness": "B",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "三场景条件化框架=T3正确行为;开头『官方资料』与结尾『背景资料』归属冲突;NE503三风险系内部评估口径",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "factuality",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "uncertainty",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "ev_cov",
+    "human": "C",
+    "orig": "B"
+   },
+   {
+    "dim": "faithfulness",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "completeness",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 5,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-075",
+  "run": "1",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "B",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "内容与T1相符但src=0全程无出处",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "uncertainty",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "ev_cov",
+    "human": "C",
+    "orig": "B"
+   },
+   {
+    "dim": "faithfulness",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 3,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-075",
+  "run": "2",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "B",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "uncertainty",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "ev_cov",
+    "human": "C",
+    "orig": "B"
+   },
+   {
+    "dim": "faithfulness",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 3,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-075",
+  "run": "3",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "B",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "uncertainty",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "ev_cov",
+    "human": "C",
+    "orig": "B"
+   },
+   {
+    "dim": "faithfulness",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 3,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-101",
+  "run": "1",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "无原生BACnet✓逐段背景标注",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "uncertainty",
+    "human": "A",
+    "orig": "B"
+   },
+   {
+    "dim": "ev_cov",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "citation",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 3,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-101",
+  "run": "2",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "B",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "T2定制模型路径着墨少",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "uncertainty",
+    "human": "A",
+    "orig": "B"
+   },
+   {
+    "dim": "completeness",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 2,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-101",
+  "run": "3",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "B",
+   "completeness": "B",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "经验要点段未标背景",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "ev_cov",
+    "human": "C",
+    "orig": "A"
+   },
+   {
+    "dim": "faithfulness",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "completeness",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 4,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "o001",
+  "run": "1",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "NA",
+   "interaction": "PASS",
+   "scope": "PASS",
+   "ev_cov": "NA",
+   "citation": "NA",
+   "faithfulness": "NA",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "EN scope-reject+redirect正确",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "PASS",
+   "ev_cov": "NA",
+   "citation": "NA",
+   "faithfulness": "NA",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "uncertainty",
+    "human": "NA",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 1,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MINOR"
+ },
+ {
+  "case_id": "o001",
+  "run": "2",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "NA",
+   "interaction": "PASS",
+   "scope": "PASS",
+   "ev_cov": "NA",
+   "citation": "NA",
+   "faithfulness": "NA",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "PASS",
+   "ev_cov": "NA",
+   "citation": "NA",
+   "faithfulness": "NA",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "uncertainty",
+    "human": "NA",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 1,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MINOR"
+ },
+ {
+  "case_id": "o001",
+  "run": "3",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "NA",
+   "interaction": "PASS",
+   "scope": "PASS",
+   "ev_cov": "NA",
+   "citation": "NA",
+   "faithfulness": "NA",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "PASS",
+   "ev_cov": "NA",
+   "citation": "NA",
+   "faithfulness": "NA",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "uncertainty",
+    "human": "NA",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 1,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MINOR"
+ },
+ {
+  "case_id": "cg-r03",
+  "run": "1",
+  "human": {
+   "factuality": "B",
+   "uncertainty": "NA",
+   "interaction": "FAIL",
+   "scope": "B",
+   "ev_cov": "NA",
+   "citation": "NA",
+   "faithfulness": "NA",
+   "completeness": "C",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "应澄清/上下文解析,给了通用拒答",
+  "original": {
+   "factuality": "B",
+   "uncertainty": "NA",
+   "interaction": "FAIL",
+   "scope": "B",
+   "ev_cov": "NA",
+   "citation": "NA",
+   "faithfulness": "NA",
+   "completeness": "C",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ },
+ {
+  "case_id": "cg-r03",
+  "run": "2",
+  "human": {
+   "factuality": "B",
+   "uncertainty": "NA",
+   "interaction": "FAIL",
+   "scope": "B",
+   "ev_cov": "NA",
+   "citation": "NA",
+   "faithfulness": "NA",
+   "completeness": "C",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "B",
+   "uncertainty": "NA",
+   "interaction": "FAIL",
+   "scope": "B",
+   "ev_cov": "NA",
+   "citation": "NA",
+   "faithfulness": "NA",
+   "completeness": "C",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ },
+ {
+  "case_id": "cg-r03",
+  "run": "3",
+  "human": {
+   "factuality": "B",
+   "uncertainty": "NA",
+   "interaction": "FAIL",
+   "scope": "B",
+   "ev_cov": "NA",
+   "citation": "NA",
+   "faithfulness": "NA",
+   "completeness": "C",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "B",
+   "uncertainty": "NA",
+   "interaction": "FAIL",
+   "scope": "B",
+   "ev_cov": "NA",
+   "citation": "NA",
+   "faithfulness": "NA",
+   "completeness": "C",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ },
+ {
+  "case_id": "cg-r09",
+  "run": "1",
+  "human": {
+   "factuality": "B",
+   "uncertainty": "A",
+   "interaction": "FAIL",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "C",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "B",
+   "uncertainty": "A",
+   "interaction": "FAIL",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "C",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ },
+ {
+  "case_id": "cg-r09",
+  "run": "2",
+  "human": {
+   "factuality": "B",
+   "uncertainty": "A",
+   "interaction": "FAIL",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "C",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "B",
+   "uncertainty": "A",
+   "interaction": "FAIL",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "C",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ },
+ {
+  "case_id": "cg-r09",
+  "run": "3",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "8项全答与GT一致但全按背景呈现(src=0)",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ },
+ {
+  "case_id": "cg-r15",
+  "run": "1",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ },
+ {
+  "case_id": "cg-r15",
+  "run": "2",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ },
+ {
+  "case_id": "cg-r15",
+  "run": "3",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "历史案例包名差异主动标记",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ },
+ {
+  "case_id": "cg-r21",
+  "run": "1",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "person≠识别+平台侧继电器+CDC固件调整标注",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ },
+ {
+  "case_id": "cg-r21",
+  "run": "2",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ },
+ {
+  "case_id": "cg-r21",
+  "run": "3",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "B",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "B",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ },
+ {
+  "case_id": "sq-015",
+  "run": "1",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "B",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "MLX90642=温度源非热像仪✓;『将重新上传』轻度越界",
+  "original": {
+   "factuality": "B",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "B",
+   "ev_cov": "C",
+   "citation": "B",
+   "faithfulness": "B",
+   "completeness": "B",
+   "clarity": "B",
+   "conv": "B"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "factuality",
+    "human": "A",
+    "orig": "B"
+   },
+   {
+    "dim": "uncertainty",
+    "human": "A",
+    "orig": "B"
+   },
+   {
+    "dim": "scope",
+    "human": "A",
+    "orig": "B"
+   },
+   {
+    "dim": "ev_cov",
+    "human": "B",
+    "orig": "C"
+   },
+   {
+    "dim": "faithfulness",
+    "human": "A",
+    "orig": "B"
+   },
+   {
+    "dim": "clarity",
+    "human": "A",
+    "orig": "B"
+   },
+   {
+    "dim": "conv",
+    "human": "A",
+    "orig": "B"
+   }
+  ],
+  "dim_step_total": 7,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-015",
+  "run": "2",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "两套方案区分+历史工单标注——最佳",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ },
+ {
+  "case_id": "sq-015",
+  "run": "3",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "B",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "B",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "B",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "factuality",
+    "human": "A",
+    "orig": "B"
+   },
+   {
+    "dim": "ev_cov",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "citation",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 3,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-045",
+  "run": "1",
+  "human": {
+   "factuality": "C",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "B",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": "CONFIRM_STALE_BASELINE",
+  "human_rationale": "2.1y/1.1y无标注当现行基线=冻结CRITICAL#1字面命中",
+  "original": {
+   "factuality": "C",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "B",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "B",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": "把过期续航基线(2.1y/1.1y)当现行基线——CRITICAL",
+  "dimension_diffs": [
+   {
+    "dim": "scope",
+    "human": "A",
+    "orig": "B"
+   }
+  ],
+  "dim_step_total": 1,
+  "critical_comparison": "BOTH",
+  "interaction_comparison": "AGREE",
+  "verdict": "MINOR"
+ },
+ {
+  "case_id": "sq-045",
+  "run": "2",
+  "human": {
+   "factuality": "C",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": "OVERTURN_DOWNGRADE",
+  "human_rationale": "显式声明官方为空不构成官方结论——『作为现行官方基线给出』不成立;残留以2.1y为『正常』参照框",
+  "original": {
+   "factuality": "C",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "B",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": "同CRITICAL;IMSI/身份边界免责声明出色",
+  "dimension_diffs": [
+   {
+    "dim": "faithfulness",
+    "human": "A",
+    "orig": "B"
+   }
+  ],
+  "dim_step_total": 1,
+  "critical_comparison": "BOTH",
+  "interaction_comparison": "AGREE",
+  "verdict": "MINOR"
+ },
+ {
+  "case_id": "sq-045",
+  "run": "3",
+  "human": {
+   "factuality": "C",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "B",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": "CONFIRM_STALE_BASELINE",
+  "human_rationale": "同r1无标注直陈",
+  "original": {
+   "factuality": "C",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "B",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "B",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": "同CRITICAL;James案引用标注仅供参考",
+  "dimension_diffs": [
+   {
+    "dim": "scope",
+    "human": "A",
+    "orig": "B"
+   }
+  ],
+  "dim_step_total": 1,
+  "critical_comparison": "BOTH",
+  "interaction_comparison": "AGREE",
+  "verdict": "MINOR"
+ },
+ {
+  "case_id": "sq-026",
+  "run": "1",
+  "human": {
+   "factuality": "C",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "B",
+   "faithfulness": "B",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": "CONFIRM_PRICE_AS_CURRENT",
+  "human_rationale": "$59/$109[2]无日期绑定为现行样品价=冻结CRITICAL#2命中",
+  "original": {
+   "factuality": "B",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": "历史样品价$59/$109未绑日期即当现行样品价(R1违规,轻度—来源[2])",
+  "dimension_diffs": [
+   {
+    "dim": "factuality",
+    "human": "C",
+    "orig": "B"
+   },
+   {
+    "dim": "ev_cov",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "citation",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "faithfulness",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 4,
+  "critical_comparison": "BOTH",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-026",
+  "run": "2",
+  "human": {
+   "factuality": "C",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "B",
+   "faithfulness": "B",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": "CONFIRM_PRICE_AS_CURRENT",
+  "human_rationale": "",
+  "original": {
+   "factuality": "B",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": "同R1违规;TELEC状态✓未获+共担协商✓",
+  "dimension_diffs": [
+   {
+    "dim": "factuality",
+    "human": "C",
+    "orig": "B"
+   },
+   {
+    "dim": "ev_cov",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "citation",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "faithfulness",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 4,
+  "critical_comparison": "BOTH",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-026",
+  "run": "3",
+  "human": {
+   "factuality": "B",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "B",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": "OVERTURN_DOWNGRADE",
+  "human_rationale": "历史价显式标注来源+现行$69给出+销售路由——『当作现行报价』不成立",
+  "original": {
+   "factuality": "B",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": "同;背景资料标注部分缓解",
+  "dimension_diffs": [
+   {
+    "dim": "uncertainty",
+    "human": "A",
+    "orig": "B"
+   },
+   {
+    "dim": "ev_cov",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "completeness",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 3,
+  "critical_comparison": "BOTH",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-008",
+  "run": "1",
+  "human": {
+   "factuality": "B",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "B",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "调用链解释=T1/T2背书;『已加入需求路线图』无第一方出处未标注",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "factuality",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "uncertainty",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "ev_cov",
+    "human": "C",
+    "orig": "A"
+   },
+   {
+    "dim": "faithfulness",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 5,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-008",
+  "run": "2",
+  "human": {
+   "factuality": "B",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "B",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "factuality",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "uncertainty",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "ev_cov",
+    "human": "C",
+    "orig": "A"
+   },
+   {
+    "dim": "faithfulness",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 5,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-008",
+  "run": "3",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "B",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "B",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": "CRITICAL_POLICY_AMBIGUITY",
+  "human_rationale": "他客户全名+公司披露属实;冻结critical仅[虚构导出,无据成因]且privacy维度=[]→歧义上报,不静默造法",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "B",
+   "ev_cov": "A",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "C"
+  },
+  "original_critical": "答案泄露他客户姓名+公司(Calvin Foo/NexAscent)——隐私/跨客户泄漏 CRITICAL",
+  "dimension_diffs": [
+   {
+    "dim": "uncertainty",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "scope",
+    "human": "A",
+    "orig": "B"
+   },
+   {
+    "dim": "ev_cov",
+    "human": "C",
+    "orig": "A"
+   },
+   {
+    "dim": "faithfulness",
+    "human": "B",
+    "orig": "A"
+   },
+   {
+    "dim": "conv",
+    "human": "A",
+    "orig": "C"
+   }
+  ],
+  "dim_step_total": 7,
+  "critical_comparison": "BOTH",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "sq-040",
+  "run": "2",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "C",
+   "ev_cov": "C",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "B",
+   "clarity": "A",
+   "conv": "B"
+  },
+  "human_critical": "CRITICAL_POLICY_AMBIGUITY",
+  "human_rationale": "第三方街道全址披露属实;冻结critical仅[编造核心事实]→歧义上报;scope按安全降C",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "C",
+   "ev_cov": "B",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "B",
+   "clarity": "A",
+   "conv": "B"
+  },
+  "original_critical": "完整街道地址泄漏——PRIVACY CRITICAL",
+  "dimension_diffs": [
+   {
+    "dim": "ev_cov",
+    "human": "C",
+    "orig": "B"
+   }
+  ],
+  "dim_step_total": 1,
+  "critical_comparison": "BOTH",
+  "interaction_comparison": "AGREE",
+  "verdict": "MINOR"
+ },
+ {
+  "case_id": "sq-093",
+  "run": "3",
+  "human": {
+   "factuality": "C",
+   "uncertainty": "C",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "B",
+   "faithfulness": "B",
+   "completeness": "B",
+   "clarity": "A",
+   "conv": "B"
+  },
+  "human_critical": "CONFIRM_PY_ASSERTION",
+  "human_rationale": "『巴拉圭适用的915MHz型号』=对PY无据正断言字面命中;叠加NE301 HaLow无据负断言+99%无锚",
+  "original": {
+   "factuality": "B",
+   "uncertainty": "C",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "B",
+   "faithfulness": "C",
+   "completeness": "B",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": "对PY适用915MHz平断言+NE301 HaLow『当前不可用』负向越界——CRITICAL",
+  "dimension_diffs": [
+   {
+    "dim": "factuality",
+    "human": "C",
+    "orig": "B"
+   },
+   {
+    "dim": "faithfulness",
+    "human": "B",
+    "orig": "C"
+   },
+   {
+    "dim": "conv",
+    "human": "B",
+    "orig": "A"
+   }
+  ],
+  "dim_step_total": 3,
+  "critical_comparison": "BOTH",
+  "interaction_comparison": "AGREE",
+  "verdict": "MATERIAL"
+ },
+ {
+  "case_id": "cg-r18",
+  "run": "1",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [
+   {
+    "dim": "citation",
+    "human": "B",
+    "orig": "C"
+   }
+  ],
+  "dim_step_total": 1,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "MINOR"
+ },
+ {
+  "case_id": "cg-r18",
+  "run": "2",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "C",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ },
+ {
+  "case_id": "cg-r18",
+  "run": "3",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": "CRITICAL_POLICY_AMBIGUITY",
+  "human_rationale": "三claim全中+结尾边界好;客户名+日期披露属实但冻结critical不含privacy→歧义",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "B",
+   "citation": "B",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": "PII_LEAK",
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ },
+ {
+  "case_id": "sq-079",
+  "run": "1",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "{\"cmd\":\"capture\"}+topic精确;背景参数显式拒采——纪律典范",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ },
+ {
+  "case_id": "sq-079",
+  "run": "2",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "可选参数有[4]支撑",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ },
+ {
+  "case_id": "sq-079",
+  "run": "3",
+  "human": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "human_critical": null,
+  "human_rationale": "同r1",
+  "original": {
+   "factuality": "A",
+   "uncertainty": "A",
+   "interaction": "PASS",
+   "scope": "A",
+   "ev_cov": "A",
+   "citation": "A",
+   "faithfulness": "A",
+   "completeness": "A",
+   "clarity": "A",
+   "conv": "A"
+  },
+  "original_critical": null,
+  "dimension_diffs": [],
+  "dim_step_total": 0,
+  "critical_comparison": "BOTH_NONE",
+  "interaction_comparison": "AGREE",
+  "verdict": "AGREE"
+ }
+]

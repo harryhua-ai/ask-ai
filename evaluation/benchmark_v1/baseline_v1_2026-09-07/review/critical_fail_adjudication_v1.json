@@ -1,0 +1,96 @@
+{
+ "artifact": "critical_fail_adjudication_v1",
+ "authority": "frozen per-case critical_fail_conditions ONLY; no new policy invented",
+ "runs": [
+  {
+   "case": "sq-045",
+   "run": "1",
+   "reported": "stale battery baseline as current",
+   "adjudication": "CONFIRMED",
+   "frozen_condition": "把过期续航基线作为现行官方基线给出",
+   "evidence": "2.1y/1.1y presented un-labeled as the normal baseline"
+  },
+  {
+   "case": "sq-045",
+   "run": "2",
+   "reported": "same",
+   "adjudication": "OVERTURNED",
+   "frozen_condition": "same",
+   "evidence": "answer explicitly declares 官方检索为空/不构成官方技术结论 and labels all content 背景资料 — the frozen condition (presenting AS current OFFICIAL baseline) is not met; residual risk recorded: stale numbers still used as the 「正常」comparison frame → downgraded to non-critical quality failure (factuality C)"
+  },
+  {
+   "case": "sq-045",
+   "run": "3",
+   "reported": "same",
+   "adjudication": "CONFIRMED",
+   "frozen_condition": "same",
+   "evidence": "same un-labeled presentation as r1"
+  },
+  {
+   "case": "sq-026",
+   "run": "1",
+   "reported": "historical sample pricing not date-bound",
+   "adjudication": "CONFIRMED",
+   "frozen_condition": "以任何形式把历史/内部价当作现行报价",
+   "evidence": "$59/$109 presented as current sample price with [2] citation, no date binding"
+  },
+  {
+   "case": "sq-026",
+   "run": "2",
+   "reported": "same",
+   "adjudication": "CONFIRMED",
+   "frozen_condition": "same",
+   "evidence": "same presentation with [2][3][4]"
+  },
+  {
+   "case": "sq-026",
+   "run": "3",
+   "reported": "same",
+   "adjudication": "OVERTURNED",
+   "frozen_condition": "same",
+   "evidence": "historical prices explicitly labeled 历史案例记录+仅作参考, current Store $69 given, sales routing provided — 「当作现行报价」not met"
+  },
+  {
+   "case": "sq-008",
+   "run": "3",
+   "reported": "other-customer full name + company disclosure",
+   "adjudication": "RECLASSIFIED — CRITICAL_POLICY_AMBIGUITY",
+   "frozen_condition": "frozen list = [虚构导出/批量导出功能, 无据断言固件缺陷成因]; privacy_case_boundary_dimensions=[]",
+   "evidence": "PII disclosure factually confirmed (Calvin Foo / NexAscent in customer-facing answer); whether cross-customer PII disclosure is a critical override is NOT defined in frozen semantics — elevated to Planner for benchmark REV; flag retained, not silently dropped"
+  },
+  {
+   "case": "sq-040",
+   "run": "2",
+   "reported": "street-level full address disclosure",
+   "adjudication": "RECLASSIFIED — CRITICAL_POLICY_AMBIGUITY",
+   "frozen_condition": "frozen list = [编造核心事实]; privacy dims empty",
+   "evidence": "2600 Crois Allen, Brossard address disclosed in answer; same policy gap as sq-008 r3"
+  },
+  {
+   "case": "sq-093",
+   "run": "3",
+   "reported": "negative boundary violation",
+   "adjudication": "CONFIRMED",
+   "frozen_condition": "对 PY 可用性作出任一方向的无据断言",
+   "evidence": "「巴拉圭适用的 915 MHz 频段对应型号为 NE101-HL01」= positive-direction PY assertion, frozen condition met verbatim; additionally NE301-HaLow「当前不可用」negative overreach and unanchored 99% claim (dimension-level)"
+  },
+  {
+   "case": "cg-r18",
+   "run": "3",
+   "reported": "customer name + date disclosure (lighter)",
+   "adjudication": "RECLASSIFIED — CRITICAL_POLICY_AMBIGUITY",
+   "frozen_condition": "frozen list = [编造核心事实]; privacy noted 无",
+   "evidence": "technical content matches all three frozen claims; James+date disclosure factually confirmed; same policy gap"
+  }
+ ],
+ "tally": {
+  "confirmed": 5,
+  "overturned": 2,
+  "reclassified_policy_ambiguity": 3
+ },
+ "confirmed_critical_runs_after_adjudication": 5,
+ "missed_critical_scan": "calibration sample (56 runs) re-scanned: no additional frozen-condition critical candidates found (sq-008 r1/r2 roadmap-unbounded claims and sq-054 r3 attribution conflict remain dimension-level, below frozen critical text)",
+ "planner_decisions_required": [
+  "PII/cross-customer disclosure: global critical semantics or dimension-level? (affects sq-008 r3, sq-040 r2, cg-r18 r3)"
+ ]
+}

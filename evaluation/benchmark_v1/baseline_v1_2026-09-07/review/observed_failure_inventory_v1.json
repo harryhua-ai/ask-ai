@@ -1,0 +1,1312 @@
+{
+ "artifact": "observed_failure_inventory_v1",
+ "purpose": "normalized input for next Failure Attribution Gate; NO K0-K9 assigned; NO fixes/architecture proposed",
+ "failure_entries_total": 73,
+ "failures": [
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-045-1",
+   "case_run": "sq-045 r1",
+   "observable_symptom": "CRITICAL_FLAGGED (把过期续航基线(2.1y/1.1y)当现行基线——CRITICAL)",
+   "affected_dimensions": [
+    "factuality"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-045 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "0/3 runs FAIL in this case",
+   "criticality": "CRITICAL_FLAGGED",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_C",
+   "truth_stability": "CONTEXTUAL"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-045-2",
+   "case_run": "sq-045 r2",
+   "observable_symptom": "CRITICAL_FLAGGED (同CRITICAL;IMSI/身份边界免责声明出色)",
+   "affected_dimensions": [
+    "factuality"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-045 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "0/3 runs FAIL in this case",
+   "criticality": "CRITICAL_FLAGGED",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_C",
+   "truth_stability": "CONTEXTUAL"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-045-3",
+   "case_run": "sq-045 r3",
+   "observable_symptom": "CRITICAL_FLAGGED (同CRITICAL;James案引用标注仅供参考)",
+   "affected_dimensions": [
+    "factuality"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-045 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "0/3 runs FAIL in this case",
+   "criticality": "CRITICAL_FLAGGED",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_C",
+   "truth_stability": "CONTEXTUAL"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-049-2",
+   "case_run": "sq-049 r2",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "factuality",
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-049 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "RECOMMEND",
+   "case_origin": "HISTORICAL_C",
+   "truth_stability": "CONTEXTUAL"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-049-3",
+   "case_run": "sq-049 r3",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "factuality",
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-049 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "RECOMMEND",
+   "case_origin": "HISTORICAL_C",
+   "truth_stability": "CONTEXTUAL"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-093-3",
+   "case_run": "sq-093 r3",
+   "observable_symptom": "CRITICAL_FLAGGED (对PY适用915MHz平断言+NE301 HaLow『当前不可用』负向越界——CRITICAL)",
+   "affected_dimensions": [
+    "uncertainty"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-093 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "0/3 runs FAIL in this case",
+   "criticality": "CRITICAL_FLAGGED",
+   "regression_family": [],
+   "interaction_class": "RECOMMEND",
+   "case_origin": "HISTORICAL_C",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-008-3",
+   "case_run": "sq-008 r3",
+   "observable_symptom": "CRITICAL_FLAGGED (答案泄露他客户姓名+公司(Calvin Foo/NexAscent)——隐私/跨客户泄漏 CRITICAL)",
+   "affected_dimensions": [],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-008 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "0/3 runs FAIL in this case",
+   "criticality": "CRITICAL_FLAGGED",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_C",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-063-1",
+   "case_run": "sq-063 r1",
+   "observable_symptom": "UNLABELED_SUBSTANTIVE_FROM_BACKGROUND (src=0 but substantive content, weak provenance)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-063 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_C",
+   "truth_stability": "CONTEXTUAL"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-063-3",
+   "case_run": "sq-063 r3",
+   "observable_symptom": "UNLABELED_SUBSTANTIVE_FROM_BACKGROUND (src=0 but substantive content, weak provenance)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-063 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_C",
+   "truth_stability": "CONTEXTUAL"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-070-1",
+   "case_run": "sq-070 r1",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-070 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "COMPARE",
+   "case_origin": "HISTORICAL_C",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-070-3",
+   "case_run": "sq-070 r3",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-070 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "COMPARE",
+   "case_origin": "HISTORICAL_C",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-104-1",
+   "case_run": "sq-104 r1",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-104 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "RECOMMEND",
+   "case_origin": "HISTORICAL_C",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-104-2",
+   "case_run": "sq-104 r2",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-104 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "RECOMMEND",
+   "case_origin": "HISTORICAL_C",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-104-3",
+   "case_run": "sq-104 r3",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-104 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "RECOMMEND",
+   "case_origin": "HISTORICAL_C",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-001-2",
+   "case_run": "sq-001 r2",
+   "observable_symptom": "UNLABELED_SUBSTANTIVE_FROM_BACKGROUND (src=0 but substantive content, weak provenance)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-001 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "SOLUTION",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-001-3",
+   "case_run": "sq-001 r3",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-001 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "SOLUTION",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-005-2",
+   "case_run": "sq-005 r2",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-005 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "1/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [
+    "#5",
+    "#28"
+   ],
+   "interaction_class": "COMPARE",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-013-1",
+   "case_run": "sq-013 r1",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "factuality",
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-013 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-013-2",
+   "case_run": "sq-013 r2",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "factuality",
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-013 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-013-3",
+   "case_run": "sq-013 r3",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "factuality",
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-013 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-026-1",
+   "case_run": "sq-026 r1",
+   "observable_symptom": "CRITICAL_FLAGGED (历史样品价$59/$109未绑日期即当现行样品价(R1违规,轻度—来源[2]))",
+   "affected_dimensions": [],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-026 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "0/3 runs FAIL in this case",
+   "criticality": "CRITICAL_FLAGGED",
+   "regression_family": [],
+   "interaction_class": "COMMERCIAL",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-026-2",
+   "case_run": "sq-026 r2",
+   "observable_symptom": "CRITICAL_FLAGGED (同R1违规;TELEC状态✓未获+共担协商✓)",
+   "affected_dimensions": [],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-026 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "0/3 runs FAIL in this case",
+   "criticality": "CRITICAL_FLAGGED",
+   "regression_family": [],
+   "interaction_class": "COMMERCIAL",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-026-3",
+   "case_run": "sq-026 r3",
+   "observable_symptom": "CRITICAL_FLAGGED (同;背景资料标注部分缓解)",
+   "affected_dimensions": [],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-026 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "0/3 runs FAIL in this case",
+   "criticality": "CRITICAL_FLAGGED",
+   "regression_family": [],
+   "interaction_class": "COMMERCIAL",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-034-2",
+   "case_run": "sq-034 r2",
+   "observable_symptom": "UNLABELED_SUBSTANTIVE_FROM_BACKGROUND (src=0 but substantive content, weak provenance)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-034 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "SOLUTION",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-034-3",
+   "case_run": "sq-034 r3",
+   "observable_symptom": "UNLABELED_SUBSTANTIVE_FROM_BACKGROUND (src=0 but substantive content, weak provenance)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-034 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "SOLUTION",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-040-2",
+   "case_run": "sq-040 r2",
+   "observable_symptom": "CRITICAL_FLAGGED (完整街道地址泄漏——PRIVACY CRITICAL)",
+   "affected_dimensions": [
+    "scope"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-040 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "1/3 runs FAIL in this case",
+   "criticality": "CRITICAL_FLAGGED",
+   "regression_family": [],
+   "interaction_class": "SOLUTION",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-040-3",
+   "case_run": "sq-040 r3",
+   "observable_symptom": "UNLABELED_SUBSTANTIVE_FROM_BACKGROUND (src=0 but substantive content, weak provenance)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-040 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "1/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "SOLUTION",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-048-1",
+   "case_run": "sq-048 r1",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-048 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "RECOMMEND",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-048-3",
+   "case_run": "sq-048 r3",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-048 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "RECOMMEND",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-080-1",
+   "case_run": "sq-080 r1",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-080 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [
+    "#5",
+    "#28"
+   ],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-080-2",
+   "case_run": "sq-080 r2",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-080 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [
+    "#5",
+    "#28"
+   ],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-082-1",
+   "case_run": "sq-082 r1",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-082 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-082-2",
+   "case_run": "sq-082 r2",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-082 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-086-1",
+   "case_run": "sq-086 r1",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-086 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "HOW_TO",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-086-2",
+   "case_run": "sq-086 r2",
+   "observable_symptom": "UNLABELED_SUBSTANTIVE_FROM_BACKGROUND (src=0 but substantive content, weak provenance)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-086 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "HOW_TO",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-086-3",
+   "case_run": "sq-086 r3",
+   "observable_symptom": "UNLABELED_SUBSTANTIVE_FROM_BACKGROUND (src=0 but substantive content, weak provenance)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-086 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "HOW_TO",
+   "case_origin": "HISTORICAL_B",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-028-1",
+   "case_run": "sq-028 r1",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-028 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_A",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-028-2",
+   "case_run": "sq-028 r2",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-028 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_A",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-028-3",
+   "case_run": "sq-028 r3",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-028 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_A",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-032-1",
+   "case_run": "sq-032 r1",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "factuality",
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-032 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "1/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "FACTUAL",
+   "case_origin": "HISTORICAL_A",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-037-3",
+   "case_run": "sq-037 r3",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-037 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "1/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "FACTUAL",
+   "case_origin": "HISTORICAL_A",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-053-1",
+   "case_run": "sq-053 r1",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-053 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "1/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_A",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-069-1",
+   "case_run": "sq-069 r1",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-069 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_A",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-069-3",
+   "case_run": "sq-069 r3",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-069 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_A",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-076-1",
+   "case_run": "sq-076 r1",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-076 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_A",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-076-2",
+   "case_run": "sq-076 r2",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-076 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_A",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-076-3",
+   "case_run": "sq-076 r3",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-076 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "HISTORICAL_A",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-sq-058-2",
+   "case_run": "sq-058 r2",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "factuality",
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=sq-058 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "1/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "RECOMMEND",
+   "case_origin": "HISTORICAL_A",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r03-1",
+   "case_run": "cg-r03 r1",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r03 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [
+    "#26"
+   ],
+   "interaction_class": "CLARIFY",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "CONTEXTUAL"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r03-2",
+   "case_run": "cg-r03 r2",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r03 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [
+    "#26"
+   ],
+   "interaction_class": "CLARIFY",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "CONTEXTUAL"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r03-3",
+   "case_run": "cg-r03 r3",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r03 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [
+    "#26"
+   ],
+   "interaction_class": "CLARIFY",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "CONTEXTUAL"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r04-1",
+   "case_run": "cg-r04 r1",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r04 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [
+    "#27"
+   ],
+   "interaction_class": "ORIENT",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r04-2",
+   "case_run": "cg-r04 r2",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r04 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [
+    "#27"
+   ],
+   "interaction_class": "ORIENT",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r04-3",
+   "case_run": "cg-r04 r3",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r04 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [
+    "#27"
+   ],
+   "interaction_class": "ORIENT",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r07-1",
+   "case_run": "cg-r07 r1",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r07 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [
+    "#31"
+   ],
+   "interaction_class": "SOLUTION",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "CONTEXTUAL"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r07-2",
+   "case_run": "cg-r07 r2",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r07 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [
+    "#31"
+   ],
+   "interaction_class": "SOLUTION",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "CONTEXTUAL"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r07-3",
+   "case_run": "cg-r07 r3",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r07 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [
+    "#31"
+   ],
+   "interaction_class": "SOLUTION",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "CONTEXTUAL"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r08-1",
+   "case_run": "cg-r08 r1",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r08 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "SOLUTION",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r08-3",
+   "case_run": "cg-r08 r3",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r08 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "SOLUTION",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r09-1",
+   "case_run": "cg-r09 r1",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r09 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "SOLUTION",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r09-2",
+   "case_run": "cg-r09 r2",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r09 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "2/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "SOLUTION",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r11-2",
+   "case_run": "cg-r11 r2",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r11 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "1/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "COMPARE",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r14-2",
+   "case_run": "cg-r14 r2",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r14 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "1/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r16-1",
+   "case_run": "cg-r16 r1",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r16 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [
+    "#5"
+   ],
+   "interaction_class": "COMPARE",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r16-2",
+   "case_run": "cg-r16 r2",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r16 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [
+    "#5"
+   ],
+   "interaction_class": "COMPARE",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r16-3",
+   "case_run": "cg-r16 r3",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r16 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [
+    "#5"
+   ],
+   "interaction_class": "COMPARE",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r17-1",
+   "case_run": "cg-r17 r1",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r17 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r17-2",
+   "case_run": "cg-r17 r2",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r17 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r17-3",
+   "case_run": "cg-r17 r3",
+   "observable_symptom": "HONEST_EMPTY (zero retrieval; explicit 未载明; no fabrication)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r17 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r18-3",
+   "case_run": "cg-r18 r3",
+   "observable_symptom": "CRITICAL_FLAGGED (PII_LEAK)",
+   "affected_dimensions": [],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r18 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "0/3 runs FAIL in this case",
+   "criticality": "CRITICAL_FLAGGED",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "STABLE"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r22-1",
+   "case_run": "cg-r22 r1",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r22 run=1; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r22-2",
+   "case_run": "cg-r22 r2",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r22 run=2; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "SNAPSHOT_BOUND"
+  },
+  {
+   "OBSERVED_FAILURE_ID": "OF-cg-r22-3",
+   "case_run": "cg-r22 r3",
+   "observable_symptom": "WRONG_BEHAVIOR (substantive retrieval available; expected behavior not delivered)",
+   "affected_dimensions": [
+    "interaction",
+    "completeness"
+   ],
+   "evidence_pointer": "baseline_results_raw.jsonl case=cg-r22 run=3; dims in baseline_judged_results.jsonl",
+   "repeat_across_n3": "3/3 runs FAIL in this case",
+   "criticality": "NON_CRITICAL",
+   "regression_family": [],
+   "interaction_class": "TROUBLESHOOT",
+   "case_origin": "COVERAGE_ADDITION",
+   "truth_stability": "SNAPSHOT_BOUND"
+  }
+ ],
+ "case_level_observations": {
+  "cross_run_verdict_variance": [
+   {
+    "case_id": "sq-049",
+    "pattern": "PFF",
+    "zero_source_runs_in_case": 2
+   },
+   {
+    "case_id": "sq-063",
+    "pattern": "FPF",
+    "zero_source_runs_in_case": 2
+   },
+   {
+    "case_id": "sq-070",
+    "pattern": "FPF",
+    "zero_source_runs_in_case": 3
+   },
+   {
+    "case_id": "sq-001",
+    "pattern": "PFF",
+    "zero_source_runs_in_case": 2
+   },
+   {
+    "case_id": "sq-005",
+    "pattern": "PFP",
+    "zero_source_runs_in_case": 0
+   },
+   {
+    "case_id": "sq-034",
+    "pattern": "PFF",
+    "zero_source_runs_in_case": 2
+   },
+   {
+    "case_id": "sq-040",
+    "pattern": "PPF",
+    "zero_source_runs_in_case": 3
+   },
+   {
+    "case_id": "sq-048",
+    "pattern": "FPF",
+    "zero_source_runs_in_case": 1
+   },
+   {
+    "case_id": "sq-080",
+    "pattern": "FFP",
+    "zero_source_runs_in_case": 2
+   },
+   {
+    "case_id": "sq-082",
+    "pattern": "FFP",
+    "zero_source_runs_in_case": 2
+   },
+   {
+    "case_id": "sq-032",
+    "pattern": "FPP",
+    "zero_source_runs_in_case": 1
+   },
+   {
+    "case_id": "sq-037",
+    "pattern": "PPF",
+    "zero_source_runs_in_case": 0
+   },
+   {
+    "case_id": "sq-053",
+    "pattern": "FPP",
+    "zero_source_runs_in_case": 3
+   },
+   {
+    "case_id": "sq-069",
+    "pattern": "FPF",
+    "zero_source_runs_in_case": 2
+   },
+   {
+    "case_id": "sq-058",
+    "pattern": "PFP",
+    "zero_source_runs_in_case": 3
+   },
+   {
+    "case_id": "cg-r08",
+    "pattern": "FPF",
+    "zero_source_runs_in_case": 2
+   },
+   {
+    "case_id": "cg-r09",
+    "pattern": "FFP",
+    "zero_source_runs_in_case": 3
+   },
+   {
+    "case_id": "cg-r11",
+    "pattern": "PFP",
+    "zero_source_runs_in_case": 1
+   },
+   {
+    "case_id": "cg-r14",
+    "pattern": "PFP",
+    "zero_source_runs_in_case": 0
+   }
+  ],
+  "zero_source_runs": "118/363 (32.5%) across 51 cases — descriptive only",
+  "language_behavior_asymmetry": {
+   "ZH_greeting": "rejection framing x3 (cg-r04)",
+   "EN_greeting": "welcome+examples x3 (cg-s01)",
+   "EN_context_parse": "rejection x3 (cg-r03)",
+   "label": "OBSERVED_LANGUAGE_ASYMMETRY (no attribution)"
+  },
+  "benchmark_defect": {
+   "case": "sq-090",
+   "issue": "frozen question truncated mid-sentence (corpus 210 chars; contract variant 250 chars; both cut at same point; 12-question list absent from executable input)",
+   "adjudication": "CONFIRMED, impact QUALIFICATION"
+  }
+ },
+ "tally_by_symptom": {
+  "CRITICAL_FLAGGED": 10,
+  "HONEST_EMPTY": 31,
+  "UNLABELED_SUBSTANTIVE_FROM_BACKGROUND": 8,
+  "WRONG_BEHAVIOR": 24
+ }
+}

@@ -1,0 +1,62 @@
+{
+ "artifact": "judge_calibration_summary_v1",
+ "date": "2026-09-07",
+ "evaluator_contract": "EVAL_V1",
+ "numeric_threshold_in_frozen_contract": "NONE — evidence-based reviewer judgment applied (recorded per gate instruction)",
+ "sample": {
+  "runs": 56,
+  "cases": 20,
+  "fraction_of_363": "56/363 = 15.4%",
+  "selection": "see human_calibration_sample_v1.json"
+ },
+ "blinding_limitation": "reviewer is the same underlying session as original judge; sq-045/sq-026/sq-008/sq-040/sq-093 original verdicts were outside current context at re-derivation time; in-context cases disclosed",
+ "results": {
+  "interaction_verdict_exact": "54/56 = 0.964",
+  "critical_flag_agreement": "10/10 runs flagged by both judges; outcome differences adjudicated separately (2 overturns, 3 policy-ambiguity reclassifications)",
+  "dimension_exact": "465/560 = 0.830",
+  "hard_group_dims_exact": "188/224 = 0.839",
+  "verdicts": {
+   "AGREE": 18,
+   "MINOR": 12,
+   "MATERIAL": 26
+  }
+ },
+ "material_disagreements": {
+  "count": 26,
+  "clustering_by_dimension": {
+   "uncertainty": 15,
+   "ev_cov": 18,
+   "citation": 12,
+   "factuality": 11,
+   "clarity": 4,
+   "interaction": 2,
+   "faithfulness": 12,
+   "completeness": 4,
+   "scope": 2,
+   "conv": 3
+  },
+  "patterns": [
+   "EVIDENCE-family leniency: original judge credited ev_cov/citation/faithfulness on zero-source-but-substantive answers (sq-008 r1/r2, sq-075, sq-101 r3, sq-054 r3) where reviewer scored C/B — content matched frozen claims but arrived unlabeled from background/parametric channels",
+   "citation-mismatch handling: sq-013 original citation B for an irrelevant retrieved source vs reviewer C (EVAL_V1: 来源错配降级 → reviewer reading)",
+   "strict-direction cluster: original stricter on sq-015 r1 (upload-promise reading), sq-008 r3 conv C (PII punished in conversational dim), sq-013 factuality C (honest-refusal graded C)",
+   "interaction verdict: sq-054 r1/r2 original PASS (constraint-questions credited) vs reviewer FAIL (T3 requires 取舍框架+请求约束; framework absent)"
+  ],
+  "group_sensitivity_on_reviewed_subset": {
+   "HARD": {
+    "human": 1.4679,
+    "original": 1.4796
+   },
+   "EVIDENCE": {
+    "human": 1.1867,
+    "original": 1.3867
+   },
+   "EXPERIENCE": {
+    "human": 1.8155,
+    "original": 1.8036
+   }
+  },
+  "aggregate_materiality": "HARD shift 0.012 / EXPERIENCE shift 0.012 — baseline aggregates robust; EVIDENCE shift 0.200 — systematic leniency risk concentrated on zero-source runs"
+ },
+ "JUDGE_CALIBRATION": "PARTIAL",
+ "rationale": "interaction 96.4% + critical flags 10/10 + HARD/EXPERIENCE aggregate robustness support usability; systematic EVIDENCE-family leniency on zero-source runs and 2 interaction disagreements warrant qualification and Planner-arranged human re-review of EVIDENCE scoring semantics"
+}

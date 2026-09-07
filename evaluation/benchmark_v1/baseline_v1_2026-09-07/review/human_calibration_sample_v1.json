@@ -1,0 +1,69 @@
+{
+ "artifact": "Benchmark v1 Baseline — Human Calibration Sample (review gate, frozen EVAL_V1 semantics)",
+ "eval_v1_requirement": "random >=10% + all CRITICAL_FAIL + all B/C-disagreement cases, dual review",
+ "selection_method": "(1) stratify 121 cases by case_origin; pick H_A=3, H_B=3, H_C=3, COVERAGE=4 via deterministic mid-rank pick over alphabetically sorted IDs (no suspicion bias); (2) rotation: add lowest-sorted case of any major interaction_class absent (OFF_TOPIC->o001); (3) add first-alphabetical BEHAVIORAL_SEED for EN coverage (o001, deduped); (4) add ALL 6 CRITICAL_FAIL cases. All 3 runs per selected case reviewed.",
+ "reviewer_blinding_note": "reviewer is the same underlying session as the original judge; perfect blinding not achievable. Discipline applied: for each run the HUMAN score is re-derived from question+frozen contract+raw answer and written BEFORE loading the original judge verdict; sq-045/sq-026/sq-008/sq-040/sq-093 original verdicts date from a prior context window and were not available to the reviewer at re-derivation time; for cases judged in the current context the limitation is disclosed and materiality relies on re-derivation evidence recorded per run.",
+ "sample_cases_stratified": [
+  "cg-r03",
+  "cg-r09",
+  "cg-r15",
+  "cg-r21",
+  "o001",
+  "sq-006",
+  "sq-013",
+  "sq-015",
+  "sq-042",
+  "sq-044",
+  "sq-054",
+  "sq-075",
+  "sq-079",
+  "sq-101"
+ ],
+ "critical_cases_added": [
+  "cg-r18",
+  "sq-008",
+  "sq-026",
+  "sq-040",
+  "sq-045",
+  "sq-093"
+ ],
+ "total_cases": 20,
+ "total_runs": 60,
+ "run_fraction": "60/363 = 16.5% (>=10% satisfied)",
+ "coverage": {
+  "case_origin": {
+   "COVERAGE_ADDITION": 5,
+   "HISTORICAL_A": 4,
+   "HISTORICAL_B": 5,
+   "HISTORICAL_C": 6
+  },
+  "interaction_class": {
+   "CLARIFY": 1,
+   "SOLUTION": 3,
+   "HOW_TO": 2,
+   "RECOMMEND": 6,
+   "OFF_TOPIC": 1,
+   "TROUBLESHOOT": 5,
+   "FACTUAL": 1,
+   "COMMERCIAL": 1
+  },
+  "truth_stability": {
+   "CONTEXTUAL": 3,
+   "SNAPSHOT_BOUND": 9,
+   "STABLE": 8
+  },
+  "language_provenance": {
+   "PRODUCTION_USER": 1,
+   "ADAPTED": 16,
+   "UNVERIFIED": 2,
+   "BEHAVIORAL_SEED": 1
+  },
+  "classes_not_covered": [
+   "COMPARE",
+   "COMMERCIAL",
+   "ORIENT",
+   "FOLLOW_UP"
+  ],
+  "note": "COMPARE/COMMERCIAL/ORIENT/FOLLOW_UP not hit by deterministic draw; recorded as coverage gap of the sample, not of the benchmark"
+ }
+}
