@@ -73,4 +73,18 @@
 
 ---
 
+## 13. FREEZE RATIFICATION REV1(2026-09-07)
+
+Planner 正式授权 **BENCHMARK-V1-SQ085-TRUTH-REV1** 后批准本冻结:
+
+- **SQ085_PLANNER_AMENDMENT = APPLIED**(实质逐项核验:claims 零 N6M1/stedgeai.mk/MODEL_STEDGEAI/MODEL_PACKAGE_MAGIC;stedgeai 构建工作流+.bin 打包+诊断事实在位;OLD 细节仅存 truth_amendment.OLD 作 provenance;其余契约面不变)。
+- **OTHER_SEMANTIC_CHANGES = NO**:仅 benchmark_manifest_v1.json(授权记录)与本报告更新;可执行语料/冻结契约/证据清单/评测契约/评分规范/匿名化映射哈希逐一比对**不变**。
+- 批准附注:sq-086(B32)claims 含 stedgeai.mk 属其自身 GT 证据锚(ne301 @5611dbe1:`STEDGEAI_VARIANT ?= 4.0` 默认、2.2 分支,本地克隆逐字复现),与 sq-085 修正案无冲突,未改动。
+- 确定性重验 24/24 PASS(案集/schema/证据解析/PII/凭据/manifest 完整性/基线未执行)。
+- **BENCHMARK_MANIFEST_HASH(批准后)** = `sha256:f49adfd5f7579945dd305bf2b4eb715fa0963802e65e50b1a2a14b44bad83969`
+
+**ASK_AI_ANSWER_INTELLIGENCE_BENCHMARK_V1 = FROZEN(已批准)**
+
+---
+
 **Benchmark v1 语义自本 Gate 通过起不可变;基线比较以本清单哈希为准。**
