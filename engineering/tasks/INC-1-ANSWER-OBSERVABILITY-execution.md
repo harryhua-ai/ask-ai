@@ -1,8 +1,8 @@
 # INC-1 应答管线可观测基座 — 执行报告
 
-- 契约:增量式工程发现(dfe104a6)INC-1 冻结条款 + 派发令补充 REQUIRED 观测项
+- 契约:增量式工程发现(dfe104a6)INC-1 冻结条款 + 派发令补充 REQUIRED 观测项 + **Evidence Lineage Completion Amendment(09-07 审查修订,已实施)**
 - 基线锚:生产 cdbcad38(PB-V1-20260907-CDBCAD3 实测基线)
-- 实现分支:ask-ai 主仓 `task/inc1-answer-observability`,实现提交 **f7ac3a7**(基于 cdbcad3)
+- 实现分支:ask-ai 主仓 `task/inc1-answer-observability`,实现提交 **f7ac3a7**(基座)+ 血统修订提交(见 §10)
 - 自评:**CANDIDATE READY**(待 Agent A 验收)
 
 ---
@@ -59,15 +59,15 @@
 | generate 路由+遥测包装增量 | **+0.002 ms/调用** |
 | stream 包装增量(12 chunks) | **+0.009 ms/流** |
 | record_call 单事件 | 0.21 μs |
-| 占生产 generate P50(12.5 s)份额 | **0.00002%** |
+| 占生产 E2E P50(12.5 s)份额 | **0.00002%** |
 
-结论:开销在 μs 量级,相对 TTFT 10.1 s / E2E 13.0 s 不可测量;ContextVar 复制随 asyncio task 继承已实证(asyncgen 可见性有专项测试)。
+**测量口径更正(A 审查指出,原报告错标)**:12.5s 是 **2026-08-31 生产两轮实测中午后轮(flash 切换生效后)的端到端总延迟 P50**,不是 generation 阶段 P50,也不是 TTFT。该轮阶段占比:generate ≈58%(≈7.2s,derived)> rerank ≈22% > intent/rewrite 各 ≈9%;阶段级 generate 独立 P50 只有早间 v4-pro 轮的 24s 实测,flash 后未单独重测。TTFT p50 = 10.130s / E2E p50 = 13.011s 为冻结 Benchmark 基线数字(另一测量会话),维持原值不替换。开销结论在任何口径下不变:+0.002ms 对 generate 阶段 ≈0.00003%、对 E2E ≈0.00002%,均不可测量。
 
 ## 7. 验证矩阵
 
-- 新增测试:17(8+2+7)全绿
-- 触碰面回归:tests/llm 35 绿;pipeline 定向 193 绿;rag 家族 74 绿
-- **全量离线套件:1737 passed / 3 skipped / 0 failed(55.26 s, HF_HUB_OFFLINE=1)** — 零回归
+- 新增测试:17(8+2+7)全绿;血统修订后新增 lineage 验收 6 测(K3/K4/K6 双向 + 四问 + 隐私边界)全绿
+- 触碰面回归:tests/llm 35 绿;pipeline 全目录 **522 绿**(含 comparison 家族 26 测)
+- **全量离线套件(血统修订后):1743 passed / 3 skipped / 0 failed(46.05 s, HF_HUB_OFFLINE=1)** — 零回归
 
 ## 8. 残余边界(诚实声明)
 
@@ -76,7 +76,28 @@
 - 流式 complete=False 覆盖客户端中断(GeneratorExit)与失败切换;已产出后失败仍按 fail-no-replay 抛出,不切链路(语义与 INC-1 前一致,有专项测试)。
 - `include_usage` 400 降级路径下该次调用无 token 用量(供应商不支持),记 None。
 
-## 9. 提交
+## 9. Evidence Lineage Completion Amendment(审查修订,已实施)
 
-- 主仓:`f7ac3a7` @ `task/inc1-answer-observability`(实现+测试,单提交,未触碰 74ffb53e/81482fc0/7a535449/dfe104a6)
-- 文档仓:本报告(独立提交)
+审查澄清判定 **INC-1_CONTRACT_GAP = YES**(身份键 `(source_id, chunk_index)` 运行时全程存在,trace 在检索/剪枝/终组合三处边界丢弃身份)。本修订按授权实施**最小观测补全**,零行为变更:
+
+| 阶段 | 新增 trace 字段 | 内容 |
+|---|---|---|
+| 检索/融合 | `stages.retrieve.candidates[]` | 融合后有序身份表:`{rank, source_id, chunk_index, score(RRF 融合分), paths(召回路成员)}`;可见性守卫**之后**取值(即真实进入排序的候选集);比较路径保持 `null`(其身份由既有 per-target diag `rerank.candidates` 承载,该 diag 已含 source_id) |
+| 重排/剪枝 | `rerank.results[]` 补 `source_id`+`chunk_index` | 身份完备化(原仅 url=doc 级);既有 text 预览暴露**未扩大** |
+| 重排/剪枝 | `rerank.prune_decisions[]` | 逐项判定 `{source_id, chunk_index, pre_prune_rank, kept}`;计数与逐项一致性有专项断言;剪枝行为零变更(仅旁路快照) |
+| 终组合 | `citation_integrity.citable[]/background[]/dropped_public[]` | 逐项身份;`citable[].citation_no` = 来源序号(引用编号语义不变);三个计数保留 |
+
+**验收测试**(`tests/pipeline/test_inc1_evidence_lineage.py`,6 测):
+- K3:所需身份不在融合候选 → 缺席可证明 + 在场者带 rank/score/paths;
+- K4:s2#0 融合在场 → `prune_decisions` kept=False + pre_prune_rank=2 + `pruned` 计数与逐项一致 + 幸存者身份表不含它;
+- K6a:s3#0 幸存但改道背景资料 → `background[]` 定位 + 剪枝判定 kept=True(幸存≠被剪)+ 访客不可见;
+- K6b:pub5#0 因来源截 5 不可见引用丢弃 → `dropped_public[]` 定位,展示层截 5 语义不变;
+- 四问测试:任取 s1#0,检索?融合 rank=1/score;重排幸存 score;剪枝 kept=True/rank=1;终组合 citable citation_no=1 —— 全部从单请求 trace 回答;
+- 隐私边界:五个血统字段集合逐项断言 ⊆ `{rank, source_id, chunk_index, score, paths, kept, pre_prune_rank, citation_no}`,零正文/零 prompt。
+
+**修订过程缺陷(已修,如实记录)**:初次实现把 `fuse_candidates` 的 None 初始化放在了比较/普通分支**之后**,比较路径 NameError(26 个 comparison 测试红)且普通路径被覆写为 None(4 个 lineage 测试红);将初始化前移至分支前修复,522 pipeline 全绿。教训:分支内赋值 + 分支后引用的变量,哨兵初始化必须在分支前。
+
+## 10. 提交
+
+- 主仓:`f7ac3a7` @ `task/inc1-answer-observability`(INC-1 基座实现+测试)→ **血统修订提交**(实现+lineage 测试,追加同一分支,未 squash)已推 origin;未触碰 74ffb53e/81482fc0/7a535449/dfe104a6
+- 文档仓:本报告两次独立提交(基座 + 修订)
