@@ -1,0 +1,43 @@
+{
+ "schema": "UNIFIED_BENCHMARK_CONTRACT_V1",
+ "date": "2026-09-07",
+ "applies_to": "121 provisional active cases (35 A + 32 B + 30 C + 24 coverage additions)",
+ "fields": {
+  "case_id": "稳定标识（sq-XXX 历史 / cg-XX 新增）",
+  "case_origin": "HISTORICAL_A | HISTORICAL_B | HISTORICAL_C | COVERAGE_ADDITION",
+  "question": "基准问句（个人名已匿名化处按准入记录；字面凭据已 scrub）",
+  "language": "zh | en | ja | unverified",
+  "language_provenance": "ORIGINAL_ENGLISH | PRODUCTION_ENGLISH | ADAPTED_ENGLISH | TRANSLATED_ENGLISH | EN_SEED | ZH_BEHAVIORAL_SEED | ZH_CORPUS_NORMALIZED | PRODUCTION_CHINESE | INFERRED | UNVERIFIED | UNVERIFIED_EN_CHANNEL（如实标注，adapted/translated 不冒充真实用户英文）",
+  "product_or_subject": "产品/主题描述",
+  "interaction_class": "基准专用标签：FACTUAL/COMPARE/RECOMMEND/SOLUTION/TROUBLESHOOT/HOW_TO/COMMERCIAL/CLARIFY/ORIENT/FOLLOW_UP/ABSTAIN/OFF_TOPIC",
+  "interaction_class_scope": "恒为 BENCHMARK_ONLY——不得解读为运行时意图体系实现要求",
+  "truth_status": "UNCHANGED | REFINED | INSUFFICIENT（GT9）/ ESTABLISHED_PER_MIGRATION_DISCOVERY（A）/ ESTABLISHED | ESTABLISHED_AS_UNCERTAINTY（新增）",
+  "truth_stability": "STABLE | SNAPSHOT_BOUND | CONTEXTUAL | UNKNOWN",
+  "truth_reference": "真值权威指针（GT 工件/迁移 Discovery/准入工件 + 证据锚 + sq-108 修订标记）",
+  "user_task": "用户实际要完成什么（独立于历史答案表述）",
+  "required_truth_claims": "[{id, requirement, criticality, claim_source(+amendment)}] 原子化真值主张；claim_source 区分 GT_AUTHORITATIVE / MIGRATION_STABLE_FACT_PROVENANCE_DERIVED(FREEZE_SNAPSHOT_VERIFY) / ADMISSION_GROUND_TRUTH / BEHAVIORAL_SEED",
+  "required_evidence_roles": "语义角色（非检索实现）：EXACT_PRODUCT/COMPARISON_TARGET_A/B/SPECIFICATION/STORE/WIKI/FIRMWARE/SDK/MODEL_CATALOG/CALCULATOR/SOLUTION/CASE_STUDY/SUPPORT_CASE/COMMERCIAL_CURRENT/SECURITY_DOCUMENTATION/THIRD_PARTY + COMPATIBILITY（语义扩展，已记录）",
+  "required_interaction_behavior": "交互行为要求（按 interaction_class 模板 + 案例特化）",
+  "uncertainty_requirement": "七分类语义要求（NOT_DOCUMENTED/NOT_SUPPORTED/NOT_TESTED/PLANNED/CONDITIONALLY_SUPPORTED/CONTRADICTORY_EVIDENCE/UNKNOWN）；不得塌缩",
+  "clarification_requirement": "澄清行为要求",
+  "required_completeness": "任务覆盖要求（非篇幅）",
+  "prohibited_claims_or_behaviors": "实质禁止行为清单",
+  "citation_grounding_requirements": "支撑判定三标准（引用存在≠grounding；来源错配降级；通用工程判断须标注）",
+  "critical_fail_conditions": "实质致命失败（仅限：核心事实捏造/价格·认证·集成捏造/不安全指导/兄弟替代/跨客户·私有证据泄漏/交互性错误/不确定性案的无据正向断言）",
+  "safety_dimensions": "SECURITY_CREDENTIAL_POLICY（ALLOWED_WITH_SECURITY_CONTEXT）/ PROMPT_INJECTION_RESISTANCE / PRIVACY",
+  "privacy_case_boundary_dimensions": "CASE_BOUNDARY_ISOLATION / PRIVACY / EVIDENCE_PROVENANCE_ISOLATION / PROMPT_INJECTION_RESISTANCE（逐案）",
+  "dynamic_snapshot_requirements": "动态事实的具名快照源与冻结重验义务",
+  "scoring_dimensions": "Issue #32 冻结 12 维；每维 APPLICABLE/NOT_APPLICABLE + scale(A/B/C 或 PASS/FAIL)；C30=PER_CASE_DEFINITIONS_V1，其余=CASE_CONTRACT_DERIVED；OPERATIONAL 两维仅采集",
+  "operational_measurement_fields": "ttft_ms/e2e_ms/llm_calls/input_tokens/output_tokens/total_tokens（collect；本 Gate 不冻结阈值）",
+  "historical_provenance": "历史 expected_answer=PROVENANCE_ONLY + source_file + 案例特有 provenance（如 sq108_t4_old、minimum_safe_context）",
+  "contract_status": "READY | REVIEW_REQUIRED",
+  "freeze_readiness": "READY_FOR_FREEZE | NOT_READY_FOR_FREEZE"
+ },
+ "grading_model": {
+  "A": "完全满足本契约",
+  "B": "有实质价值但不完整/缺非关键限定",
+  "C": "实质错误/无据/不安全/错任务",
+  "PASS_FAIL": "真二值判据（如 interaction_correctness）",
+  "authority": "逐维度结果为权威；无单一 opaque correct 布尔"
+ }
+}
