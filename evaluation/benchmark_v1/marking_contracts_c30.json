@@ -1,0 +1,4273 @@
+{
+ "gate": "ASK-AI Answer Intelligence Benchmark v1 — 30-Case Marking Contract Rewrite",
+ "parent_issue": "GitHub Issue #32 — P0 Discovery: establish ASK-AI Answer Intelligence Benchmark v1 before redesigning the Answer Engine",
+ "authority": "DISCOVERY / EVALUATION DESIGN ONLY — READ ONLY（无生产/知识源/Answer Engine 变更）",
+ "date": "2026-09-07",
+ "discovery_revision": "REV0",
+ "accepted_predecessors": {
+  "historical_corpus_migration_gate": "FINAL PASS（migration_inventory_117.json，A35/B32/C30/D20）",
+  "ground_truth_revalidation_gate": "FINAL PASS（ground_truth_revalidation_41.json @54f9c9de1d55e0d7d22ea5d465491eed85c9c8d5）"
+ },
+ "selection": {
+  "source": "docs/evaluation/benchmark_v1/migration_inventory_117.json",
+  "filter": "migration_state = C",
+  "selected": 30,
+  "expected": 30,
+  "selection_check": "PASS",
+  "gt_overlap_cases": [
+   "sq-003",
+   "sq-014",
+   "sq-045",
+   "sq-049",
+   "sq-074",
+   "sq-093",
+   "sq-103",
+   "sq-108",
+   "sq-109"
+  ],
+  "gt_overlap_count": 9
+ },
+ "truth_authority": {
+  "historical_expected_answer": "NOT authoritative — 仅作 provenance 保留（各 case 的 historical_expected_answer_status + 源快照）",
+  "gt_overlap_9": "ground_truth_revalidation_41.json 为现行基准真值权威；不得从历史 expected_answer 重导",
+  "non_gt_21": "Accepted Migration Discovery evidence + 权威历史/源材料（冻结 wiki/ne301/AIToolStack/固件仓/Store 快照锚点见各 case truth_reference.stable_fact_anchors）",
+  "new_contradiction_policy": "发现新的实质性事实矛盾时标记 TRUTH_REVALIDATION_REQUIRED 上报 Planner，不得静默修复（本轮未发现，计数=0）"
+ },
+ "scoring_model": {
+  "dimension_set": {
+   "HARD_CORRECTNESS": [
+    "factuality",
+    "uncertainty_non_fabrication",
+    "interaction_correctness",
+    "product_scope_safety"
+   ],
+   "EVIDENCE": [
+    "evidence_coverage",
+    "citation_quality",
+    "faithfulness_grounding"
+   ],
+   "EXPERIENCE": [
+    "completeness_usefulness",
+    "clarity_structure",
+    "conversational_appropriateness"
+   ],
+   "OPERATIONAL": [
+    "ttft_e2e",
+    "llm_calls_token_cost"
+   ]
+  },
+  "scales": {
+   "A/B/C": "A=完全满足本契约；B=有实质价值但不完整/缺少必要限定；C=实质性错误、不安全、无依据或交互错误",
+   "PASS/FAIL": "维度为真正二值时使用，不制造人为部分分（本工件中 interaction_correctness 统一二值）"
+  },
+  "authority": "逐维度结果为权威评估输出；不产生单一 opaque 的 overall correct 布尔",
+  "operational_note": "TTFT/E2E 与 LLM calls/token cost 为基准维度但本 Gate 不设 case 级阈值（无既有冻结要求，不发明性能阈值）",
+  "taxonomy_note": "interaction_class 为基准专用标签（承袭迁移 Inventory 分类体系：FACTUAL=ANSWER 等价命名），不得解读为要求实现等价运行时意图类"
+ },
+ "special_case_escalations": [
+  {
+   "case_id": "sq-013",
+   "finding": "sq-013 的 migration_state = B（非 C），不在本 Gate 的 30 案例选择集内",
+   "instruction_conflict": "Gate 指令含「#013 SECURITY-SENSITIVE CASE：推导显式基准安全契约」小节",
+   "resolution": "按「恰好 30 个 C 案例」的硬性选择约束执行，未扩选第 31 案例；#013 的专用安全契约推导显式升级 Planner（需 B 轨契约 Gate 或明确范围扩展授权）；其 GT 已确立语义（官方文档存在默认凭证、须安全化处理、最终禁答标准待定）保持于 GT 工件",
+   "global_rule_applied": "凭证值零出现规则已作为全局卫生规则执行（本工件与报告 0 出现，程序化扫描通过）",
+   "status": "ESCALATED_TO_PLANNER — SECURITY_CONTRACT_DEFERRED（无发明政策）"
+  },
+  {
+   "case_id": "sq-026",
+   "finding": "sq-026 的 migration_state = B（非 C），不在本 Gate 的 30 案例选择集内",
+   "instruction_conflict": "Gate 指令含「#026 PRICING CASE」小节",
+   "resolution": "未扩选；#026 的定价语义已由 GT Gate 裁决（历史 $59/$109=带日期历史样本/报价上下文；现价=Store 快照），本 Gate 将其实质转写为跨案例规则 R1（商业快照绑定），作用于 C 集内的商业内容案例（sq-030/sq-093 等）",
+   "status": "RESOLVED_AS_CROSS_CASE_RULE（#026 本身的 B 轨契约仍属其自身轨道）"
+  }
+ ],
+ "cross_case_rules": [
+  {
+   "id": "R1",
+   "rule": "商业快照绑定：历史价格/报价/MOQ 永不自动成为现价/现政策；现行商业事实=当前 Store 快照或销售确认，引用历史值必须带日期绑定。",
+   "applies_to": [
+    "sq-030",
+    "sq-093",
+    "sq-019",
+    "sq-033",
+    "sq-074"
+   ]
+  },
+  {
+   "id": "R2",
+   "rule": "续航基线口径统一：一律采用冻结 wiki 电池×通信矩阵；历史「WiFi 2.1 年 / Cat-1 1.1 年」口径退役。",
+   "applies_to": [
+    "sq-045",
+    "sq-029",
+    "sq-063"
+   ]
+  },
+  {
+   "id": "R3",
+   "rule": "MLX90642 定性统一：32×24 温度触发源、±1.5°C，非热成像相机、不构成医疗结论。",
+   "applies_to": [
+    "sq-015",
+    "sq-091",
+    "sq-011"
+   ]
+  },
+  {
+   "id": "R4",
+   "rule": "PIR 获得方式统一：扩展板可得+固件触发支持；标准外壳无 PIR 安装位；「入壳集成」为结构定制。",
+   "applies_to": [
+    "sq-019",
+    "sq-033",
+    "sq-065",
+    "sq-103"
+   ]
+  },
+  {
+   "id": "R5",
+   "rule": "NOT_DOCUMENTED ≠ NOT_SUPPORTED：第一方无记载时双向禁止（不得宣称存在，也不得宣称不可能），统一以「未见记载/需确认」表述。",
+   "applies_to": [
+    "sq-093",
+    "sq-103",
+    "sq-109",
+    "sq-019",
+    "sq-015"
+   ]
+  },
+  {
+   "id": "R6",
+   "rule": "NOT_TESTED ≠ 不可能：未验证路径以 POC/需验证表述（与 R5 互补：前者管能力验证，后者管文档记载）。",
+   "applies_to": [
+    "sq-014",
+    "sq-104",
+    "sq-070",
+    "sq-015"
+   ]
+  },
+  {
+   "id": "R7",
+   "rule": "禁止虚构案例/客户部署/背书（RECOMMEND/COMMERCIAL 族统一禁令）。",
+   "applies_to": [
+    "sq-014",
+    "sq-030",
+    "sq-054",
+    "sq-065",
+    "sq-091",
+    "sq-101",
+    "sq-103",
+    "sq-105",
+    "sq-035"
+   ]
+  },
+  {
+   "id": "R8",
+   "rule": "SN/设备级实测数据不可虚构：无设备数据时结论=假设+诊断步骤+数据请求。",
+   "applies_to": [
+    "sq-029",
+    "sq-063",
+    "sq-083"
+   ]
+  },
+  {
+   "id": "R9",
+   "rule": "商务运营事实（订单状态/排期/折扣）一律 UNKNOWN+路由销售/运营，知识库不冒充 ERP。",
+   "applies_to": [
+    "sq-030",
+    "sq-078",
+    "sq-019",
+    "sq-033",
+    "sq-093"
+   ]
+  },
+  {
+   "id": "R10",
+   "rule": "伞形/近似重复拆分：sq-008≠#007；sq-070 不吸收 #088/#097；sq-090 按 12 问清单逐问覆盖；sq-045 三问逐问覆盖。",
+   "applies_to": [
+    "sq-008",
+    "sq-045",
+    "sq-070",
+    "sq-090"
+   ]
+  },
+  {
+   "id": "R11",
+   "rule": "客户会话/内部策略语境剥离：会约、发素材、内部折扣策略等不构成技术契约内容。",
+   "applies_to": [
+    "sq-003",
+    "sq-014",
+    "sq-015",
+    "sq-030",
+    "sq-049",
+    "sq-065",
+    "sq-083"
+   ]
+  },
+  {
+   "id": "R12",
+   "rule": "引用=支撑而非存在：每个契约的 citation_grounding_requirements 均要求被引证据实际包含断言；来源错配（如用概览页支撑模型目录断言）判低分。",
+   "applies_to": [
+    "ALL"
+   ]
+  },
+  {
+   "id": "R13",
+   "rule": "澄清不惩罚：真实缺参时请求澄清是正确行为（sq-031 为 CLARIFY 核心，sq-054/sq-104/sq-108 参数请求为契约要件）。",
+   "applies_to": [
+    "sq-031",
+    "sq-054",
+    "sq-104",
+    "sq-108"
+   ]
+  },
+  {
+   "id": "R14",
+   "rule": "推荐自由度：RECOMMEND/SOLUTION 契约评任务适配而非历史销售偏好；不同推荐只要满足已验证真值与证据契约即为正确。",
+   "applies_to": [
+    "sq-020",
+    "sq-030",
+    "sq-049",
+    "sq-054",
+    "sq-065",
+    "sq-093",
+    "sq-103",
+    "sq-105",
+    "sq-108",
+    "sq-109",
+    "sq-014",
+    "sq-011",
+    "sq-015",
+    "sq-019",
+    "sq-033",
+    "sq-074",
+    "sq-090"
+   ]
+  }
+ ],
+ "historical_false_pass_defense": [
+  {
+   "pattern": "非空回答即过",
+   "defense": "interaction_correctness 为任务绑定的 PASS/FAIL",
+   "demonstration": [
+    "sq-031：不澄清直接推销 → FAIL",
+    "sq-035：认同错误前提 → FAIL",
+    "sq-078：未纠正 cloud URL 误解 → FAIL"
+   ]
+  },
+  {
+   "pattern": "未拒答即过",
+   "defense": "同上 + uncertainty 维度",
+   "demonstration": [
+    "sq-109：自信给出 BAA/TAA 结论（任一方向）→ uncertainty_non_fabrication=C + critical fail",
+    "sq-031：拒答 → FAIL（错误拒答同样是 FAIL）"
+   ]
+  },
+  {
+   "pattern": "n_sources>0 / 存在 [1] 即过",
+   "defense": "citation_quality 按支撑判定（R12）",
+   "demonstration": [
+    "sq-014：用产品概览页支撑模型目录断言（来源错配）→ citation_quality=C",
+    "全部 30 案例 citation_grounding_requirements 均显式声明「引用存在不构成 grounding」"
+   ]
+  },
+  {
+   "pattern": "看起来合理即过",
+   "defense": "factuality 锚定冻结证据",
+   "demonstration": [
+    "sq-078：编造 cloud URL → critical fail",
+    "sq-101：宣称原生 BACnet → critical fail",
+    "sq-091：宣称医疗筛查适用 → critical fail"
+   ]
+  },
+  {
+   "pattern": "提到相关产品即过",
+   "defense": "product_scope_safety 兄弟产品替代禁令",
+   "demonstration": [
+    "sq-020：以 NE301 证据回答 NE101 端侧 AI → critical fail",
+    "sq-105：以 NE301 证据回答 NE503 规格 → critical fail",
+    "sq-014：提 NG4500 但回避模型名录事实 → completeness=C"
+   ]
+  },
+  {
+   "pattern": "旧评测器判 correct 即过",
+   "defense": "历史 expected_answer 失去权威地位",
+   "demonstration": [
+    "sq-103：历史答案断言「经 Gundi 对接 EarthRanger」→ 新契约 critical fail（正面虚构集成）",
+    "sq-014：历史答案无界宣称「平台支持自定义模型部署」→ 新契约降 B/C（NOT_TESTED 未加界）"
+   ]
+  },
+  {
+   "pattern": "推荐与历史销售记录一致即过",
+   "defense": "R14 推荐自由度 + R11 语境剥离",
+   "demonstration": [
+    "sq-030：内部折扣策略非答案真值，泄漏即 C",
+    "sq-054：无站点约束下的绝对化单一推荐 → critical fail",
+    "不同推荐只要满足证据契约即为正确"
+   ]
+  }
+ ],
+ "counts": {
+  "SELECTED": 30,
+  "PROCESSED": 30,
+  "READY": 30,
+  "NOT_READY": 0,
+  "SECURITY_POLICY_DECISION_REQUIRED": 0,
+  "TRUTH_REVALIDATION_REQUIRED": 0,
+  "CRITICAL_FAIL_CASES_COVERED": 30
+ },
+ "interaction_class_counts": {
+  "HOW_TO": 1,
+  "RECOMMEND": 17,
+  "TROUBLESHOOT": 5,
+  "COMMERCIAL": 1,
+  "CLARIFY": 1,
+  "ORIENT": 1,
+  "COMPARE": 1,
+  "FACTUAL": 2,
+  "SOLUTION": 1
+ },
+ "evidence_role_usage": {
+  "SDK": 7,
+  "SPECIFICATION": 23,
+  "MODEL_CATALOG": 11,
+  "EXACT_PRODUCT": 24,
+  "WIKI": 14,
+  "SOLUTION": 11,
+  "CALCULATOR": 2,
+  "COMPATIBILITY": 4,
+  "SUPPORT_CASE": 1,
+  "CURRENT_COMMERCIAL": 5,
+  "FIRMWARE": 7,
+  "STORE": 1,
+  "SECURITY_DOCUMENTATION": 1
+ },
+ "provenance": {
+  "migration_inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json（REV1，corpus v2.1）",
+  "ground_truth_artifact": "docs/evaluation/benchmark_v1/ground_truth_revalidation_41.json @54f9c9de1d55e0d7d22ea5d465491eed85c9c8d5",
+  "corpus": "/Users/harryhua/Documents/GitHub/Knowledge/知识库/Think/ASK AI/optimize/standard_questions.json v2.1（117 题，只读取证）",
+  "evidence_anchors": {
+   "wiki": "camthink-ai/wiki-documents @ 4ed5b32e304ee09a5e067a464e16c990c6218314",
+   "ne301": "camthink-ai/ne301 @ 5611dbe14bf6d3275afc03374ea37aef71d203d5",
+   "knowledge_snapshot": "Knowledge @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 快照，仅历史证据）",
+   "firmware": "lowpower_camera @ 07150b49（NE101 固件）",
+   "store": "camthink.ai Store 快照（取证 2026-09-05）"
+  }
+ },
+ "boundaries": {
+  "production_mutation": "NO",
+  "knowledge_source_mutation": "NO",
+  "answer_engine_implementation": "NO",
+  "note": "本工件不冻结 Benchmark v1；interaction_class 不得解读为运行时意图体系实现要求"
+ },
+ "cases": [
+  {
+   "case_id": "sq-003",
+   "seq": 3,
+   "question": "客户已将 NE101 相机设置完成，但在将相机与 AIToolStack Docker 平台通过 MQTT 连接时遇到困难。客户请求周一上午远程会议协助。",
+   "language": "zh",
+   "product_or_subject": "NE101 + AIToolStack(Docker)",
+   "migration_state": "C",
+   "interaction_class": "HOW_TO",
+   "user_task": "帮助用户把 NE101 相机通过 MQTT 正确接入 AIToolStack Docker 平台：给出 broker 侧与相机侧的配置要点，并使连通可验证。",
+   "truth_reference": {
+    "authority": "GROUND_TRUTH_ARTIFACT",
+    "artifact": "docs/evaluation/benchmark_v1/ground_truth_revalidation_41.json",
+    "gt_case_id": "sq-003",
+    "current_truth_status": "REFINED",
+    "uncertainty_state": "NONE",
+    "benchmark_truth_ready": "YES",
+    "note": "真值以 GT 工件为准，不得从历史 expected_answer 重导。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "AIToolStack Docker 部署内置 Mosquitto broker，默认 MQTT 端口 1883、MQTTS 端口 8883（以冻结 AIToolStack 文档为准）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "broker 支持匿名连接；亦可在 Web UI（System Settings）配置外置第三方 broker。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "相机侧 MQTT Host 必须填服务器实际 IP（非 localhost），且相机与服务器在同一可达网络。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T4",
+     "requirement": "上述端口/路径为版本绑定事实（AIToolStack 仓 2026-05 活跃取证）；当前版本若不同，必须以现行 AIToolStack 文档为准。",
+     "criticality": "HIGH"
+    }
+   ],
+   "required_evidence_roles": [
+    "SDK",
+    "SPECIFICATION"
+   ],
+   "uncertainty_requirement": "无需表达正面不确定性，但必须携带版本绑定限定；不得把版本绑定配置表述为永久不变事实。",
+   "clarification_requirement": "若部署环境（内网/云、是否同网段）缺失，可请求最小必要环境信息，但不得以此推迟全部技术回答。",
+   "required_interaction_behavior": "HOW_TO：给出 broker 侧（内置/外置）与相机侧（Host 填法）的分步配置路径（Web UI → System Settings），以连通验证步骤收尾（如订阅测试/收到上报）。",
+   "required_completeness": "内置 broker 路径完整（端口/匿名/Host/同网络要求）+ 外置 broker 至少给出入口指引 + 验证步骤；「周一上午远程会议」为会约语境，不属于技术契约范围，回答不得以会议安排替代技术指导。",
+   "prohibited_claims_or_behaviors": [
+    "编造端口、认证方式或 TLS 证书配置并作为官方配置给出",
+    "把 localhost 说成相机可用的 MQTT Host",
+    "断言该连接「不可能实现」",
+    "把版本绑定细节表述为永恒不变事实",
+    "把部署配置问题误判为相机硬件故障"
+   ],
+   "citation_grounding_requirements": [
+    "端口/System Settings 路径断言必须由 AIToolStack 文档证据直接支撑，且该证据确实包含该断言",
+    "「同网络可达」等通用网络指导须标注为一般性指导，不得伪装为产品文档内容",
+    "引用存在本身不构成 grounding：引用的证据必须实际支撑被引断言"
+   ],
+   "critical_fail_conditions": [
+    "编造端口/认证/证书配置并作为官方配置给出",
+    "指导用户刷写或修改相机固件来解决本问题",
+    "断言相机硬件故障（非故障问题）"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "端口/匿名/System Settings 路径/Host 要求全部与冻结 AIToolStack 文档一致。",
+     "B": "主要事实正确但个别配置细节含糊或未给验证方法。",
+     "C": "端口/配置与证据相悖或属编造。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "明确携带版本绑定限定且不虚构任何配置项。",
+     "B": "事实正确但未说明版本绑定。",
+     "C": "虚构配置项或把推测表述为文档事实。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "给出可执行的分步 MQTT 配置与验证路径。",
+     "FAIL": "答非所问、只回应会约请求而不给技术路径、或误判为硬件故障。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "仅涉 NE101+AIToolStack 边界，不借入他产品证据。",
+     "B": "轻微越界但不误导结论。",
+     "C": "以他产品证据支撑本配置断言。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "内置与外置 broker 双路径均有证据支撑。",
+     "B": "仅内置路径有据，外置路径无据或缺失。",
+     "C": "关键断言无证据支撑。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "每个配置断言可溯源到确实包含它的 AIToolStack 文档证据。",
+     "B": "引用笼统（整仓/整页）但内容正确。",
+     "C": "引用与断言不符或仅以引用计数充当 grounding。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "所有技术断言与被引证据一致。",
+     "B": "大体一致但混入未标注的推断。",
+     "C": "断言超出证据（编造）。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "双路径+验证步骤完整，用户可据此完成连通。",
+     "B": "单路径完整、外置路径缺失或无验证步骤。",
+     "C": "缺 Host/网络等关键步骤，无法执行。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "broker 侧/相机侧/验证 分步清晰。",
+     "B": "结构松散但可跟随。",
+     "C": "步骤混乱无法据此操作。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "指导性语气，不承诺会约。",
+     "B": "中性可接受。",
+     "C": "以会约/销售话术替代技术回答。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-014",
+   "seq": 14,
+   "question": "现有客户 Eras（[邮箱]，巴西，前期对接的是糖厂周界入侵检测）的另一个方向：矿石运输车（ore transporter）火控监测。内部讨论 CamThink 能否支持火灾/烟雾/热成像检测，以及如何回复。",
+   "language": "zh",
+   "product_or_subject": "NE301（NG4500 为替代方向）",
+   "migration_state": "C",
+   "interaction_class": "RECOMMEND",
+   "user_task": "评估 CamThink 能否支持矿石运输车火灾/烟雾/热成像监测，并确定如实且有用的回复方向（能力事实 + 可行路径 + 替代方向）。",
+   "truth_reference": {
+    "authority": "GROUND_TRUTH_ARTIFACT",
+    "artifact": "docs/evaluation/benchmark_v1/ground_truth_revalidation_41.json",
+    "gt_case_id": "sq-014",
+    "current_truth_status": "UNCHANGED",
+    "uncertainty_state": "NO_OFFICIAL_PRETRAINED_MODEL_LISTED",
+    "benchmark_truth_ready": "YES",
+    "note": "官方/预训练模型目录无火灾模型≠平台不支持火灾检测；自定义部署能力 NOT_TESTED 不得转正。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "官方 NE301 模型目录（ne301 @5611dbe1）无火灾/烟雾预训练模型；COCO80 类别中仅 fire hydrant（消防栓），无 fire/smoke 类。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "正确结论 = NO_OFFICIAL_PRETRAINED_MODEL_LISTED（官方无在列火灾预训练模型），不是「平台不支持火灾检测」。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "自定义模型部署路径（客户自备火灾/烟雾模型经 YOLO 部署）为可行方向，但该能力未经官方证实 = NOT_TESTED，须以有界语言（POC/合作验证）表述，不得转正为已验证能力。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T4",
+     "requirement": "多路视频场景可给 NG4500 作为替代路线；此为分析性建议，不得冒充既有产品事实或既有案例。",
+     "criticality": "MEDIUM"
+    }
+   ],
+   "required_evidence_roles": [
+    "MODEL_CATALOG",
+    "EXACT_PRODUCT",
+    "SPECIFICATION"
+   ],
+   "uncertainty_requirement": "本案例不确定性为核心语义，且为双向边界：(a) 不得正向虚构官方火灾模型存在；(b) 不得负向越界宣称火灾检测不可能；(c) NOT_TESTED 不得当能力承诺。",
+   "clarification_requirement": "可询问场景参数（检测距离、报警联动、模型/数据是否已有）以给出有据的 POC 建议；不得以缺信息为由回避核心能力事实。",
+   "required_interaction_behavior": "RECOMMEND：如实说明官方无火灾预训练模型 → 给出自定义模型 POC 路径（有界）与 NG4500 替代方向 → 明确下一步（客户提供模型/数据做验证）。",
+   "required_completeness": "三个层次齐备：官方名录事实、自定义路径（有界）、替代方向 + 下一步；内部讨论语境（「是否可编造案例」）绝不得出现在答案中。",
+   "prohibited_claims_or_behaviors": [
+    "宣称存在官方火灾/烟雾预训练模型",
+    "宣称平台/产品不能做火灾检测（把 NOT_DOCUMENTED 当 NOT_SUPPORTED）",
+    "把 COCO 的 fire hydrant 说成火灾检测能力",
+    "虚构火灾检测案例、客户部署或认证",
+    "把 NOT_TESTED 的自定义部署说成已验证/turnkey 能力",
+    "把内部讨论策略当作答案事实复述"
+   ],
+   "citation_grounding_requirements": [
+    "「无火灾模型」必须由模型目录证据支撑（目录确实不含 fire/smoke 类）；不得用产品概览页支撑模型目录断言（来源错配）",
+    "NG4500 替代方向的规格依据（多路视频能力）须由 NG4500 自身证据支撑",
+    "引用存在不构成 grounding：给出的每个能力断言须与被引证据一致"
+   ],
+   "critical_fail_conditions": [
+    "断言官方火灾/烟雾预训练模型存在",
+    "断言火灾检测不可能/平台不支持火灾检测",
+    "虚构火灾检测案例或客户部署"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "名录事实（无火灾/烟雾模型）+ COCO 类别事实全部正确。",
+     "B": "结论正确但 COCO 类别细节不准。",
+     "C": "名录事实错误（编造模型或宣称不可能）。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "双向边界都守住，NOT_TESTED 以有界语言表述。",
+     "B": "方向正确但语言过强（如「支持自定义模型部署」未加未经官方证实限定）。",
+     "C": "任一方向越界（虚构存在或宣称不可能）。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "回答了「能否支持 + 如何回复」的实质（事实+路径+方向）。",
+     "FAIL": "只给销售话术、只复述内部讨论、或答非所问。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE301/NG4500 边界清晰：NG4500 仅作替代方向且依据为 NG4500 自身证据。",
+     "B": "替代方向表述含糊（未说明其为不同产品）。",
+     "C": "用 NG4500 事实回答 NE301 能力或反之（兄弟产品替代）。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "模型目录 + COCO 类别 + NG4500 规格三处均有据。",
+     "B": "缺其中一处支撑。",
+     "C": "关键断言无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "「无火灾模型」可溯源到模型目录且引用恰当。",
+     "B": "引用笼统但内容正确。",
+     "C": "以 wiki 概览冒充模型目录，或仅计数引用。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "能力/不可得断言均与被引证据一致。",
+     "B": "有推断混入但已标注。",
+     "C": "断言超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "名录事实+有界自定义路径+替代方向+下一步 齐备。",
+     "B": "缺替代方向或缺下一步。",
+     "C": "缺名录事实（核心）。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "「有什么/没什么/可怎么办」结构清晰。",
+     "B": "可跟随但层次混。",
+     "C": "结论与依据纠缠无法辨认。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "对外可用的诚实回复语气，无内部语境泄漏。",
+     "B": "中性。",
+     "C": "泄漏内部讨论/贬损性表述。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-045",
+   "seq": 45,
+   "question": "客户 Zac Diener ([邮箱], eLock Technologies LLC, Berkeley CA) 报告三个问题： 1. 电池完全耗尽，想查日志了解高功耗原因 2. Web UI 非常慢，切换标签页和修改配置加载时间长，偶发报错 3. SIM 卡已安装，但 System Settings > Communications > Change Communications Method 只有 Wi-Fi 选项",
+   "language": "zh",
+   "product_or_subject": "NE301",
+   "migration_state": "C",
+   "interaction_class": "TROUBLESHOOT",
+   "user_task": "三问：(1) 电池完全耗尽后如何查明异常耗电原因；(2) Web UI 慢/偶发报错如何排查；(3) 已装 SIM 但通信方式只有 Wi-Fi 选项，如何恢复蜂窝选项。",
+   "truth_reference": {
+    "authority": "GROUND_TRUTH_ARTIFACT",
+    "artifact": "docs/evaluation/benchmark_v1/ground_truth_revalidation_41.json",
+    "gt_case_id": "sq-045",
+    "current_truth_status": "REFINED",
+    "uncertainty_state": "NONE",
+    "benchmark_truth_ready": "YES",
+    "note": "续航基线历史值（WiFi 2.1 年 / Cat-1 1.1 年）已被现行 wiki 电池×通信矩阵替代；基准必须采用冻结时 wiki 表。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "续航基线 = 冻结 wiki 电池（6V/7.2V 锂亚）× 通信方式（WiFi/HaLow/Cat-1）矩阵（口径如「5 次/天 WiFi >3 年」）；历史「WiFi 约 2.1 年 / Cat-1 约 1.1 年」不得作为当前基线引用。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "电池完全耗尽时设备无法本地读取日志；可行路径 = 受控充电恢复供电后再取日志/复测（方法论，非根因断言）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "Web UI 慢的正确处理 = 先排查网络/负载/浏览器等外因的诊断步骤；设备缺陷结论未经证据确立前不得断言。",
+     "criticality": "MEDIUM"
+    },
+    {
+     "id": "T4",
+     "requirement": "蜂窝选项缺失：须核对设备变体（是否 Cat-1 版）/SIM 状态/固件版本并给诊断步骤；根因未经证据确立前只能作为假设提出。",
+     "criticality": "HIGH"
+    }
+   ],
+   "required_evidence_roles": [
+    "WIKI",
+    "SPECIFICATION",
+    "SOLUTION"
+   ],
+   "uncertainty_requirement": "三问的根因均未被证据确立：诊断假设必须显式标注为假设；可给确定性的只有续航基线（绑矩阵）与「耗尽后无法取日志」的操作约束。",
+   "clarification_requirement": "必须请求缺失材料（设备能否充电、变体型号、SIM 运营商/套餐状态、网络环境）以收敛根因；不得装作已掌握设备侧数据。",
+   "required_interaction_behavior": "TROUBLESHOOT：逐问 症状解读 → 有据的可能原因（假设） → 诊断步骤 → 安全纠正动作 → 验证步骤；不得只复述历史答案措辞。",
+   "required_completeness": "三问逐问覆盖，缺一不可；电池问必须落到现行续航矩阵口径。",
+   "prohibited_claims_or_behaviors": [
+    "把历史「WiFi 2.1 年 / Cat-1 1.1 年」当作现行官方续航基线",
+    "无据断言蜂窝选项缺失的根因（如直接断言设备硬件损坏）",
+    "承诺 RMA/换货结果",
+    "跳过三问中的任意一问",
+    "编造日志内容或设备侧数据"
+   ],
+   "citation_grounding_requirements": [
+    "续航基线数字必须由冻结 wiki 续航矩阵证据支撑且口径一致",
+    "操作约束（耗尽后无法取日志）须与设备文档一致或标注为支持方法论",
+    "引用存在不构成 grounding：矩阵引用必须真的包含所引口径"
+   ],
+   "critical_fail_conditions": [
+    "把过期续航基线作为现行官方基线给出（实质性现势事实错误）",
+    "无据断言 SIM/硬件根因"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "续航基线采用现行矩阵口径，操作约束正确。",
+     "B": "基线正确但未给出口径来源。",
+     "C": "使用过期基线或编造操作约束。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "根因均以假设标注，未虚构设备侧数据。",
+     "B": "假设基本合理但未标注不确定性。",
+     "C": "断言未经证据的根因。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "三问逐问给出症状→假设→诊断→验证闭环。",
+     "FAIL": "只答一问、或只致歉不排查、或答非所问。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "仅涉 NE301 自身能力与设置边界。",
+     "B": "轻微越界。",
+     "C": "以他产品/兄弟型号规格作诊断依据。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "续航矩阵+设置路径+诊断方法论均有据。",
+     "B": "缺其一。",
+     "C": "关键依据无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "基线引用可溯源到续航矩阵且口径一致。",
+     "B": "引用笼统。",
+     "C": "引用与口径不符。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "诊断步骤与被引文档一致，推断已标注。",
+     "B": "部分推断未标注。",
+     "C": "把推断当文档事实。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "三问全覆盖且每问有验证步骤。",
+     "B": "三问覆盖但某问缺验证。",
+     "C": "覆盖不全。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "按三问分节，步骤可执行。",
+     "B": "可跟随但结构松。",
+     "C": "无法据此排查。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "支持语气，先给可立即执行的动作（充电/取日志）。",
+     "B": "中性。",
+     "C": "责备用户或空泛安抚。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-049",
+   "seq": 49,
+   "question": "ICU Solarcam（澳洲太阳能远程视频监控方案商，运营13+年）通过开发信回复联系 CamThink，Jim R ([邮箱]) 表示感兴趣并想要约会议。",
+   "language": "zh",
+   "product_or_subject": "NE503",
+   "migration_state": "C",
+   "interaction_class": "RECOMMEND",
+   "user_task": "评估 NE503 是否适合太阳能供电的远程视频监控场景（单设备替代「相机 + AI 盒」两层架构），并给出技术上站得住的回复方向。",
+   "truth_reference": {
+    "authority": "GROUND_TRUTH_ARTIFACT",
+    "artifact": "docs/evaluation/benchmark_v1/ground_truth_revalidation_41.json",
+    "gt_case_id": "sq-049",
+    "current_truth_status": "REFINED",
+    "uncertainty_state": "NONE",
+    "benchmark_truth_ready": "YES",
+    "note": "20 TOPS@INT8 / Hailo-15H 由官方 overview 确认；功耗口径以当前规格页为准，历史 5–6W 不得作为无日期现行事实。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "NE503 = Hailo-15H，20 TOPS@INT8（冻结 wiki overview）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "功耗口径以冻结规格页为准；历史「5–6W」若引用必须绑定快照日期，不得作为无日期的现行事实。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "「单设备替代两层（相机+AI 盒）」为架构分析主张，可作推荐理由，不得冒充官方产品事实。",
+     "criticality": "MEDIUM"
+    },
+    {
+     "id": "T4",
+     "requirement": "太阳能适配若给出功耗×太阳能预算计算，必须标注为估算（CALCULATOR 语义），不得虚构官方太阳能套件/数字。",
+     "criticality": "MEDIUM"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "SPECIFICATION",
+    "WIKI",
+    "CALCULATOR"
+   ],
+   "uncertainty_requirement": "数值（功耗/太阳能预算）必须绑定快照或标注估算；会约/销售语境剥离，回答按技术实质评分。",
+   "clarification_requirement": "可请求负载场景信息（路数、帧率、检测目标）以细化方案；不得以此回避核心规格事实。",
+   "required_interaction_behavior": "RECOMMEND：给出 NE503 规格事实 → 面向太阳能远程监控的适配分析（功耗有界）→ 明确待确认项（负载、部署环境）。",
+   "required_completeness": "规格事实 + 场景适配分析 + 待确认项；不得只给寒暄/会约回应。",
+   "prohibited_claims_or_behaviors": [
+    "把 5–6W 当作永恒现行事实（无快照绑定）",
+    "虚构官方功耗/太阳能套件数字",
+    "承诺会议、报价或折扣",
+    "把架构分析说成官方定位文档内容"
+   ],
+   "citation_grounding_requirements": [
+    "20 TOPS/Hailo-15H 必须由 wiki overview 证据支撑",
+    "功耗数字必须可溯源到规格页快照或显式标注估算",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "编造官方功耗/太阳能数字并作为事实给出"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "20 TOPS/Hailo-15H 正确，功耗表述口径正确。",
+     "B": "规格正确但功耗口径含糊。",
+     "C": "规格/功耗错误或编造。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "历史功耗绑定快照，估算标注估算。",
+     "B": "数值正确但未绑定。",
+     "C": "把估算/历史当官方事实。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "给出技术评估与待确认项。",
+     "FAIL": "只回应会约寒暄，无技术实质。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "仅用 NE503 自身证据。",
+     "B": "轻微越界。",
+     "C": "以他产品证据支撑 NE503 规格。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "规格+场景分析均有据或标注估算。",
+     "B": "场景分析无据且未标注。",
+     "C": "关键规格无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "规格断言溯源到 overview/规格页。",
+     "B": "引用笼统。",
+     "C": "引用错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "断言与被引证据一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "事实+适配+待确认齐备。",
+     "B": "缺待确认项。",
+     "C": "仅规格罗列无场景适配。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "规格/适配/待确认分层清晰。",
+     "B": "结构一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "面向方案商的技术语气，无会约承诺。",
+     "B": "中性。",
+     "C": "以会约替代回答。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-074",
+   "seq": 74,
+   "question": "Massimo 回复 6/5 Option 2 确认邮件，列出 10 项他认为应包含的规格清单，作为付款前确认： 1. PIR 运动传感器 2. 环境光传感器 3. IR-Cut 滤镜 4. IR 红外照明 LED 5. PIR + 夜视固件适配 6. 88° 镜头 7. YOLOv8 Nano 预装 8. 防水外壳 9. 自动夜视切换 10. XIAO ESP32C3 自集成",
+   "language": "zh",
+   "product_or_subject": "NE301（定制可行性评估）",
+   "migration_state": "C",
+   "interaction_class": "RECOMMEND",
+   "user_task": "对客户列出的 10 项规格逐项给出可行性归类（标准 / 选配 / 扩展板可得 / 需定制新增 / 客户侧自集成），作为付款前确认的技术事实基础。",
+   "truth_reference": {
+    "authority": "GROUND_TRUTH_ARTIFACT",
+    "artifact": "docs/evaluation/benchmark_v1/ground_truth_revalidation_41.json",
+    "gt_case_id": "sq-074",
+    "current_truth_status": "REFINED",
+    "uncertainty_state": "NONE",
+    "benchmark_truth_ready": "YES",
+    "note": "可行性事实与当前文档/仓库一致（ACS-04 含 PIR/环境光；88° 镜头为可选配置）；IR-Cut 仍非标配。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "PIR 运动传感器与环境光传感器：可经 ACS-04 扩展板获得（扩展板含 PIR/环境光），非机身标配集成。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "88° 镜头 = 可选配置（现行文档）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "IR-Cut 滤光片 = 非标配，需定制新增。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T4",
+     "requirement": "IR 红外照明 LED（替换标准白光补光灯）= 定制项，标准配置为白光补光。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T5",
+     "requirement": "YOLOv8 Nano = 模型目录支持的部署路径；「出厂预装」未经第一方证实，须与「可部署」区分并有界表述。",
+     "criticality": "MEDIUM"
+    },
+    {
+     "id": "T6",
+     "requirement": "防水外壳 = 标准产品属性（绑现行文档口径）。",
+     "criticality": "MEDIUM"
+    },
+    {
+     "id": "T7",
+     "requirement": "PIR+夜视自动切换的固件适配 = 定制开发方向，不得承诺为标准固件行为。",
+     "criticality": "MEDIUM"
+    },
+    {
+     "id": "T8",
+     "requirement": "「XIAO ESP32C3 自集成」= 客户侧自集成项，不属于 CamThink 交付承诺，正确答案须识别这一归属。",
+     "criticality": "MEDIUM"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "COMPATIBILITY",
+    "SPECIFICATION",
+    "WIKI",
+    "MODEL_CATALOG"
+   ],
+   "uncertainty_requirement": "「出厂预装」「标准固件自动切换」等未证实项须有界（未经证实/需定制确认）；不得为促成付款把未证实项说成已具备。",
+   "clarification_requirement": "付款/排期/价格等商务确认须路由到商务渠道；技术面可请求部署环境确认（供电、安装位）。",
+   "required_interaction_behavior": "RECOMMEND（可行性表）：10 项逐项归类 + 依据 + 明确的「需定制/需确认」标注，不回避不利项（IR-Cut 非标配）。",
+   "required_completeness": "10 项逐项覆盖；每项归类有据；商务项（排期/付款）显式路由而非编造。",
+   "prohibited_claims_or_behaviors": [
+    "把 IR-Cut 说成标配或现有机身包含项",
+    "把全部 10 项说成标准发货内容",
+    "把客户自集成项（XIAO ESP32C3）算作 CamThink 交付承诺",
+    "虚构排期、MOQ 或价格（付款/排期语境剥离）",
+    "把「预装 YOLOv8n」「自动夜视切换」说成既有标准能力"
+   ],
+   "citation_grounding_requirements": [
+    "每项归类（标配/选配/扩展板/定制）必须由冻结 wiki/ne301 证据支撑且证据确实包含该归类",
+    "不可归类项必须显式标注「需确认」而非猜测归类",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "把 IR-Cut 或 IR 照明说成标配/现成能力（实质性可行性误报）",
+    "为促成交易虚构定制能力或排期承诺"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "各项归类与冻结证据一致（含 IR-Cut 非标配）。",
+     "B": "归类大体正确但个别项含糊。",
+     "C": "关键项归类错误（如 IR-Cut 标配化）。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "未证实项全部有界标注。",
+     "B": "有界意识但部分项语言过强。",
+     "C": "把未证实项当已具备能力。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "逐项可行性归类回答了付款前确认任务。",
+     "FAIL": "只作整体回应/跳项/转为商务话术。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "CamThink 侧与客户侧自集成项归属清晰。",
+     "B": "归属表述含糊。",
+     "C": "把客户侧项认作产品能力或反之。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "各项依据均落在 wiki/ne301/扩展板证据。",
+     "B": "个别项依据缺失且未标注需确认。",
+     "C": "多项无据归类。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "归类可溯源到具体证据。",
+     "B": "引用笼统。",
+     "C": "引用与归类不符。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "与被引证据一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "10 项全覆盖+需确认项显式。",
+     "B": "覆盖 8–9 项。",
+     "C": "大面积缺项。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "逐项表格化/清单化清晰。",
+     "B": "可跟随。",
+     "C": "混杂不可核对。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "技术确认语气，商务项恰当路由。",
+     "B": "中性。",
+     "C": "催促付款/夸大承诺。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-093",
+   "seq": 93,
+   "question": "客户对机器视觉（machine vision）感兴趣，聚焦工业监测和农业监测。同时想测试 HaLow 长距离拍照场景（巴拉圭 HaLow 早期采用阶段）。",
+   "language": "zh",
+   "product_or_subject": "NE101（HaLow 连接 + 机器视觉方向）",
+   "migration_state": "C",
+   "interaction_class": "RECOMMEND",
+   "user_task": "评估 NE101 HaLow 方案在巴拉圭（早期采用阶段）做长距离拍照的可用性，并给出工业/农业监测方向的建议。",
+   "truth_reference": {
+    "authority": "GROUND_TRUTH_ARTIFACT",
+    "artifact": "docs/evaluation/benchmark_v1/ground_truth_revalidation_41.json",
+    "gt_case_id": "sq-093",
+    "current_truth_status": "REFINED",
+    "uncertainty_state": "NOT_DOCUMENTED",
+    "benchmark_truth_ready": "YES",
+    "note": "HaLow=Sub-1GHz 868/915 MHz，网关 Region 可选（US/AU 等）；巴拉圭具体法规无第一方记载 → CONDITIONALLY_SUPPORTED（按区域频率）+ PY 法规 NOT_DOCUMENTED。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "NE101 支持 HaLow（Sub-1GHz 868/915 MHz），网关侧 Region 可选择（US/AU 等，冻结 wiki）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "巴拉圭 915 MHz 频段的法规/可用性状态无第一方记载 = NOT_DOCUMENTED；不得断言「在巴拉圭可用」或「不可用」。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "正确框架 = CONDITIONALLY_SUPPORTED：按区域频率规划讨论 + 建议以 DevKit 实测与当地法规确认收尾。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T4",
+     "requirement": "工业/农业监测方向应落在有据能力上（端侧检测/定时拍照/上报路径），不得虚构农业算法/案例。",
+     "criticality": "MEDIUM"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "SPECIFICATION",
+    "WIKI"
+   ],
+   "uncertainty_requirement": "核心：PY 法规 NOT_DOCUMENTED ≠ NOT_SUPPORTED，双向禁止（不得说可用，也不得说不可用）；区域适配以「条件成立即可用」的有界语言表达。",
+   "clarification_requirement": "可请求部署参数（距离、回传频率、区域）以细化测试建议；不得以此回避 HaLow 能力事实。",
+   "required_interaction_behavior": "RECOMMEND：HaLow 频段/Region 事实 → 巴拉圭条件性可用框架 → DevKit 实测/法规确认建议 → 工业/农业方向的有据建议。",
+   "required_completeness": "频段事实 + 条件性框架 + 验证路径 + 场景方向；缺 PY 法规边界即为不完整。",
+   "prohibited_claims_or_behaviors": [
+    "断言巴拉圭 HaLow 合法可用",
+    "断言巴拉圭 HaLow 不可用/不合规",
+    "虚构 Region 码或频段参数",
+    "虚构农业/工业算法能力或客户案例",
+    "把「早期采用阶段」曲解为产品不支持"
+   ],
+   "citation_grounding_requirements": [
+    "868/915 MHz 与 Region 事实必须由冻结 wiki 证据支撑",
+    "PY 状态的无记载结论应表述为「第一方文档未见记载」而非断言事实",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "对 PY 可用性作出任一方向的无据断言（实质性合规虚构）"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "频段/Region 事实正确，PY 边界表述正确。",
+     "B": "频段正确但 PY 边界含糊。",
+     "C": "频段错误或对 PY 作无据断言。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "NOT_DOCUMENTED 双向边界守住，条件性框架清晰。",
+     "B": "边界意识有但表述含糊。",
+     "C": "任一方向越界。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "给出条件性可用评估+验证路径。",
+     "FAIL": "直接断言可用/不可用或答非所问。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE101+网关边界清晰。",
+     "B": "轻微越界。",
+     "C": "以他产品 HaLow 证据替代。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "频段事实+场景建议均有据。",
+     "B": "场景建议无据未标注。",
+     "C": "频段事实无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "频段可溯源 wiki。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "事实+框架+验证+方向齐备。",
+     "B": "缺验证路径。",
+     "C": "缺 PY 边界。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "工程咨询语气。",
+     "B": "中性。",
+     "C": "过度承诺。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-103",
+   "seq": 103,
+   "question": "关于 野生动物智能监测，AI 识别 + 蜂窝上传 的产品咨询，推荐什么方案？",
+   "language": "zh",
+   "product_or_subject": "NE301（野生动物监测方案）",
+   "migration_state": "C",
+   "interaction_class": "RECOMMEND",
+   "user_task": "为野生动物智能监测（AI 识别 + 蜂窝上传）推荐产品方案。",
+   "truth_reference": {
+    "authority": "GROUND_TRUTH_ARTIFACT",
+    "artifact": "docs/evaluation/benchmark_v1/ground_truth_revalidation_41.json",
+    "gt_case_id": "sq-103",
+    "current_truth_status": "INSUFFICIENT",
+    "uncertainty_state": "NOT_DOCUMENTED",
+    "benchmark_truth_ready": "NO",
+    "note": "GT 正面真值 NOT_READY（Gundi/EarthRanger 集成无第一方证据）。本 Gate 依授权判定：该问句可成立为不确定性/证据不足型标记契约（问句本身只要求产品推荐，不要求集成断言），故 contract READY；正面集成真值仍按 GT 工件保持 NOT_READY。"
+   },
+   "uncertainty_contract_conversion_decision": {
+    "can_be_uncertainty_contract": true,
+    "rationale": "问句文本仅要求产品推荐（野生动物监测+AI 识别+蜂窝上传）；产品侧推荐有历史源快照依据；Gundi/EarthRanger 集成话题仅需有界不确定性语义即可正确回答，无需正面集成真值。历史 expected_answer 断言「经 Gundi 对接 EarthRanger」正是新契约必须判 FAIL 的假通过模式。",
+    "positive_truth_remaining_blocker": "第一方源（wiki/ne301/AIToolStack）无 EarthRanger/Gundi 记载；如需正面集成真值，仍须 Planner 另行取证。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "NE301（含 Cat-1 变体）支持端侧检测 + 蜂窝（Cat-1）上报，PIR 唤醒可用（依历史源快照 Knowledge @d4f7f49b，推荐基础须绑定快照表述）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "第一方源无 Gundi/EarthRanger 集成记载 = NOT_DOCUMENTED；答案不得断言存在经核实的集成通道。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "同样不得断言「不可能对接」（NOT_DOCUMENTED 双向界）；正确行为 = 说明第一方文档未见记载 + 建议经官方渠道确认集成路径。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T4",
+     "requirement": "方案建议（太阳能/电池供电、PIR 触发省电、定时+事件上报）落在有据产品能力上，不虚构野生动物场景案例。",
+     "criticality": "MEDIUM"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "SPECIFICATION",
+    "SUPPORT_CASE"
+   ],
+   "uncertainty_requirement": "核心：本契约的正确行为本身 = 有界不确定性 / 第一方证据缺失的如实表达；集成话题既不可正向虚构也不可负向断言。",
+   "clarification_requirement": "可询问监测目标物种/部署环境/上报频率以细化方案；不得以此回避集成话题的边界表述。",
+   "required_interaction_behavior": "RECOMMEND：有据的产品方案推荐（NE301 Cat-1+PIR 方向，绑快照）→ 集成话题的有界表述（无第一方记载+官方确认建议）→ 下一步（POC/确认）。",
+   "required_completeness": "产品推荐 + 集成边界 + 下一步；若答案提及保护平台（EarthRanger 等）而无边界表述即为不完整。",
+   "prohibited_claims_or_behaviors": [
+    "断言存在经核实的 Gundi/EarthRanger 集成通道（历史期望答案正是此模式 → 按新契约必须 FAIL）",
+    "断言不可能对接 EarthRanger/Gundi",
+    "虚构野生动物监测案例、客户部署或保护组织合作",
+    "把历史销售记录当第一方集成文档引用"
+   ],
+   "citation_grounding_requirements": [
+    "产品能力断言须由产品证据支撑；历史源快照仅可作为「历史方案基础」表述并绑定快照",
+    "集成「无记载」结论应表述为「第一方文档未见记载」而非事实断言",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "正面虚构集成通道存在（历史假通过模式）",
+    "虚构野生动物监测案例或保护组织合作"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "产品能力事实正确且绑快照表述。",
+     "B": "能力正确但未绑快照。",
+     "C": "编造集成通道或产品能力。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "集成话题双向边界守住，正确表达证据缺失。",
+     "B": "边界意识有但表述含糊（如「支持对接」未加核实限定）。",
+     "C": "断言集成存在或不可能。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "给出有据产品推荐+集成边界+下一步。",
+     "FAIL": "拒绝回答、或以集成虚构支撑推荐。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE301 能力边界清晰。",
+     "B": "轻微越界。",
+     "C": "以他产品能力支撑推荐。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "产品推荐依据+集成无记载表述均有据。",
+     "B": "其一缺失。",
+     "C": "推荐无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源且绑定正确。",
+     "B": "笼统。",
+     "C": "把销售记录当官方文档引用。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "推荐+边界+下一步齐备。",
+     "B": "缺下一步。",
+     "C": "缺集成边界（提及平台而无边界）。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "咨询回复语气，无虚构背书。",
+     "B": "中性。",
+     "C": "以虚构合作背书。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-108",
+   "seq": 108,
+   "question": "关于 8+ 摄像头同步分析，object detection / ALPR / people counting 的产品咨询，推荐什么方案？",
+   "language": "zh",
+   "product_or_subject": "NE503",
+   "migration_state": "C",
+   "interaction_class": "RECOMMEND",
+   "user_task": "为 8+ 路摄像头同步分析（object detection / ALPR / people counting）推荐产品方案。",
+   "truth_reference": {
+    "authority": "GROUND_TRUTH_ARTIFACT",
+    "artifact": "docs/evaluation/benchmark_v1/ground_truth_revalidation_41.json",
+    "gt_case_id": "sq-108",
+    "current_truth_status": "UNCHANGED",
+    "uncertainty_state": "NONE",
+    "benchmark_truth_ready": "YES",
+    "note": "SDK 事实（Python SDK MediaClient/InferenceClient/DeviceClient + aipc-cli + RESTful + C++ SDK 文档）由官方 overview 确认。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "NE503 = Hailo-15H，20 TOPS@INT8。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "NE503 提供 Python SDK（MediaClient/InferenceClient/DeviceClient）、aipc-cli、RESTful API 与 C++ SDK 文档（冻结 wiki）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "容器化部署（Docker/containerd）支持多模型/多流分析的组织方式。",
+     "criticality": "MEDIUM"
+    },
+    {
+     "id": "T4",
+     "requirement": "ALPR / people counting = 须经模型部署实现的分析任务；官方无预装 ALPR/客流应用记载；8+ 路并发可行性取决于模型/流/分辨率预算，必须以估算（CALCULATOR 语义）或 POC 建议表述，不得给出虚构的官方路数上限。",
+     "criticality": "HIGH"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "SDK",
+    "SPECIFICATION",
+    "CALCULATOR"
+   ],
+   "uncertainty_requirement": "路数上限与 ALPR 模型可用性均不可虚构：可行性表述必须落在「SDK+算力路径+需按负载评估/POC」的有界框架。",
+   "clarification_requirement": "应请求分辨率/帧率/模型规模等负载参数以细化估算；不得以缺参数为由不给方案框架。",
+   "required_interaction_behavior": "RECOMMEND：规格与 SDK 事实 → 面向 8+ 路的架构建议（流/模型预算框架）→ 明确需负载评估或 POC。",
+   "required_completeness": "规格 + SDK 能力 + 多路架构框架 + 有界的 ALPR/people-counting 实现路径。",
+   "prohibited_claims_or_behaviors": [
+    "宣称 NE503 自带/预装 ALPR 或 people counting 应用",
+    "虚构具体路数上限（如「支持 16 路」）为官方规格",
+    "把 SDK 能力说成现成业务应用",
+    "虚构同步分析精度数字"
+   ],
+   "citation_grounding_requirements": [
+    "SDK 组件名（MediaClient/InferenceClient/DeviceClient/aipc-cli/RESTful/C++ SDK）必须与冻结 wiki 一致",
+    "路数/吞吐估算必须标注为估算并给出预算框架",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "虚构官方路数上限或预装 ALPR 应用（实质性能力虚构）"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "规格与 SDK 事实全部正确。",
+     "B": "正确但组件名含糊。",
+     "C": "规格/SDK 事实错误。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "路数/模型可用性有界表述。",
+     "B": "有界意识弱（如给出未标估算的路数）。",
+     "C": "虚构路数/预装应用。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "给出多路方案框架+待评估项。",
+     "FAIL": "只报规格或答非所问。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE503 边界清晰。",
+     "B": "轻微越界。",
+     "C": "以 NE301/NG4500 证据替代。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "规格+SDK+容器路径有据。",
+     "B": "缺其一。",
+     "C": "SDK 事实无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "SDK 断言溯源 overview。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "规格+SDK+架构+实现路径齐备。",
+     "B": "缺架构框架。",
+     "C": "缺 SDK 事实。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "技术咨询语气。",
+     "B": "中性。",
+     "C": "过度承诺。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-109",
+   "seq": 109,
+   "question": "关于 零售、智能制造、基础设施/公用事业、仓储物流 — 利用现有 IP 摄像头 + Jetson 边缘计算 的产品咨询，推荐什么方案？",
+   "language": "zh",
+   "product_or_subject": "NG4500",
+   "migration_state": "C",
+   "interaction_class": "RECOMMEND",
+   "user_task": "为「利用现有 IP 摄像头 + 边缘计算」的多行业场景推荐方案，并正确处理 BAA/TAA 合规边界（基础设施/公用事业语境）。",
+   "truth_reference": {
+    "authority": "GROUND_TRUTH_ARTIFACT",
+    "artifact": "docs/evaluation/benchmark_v1/ground_truth_revalidation_41.json",
+    "gt_case_id": "sq-109",
+    "current_truth_status": "INSUFFICIENT",
+    "uncertainty_state": "NOT_DOCUMENTED",
+    "benchmark_truth_ready": "YES",
+    "note": "制造地/合规状态在第一方源（wiki/Store 快照）无记载 → 基准只考「不虚构合规状态、引导官方确认」的有界行为。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "NG4500 = 边缘 AI 盒（Jetson Orin 平台），可接入既有 IP 摄像头做边缘推理（方向与问句匹配）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "NG4500 制造地 / BAA/TAA 合规状态在第一方源无记载 = NOT_DOCUMENTED。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "正确行为 = 不虚构合规/制造地；把 BAA/TAA 识别为美国公用事业/联邦采购的实质性合规门槛；建议经官方渠道确认后进入该类采购流程。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T4",
+     "requirement": "历史销售记录中「NG4500 当前中国组装」仅为销售记录语境，不得作为官方现行事实复述。",
+     "criticality": "HIGH"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "SPECIFICATION",
+    "CURRENT_COMMERCIAL"
+   ],
+   "uncertainty_requirement": "核心：合规状态 NOT_DOCUMENTED 双向禁止（不得说符合，也不得说不符合）；正确行为本身是有界表述 + 官方确认路由。",
+   "clarification_requirement": "可询问行业/部署国/摄像头规模以细化方案；公用事业/联邦语境必须触发合规确认建议而非直接推荐结论。",
+   "required_interaction_behavior": "RECOMMEND：NG4500 与既有 IP 摄像头的适配分析（有据）→ 行业场景映射（零售/制造/仓储有据能力）→ 公用事业/联邦场景 = 合规门槛有界提示 + 官方确认路由。",
+   "required_completeness": "适配分析 + 场景映射 + 合规边界三部分齐备；公用事业场景缺合规边界即为不完整。",
+   "prohibited_claims_or_behaviors": [
+    "断言 NG4500 符合 BAA/TAA",
+    "断言 NG4500 不符合 BAA/TAA 或直接断言其制造地",
+    "把历史销售记录中「中国组装」当官方现行事实复述",
+    "虚构美国政府/公用事业部署案例",
+    "为非合规敏感场景强加不必要的合规否定（过度拒绝）"
+   ],
+   "citation_grounding_requirements": [
+    "NG4500 平台/接入能力断言须由 NG4500 自身证据支撑",
+    "合规「无记载」结论须表述为「第一方文档未见记载」而非事实断言",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "虚构 BAA/TAA 合规状态或制造地（任一方向）",
+    "虚构美国政府/公用事业部署案例"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "NG4500 平台/接入事实正确，合规边界正确。",
+     "B": "平台正确但合规边界含糊。",
+     "C": "合规/制造地断言错误。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "NOT_DOCUMENTED 双向守住+确认路由。",
+     "B": "边界意识有但含糊。",
+     "C": "任一方向虚构。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "给出适配+场景+合规边界。",
+     "FAIL": "直接下合规结论或答非所问。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NG4500 与相机分工清晰。",
+     "B": "轻微越界。",
+     "C": "以 NE503/NE301 证据替代 NG4500。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "平台证据+合规无记载表述有据。",
+     "B": "缺其一。",
+     "C": "平台断言无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "三部分齐备。",
+     "B": "缺场景映射。",
+     "C": "缺合规边界。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "行业咨询语气。",
+     "B": "中性。",
+     "C": "虚构案例背书。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-008",
+   "seq": 8,
+   "question": "客户 Gabe Cook（Steiner）反馈两个问题： 1. **补光灯行为差异**：按键拍照似乎忽略已保存的补光灯设置，使用默认 \"auto\" 模式；定时拍照则正常遵循保存的设置。客户提供了 4 张对比照片验证此行为。 2. **图片导出**：客户询问 Neomind 服务器上存储的图片是否可以导出，以及多摄像头定时拍照场景下是否支持定时批量导出。",
+   "language": "zh",
+   "product_or_subject": "NE101 + Neomind 服务器",
+   "migration_state": "C",
+   "interaction_class": "TROUBLESHOOT",
+   "user_task": "两问：(1) 解释按键拍照与定时拍照对已保存补光灯设置行为不一致的原因（调用链差异）；(2) Neomind 服务器图片能否导出、多摄像头场景是否支持定时批量导出。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-008",
+    "stable_fact_anchors": [
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）",
+     "NE101 固件仓库快照（lowpower_camera）"
+    ],
+    "source_snapshot_required": true,
+    "note": "真值稳定性 stable：按键 vs 定时拍照路径的补光灯处理差异为固件级可验证事实；Neomind 导出能力以第一方文档记载为准。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "按键拍照与定时拍照走不同的拍照触发路径，补光灯设置的遵循行为不同：定时路径遵循已保存设置，按键路径使用默认 auto 行为（症状解读与固件证据一致）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "对症状的解释必须落在「两条触发路径的调用链差异」上，而不是笼统归因于设置未保存成功。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "Neomind 服务器图片导出能力：必须按第一方 Neomind 文档记载回答；若定时批量导出无第一方记载，须有界表述（未见记载/需确认），不得虚构功能。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T4",
+     "requirement": "给出验证/规避步骤（如统一改用定时拍照以获得一致补光行为）。",
+     "criticality": "MEDIUM"
+    }
+   ],
+   "required_evidence_roles": [
+    "FIRMWARE",
+    "SDK",
+    "SOLUTION"
+   ],
+   "uncertainty_requirement": "Neomind 导出/批量导出若超出第一方文档，必须显式有界（NOT_DOCUMENTED 语义）；固件行为解释按证据给出，不做超出证据的代码级断言。",
+   "clarification_requirement": "可请求固件版本/服务器版本以精确对齐行为；不得以此回避已确立的两问。",
+   "required_interaction_behavior": "TROUBLESHOOT：两问分别 症状确认 → 有据成因解释 → 验证/规避步骤；第二问给出能力边界 + 确认路径。",
+   "required_completeness": "两问全覆盖；第一问必须给出成因级解释（路径差异），第二问必须落到文档化能力或显式无记载边界。",
+   "prohibited_claims_or_behaviors": [
+    "虚构 Neomind 导出/定时批量导出功能",
+    "把补光灯差异错误归因（如「设置没保存」）而无证据",
+    "断言固件缺陷/承诺修复排期",
+    "把 #007 的问题内容并入本契约（近似重复 {#007,#008} 须拆分，本契约只覆盖本问句两问）"
+   ],
+   "citation_grounding_requirements": [
+    "补光灯行为差异解释必须与固件/文档证据一致，证据须确实覆盖两条触发路径",
+    "Neomind 能力断言须由 Neomind 文档支撑；无记载时表述为「未见记载」而非事实断言",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "虚构导出/批量导出功能（实质性能力虚构）",
+    "无据断言固件缺陷成因"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "两路径补光行为差异与导出能力边界均正确。",
+     "B": "差异解释正确但导出边界含糊。",
+     "C": "行为差异解释错误或虚构导出功能。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "无记载能力显式有界。",
+     "B": "有界意识弱。",
+     "C": "虚构功能或断言无据成因。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "两问分别给出解释+验证步骤。",
+     "FAIL": "只答一问或只安抚。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE101 与 Neomind 边界清晰。",
+     "B": "轻微越界。",
+     "C": "以相机证据回答服务器能力或反之。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "固件行为+服务器能力均有据/有界。",
+     "B": "其一缺失。",
+     "C": "关键解释无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "两问全闭环（含规避建议）。",
+     "B": "缺规避建议。",
+     "C": "缺一问。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "按问分节清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "支持语气。",
+     "B": "中性。",
+     "C": "责备用户。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-011",
+   "seq": 11,
+   "question": "客户（Daniel Hii，新加坡 Kajima 建设公司）计划在新加坡户外环境使用 NE301 进行热舒适度研究，探索人们在不同气候条件下（气温、太阳辐射）对遮阳/非遮阳空间的耐受性。项目处于规划阶段，尚未与设施管理方确认安装限制。",
+   "language": "zh",
+   "product_or_subject": "NE301（户外热舒适度研究）",
+   "migration_state": "C",
+   "interaction_class": "RECOMMEND",
+   "user_task": "评估 NE301 用于户外热舒适度研究（人员检测/遮阳行为观察）的可行方案，并指出研究阶段的关键未确认约束。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-011",
+    "stable_fact_anchors": [
+     "camthink-ai/ne301 @ 5611dbe14bf6d3275afc03374ea37aef71d203d5",
+     "camthink-ai/wiki-documents @ 4ed5b32e304ee09a5e067a464e16c990c6218314（取证 2026-09-05）",
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）"
+    ],
+    "source_snapshot_required": true,
+    "note": "能力事实（COCO person/umbrella、供电选项）绑冻结源；研究适配性为有界评估。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "NE301 端侧支持 COCO 预训练类别的人员检测（person）；COCO80 含 umbrella（伞）类别，可用于遮阳行为观察的探索性检测。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "NE301 不含测量太阳辐射的传感器；红外测温（如扩展板 MLX90642）为表面温度触发源，不能测量太阳辐照度——研究若需辐照度数据须另有专业仪器。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "户外部署可行路径落在有据能力上：供电选项（电池/太阳能等按冻结 wiki 口径）、定时拍照/事件上报、Wi-Fi/蜂窝连接。",
+     "criticality": "MEDIUM"
+    },
+    {
+     "id": "T4",
+     "requirement": "研究适配性必须有界：NE301 方案定位为数据采集/原型验证节点，不是经过验证的研究级测量仪器。",
+     "criticality": "HIGH"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "MODEL_CATALOG",
+    "SPECIFICATION",
+    "WIKI"
+   ],
+   "uncertainty_requirement": "研究级适配性不得转正为「满足研究要求」；检测类别能力以模型目录为准，不虚构热舒适指标（如 WBGT/辐照度）测量能力。",
+   "clarification_requirement": "安装限制未确认（规划阶段）——正确答案必须显式列出待确认项（安装位/供电/隐私合规/设施方许可），并以此作为方案条件。",
+   "required_interaction_behavior": "RECOMMEND：能力事实 → 研究场景适配方案（有界） → 待确认约束清单 → 下一步（POC/确认）。",
+   "required_completeness": "能力事实 + 有界适配 + 待确认项；缺待确认项即为不完整（规划阶段语境）。",
+   "prohibited_claims_or_behaviors": [
+    "宣称 NE301/扩展板可测量太阳辐射/辐照度",
+    "宣称满足研究级/临床级测量要求",
+    "虚构热舒适指标（WBGT 等）计算能力",
+    "忽略安装限制未确认的事实而给出确定性部署承诺",
+    "把 person/umbrella 检测说成行为学结论生成能力"
+   ],
+   "citation_grounding_requirements": [
+    "检测类别断言必须由模型目录证据支撑",
+    "供电/连接选项必须由冻结 wiki 支撑",
+    "研究适配性结论须标注为评估性判断而非官方结论"
+   ],
+   "critical_fail_conditions": [
+    "虚构辐照度/热舒适指标测量能力（实质性能力虚构）"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "检测类别与传感器边界正确。",
+     "B": "能力正确但边界含糊。",
+     "C": "虚构测量能力。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "研究适配有界+待确认项显式。",
+     "B": "有界弱。",
+     "C": "把原型能力说成研究级保证。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "给出可行方案+待确认约束。",
+     "FAIL": "直接承诺部署或答非所问。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE301 能力边界清晰。",
+     "B": "轻微越界。",
+     "C": "以他产品能力支撑。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "模型目录+供电/连接均有据。",
+     "B": "缺其一。",
+     "C": "关键断言无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "能力+方案+待确认齐备。",
+     "B": "缺待确认项。",
+     "C": "缺能力事实。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "研究咨询语气。",
+     "B": "中性。",
+     "C": "过度承诺。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-015",
+   "seq": 15,
+   "question": "Cliff（ModularX，南非）通过 WhatsApp 联系 Dave 和 Harry，要求提供热成像相机 + 入侵检测（越线、人车检测）的演示视频。之前发过的链接已过期。",
+   "language": "zh",
+   "product_or_subject": "NG4500 / NE301（热成像+入侵检测能力澄清）",
+   "migration_state": "C",
+   "interaction_class": "RECOMMEND",
+   "user_task": "澄清 CamThink 在「热成像 + 入侵检测（越线、人车检测）」上的真实可演示能力：什么现在就有据可演示、什么需要定制/验证。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-015",
+    "stable_fact_anchors": [
+     "camthink-ai/wiki-documents @ 4ed5b32e304ee09a5e067a464e16c990c6218314（取证 2026-09-05）",
+     "camthink-ai/ne301 @ 5611dbe14bf6d3275afc03374ea37aef71d203d5",
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）"
+    ],
+    "source_snapshot_required": true,
+    "note": "历史答案过期（链接失效）；历史期望答案需重写：演示会话语境剥离，按能力事实评分。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "MLX90642（扩展板红外传感器）= 32×24 温度触发源，不是热成像相机；不能作为视频级热成像能力演示。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "CamThink 现有产品线中无第一方记载的外接热成像相机方案；若涉及，须有界表述（未见官方方案/需专项确认）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "入侵检测（人/车检测）可在 NPU 上经检测模型实现为 POC 路径；「越线判定」类逻辑须经部署侧规则实现，不得宣称固件自带越线算法，除非第一方文档记载。",
+     "criticality": "MEDIUM"
+    },
+    {
+     "id": "T4",
+     "requirement": "不得虚构「已有演示视频/素材」；正确行为 = 说明可演示的能力边界与 POC 安排方向（不承诺具体会约/链接）。",
+     "criticality": "HIGH"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "SPECIFICATION",
+    "MODEL_CATALOG"
+   ],
+   "uncertainty_requirement": "热成像方案与越线算法均为 NOT_DOCUMENTED/NOT_TESTED 语义区：双向禁止（不得宣称有，也不得宣称绝无可能），用「未见官方记载/可作定制探讨」表述。",
+   "clarification_requirement": "可请求场景参数（检测距离/视场/报警形式）以给出 POC 框架；不得以缺参数回避能力边界。",
+   "required_interaction_behavior": "RECOMMEND（能力澄清）：区分「现在有据可演示」（人车检测 POC）与「需定制/确认」（真热成像、越线逻辑），不虚构演示素材。",
+   "required_completeness": "热成像边界 + 入侵检测路径 + 演示能力边界三部分齐备。",
+   "prohibited_claims_or_behaviors": [
+    "把 MLX90642 说成热成像相机",
+    "虚构已有演示视频/可重发链接",
+    "宣称固件自带越线检测算法（无第一方记载）",
+    "宣称「完全无法做入侵检测」（负向越界）",
+    "承诺会约/发送素材（会话语境剥离）"
+   ],
+   "citation_grounding_requirements": [
+    "MLX90642 定性必须与扩展板/固件证据一致",
+    "入侵检测路径断言须由模型目录/NPU 证据支撑，并区分「检测」与「越线规则」",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "虚构演示视频/热成像演示能力（实质性能力虚构）",
+    "把温度触发源说成热成像相机"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "MLX90642 定性与入侵检测路径正确。",
+     "B": "定性正确但路径含糊。",
+     "C": "定性错误或虚构演示能力。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "无记载项双向有界。",
+     "B": "有界弱。",
+     "C": "虚构或负向越界。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "给出能力边界+POC 框架。",
+     "FAIL": "只答应发视频或答非所问。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "产品边界清晰。",
+     "B": "轻微越界。",
+     "C": "以他产品证据支撑热成像断言。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "定性+路径有据。",
+     "B": "缺其一。",
+     "C": "关键断言无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "三部分齐备。",
+     "B": "缺 POC 框架。",
+     "C": "缺热成像边界。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "「能演示/需定制」分层清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "能力澄清语气，无虚假承诺。",
+     "B": "中性。",
+     "C": "虚构素材/过度承诺。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-019",
+   "seq": 19,
+   "question": "客户（Lightbox，澳大利亚，[邮箱]）通过邮件提出以下问题： 1. 太阳能板：已打开 wiki 页面，希望提供太阳能板和电池装在 NE101 上的实物照片 2. Logo 定制：客户已提供 Logo 文件（做 mockup），询问最小起订量 3. PIR 运动传感器：是否需要单独订购？能否提供 PIR 装在相机上的图片？还是集成的？ 4. 视频功能 + 建筑行业应用：当前仅需照片，但视频在 roadmap 上。问 NE101 在建筑行业怎么用",
+   "language": "zh",
+   "product_or_subject": "NE101",
+   "migration_state": "C",
+   "interaction_class": "RECOMMEND",
+   "user_task": "四问售前评估：(1) 太阳能方案实物形态；(2) Logo 定制 MOQ；(3) PIR 传感器获得方式（集成/外购）；(4) NE101 建筑行业应用与视频能力边界。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-019",
+    "stable_fact_anchors": [
+     "camthink-ai/wiki-documents @ 4ed5b32e304ee09a5e067a464e16c990c6218314（取证 2026-09-05）",
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）"
+    ],
+    "source_snapshot_required": true,
+    "note": "太阳能方案（10W 板+7AH 电池口径）绑冻结 wiki；MOQ 与视频 roadmap 为第一方无记载区；MOQ 不可虚构。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "NE101 有太阳能供电方案（冻结 wiki 口径：太阳能板+电池，如 10W+7AH）；实物照片诉求属素材提供，回答不得虚构照片/素材的存在。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "Logo 定制 MOQ：第一方源无记载 → 不得编造 MOQ 数字；正确行为 = 说明需商务确认（销售路由）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "PIR 传感器：经扩展板（ACS-04 含 PIR）获得，非机身集成；「是否单独订购」按扩展板采购口径回答，不得宣称机身内置 PIR。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T4",
+     "requirement": "视频能力：NE101 为拍照设备；「视频在 roadmap」非第一方现行能力 → 不得宣称支持视频，也不得代官方确认 roadmap 真伪；建筑行业应用落在有据能力（定时拍照+端侧检测+上报+太阳能部署）上。",
+     "criticality": "HIGH"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "SPECIFICATION",
+    "WIKI",
+    "CURRENT_COMMERCIAL"
+   ],
+   "uncertainty_requirement": "MOQ 与视频 roadmap 为不确定性核心：NOT_DOCUMENTED 双向界 + 商务路由；不得以「大概 50 台起」式编造填充。",
+   "clarification_requirement": "建筑行业应用可询问部署细节（工地点位/上报频率）以细化；MOQ/视频必须路由确认而非反问用户。",
+   "required_interaction_behavior": "RECOMMEND（多问售前）：逐问回答；能力问题给有据事实；商务问题（MOQ）给确认路由；roadmap 问题给有界表述。",
+   "required_completeness": "四问全覆盖；MOQ/视频两问的正确形态是「有界+路由」，不得跳过。",
+   "prohibited_claims_or_behaviors": [
+    "编造 MOQ 数字或折扣政策",
+    "宣称 NE101 支持视频或代官方确认视频 roadmap",
+    "宣称 PIR 机身集成",
+    "虚构太阳能实物照片/素材存在",
+    "把四问中的任何一问跳过"
+   ],
+   "citation_grounding_requirements": [
+    "太阳能方案口径必须由冻结 wiki 支撑",
+    "PIR 获得方式必须由扩展板证据支撑",
+    "「无记载」结论表述为「第一方文档未见记载」并路由确认"
+   ],
+   "critical_fail_conditions": [
+    "编造 MOQ（实质性商务虚构）",
+    "宣称视频能力/确认 roadmap（无据能力断言）"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "太阳能/PIR/拍照能力事实正确。",
+     "B": "正确但口径含糊。",
+     "C": "MOQ/视频/PIR 任一虚构。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "MOQ/roadmap 双向有界+路由。",
+     "B": "有界弱（如暗示 MOQ 范围）。",
+     "C": "编造 MOQ 或确认 roadmap。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "四问逐问覆盖，商务项路由。",
+     "FAIL": "漏问或以销售话术替代。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE101 边界清晰（不借 NE301 视频能力）。",
+     "B": "轻微越界。",
+     "C": "以 NE301 能力回答 NE101。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "有据项全部溯源。",
+     "B": "缺其一。",
+     "C": "关键无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "四问全覆盖。",
+     "B": "覆盖 3 问。",
+     "C": "覆盖 ≤2 问。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "按问分节。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "售前语气，商务项得体路由。",
+     "B": "中性。",
+     "C": "编造承诺。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-020",
+   "seq": 20,
+   "question": "Marco 通过 LinkedIn 主动联系 CamThink，关注点： - 边缘 AI 部署（替代当前方案中的 AI 盒子） - 降低功耗（太阳能供电场景） - 减少误报（需要端侧 AI 做 true alarm 过滤） - 自定义模型部署 - 替代 AI 硬件架构",
+   "language": "zh",
+   "product_or_subject": "NE101 + NE301（组合方案）",
+   "migration_state": "C",
+   "interaction_class": "RECOMMEND",
+   "user_task": "针对五个关注点（边缘 AI 替代 AI 盒、太阳能低功耗、端侧过滤误报、自定义模型、替代架构）给出有据的产品方向建议。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-020",
+    "stable_fact_anchors": [
+     "camthink-ai/wiki-documents @ 4ed5b32e304ee09a5e067a464e16c990c6218314（取证 2026-09-05）",
+     "camthink-ai/ne301 @ 5611dbe14bf6d3275afc03374ea37aef71d203d5",
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）"
+    ],
+    "source_snapshot_required": true,
+    "note": "LinkedIn 推销语境剥离：按技术实质评分；NE101（拍照/上报）与 NE301（端侧 NPU AI）能力边界为关键事实。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "NE101 = 拍照/上报设备，无端侧 AI 算力；NE301 = 端侧 NPU（0.6 TOPS 级）AI 相机，支持 YOLO 类检测模型部署。两者能力边界不得互换。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "「端侧 AI 做 true alarm 过滤」的可行路径 = NE301 端侧检测后仅上报有效事件（有据路径），不是 NE101 能力。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "自定义模型部署为受支持路径（模型目录+工具链），但客户特定模型的最终效果须验证（POC 表述）。",
+     "criticality": "MEDIUM"
+    },
+    {
+     "id": "T4",
+     "requirement": "太阳能低功耗部署口径按冻结 wiki（供电方案/唤醒策略）；不得虚构具体功耗数字。",
+     "criticality": "MEDIUM"
+    },
+    {
+     "id": "T5",
+     "requirement": "组合建议（如：端侧 AI 用 NE301，纯拍照点位用 NE101，或 NE301 替代相机+AI 盒两层）为分析性推荐，须与产品事实一致。",
+     "criticality": "MEDIUM"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "MODEL_CATALOG",
+    "SPECIFICATION",
+    "WIKI"
+   ],
+   "uncertainty_requirement": "客户模型效果、误报率改善幅度均不可量化承诺；用 POC/验证表述。",
+   "clarification_requirement": "可请求点位数/检测目标/供电条件以细化组合方案。",
+   "required_interaction_behavior": "RECOMMEND：按五个关注点逐项给出有据方案 + 能力边界 + 验证建议；无推销话术要求（语境剥离）。",
+   "required_completeness": "五个关注点逐一覆盖；误报过滤必须落在「端侧检测过滤上报」的有据机制上。",
+   "prohibited_claims_or_behaviors": [
+    "宣称 NE101 具备端侧 AI（兄弟产品能力误植）",
+    "承诺误报率下降幅度等量化效果",
+    "虚构功耗数字或太阳能预算",
+    "把自定义模型部署说成 turnkey 保证效果",
+    "泄漏内部销售策略"
+   ],
+   "citation_grounding_requirements": [
+    "两款产品的能力边界断言须各有其自身证据支撑",
+    "功耗/部署口径溯源冻结 wiki",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "以 NE301 证据回答 NE101 端侧 AI 能力（兄弟产品替代）"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "两款能力边界与路径正确。",
+     "B": "正确但含糊。",
+     "C": "边界互换或虚构数字。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "效果类断言全部 POC 有界。",
+     "B": "有界弱。",
+     "C": "量化承诺。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "五点逐项覆盖。",
+     "FAIL": "只答部分点或答非所问。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE101/NE301 分工清晰。",
+     "B": "分工含糊。",
+     "C": "兄弟产品替代。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "能力+部署口径有据。",
+     "B": "缺其一。",
+     "C": "关键无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "五点全齐。",
+     "B": "缺 1–2 点。",
+     "C": "大面积缺失。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "按关注点组织。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "技术咨询语气。",
+     "B": "中性。",
+     "C": "推销腔替代技术实质。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-029",
+   "seq": 29,
+   "question": "客户 Gary Andrews (PwC) 反馈另一台 NE101 相机（Rainbow Kitchen 3, SN: 6503F284378503G8, FW: NE101_V1.8_FCC）出现电池续航异常：电池百分比在 4 天内从 100% 掉到 0%（5/17-5/21）。客户表示喜欢 NE101 但对电池续航有顾虑。",
+   "language": "zh",
+   "product_or_subject": "NE101（电池续航诊断）",
+   "migration_state": "C",
+   "interaction_class": "TROUBLESHOOT",
+   "user_task": "对特定设备的异常掉电（4 天 100%→0%）给出诊断方法论与可能的解释框架，并回应用户的续航顾虑。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-029",
+    "stable_fact_anchors": [
+     "NE101 固件仓库快照（lowpower_camera @07150b49）",
+     "camthink-ai/wiki-documents @ 4ed5b32e304ee09a5e067a464e16c990c6218314（取证 2026-09-05）",
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）"
+    ],
+    "source_snapshot_required": true,
+    "note": "电量计饱和行为（电压 >6000mV 显示卡 100%）为固件级可验证机制；SN 级根因无设备数据不得断言；续航期望绑现行 wiki 矩阵（与 sq-045 同规则）。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "电量计饱和机制：电池电压高于阈值（约 >6000mV）时百分比显示卡在 100%——即显示 100% 不代表刚充满的真实状态；「快速从 100% 掉落」可能与饱和后回落一致，此解释必须作为假设框架而非定论。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "诊断方法论：分阶段电流/功耗测量（睡眠/唤醒/拍照/上传各阶段），结合拍照频率、信号质量（弱信号重连耗电）等配置排查。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "续航期望基线 = 现行 wiki 电池×通信矩阵（不得使用历史 2.1 年/1.1 年口径——与 sq-045 同一现行口径规则）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T4",
+     "requirement": "SN 级根因：无设备侧数据（配置/日志/实测电流）不得断言根因；须请求设备数据或给出复测步骤。",
+     "criticality": "HIGH"
+    }
+   ],
+   "required_evidence_roles": [
+    "FIRMWARE",
+    "SPECIFICATION",
+    "WIKI",
+    "SOLUTION"
+   ],
+   "uncertainty_requirement": "根因不可断言（无设备数据）：所有成因解释须显式标注假设；电量计机制为可陈述的固件事实，但不等于本机根因。",
+   "clarification_requirement": "必须请求：设备配置（拍照频率/上传方式）、安装环境（信号）、能否取日志/复测；不得装作已知设备状态。",
+   "required_interaction_behavior": "TROUBLESHOOT：症状解读（含电量计机制的事实层）→ 假设框架（标注）→ 分阶段诊断步骤 → 验证/复测建议；正面回应续航顾虑（基线口径）。",
+   "required_completeness": "机制解释 + 方法论 + 基线口径 + 数据请求四要素齐备。",
+   "prohibited_claims_or_behaviors": [
+    "断言该 SN 的确定性根因（硬件缺陷/电池老化等）",
+    "把「卡 100% 机制」直接断言为本机根因而不标注假设",
+    "使用历史 2.1 年/1.1 年续航基线",
+    "承诺 RMA/换机结果",
+    "编造日志/电流数据"
+   ],
+   "citation_grounding_requirements": [
+    "电量计机制表述须与固件证据一致并注明依据层级",
+    "续航基线必须溯源现行 wiki 矩阵",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "无据断言 SN 级根因（实质性诊断虚构）",
+    "过期续航基线当现行口径"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "电量计机制与基线口径正确。",
+     "B": "机制正确但基线口径含糊。",
+     "C": "机制错误或基线过期。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "根因全部假设标注+数据请求明确。",
+     "B": "假设未充分标注。",
+     "C": "断言根因或编造数据。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "给出诊断闭环+正面回应顾虑。",
+     "FAIL": "只安抚不诊断。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE101 边界内。",
+     "B": "轻微越界。",
+     "C": "借他产品规格作诊断。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "机制+基线+方法论有据。",
+     "B": "缺其一。",
+     "C": "机制无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源并注明层级。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "四要素齐备。",
+     "B": "缺数据请求。",
+     "C": "缺方法论。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "分阶段步骤清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "共情+专业，回应顾虑。",
+     "B": "中性。",
+     "C": "推卸或敷衍。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-030",
+   "seq": 30,
+   "question": "Dave 向 Abhishek 推销 NE301 用于智能仓储（缺货检测/人员检测/车辆检测/OCR标签识别等），客户回复：\"We are interested in at least 5-10 cameras but price is becoming bottleneck.\"",
+   "language": "zh",
+   "product_or_subject": "NE301（仓储能力 + 价格异议）",
+   "migration_state": "C",
+   "interaction_class": "COMMERCIAL",
+   "user_task": "回应价格敏感的 5–10 台仓储问询：给出有据的仓储能力事实（缺货/人员/车辆检测、标签 OCR 的实现路径），并正确处理价格话题（无内部价格可作现行报价）。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-030",
+    "stable_fact_anchors": [
+     "camthink-ai/ne301 @ 5611dbe14bf6d3275afc03374ea37aef71d203d5",
+     "camthink-ai/wiki-documents @ 4ed5b32e304ee09a5e067a464e16c990c6218314（取证 2026-09-05）",
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）"
+    ],
+    "source_snapshot_required": true,
+    "note": "internal_strategy 语境剥离：内部回复策略/折扣方案非答案真值；仓储能力事实可抽取；价格语义=现行 Store/销售确认，历史/内部价一律不得成为现行价（跨案例 #026 规则）。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "人员/车辆检测：NE301 端侧可经 COCO 预训练（person/car）实现（有据路径）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "缺货检测与标签 OCR：须经定制模型实现（非出厂即有）；OCR 标签识别为专用模型路径，不得宣称 off-the-shelf。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "多机位成本优化方向（如：NG4500 聚合多路以摊薄端侧算力成本）可作为分析性建议，须与产品事实一致且不冒充官方方案。",
+     "criticality": "MEDIUM"
+    },
+    {
+     "id": "T4",
+     "requirement": "价格：不得给出任何具体价格/折扣作为现行报价；正确行为 = 引导至现行渠道（Store 快照/销售确认）；5–10 台量级为商务谈判事项。",
+     "criticality": "HIGH"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "MODEL_CATALOG",
+    "CURRENT_COMMERCIAL",
+    "SOLUTION"
+   ],
+   "uncertainty_requirement": "价格与折扣全部为 UNKNOWN/REQUIRES SALES CONFIRMATION 语义；定制模型效果（识别率）不可量化承诺。",
+   "clarification_requirement": "可请求仓库布局/标签类型/检测目标细节以细化方案；价格异议必须路由销售而非自行报价。",
+   "required_interaction_behavior": "COMMERCIAL：能力事实 + 实现路径澄清（哪些现成/哪些定制）+ 价格正确路由（不报价、不承诺折扣）。",
+   "required_completeness": "四类能力（缺货/人员/车辆/OCR）逐一给出路径定性 + 价格路由；缺价格路由即为不完整（价格是问句核心）。",
+   "prohibited_claims_or_behaviors": [
+    "给出任何具体价格或折扣作为现行报价（含历史/内部价）",
+    "宣称缺货检测/OCR 有现成模型",
+    "承诺识别率/检测率数字",
+    "泄漏内部定价策略/折扣授权",
+    "虚构仓储客户案例"
+   ],
+   "citation_grounding_requirements": [
+    "能力路径断言须由模型目录/产品证据支撑",
+    "多机位架构建议须标注为分析建议",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "以任何形式给出虚构/历史/内部价格作为现行报价（#026 跨案例规则）",
+    "宣称定制能力为现成能力"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "四类能力路径定性正确。",
+     "B": "正确但个别含糊。",
+     "C": "路径定性错误。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "价格全路由+效果不承诺。",
+     "B": "有界弱。",
+     "C": "报价/承诺效果。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "能力+路径+价格路由齐备。",
+     "FAIL": "只谈价格或只推销。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE301/NG4500 边界清晰。",
+     "B": "轻微越界。",
+     "C": "兄弟产品替代。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "能力断言有据。",
+     "B": "部分无据。",
+     "C": "关键无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "四能力+价格路由齐备。",
+     "B": "缺一类能力。",
+     "C": "缺价格路由。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "商务得体，不泄内部。",
+     "B": "中性。",
+     "C": "泄内部策略。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-031",
+   "seq": 31,
+   "question": "客户留言：\"we want this for getting various alerts from hotel operations\"。需求模糊，需要引导具体化。",
+   "language": "zh",
+   "product_or_subject": "NE301（酒店运营告警场景，需求澄清）",
+   "migration_state": "C",
+   "interaction_class": "CLARIFY",
+   "user_task": "面对模糊需求（「酒店运营的各种告警」），通过有针对性的澄清问题帮助客户具体化需求，而不是直接推销或拒答。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-031",
+    "stable_fact_anchors": [
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）",
+     "camthink-ai/ne301 @ 5611dbe14bf6d3275afc03374ea37aef71d203d5"
+    ],
+    "source_snapshot_required": true,
+    "note": "clarify_core：本案例为 CLARIFY 基准种子；澄清行为本身是正确答案，澄清不得被惩罚（跨案例规则）。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "该留言属于产品咨询范围内（不得判为 off-topic / 不得拒答）——交互正确性的核心。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "澄清问题须覆盖需求的关键维度：告警类别优先级（安保/客房服务/维护/客人服务）、现有系统对接（BMS/HMS/工单系统）、试点范围（哪家酒店/哪个场景先行）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "澄清问题可引用有据能力作为场景示例（人员检测/区域入侵/车位占用等），但须以「可能的场景示例」呈现，不得作为能力承诺清单。",
+     "criticality": "MEDIUM"
+    },
+    {
+     "id": "T4",
+     "requirement": "不得在需求未具体化前给出确定性方案承诺/报价/排期。",
+     "criticality": "MEDIUM"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "SOLUTION"
+   ],
+   "uncertainty_requirement": "正确行为本身 = 承认需求信息不足并以澄清推进；不得假装理解需求后直接作答。",
+   "clarification_requirement": "核心：必须提出具体的、有区分度的澄清问题（非泛泛「请告诉我更多」）；澄清数量与质量按维度评分。",
+   "required_interaction_behavior": "CLARIFY：简短确认来意 → 提出 2–4 个关键澄清问题（按 T2 维度）→ 说明得到答案后可提供的方案方向（不承诺）。",
+   "required_completeness": "澄清维度覆盖 T2 全部三类；仅一个问题不构成完整澄清。",
+   "prohibited_claims_or_behaviors": [
+    "判为 off-topic 而拒答（错误拒答）",
+    "不澄清直接推销固定方案",
+    "把示例场景说成既有能力承诺",
+    "给出报价/排期承诺",
+    "虚构酒店客户案例背书"
+   ],
+   "citation_grounding_requirements": [
+    "示例能力须有产品证据支撑且标注为示例",
+    "澄清型回答通常无需强引用，但任何能力示例不得无据",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "把模糊咨询判为 off-topic 拒答（交互性致命错误）",
+    "不澄清直接推销（答错任务）"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "示例能力有据且表述正确。",
+     "B": "示例含糊但有据可循。",
+     "C": "虚构能力示例。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "明确承认需求待具体化，不虚构理解。",
+     "B": "隐含假设但未虚构承诺。",
+     "C": "假装理解并承诺方案。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "以澄清问题推进需求具体化。",
+     "FAIL": "拒答、跑题或直接推销。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "示例不越产品边界。",
+     "B": "轻微越界。",
+     "C": "示例越界误导。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "所用示例均有据。",
+     "B": "部分示例无据但无害。",
+     "C": "示例虚构。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "能力示例可溯源。",
+     "B": "笼统。",
+     "C": "错配或虚构引用。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "三类澄清维度全覆盖且问题具体。",
+     "B": "覆盖 1–2 类或问题泛泛。",
+     "C": "无实质澄清。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "问题编号/分组清晰。",
+     "B": "可跟随。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "引导而非推销的语气。",
+     "B": "中性。",
+     "C": "推销腔/审问腔。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-033",
+   "seq": 33,
+   "question": "Massimo 原本用 NE101（无端侧 AI），现确认需要端侧 AI（猫/狗/人识别）转向 NE301。 5/29 新邮件要求定制 NE301： 1. PIR 传感器集成并安装到外壳内（用于唤醒相机） 2. IR 红外夜视 LED（替换白色补光灯） 3. 需要最紧凑干净的方案，保持防水 4. 准备订购 3 台用于开发测试 5. YOLO 模型用于猫检测，需区分狗和人",
+   "language": "zh",
+   "product_or_subject": "NE301（定制评估：PIR 集成 / IR 夜视 / YOLO 猫狗人）",
+   "migration_state": "C",
+   "interaction_class": "RECOMMEND",
+   "user_task": "评估 NE301 定制诉求的可行性：PIR 装入外壳用于唤醒、IR LED 替换白光补光、紧凑防水、3 台开发测试、猫/狗/人区分模型。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-033",
+    "stable_fact_anchors": [
+     "camthink-ai/ne301 @ 5611dbe14bf6d3275afc03374ea37aef71d203d5",
+     "camthink-ai/wiki-documents @ 4ed5b32e304ee09a5e067a464e16c990c6218314（取证 2026-09-05）",
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）"
+    ],
+    "source_snapshot_required": true,
+    "note": "关键边界：标准外壳无 PIR 安装位；IR LED 为定制项（标准为白光补光）；MOQ/NRE 费用第一方无记载不可虚构；COCO 含 cat/dog/person。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "PIR：固件支持 PIR 作为触发/唤醒源（扩展板含 PIR）；但标准 NE301 外壳无 PIR 安装位——「PIR 集成进外壳」= 结构定制项，不是现成配置。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "IR 夜视 LED：标准补光为白光 LED；替换为 IR 照明 = 硬件定制项，非选配开关。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "防水（IP 等级口径按现行文档）在定制路径下须保持——定制不得以丧失防水为默认代价，但最终以定制确认为准。",
+     "criticality": "MEDIUM"
+    },
+    {
+     "id": "T4",
+     "requirement": "3 台开发测试订购 = 标准购买流程；MOQ/NRE 费用第一方无记载 → 不得编造，路由商务确认。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T5",
+     "requirement": "YOLO 猫/狗/人：COCO80 含 cat/dog/person 三类，端侧可部署；「区分」到客户满意精度须客户数据训练/验证（POC 表述）。",
+     "criticality": "HIGH"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "FIRMWARE",
+    "MODEL_CATALOG",
+    "COMPATIBILITY",
+    "CURRENT_COMMERCIAL"
+   ],
+   "uncertainty_requirement": "定制项（PIR 结构位、IR 灯）为「需定制确认」语义；模型精度不可承诺；MOQ/NRE 不可虚构。",
+   "clarification_requirement": "可请求安装环境/检测距离/夜视距离参数以细化定制评估；商务项路由销售。",
+   "required_interaction_behavior": "RECOMMEND（可行性表）：5 项诉求逐项回答（现成/定制/需确认），不利项（外壳无 PIR 位、IR 需定制）不回避。",
+   "required_completeness": "5 项逐项覆盖；模型部分必须区分「类别存在可部署」与「精度需验证」。",
+   "prohibited_claims_or_behaviors": [
+    "宣称标准外壳可直装 PIR（无据能力断言）",
+    "宣称 IR 夜视版为现成品",
+    "编造 MOQ/NRE/单价",
+    "承诺检测精度/误识率",
+    "把定制项说成固件配置即可达成"
+   ],
+   "citation_grounding_requirements": [
+    "PIR/IR/防水断言须由扩展板/产品文档证据支撑",
+    "COCO 类别断言须由模型目录支撑",
+    "「需定制确认」项不得伪装成有据事实"
+   ],
+   "critical_fail_conditions": [
+    "把结构定制项（PIR 入壳/IR 灯）说成现成能力（实质性可行性误报）",
+    "编造 MOQ/NRE/价格"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "PIR/IR/防水/模型类别事实全部正确。",
+     "B": "正确但个别项含糊。",
+     "C": "关键边界错误（如 PIR 直装）。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "定制项有界+商务路由+精度不承诺。",
+     "B": "有界弱。",
+     "C": "编造商务数字/承诺精度。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "5 项逐项可行性回答。",
+     "FAIL": "整体敷衍或只答部分。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE301 与扩展板边界清晰。",
+     "B": "轻微越界。",
+     "C": "借他产品证据。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "各项有据/有界。",
+     "B": "缺其一。",
+     "C": "关键无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "5 项全覆盖。",
+     "B": "缺 1 项。",
+     "C": "缺 ≥2 项。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "逐项清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "可行性评估语气。",
+     "B": "中性。",
+     "C": "过度承诺促成交易。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-035",
+   "seq": 35,
+   "question": "Allan 看了 CamThink 官网后误以为 CamThink 是\"OEM for customized video and AI solutions\"，认为不适合他们（他们不做内部开发，只集成成品）。但他说 \"If I'm working from incorrect information, please let me know\" — 留了被纠正的门。",
+   "language": "zh",
+   "product_or_subject": "NE301 / CamThink 产品定位（ORIENT）",
+   "migration_state": "C",
+   "interaction_class": "ORIENT",
+   "user_task": "纠正潜在客户的定位误解：CamThink 是成品 AI 相机产品公司（NE101/NE301/NE503/NG4500 产品线），不是承接定制的 OEM/方案设计公司；同时说明客户作为集成商可用的合作路径。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-035",
+    "stable_fact_anchors": [
+     "camthink-ai/wiki-documents @ 4ed5b32e304ee09a5e067a464e16c990c6218314（取证 2026-09-05）",
+     "camthink.ai 官网/Store 快照（取证 2026-09-05）"
+    ],
+    "source_snapshot_required": true,
+    "note": "snapshot_bound：定位表述绑冻结官网/wiki 口径；orientation 语境：正确答案必须使用客户留出的纠正门。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "CamThink 销售成品 AI 视觉产品（NE101/NE301/NE503/NG4500 产品线），官方定位不是承接定制设计的 OEM/设计公司。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "「不做内部开发也能用」：成品 + 文档 + SDK/工具链使集成商无需自研硬件即可集成（有据能力：文档/SDK/扩展板/模型部署路径）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "定制边界诚实：可获得的是配置/选配/扩展板/自定义模型部署，不是任意结构/固件级定制设计服务（与 sq-033/sq-074 定制语义一致）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T4",
+     "requirement": "必须正面纠正误解（利用客户留出的纠正门），同时不贬低客户基于官网形成的理解。",
+     "criticality": "HIGH"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "WIKI",
+    "STORE",
+    "SDK"
+   ],
+   "uncertainty_requirement": "定位表述绑定快照；不得把「可探讨的定制合作」说成标准服务，也不得把公司说成完全无定制可能（双向有界）。",
+   "clarification_requirement": "可询问客户应用场景以推荐合适成品型号；不得以反问回避纠正。",
+   "required_interaction_behavior": "ORIENT：礼貌纠正定位误解 → 给出成品产品线概览 → 说明集成商路径（文档/SDK/扩展板/模型部署）→ 邀请下一步（按场景推荐型号）。",
+   "required_completeness": "纠正 + 产品线概览 + 集成路径 + 下一步邀请四要素齐备。",
+   "prohibited_claims_or_behaviors": [
+    "顺着误解承认 CamThink 是定制 OEM（错误前提认同）",
+    "反向过度承诺「什么都可定制」（NRE 级设计服务承诺）",
+    "贬低客户或其理解",
+    "虚构 OEM/ODM 服务线或合作案例"
+   ],
+   "citation_grounding_requirements": [
+    "定位表述须与冻结官网/wiki 口径一致",
+    "集成能力断言须由文档/SDK 证据支撑",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "认同错误前提（未纠正误解）——交互性致命错误",
+    "虚构 OEM/定制服务线"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "定位与产品线事实正确。",
+     "B": "正确但产品线含糊。",
+     "C": "定位表述错误。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "定制边界双向有界。",
+     "B": "有界弱。",
+     "C": "虚构服务线或全盘否定定制。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "正面纠正误解并给出替代合作路径。",
+     "FAIL": "未纠正/认同误解/拒答。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "产品线边界清晰。",
+     "B": "轻微越界。",
+     "C": "虚构产品线。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "定位+集成能力有据。",
+     "B": "缺其一。",
+     "C": "关键无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "四要素齐备。",
+     "B": "缺下一步邀请。",
+     "C": "缺纠正或集成路径。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "礼貌纠正、无贬低。",
+     "B": "中性。",
+     "C": "生硬纠正/贬低。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-054",
+   "seq": 54,
+   "question": "阿根廷集成商 KRONSA 的终端客户（甘蔗糖厂+造纸厂，大型工业厂区）需要升级现有 CCTV 系统，首个评估场景为户外围栏入侵检测。",
+   "language": "zh",
+   "product_or_subject": "NG4500 / NE503（工业周界升级）",
+   "migration_state": "C",
+   "interaction_class": "RECOMMEND",
+   "user_task": "为大型工业厂区（保留/升级既有 CCTV）的户外围栏入侵检测给出升级路径建议：两层架构（既有摄像头 + NG4500 边缘盒）与 AI 相机替换（NE503）的取舍框架。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-054",
+    "stable_fact_anchors": [
+     "camthink-ai/wiki-documents @ 4ed5b32e304ee09a5e067a464e16c990c6218314（取证 2026-09-05）",
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）"
+    ],
+    "source_snapshot_required": true,
+    "note": "scenario_dependent：正确答案必须是条件化/分级推荐 + 请求缺失站点约束；不得虚构同类厂区案例。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "两层架构路径：既有/新增摄像头（RTSP 接入）+ NG4500 边缘推理盒做检测——利用既有 CCTV 投资的可行路径。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "AI 相机替换路径：NE503（Hailo-15H 20 TOPS）适合新装/替换点位的一体化 AI 相机。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "推荐必须条件化：分级取决于既有摄像头可用性（模拟/IP）、点位数量、网络与供电、检测距离等站点约束；缺少约束时正确行为 = 给出取舍框架 + 请求关键约束。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T4",
+     "requirement": "检测能力表述：人/车检测为模型可部署路径；「围栏越线判定」为部署侧规则逻辑（与 sq-015 同规则），不得宣称固件自带。",
+     "criticality": "MEDIUM"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "SPECIFICATION",
+    "SOLUTION",
+    "WIKI"
+   ],
+   "uncertainty_requirement": "无站点约束数据时不得下唯一结论；路数/算力预算表述为估算；不得虚构糖厂/造纸厂同类案例。",
+   "clarification_requirement": "核心：必须请求关键站点约束（既有摄像头类型与数量、网络、供电、周界长度）；框架先行不空转。",
+   "required_interaction_behavior": "RECOMMEND：两条路径的事实基础 → 条件化取舍框架（何时选两层/何时换 AI 相机）→ 关键约束请求 → 下一步（POC/评估）。",
+   "required_completeness": "两路径 + 取舍条件 + 约束请求 + 下一步；只推单一产品不带条件即为不完整。",
+   "prohibited_claims_or_behaviors": [
+    "虚构同类工业厂区部署案例/背书",
+    "无条件断言「必须整体替换既有 CCTV」",
+    "虚构路数上限/检测距离数字",
+    "宣称固件自带越线算法",
+    "泄漏内部报价策略"
+   ],
+   "citation_grounding_requirements": [
+    "两路径的规格断言须各有产品证据支撑",
+    "预算/估算须标注估算",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "虚构同类案例背书",
+    "无站点约束下的绝对化单一结论（把条件化任务答成确定性推荐）"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "两路径规格事实正确。",
+     "B": "正确但含糊。",
+     "C": "规格错误。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "条件化框架+估算标注+无虚构案例。",
+     "B": "条件化弱。",
+     "C": "虚构案例/绝对化结论。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "给出取舍框架+约束请求。",
+     "FAIL": "单产品硬推或答非所问。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NG4500/NE503 分工清晰。",
+     "B": "分工含糊。",
+     "C": "兄弟产品替代。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "两路径均有据。",
+     "B": "缺其一。",
+     "C": "关键无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "四要素齐备。",
+     "B": "缺约束请求。",
+     "C": "缺取舍框架。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "路径/条件分层清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "方案咨询语气。",
+     "B": "中性。",
+     "C": "推销腔。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-063",
+   "seq": 63,
+   "question": "PwC 寄回两台 NE101 蜂窝版设备，Wei W. Rangey 请求分享分析结果： - SN: 6503F28037193G4 — 功耗异常（客户报告电池消耗过快） - SN: 6503F288788903G4 — 不准时上报图片",
+   "language": "zh",
+   "product_or_subject": "NE101（返修设备分析方法论）",
+   "migration_state": "C",
+   "interaction_class": "TROUBLESHOOT",
+   "user_task": "回应返修分析请求：给出两台设备（功耗异常 / 不准时上报）的诊断方法论与结果沟通框架——而非虚构实验室结论。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-063",
+    "stable_fact_anchors": [
+     "NE101 固件仓库快照（lowpower_camera @07150b49）",
+     "camthink-ai/wiki-documents @ 4ed5b32e304ee09a5e067a464e16c990c6218314（取证 2026-09-05）",
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）"
+    ],
+    "source_snapshot_required": true,
+    "note": "device_sn_specific：SN 级实测数据不可被答案引擎虚构；可评分的是可迁移的诊断方法论与诚实的边界（与 sq-029 电量计机制、sq-083 上报链诊断同一机制族）。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "功耗异常诊断 = 分阶段电流测量方法论（睡眠/唤醒/拍照/蜂窝上传各阶段）+ 配置排查（拍照频率、上传方式、信号质量）；电量计饱和机制（>6000mV 卡 100%）可作为解释框架之一（假设，需实测验证）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "不准时上报诊断 = 排查定时调度配置/时区、上传链路（网络重试/MQTT 会话）、服务端接收时间口径；区分「未拍摄」与「拍摄未送达」。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "SN 级结论边界：在未给出真实实验室数据的情况下，正确答案不得断言两台设备的具体根因/结论；正确行为 = 方法论 + 已执行步骤说明框架 + 待补数据请求。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T4",
+     "requirement": "续航期望基线绑现行 wiki 矩阵（跨案例规则，同 sq-045/sq-029）。",
+     "criticality": "MEDIUM"
+    }
+   ],
+   "required_evidence_roles": [
+    "FIRMWARE",
+    "SPECIFICATION",
+    "WIKI",
+    "SOLUTION"
+   ],
+   "uncertainty_requirement": "核心：无设备实测数据时的结论必须显式有界（假设/待验证）；不得编造「实测发现 XX mA 异常」等实验室事实。",
+   "clarification_requirement": "应请求/说明所需数据（日志、电流实测、配置导出、服务端时间戳）以推进分析。",
+   "required_interaction_behavior": "TROUBLESHOOT：按两台设备分别给出 症状→可能成因（假设）→诊断步骤→所需数据/验证；明确哪些结论须实测后才能下。",
+   "required_completeness": "两台设备的方法论闭环 + SN 级边界声明 + 数据请求。",
+   "prohibited_claims_or_behaviors": [
+    "虚构实验室实测数据或确定性根因",
+    "把假设包装成已完成的分析结论",
+    "承诺维修/RMA 结果",
+    "使用过期续航基线",
+    "把两台设备的症状混为一谈"
+   ],
+   "citation_grounding_requirements": [
+    "方法论步骤须与固件/文档证据一致",
+    "电量计/上传链路机制表述注明依据层级",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "虚构 SN 级实测结论（实质性诊断虚构）"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "机制与基线口径正确。",
+     "B": "正确但含糊。",
+     "C": "机制/基线错误。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "SN 级边界显式+假设标注。",
+     "B": "边界意识弱。",
+     "C": "虚构实测结论。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "两设备方法论闭环+数据请求。",
+     "FAIL": "只答应不给方法或答非所问。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE101 边界内。",
+     "B": "轻微越界。",
+     "C": "借他产品规格。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "机制+方法论有据。",
+     "B": "缺其一。",
+     "C": "关键无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "两设备+边界+数据请求齐备。",
+     "B": "缺数据请求。",
+     "C": "只答一台。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "按设备/步骤清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "专业支持语气。",
+     "B": "中性。",
+     "C": "敷衍/推责。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-065",
+   "seq": 65,
+   "question": "客户 Ambipar（巴西大型环境环保集团）通过 [邮箱] 咨询工业垃圾箱满溢检测方案。客户发来照片展示现有垃圾箱满载溢出状态。",
+   "language": "zh",
+   "product_or_subject": "NE301（垃圾箱满溢检测方案）",
+   "migration_state": "C",
+   "interaction_class": "RECOMMEND",
+   "user_task": "为工业垃圾箱满溢检测推荐方案：基于视觉的填充高度/满溢识别的实现路径、部署方式与边界。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-065",
+    "stable_fact_anchors": [
+     "camthink-ai/ne301 @ 5611dbe14bf6d3275afc03374ea37aef71d203d5",
+     "camthink-ai/wiki-documents @ 4ed5b32e304ee09a5e067a464e16c990c6218314（取证 2026-09-05）",
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）"
+    ],
+    "source_snapshot_required": true,
+    "note": "customer_session（客户照片）语境剥离：照片专属分析不评分，评的是方案能力事实；满溢检测=填充高度识别的定制模型路径，非出厂模型。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "满溢检测 = 视觉填充高度/状态识别，须经定制模型（检测/分类）在 NE301 端侧实现；无出厂即用的「垃圾箱满溢」模型（不得虚构现成模型）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "部署路径有据：定时拍照/事件触发（PIR 可作唤醒）+ 端侧判定 + MQTT/平台上报。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "视觉方案边界必须承认：安装角度/遮挡/光照/垃圾异形堆叠会影响识别效果——需现场校准与模型训练（POC 表述），不得承诺识别率。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T4",
+     "requirement": "供电与户外防护口径按冻结 wiki（电池/太阳能、防护等级）。",
+     "criticality": "MEDIUM"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "MODEL_CATALOG",
+    "SOLUTION",
+    "WIKI"
+   ],
+   "uncertainty_requirement": "效果（识别率/误报率）不可量化承诺；定制模型路径须显式（数据采集→训练→部署验证）。",
+   "clarification_requirement": "可请求垃圾箱类型/点位数/上报频率/供电条件以细化方案。",
+   "required_interaction_behavior": "RECOMMEND：方案路径（定制模型+端侧判定+上报）→ 部署要点 → 边界与验证建议（POC）。",
+   "required_completeness": "路径 + 部署 + 边界三部分齐备；不得只答「可以做」。",
+   "prohibited_claims_or_behaviors": [
+    "宣称有出厂即用的满溢检测模型",
+    "承诺识别率/误报率数字",
+    "虚构环保行业客户案例背书",
+    "宣称无需训练即可识别任意箱型",
+    "忽略光照/遮挡等边界"
+   ],
+   "citation_grounding_requirements": [
+    "能力路径断言须由产品/模型目录证据支撑",
+    "部署口径溯源冻结 wiki",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "虚构现成满溢检测模型（实质性能力虚构）",
+    "承诺量化识别效果"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "路径与部署事实正确。",
+     "B": "正确但含糊。",
+     "C": "路径错误。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "定制路径显式+效果不承诺。",
+     "B": "有界弱。",
+     "C": "虚构现成模型/承诺效果。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "给出方案+部署+边界。",
+     "FAIL": "只答可行与否。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE301 边界清晰。",
+     "B": "轻微越界。",
+     "C": "兄弟产品替代。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "路径+部署有据。",
+     "B": "缺其一。",
+     "C": "关键无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "三部分齐备。",
+     "B": "缺边界。",
+     "C": "缺路径。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "方案咨询语气。",
+     "B": "中性。",
+     "C": "过度承诺。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-070",
+   "seq": 70,
+   "question": "客户 Fabrice Jolivet (Maloric) 在 v2.19 固件稳定后，基于视频管线的实际开发进展，提出 8 个技术问题 + 产品路线决策。核心诉求：从当前 3 台 SPI 多机架构转向单机双镜头方案。",
+   "language": "zh",
+   "product_or_subject": "NE301（双镜头 DCMIPP vs 多机 SPI 架构对比）",
+   "migration_state": "C",
+   "interaction_class": "COMPARE",
+   "user_task": "就「3 台 SPI 多机架构 → 单机双镜头（DCMIPP 并行输入）」的架构迁移给出可行性对比：接口/同步/供电/机械/软件支持成熟度，支撑产品路线决策。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-070",
+    "stable_fact_anchors": [
+     "camthink-ai/ne301 @ 5611dbe14bf6d3275afc03374ea37aef71d203d5",
+     "NE301 固件仓库快照",
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）"
+    ],
+    "source_snapshot_required": true,
+    "note": "multi_part_umbrella：8 问伞形按源快照拆解，本契约覆盖架构决策核心；跨源重复 {#070,#088,#097} 须拆分，本契约不得吸收 #088/#097 的独立问题。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "NE301 SoC 具备 DCMIPP 并行摄像头接口，支持双传感器输入路径——「单机双镜头」在硬件接口层面有据可依（以冻结固件/文档口径为准）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "对比必须覆盖关键维度：接口形态（SPI 多机 vs DCMIPP 并行）、帧同步、供电与走线、机械/防水、SDK/固件支持成熟度。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "成熟度分级诚实：文档化能力 vs 需开发验证项必须区分；双镜头路径中未经文档证实的事项（如具体双摄同步 API 成熟度）须标注「需验证」。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T4",
+     "requirement": "不得双向越界：既不得断言双镜头「产品级现成」，也不得断言「不可行」。",
+     "criticality": "HIGH"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "COMPATIBILITY",
+    "FIRMWARE",
+    "SDK",
+    "SPECIFICATION"
+   ],
+   "uncertainty_requirement": "核心：成熟度未知项显式「需验证」；固件版本绑定（v2.19 语境按源快照），不虚构版本能力。",
+   "clarification_requirement": "可请求双摄模组规格/帧率/分辨率目标以细化对比；不得以此回避接口层事实。",
+   "required_interaction_behavior": "COMPARE：两架构逐维对比表 + 可行性结论（分文档化/需验证两栏）+ 迁移建议与验证步骤。",
+   "required_completeness": "对比维度覆盖 T2 全部；结论必须可执行（下一步验证什么）。",
+   "prohibited_claims_or_behaviors": [
+    "断言双镜头方案为产品级现成能力",
+    "断言双镜头不可行（负向越界）",
+    "虚构 SDK/固件 API 能力",
+    "把 #088/#097 的独立问题并入本契约评分",
+    "忽略机械/防水等工程维度只谈算力"
+   ],
+   "citation_grounding_requirements": [
+    "接口/SDK 断言须由固件/文档证据支撑并注明版本绑定",
+    "「需验证」项不得伪装成文档事实",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "虚构接口/API 能力支撑错误结论（实质性技术虚构）",
+    "无据断言可行/不可行的绝对结论"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "接口/路径事实正确且版本绑定。",
+     "B": "正确但含糊。",
+     "C": "接口事实错误。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "成熟度两栏（文档化/需验证）诚实。",
+     "B": "分级弱。",
+     "C": "虚构 API 或绝对化结论。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "给出逐维对比+可执行结论。",
+     "FAIL": "只给单边结论或答非所问。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE301 边界内。",
+     "B": "轻微越界。",
+     "C": "借他产品接口证据。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "关键维度有据/有界。",
+     "B": "缺维。",
+     "C": "关键无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源并绑版本。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "维度全+结论可执行。",
+     "B": "缺验证建议。",
+     "C": "缺关键维度。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "对比表清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "工程决策支持语气。",
+     "B": "中性。",
+     "C": "替客户拍板过度承诺。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-078",
+   "seq": 78,
+   "question": "Flipkart 团队发邮件给 Dave，要求： 1. 确认付款状态和发货状态 2. 提供一个 **cloud URL** 用于连接相机与 NG4500 做测试——IT 团队需要这个 URL 走访问审批流程",
+   "language": "zh",
+   "product_or_subject": "NG4500 + NE101（本地直连 vs 云端 URL 误解纠正）",
+   "migration_state": "C",
+   "interaction_class": "FACTUAL",
+   "user_task": "两问：(1) 付款/发货状态确认（商务运营项）；(2) 纠正「存在 CamThink cloud URL 用于相机-NG4500 连接」的误解，并给出可审批的替代访问方案。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-078",
+    "stable_fact_anchors": [
+     "camthink-ai/wiki-documents @ 4ed5b32e304ee09a5e067a464e16c990c6218314（取证 2026-09-05）",
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）"
+    ],
+    "source_snapshot_required": true,
+    "note": "misconception_correction：NG4500 与相机为本地 RTSP/ONVIF 直连，无 cloud URL 服务；订单状态为商务运营事实，知识库无权编造。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "不存在 CamThink 提供的「cloud URL」来连接相机与 NG4500；相机与 NG4500 的集成是本地直连（RTSP/ONVIF 口径按冻结文档）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "替代路径有据：如需给 IT 审批提供远程访问入口，可说明 NeoMind 远程管理平台方向或自建测试环境的路径（按源快照口径，不虚构具体 URL）。",
+     "criticality": "MEDIUM"
+    },
+    {
+     "id": "T3",
+     "requirement": "付款/发货状态：知识库无该订单事实 → 正确行为 = 路由商务/运营渠道确认，不得编造状态。",
+     "criticality": "HIGH"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "SPECIFICATION",
+    "WIKI",
+    "CURRENT_COMMERCIAL"
+   ],
+   "uncertainty_requirement": "订单状态为 UNKNOWN（须路由）；远程访问方案不虚构具体 URL/凭证。",
+   "clarification_requirement": "可询问测试环境形态（办公室/现场）以细化方案；订单确认必须路由而非反问知识库。",
+   "required_interaction_behavior": "FACTUAL（误解纠正）：明确否定 cloud URL 存在并解释本地直连架构 → 给出可审批的替代访问方案 → 订单状态显式路由。",
+   "required_completeness": "两问全覆盖；误解纠正必须显式（不能只暗示）。",
+   "prohibited_claims_or_behaviors": [
+    "编造 cloud URL 或暗示其存在",
+    "编造付款/发货状态",
+    "把本地直连说成云端服务",
+    "忽略订单确认诉求（只答技术问）"
+   ],
+   "citation_grounding_requirements": [
+    "直连架构断言须由产品文档证据支撑",
+    "替代方案断言须与源快照口径一致",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "编造 cloud URL / 订单状态（实质性事实虚构）",
+    "未纠正核心误解（交互性失败）"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "直连架构与订单边界正确。",
+     "B": "正确但含糊。",
+     "C": "暗示 cloud URL 存在或编造状态。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "订单显式 UNKNOWN+路由；URL 不虚构。",
+     "B": "路由弱。",
+     "C": "编造任一。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "显式纠正误解+替代方案+订单路由。",
+     "FAIL": "顺着误解作答或漏问。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NG4500/相机边界清晰。",
+     "B": "轻微越界。",
+     "C": "借他产品证据。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "直连+替代路径有据。",
+     "B": "缺其一。",
+     "C": "关键无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "两问闭环。",
+     "B": "缺替代方案。",
+     "C": "漏订单问。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "面向企业 IT 的清晰语气。",
+     "B": "中性。",
+     "C": "含糊其辞。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-083",
+   "seq": 83,
+   "question": "Kevin（台湾）使用 NE101 Cat-1 做定时抓拍 MQTT 上传（tea 种植监测）。配置了 8 个定时点（07/08/09/10/14/15/16/17），每天执行。客户反馈 16:00 没有收到图片。",
+   "language": "zh",
+   "product_or_subject": "NE101 Cat-1（定时抓拍 MQTT 链路诊断）",
+   "migration_state": "C",
+   "interaction_class": "TROUBLESHOOT",
+   "user_task": "诊断 8 个定时抓拍点中仅 16:00 未收到 MQTT 图片的原因：区分「未拍摄」与「拍摄未送达」，给出诊断步骤与验证方法。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-083",
+    "stable_fact_anchors": [
+     "NE101 固件仓库快照（lowpower_camera @07150b49）",
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）"
+    ],
+    "source_snapshot_required": true,
+    "note": "customer_session 语境剥离：会话日志专属细节不评分；可评分的是可迁移诊断方法论（ECONNRESET=对端重置的诊断语义）；SN/日级根因无数据不得断言。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "诊断第一步必须区分两类失败：设备侧未执行拍摄/未发布 MQTT vs 拍摄并发布但服务端/链路丢失（设备日志、MQTT broker 日志两侧核对）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "连接错误语义：ECONNRESET 类错误 = 连接被对端重置，指向 broker/网络侧而非相机应用本身；该语义用于指导「查对端」而非直接定论。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "时段相关性检查方向有据可循：16:00 单点失败应对比其余 7 个成功点的差异（网络负载、broker 状态、设备该时段行为、时区/调度配置一致性）。",
+     "criticality": "MEDIUM"
+    },
+    {
+     "id": "T4",
+     "requirement": "根因边界：无两侧日志数据不得断言确定性根因；结论必须是假设 + 验证步骤。",
+     "criticality": "HIGH"
+    }
+   ],
+   "required_evidence_roles": [
+    "FIRMWARE",
+    "SDK",
+    "SOLUTION"
+   ],
+   "uncertainty_requirement": "根因不可断言：所有成因解释显式假设；不得虚构日志内容或 broker 状态。",
+   "clarification_requirement": "必须请求关键数据（设备该时段日志、broker 侧记录、QoS/重试配置、时区设置）以收敛；不得装作已见日志。",
+   "required_interaction_behavior": "TROUBLESHOOT：失败分类框架（未拍 vs 未达）→ 两侧日志核对步骤 → 时段差异排查方向 → 假设 + 验证收尾。",
+   "required_completeness": "分类框架 + 两侧核对 + 差异排查 + 数据请求四要素齐备。",
+   "prohibited_claims_or_behaviors": [
+    "断言确定性根因（如「broker 16:00 宕机」）而无数据",
+    "虚构日志/broker 状态",
+    "只答「重新配置一下」式敷衍而不给分类诊断",
+    "把 Cat-1 网络特性断言为本案根因而无据"
+   ],
+   "citation_grounding_requirements": [
+    "MQTT/错误语义解释须与协议/固件证据一致，标注为一般性诊断语义",
+    "调度/上传行为断言须与固件证据一致",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "无数据断言确定性根因（实质性诊断虚构）"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "失败分类与错误语义正确。",
+     "B": "正确但含糊。",
+     "C": "语义错误（如把 ECONNRESET 归因相机应用）。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "假设标注+数据请求明确。",
+     "B": "假设未充分标注。",
+     "C": "虚构根因/日志。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "给出分类诊断闭环。",
+     "FAIL": "敷衍或答非所问。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE101+broker 边界清晰。",
+     "B": "轻微越界。",
+     "C": "借他产品行为作依据。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "语义+步骤有据。",
+     "B": "缺其一。",
+     "C": "关键无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源/正确标注一般语义。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "四要素齐备。",
+     "B": "缺数据请求。",
+     "C": "缺分类框架。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "排查步骤有序。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "支持语气。",
+     "B": "中性。",
+     "C": "责备用户网络。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-090",
+   "seq": 90,
+   "question": "Alexandros Doganis ([邮箱], CC arisdoganis) 已购买 NE301 WiFi 版本（88°+137° HFOV）+ ball mounts 进行测试。反馈积极：固件刷写顺畅、REST API 干净、图像质量好、成功部署自定义 pose 模型（端到端: camera→NPU→keypoints）、RTMP 推流稳定（含断连自动重连）、夜间 670nm LED 测试初步可行。用户钻孔外壳通过硅胶密封接入 USB-C 供电 —— 解决 WiFi 版没有外部 USB-",
+   "language": "zh",
+   "product_or_subject": "NE301（进阶用户 12 问技术深潜）",
+   "migration_state": "C",
+   "interaction_class": "SOLUTION",
+   "user_task": "面向已在端到端运行自定义 pose 模型的进阶用户，逐一回答其 12 个技术问题（含如 keypoint-only MQTT 路径等），每个结论须有据或有界。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-090",
+    "stable_fact_anchors": [
+     "camthink-ai/ne301 @ 5611dbe14bf6d3275afc03374ea37aef71d203d5",
+     "NE301 固件仓库快照",
+     "camthink-ai/wiki-documents @ 4ed5b32e304ee09a5e067a464e16c990c6218314（取证 2026-09-05）"
+    ],
+    "source_snapshot_required": true,
+    "note": "multi_part_umbrella：12 问按源快照冻结后逐问评分；SOLUTION 契约=每问一个可核验结论；用户自述经验（已跑通 pose/RTMP）为对话上下文，不构成新的产品事实。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "每个子问题的结论必须落在三类之一并可核验：(a) 有据能力（文档/固件证据）；(b) 有界未证实（标注「文档未见/需验证」）；(c) 明确不可行（有反证时）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "keypoint-only MQTT 上报路径类问题：回答必须区分「固件/SDK 现成路径」与「需用户在部署侧自行实现」，不得把部署侧方案说成固件自带（除非文档记载）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "不得因用户自述已跑通某能力而推断相关未证实能力也存在（经验≠文档能力）。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T4",
+     "requirement": "12 问逐问覆盖：无法有据回答的问题必须显式有界或说明所需验证，不得静默跳过。",
+     "criticality": "HIGH"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "FIRMWARE",
+    "SDK",
+    "SPECIFICATION",
+    "WIKI"
+   ],
+   "uncertainty_requirement": "核心：对进阶用户的深潜问题，「文档未见记载」是合法且预期的结论形态；虚构 API/配置行为一票否决。",
+   "clarification_requirement": "可请求固件版本/具体模型类型以精确对齐；不得以此回避可回答的多数子问题。",
+   "required_interaction_behavior": "SOLUTION：12 问逐问编号作答，每问=结论+依据（或显式有界）+必要步骤；结构可核对。",
+   "required_completeness": "12 问全覆盖（逐问可对照源快照清单）；静默漏问 ≥1 即降级。",
+   "prohibited_claims_or_behaviors": [
+    "虚构固件 API/配置项/寄存器行为",
+    "把用户自述经验外推为产品能力",
+    "静默跳过任何子问题",
+    "把部署侧实现说成固件自带",
+    "给出危险操作指引（如破坏防水的改装建议）"
+   ],
+   "citation_grounding_requirements": [
+    "每问结论须可溯源到固件/文档证据，或显式标注「未见记载」",
+    "版本绑定表述（固件版本差异）须一致",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "虚构固件/SDK 能力（实质性技术虚构）",
+    "静默跳过子问题造成覆盖假象"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "已答子问的事实全部正确。",
+     "B": "个别含糊。",
+     "C": "关键事实错误。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "未证实项逐问有界，无虚构。",
+     "B": "有界不系统。",
+     "C": "任一虚构。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "逐问编号作答，结论可核验。",
+     "FAIL": "整体综述回避逐问。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE301 边界内。",
+     "B": "轻微越界。",
+     "C": "借他产品证据。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "有据项+有界项覆盖全。",
+     "B": "部分子问无着落。",
+     "C": "大面积无着落。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "逐问可溯源。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "12 问全覆盖。",
+     "B": "漏 1–2 问。",
+     "C": "漏 ≥3 问。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "逐问编号清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "对等工程语气，尊重用户进展。",
+     "B": "中性。",
+     "C": "居高临下/营销腔。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-091",
+   "seq": 91,
+   "question": "Harry 内部评估：客户想用 NE301 + 扩展板做红外热成像，检测糖尿病患者脚底温度。需确认 MLX90642 + NE301 能否满足此医疗场景需求。",
+   "language": "zh",
+   "product_or_subject": "NE301 + MLX90642 扩展板（医疗边界）",
+   "migration_state": "C",
+   "interaction_class": "FACTUAL",
+   "user_task": "评估 MLX90642 + NE301 能否满足糖尿病足温度筛查这一医疗场景需求，并给出诚实的能力边界与替代方向。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-091",
+    "stable_fact_anchors": [
+     "camthink-ai/ne301 @ 5611dbe14bf6d3275afc03374ea37aef71d203d5",
+     "MLX90642 数据手册口径（32×24 / ±1.5°C）",
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）"
+    ],
+    "source_snapshot_required": true,
+    "note": "uncertainty_core + medical_boundary：医疗结论边界为案例核心；「不足以医疗结论」非「不能做研究原型」，双向有界。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "MLX90642 = 32×24（768 点）红外阵列，精度约 ±1.5°C（数据手册典型值），定位为温度触发源，不是视频级热成像仪。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "结论：分辨率/精度/无医疗认证/无分析软件 → 不足以支撑医疗级糖尿病足筛查结论；「可用于学术研究/原型数据采集」与「不可用于临床诊断」必须同时成立。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "不得宣称该组合通过/可获得医疗认证；临床需求应路由到专业医疗热像方案。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T4",
+     "requirement": "研究用途的可行路径可给出：读取 768 点温度数据（驱动接口有据）+ MQTT 上报自定义分析（原型定位）。",
+     "criticality": "MEDIUM"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "SPECIFICATION",
+    "SECURITY_DOCUMENTATION"
+   ],
+   "uncertainty_requirement": "医疗边界为不确定性核心：医疗适格性不得有任何松动表述；研究适格性不得被过度否定。",
+   "clarification_requirement": "可询问用途是研究还是临床服务以分层回答；不得以反问回避边界结论。",
+   "required_interaction_behavior": "FACTUAL：传感器事实 → 医疗边界结论（明确「不满足医疗筛查要求」）→ 研究原型可行路径 → 临床需求替代方向。",
+   "required_completeness": "四段齐备；缺医疗边界结论或缺研究路径均不完整。",
+   "prohibited_claims_or_behaviors": [
+    "宣称可满足医疗级筛查/诊断要求",
+    "宣称具备或可获得医疗认证",
+    "把温度触发源说成热成像相机（与 sq-015 同规则）",
+    "把研究原型可行性错误否定为「完全不能用于温度测量」（负向越界）",
+    "给出医疗建议/诊断意见"
+   ],
+   "citation_grounding_requirements": [
+    "32×24 / ±1.5°C 必须由数据手册口径证据支撑",
+    "医疗边界结论标注为能力评估而非医疗建议",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "宣称满足医疗筛查/诊断需求或医疗认证（安全性致命错误）",
+    "输出诊断性医疗意见"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "传感器规格与定位正确。",
+     "B": "正确但含糊。",
+     "C": "规格/定位错误。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "医疗/研究双向边界精确。",
+     "B": "边界有但一侧松动。",
+     "C": "任一方向越界。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "给出明确边界结论+替代方向。",
+     "FAIL": "含糊其辞或答非所问。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "产品/传感器边界清晰。",
+     "B": "轻微越界。",
+     "C": "虚构医疗能力。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "规格+驱动路径有据。",
+     "B": "缺其一。",
+     "C": "关键无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源数据手册口径。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "四段齐备。",
+     "B": "缺研究路径。",
+     "C": "缺医疗边界。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "能/不能分层清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "审慎、不涉诊疗语气。",
+     "B": "中性。",
+     "C": "轻率医疗表态。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-101",
+   "seq": 101,
+   "question": "关于 楼宇自控 — 机械水表/电表/流量计 OCR 抄表，输出 BACnet 协议进 BMS 的产品咨询，推荐什么方案？",
+   "language": "zh",
+   "product_or_subject": "NE301（抄表 OCR + BACnet 边界）",
+   "migration_state": "C",
+   "interaction_class": "RECOMMEND",
+   "user_task": "为机械表计 OCR 抄表并输出 BACnet 进 BMS 的需求推荐方案，并正确处理 BACnet 边界（NE301 无原生 BACnet 输出）。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-101",
+    "stable_fact_anchors": [
+     "camthink-ai/ne301 @ 5611dbe14bf6d3275afc03374ea37aef71d203d5",
+     "camthink-ai/wiki-documents @ 4ed5b32e304ee09a5e067a464e16c990c6218314（取证 2026-09-05）",
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）"
+    ],
+    "source_snapshot_required": true,
+    "note": "bacnet_boundary：无原生 BACnet 为关键边界事实；机械表盘 OCR = 定制专用模型；BACnet 转换需外部网关/转换层。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "NE301 无原生 BACnet 协议输出；其集成路径为 MQTT/HTTP 等上报方式；「输出 BACnet 进 BMS」须经外部转换层（网关/中间件）实现。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "机械表盘读数 OCR = 定制专用模型路径（非出厂模型、非通用 OCR 直接可用）；液晶屏表计与机械表盘是不同模型问题。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "NE301 PoE 变体适合楼宇固定点位部署（供电有据口径）；端侧 OCR 在 NPU 上可行（模型路径）。",
+     "criticality": "MEDIUM"
+    },
+    {
+     "id": "T4",
+     "requirement": "缺失约束须请求：表计类型/数量、安装条件、BACnet 转换方案归属（客户提供网关或另采）。",
+     "criticality": "MEDIUM"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "MODEL_CATALOG",
+    "COMPATIBILITY",
+    "SPECIFICATION"
+   ],
+   "uncertainty_requirement": "BACnet 转换层不在产品能力内，须显式作为外部依赖；OCR 识别率不可承诺。",
+   "clarification_requirement": "须请求表计类型/数量/安装条件以细化；BACnet 方案归属应与客户确认。",
+   "required_interaction_behavior": "RECOMMEND：能力路径（端侧定制 OCR + MQTT 上报）→ BACnet 边界（无原生输出，外部转换层）→ 部署适配（PoE）→ 待确认约束。",
+   "required_completeness": "OCR 路径 + BACnet 边界 + 部署 + 约束请求齐备；缺 BACnet 边界即为不完整（问句核心包含 BACnet）。",
+   "prohibited_claims_or_behaviors": [
+    "宣称 NE301 原生支持 BACnet 输出（关键边界虚构）",
+    "宣称有现成机械表盘 OCR 模型",
+    "承诺识别率数字",
+    "虚构楼宇自控集成案例"
+   ],
+   "citation_grounding_requirements": [
+    "接口/协议能力断言须由产品文档证据支撑（BACnet 无记载=无原生能力的表述须与文档一致）",
+    "OCR 路径断言须由模型目录/NPU 能力证据支撑",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "虚构原生 BACnet 能力（实质性边界虚构）",
+    "宣称现成抄表模型"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "BACnet 边界与 OCR 路径正确。",
+     "B": "正确但含糊。",
+     "C": "边界错误。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "外部依赖显式+识别率不承诺。",
+     "B": "有界弱。",
+     "C": "虚构能力/承诺效果。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "给出路径+边界+待确认。",
+     "FAIL": "只答推荐型号。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "产品边界清晰。",
+     "B": "轻微越界。",
+     "C": "借他产品协议能力。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "路径+边界有据。",
+     "B": "缺其一。",
+     "C": "关键无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "四要素齐备。",
+     "B": "缺约束请求。",
+     "C": "缺 BACnet 边界。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "方案咨询语气。",
+     "B": "中性。",
+     "C": "过度承诺。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-104",
+   "seq": 104,
+   "question": "关于 1. 纺织/布料检测 — 织造缺陷、污渍、撕裂（高速产线、宽幅面） 的产品咨询，推荐什么方案？",
+   "language": "zh",
+   "product_or_subject": "NE503 / NG4500（纺织高速产线适配评估）",
+   "migration_state": "C",
+   "interaction_class": "RECOMMEND",
+   "user_task": "评估 CamThink 方案对「高速产线、宽幅面纺织缺陷检测」的适配性：快门类型边界、条件化结论与替代路径。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-104",
+    "stable_fact_anchors": [
+     "camthink-ai/wiki-documents @ 4ed5b32e304ee09a5e067a464e16c990c6218314（取证 2026-09-05）",
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）"
+    ],
+    "source_snapshot_required": true,
+    "note": "uncertainty_core + shutter_boundary：滚动快门 vs 全局快门为关键工程边界；产线速度/幅面参数缺失 → 正确行为=条件化评估+请求参数，双向越界（能/不能）均罚。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "CamThink 相机采用滚动快门（rolling shutter）；高速运动物体的无畸变成像通常需要全局快门（全局快门为工业机器视觉的常见要求）——该工程判据须明确给出。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "结论必须条件化：「高速」无量化定义 → 不得直接断言适配或不适配；正确行为 = 指出快门边界 + 请求产线速度/幅面/缺陷最小尺寸等参数后再收敛。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "替代/组合路径有据：NG4500 边缘盒可接入客户既有工业相机做推理；NE503 适合中低速工位检测；两者均不得被说成全局快门相机。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T4",
+     "requirement": "缺陷检测模型 = 定制训练路径（织造缺陷非通用类别），不得宣称现成模型。",
+     "criticality": "MEDIUM"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "SPECIFICATION",
+    "SOLUTION",
+    "MODEL_CATALOG"
+   ],
+   "uncertainty_requirement": "核心：参数缺失下的条件化结论；「NOT_TESTED 的高速适配」不得转正也不得绝对否定。",
+   "clarification_requirement": "必须请求：产线速度（m/min）、幅面宽度、缺陷最小尺寸、检测精度要求、客户现有相机栈；缺参请求本身是契约核心行为。",
+   "required_interaction_behavior": "RECOMMEND（条件化评估）：快门边界工程判据 → 条件化适配结论（低速可评估/高速存疑待参数）→ 替代路径（NG4500+既有相机）→ 参数请求清单。",
+   "required_completeness": "判据 + 条件化结论 + 替代路径 + 参数请求四要素齐备。",
+   "prohibited_claims_or_behaviors": [
+    "宣称 CamThink 相机为全局快门",
+    "无条件断言「适配高速产线」",
+    "无条件断言「完全不能用于纺织检测」（负向越界：中低速工位/NG4500 路径被错误否定）",
+    "宣称现成织造缺陷模型",
+    "跳过参数请求直接下结论"
+   ],
+   "citation_grounding_requirements": [
+    "快门类型断言必须由产品规格证据支撑",
+    "全局快门判据表述为一般机器视觉工程知识并明确标注属性",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "把滚动快门说成全局快门（实质性规格虚构）",
+    "无条件适配结论（在参数缺失下越界下结论）"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "快门事实与判据正确。",
+     "B": "正确但含糊。",
+     "C": "快门事实错误。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "条件化结论+参数请求明确。",
+     "B": "条件化弱。",
+     "C": "无条件越界结论。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "给出判据+条件化结论+参数请求。",
+     "FAIL": "直接能/不能定论。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE503/NG4500 分工清晰且不虚标快门。",
+     "B": "分工含糊。",
+     "C": "兄弟产品替代。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "规格+路径有据。",
+     "B": "缺其一。",
+     "C": "关键无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源并标注判据属性。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "四要素齐备。",
+     "B": "缺替代路径。",
+     "C": "缺参数请求。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "工程评估语气。",
+     "B": "中性。",
+     "C": "过度承诺/过度否定。"
+    }
+   }
+  },
+  {
+   "case_id": "sq-105",
+   "seq": 105,
+   "question": "关于 酒店安防监控、人流统计、AI 视觉分析 的产品咨询，推荐什么方案？",
+   "language": "zh",
+   "product_or_subject": "NE503 + NG4500（酒店场景组合）",
+   "migration_state": "C",
+   "interaction_class": "RECOMMEND",
+   "user_task": "为酒店安防监控、人流统计、AI 视觉分析推荐产品组合方案。",
+   "truth_reference": {
+    "authority": "MIGRATION_DISCOVERY_EVIDENCE",
+    "inventory": "docs/evaluation/benchmark_v1/migration_inventory_117.json#sq-105",
+    "stable_fact_anchors": [
+     "camthink-ai/wiki-documents @ 4ed5b32e304ee09a5e067a464e16c990c6218314（取证 2026-09-05）",
+     "camthink-ai/ne301 @ 5611dbe14bf6d3275afc03374ea37aef71d203d5",
+     "Knowledge 仓 @ d4f7f49b4de211bbaeb8db0501165ef1dc74b322（历史 support/sales 源快照，仅作历史证据）"
+    ],
+    "source_snapshot_required": true,
+    "note": "模板化问句：按有据产品组合评分；酒店部署案例无第一方记载不得虚构；人流统计=person 检测路径的实现任务。"
+   },
+   "marking_contract_status": "READY",
+   "required_truth_claims": [
+    {
+     "id": "T1",
+     "requirement": "NE503（Hailo-15H，20 TOPS）可作前端 AI 相机；NG4500 可作多路汇聚/网关侧推理——组合定位须与产品事实一致。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T2",
+     "requirement": "人流统计 = 基于 person 检测模型的实现任务（含进出判定等部署侧逻辑）；不得宣称出厂自带 people counting 应用。",
+     "criticality": "HIGH"
+    },
+    {
+     "id": "T3",
+     "requirement": "安防监控能力表述落在有据能力（实时取流/事件检测/上报）上；隐私合规提示可加但不得虚构合规能力。",
+     "criticality": "MEDIUM"
+    },
+    {
+     "id": "T4",
+     "requirement": "方案必须条件化于点位数/网络/算力预算；不得虚构酒店客户案例背书。",
+     "criticality": "MEDIUM"
+    }
+   ],
+   "required_evidence_roles": [
+    "EXACT_PRODUCT",
+    "SPECIFICATION",
+    "SOLUTION",
+    "MODEL_CATALOG"
+   ],
+   "uncertainty_requirement": "路数预算与人流统计精度不可虚构；部署案例不得虚构；组合建议标注为分析性推荐。",
+   "clarification_requirement": "应请求点位数/楼层数/网络条件以细化组合与预算。",
+   "required_interaction_behavior": "RECOMMEND：产品组合事实 → 酒店三场景（安防/人流/视觉分析）能力映射（有据） → 条件化部署框架 → 待确认项。",
+   "required_completeness": "三场景逐一映射 + 组合框架 + 待确认项；只推单一型号不带场景映射即不完整。",
+   "prohibited_claims_or_behaviors": [
+    "宣称出厂自带 people counting/安防应用",
+    "虚构酒店/赌场客户案例",
+    "虚构路数上限或识别率",
+    "以 NE301 证据回答 NE503 规格（兄弟产品替代）"
+   ],
+   "citation_grounding_requirements": [
+    "两产品规格断言须各有自身证据支撑",
+    "人流统计路径断言须区分模型能力与部署侧逻辑",
+    "引用存在不构成 grounding"
+   ],
+   "critical_fail_conditions": [
+    "虚构现成 people counting 应用或客户案例（实质性能力虚构）",
+    "兄弟产品证据替代"
+   ],
+   "scoring_dimensions": {
+    "factuality": {
+     "scale": "A/B/C",
+     "A": "两产品规格与分工正确。",
+     "B": "正确但含糊。",
+     "C": "规格/分工错误。"
+    },
+    "uncertainty_non_fabrication": {
+     "scale": "A/B/C",
+     "A": "应用/案例/预算全部有界。",
+     "B": "有界弱。",
+     "C": "虚构应用/案例。"
+    },
+    "interaction_correctness": {
+     "scale": "PASS/FAIL",
+     "PASS": "三场景映射+组合框架。",
+     "FAIL": "只报价码或答非所问。"
+    },
+    "product_scope_safety": {
+     "scale": "A/B/C",
+     "A": "NE503/NG4500 分工清晰。",
+     "B": "分工含糊。",
+     "C": "兄弟产品替代。"
+    },
+    "evidence_coverage": {
+     "scale": "A/B/C",
+     "A": "规格+场景路径有据。",
+     "B": "缺其一。",
+     "C": "关键无据。"
+    },
+    "citation_quality": {
+     "scale": "A/B/C",
+     "A": "可溯源。",
+     "B": "笼统。",
+     "C": "错配。"
+    },
+    "faithfulness_grounding": {
+     "scale": "A/B/C",
+     "A": "一致。",
+     "B": "推断未标注。",
+     "C": "超出证据。"
+    },
+    "completeness_usefulness": {
+     "scale": "A/B/C",
+     "A": "三场景+框架+待确认齐备。",
+     "B": "缺待确认。",
+     "C": "缺场景映射。"
+    },
+    "clarity_structure": {
+     "scale": "A/B/C",
+     "A": "按场景组织清晰。",
+     "B": "一般。",
+     "C": "混乱。"
+    },
+    "conversational_appropriateness": {
+     "scale": "A/B/C",
+     "A": "方案咨询语气。",
+     "B": "中性。",
+     "C": "虚构背书。"
+    }
+   }
+  }
+ ]
+}
