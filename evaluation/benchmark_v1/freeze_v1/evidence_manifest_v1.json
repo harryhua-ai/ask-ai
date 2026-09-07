@@ -1,0 +1,427 @@
+{
+ "artifact": "ASK-AI Answer Intelligence Benchmark v1 — FROZEN EVIDENCE MANIFEST",
+ "benchmark_version": "v1",
+ "as_of": "2026-09-07",
+ "policy": "静态/版本化 Freeze 工件即为充分出处（不建快照管线）；动态事实冻结至 BENCHMARK_V1_AS_OF=2026-09-07，下次冻结重验",
+ "evidence": [
+  {
+   "evidence_id": "EV-WIKI",
+   "authority": "官方文档",
+   "source_type": "git repository",
+   "repository": "camthink-ai/wiki-documents",
+   "commit_sha": "4ed5b32e304ee09a5e067a464e16c990c6218314",
+   "snapshot_date": "2026-09-07（只读浅克隆复核）",
+   "content_hash_note": "关键文件 blob/hash 见下",
+   "key_files": [
+    {
+     "path": "docs/6-neoeyes-ne503-series/0-overview.md",
+     "git_blob": "1d438f4784b5c1033f01fdf72d531ec8454dd8dc",
+     "note": "LPR 应用示例(app-lpr)/20 TOPS/智慧安防——sq-108 修正案+cg-r12 锚"
+    },
+    {
+     "path": "docs/8-neoeyes-ne302-series/1-quick-start.md",
+     "git_blob": "e5bc73917c4c3a246834ea4b3b26d21da08dac7f",
+     "note": "NE302 系列（cg-r01）"
+    },
+    {
+     "path": "docs/2-neoeyes-ne101-series/3-application-guide/2-wifihalow-solution.md",
+     "git_blob": "82d0f59535d606e97ef06f0300cd4b148fdb681f",
+     "note": "HaLow 方案（cg-r23/sq-093）"
+    }
+   ],
+   "dynamic_facts_verified_as_of": [
+    "NE302 系列存在",
+    "NeoRuntime 于 NE503 文档在载(quick-start/overview/troubleshooting)",
+    "LPR 应用示例在载",
+    "HaLow 868/915/Region",
+    "电池×通信矩阵"
+   ],
+   "cases_using_evidence": [
+    "cg-r01",
+    "cg-r02",
+    "cg-r03",
+    "cg-r04",
+    "cg-r05",
+    "cg-r06",
+    "cg-r07",
+    "cg-r08",
+    "cg-r09",
+    "cg-r10",
+    "cg-r11",
+    "cg-r12",
+    "cg-r13",
+    "cg-r14",
+    "cg-r15",
+    "cg-r16",
+    "cg-r17",
+    "cg-r18",
+    "cg-r19",
+    "cg-r20",
+    "cg-r21",
+    "cg-r22",
+    "cg-r23",
+    "cg-s01",
+    "sq-001",
+    "sq-002",
+    "sq-004",
+    "sq-005",
+    "sq-006",
+    "sq-007",
+    "sq-009",
+    "sq-010",
+    "sq-011",
+    "sq-012",
+    "sq-013",
+    "sq-015",
+    "sq-017",
+    "sq-018",
+    "sq-019",
+    "sq-020",
+    "sq-021",
+    "sq-022",
+    "sq-023",
+    "sq-024",
+    "sq-025",
+    "sq-026",
+    "sq-027",
+    "sq-028",
+    "sq-029",
+    "sq-030",
+    "sq-032",
+    "sq-033",
+    "sq-034",
+    "sq-035",
+    "sq-036",
+    "sq-037",
+    "sq-038",
+    "sq-039",
+    "sq-040",
+    "sq-041",
+    "sq-042",
+    "sq-043",
+    "sq-044",
+    "sq-045",
+    "sq-046",
+    "sq-047",
+    "sq-048",
+    "sq-049",
+    "sq-050",
+    "sq-051",
+    "sq-053",
+    "sq-054",
+    "sq-055",
+    "sq-056",
+    "sq-057",
+    "sq-058",
+    "sq-059",
+    "sq-060",
+    "sq-061",
+    "sq-063",
+    "sq-064",
+    "sq-065",
+    "sq-067",
+    "sq-069",
+    "sq-072",
+    "sq-073",
+    "sq-074",
+    "sq-075",
+    "sq-076",
+    "sq-077",
+    "sq-078",
+    "sq-079",
+    "sq-080",
+    "sq-081",
+    "sq-082",
+    "sq-084",
+    "sq-085",
+    "sq-086",
+    "sq-087",
+    "sq-089",
+    "sq-090",
+    "sq-092",
+    "sq-093",
+    "sq-101",
+    "sq-104",
+    "sq-105",
+    "sq-108"
+   ]
+  },
+  {
+   "evidence_id": "EV-NE301",
+   "authority": "官方仓库",
+   "source_type": "git repository",
+   "repository": "camthink-ai/ne301",
+   "commit_sha": "5611dbe14bf6d3275afc03374ea37aef71d203d5",
+   "snapshot_date": "2026-09-05 取证",
+   "cases_using_evidence": [
+    "cg-r09",
+    "cg-r10",
+    "cg-r12",
+    "cg-r13",
+    "cg-r21",
+    "sq-011",
+    "sq-012",
+    "sq-014",
+    "sq-015",
+    "sq-020",
+    "sq-030",
+    "sq-031",
+    "sq-033",
+    "sq-034",
+    "sq-040",
+    "sq-044",
+    "sq-046",
+    "sq-055",
+    "sq-065",
+    "sq-070",
+    "sq-074",
+    "sq-075",
+    "sq-086",
+    "sq-090",
+    "sq-091",
+    "sq-101",
+    "sq-104",
+    "sq-105"
+   ]
+  },
+  {
+   "evidence_id": "EV-LPC",
+   "authority": "官方仓库/releases",
+   "source_type": "git repository + releases",
+   "repository": "camthink-ai/lowpower_camera",
+   "commit_sha": "07150b49517df9c128d11f6c9a98d970581022d6",
+   "snapshot_date": "2026-09-07（releases 经 gh api 复核）",
+   "releases": [
+    {
+     "tag": "v1.9(hw-v2.0)",
+     "published": "2026-07-20"
+    },
+    {
+     "tag": "v1.8(hw-v2.0)",
+     "published": "2026-06-04"
+    },
+    {
+     "tag": "v1.8(hw-v1.2)",
+     "published": "2026-05-20"
+    }
+   ],
+   "cases_using_evidence": [
+    "cg-r08",
+    "cg-r13",
+    "cg-r14",
+    "cg-r17",
+    "cg-r18",
+    "cg-r19",
+    "cg-r21",
+    "cg-r22",
+    "cg-r23",
+    "sq-005",
+    "sq-006",
+    "sq-007",
+    "sq-008",
+    "sq-009",
+    "sq-010",
+    "sq-017",
+    "sq-022",
+    "sq-024",
+    "sq-028",
+    "sq-029",
+    "sq-033",
+    "sq-053",
+    "sq-057",
+    "sq-059",
+    "sq-063",
+    "sq-064",
+    "sq-067",
+    "sq-069",
+    "sq-070",
+    "sq-076",
+    "sq-079",
+    "sq-080",
+    "sq-082",
+    "sq-083",
+    "sq-085",
+    "sq-087",
+    "sq-090",
+    "sq-092"
+   ]
+  },
+  {
+   "evidence_id": "EV-AITOOLSTACK",
+   "authority": "官方仓库",
+   "source_type": "git repository",
+   "repository": "camthink-ai/AIToolStack",
+   "commit_sha": "2026-09-05 取证（backend/utils: dataset_import/ne301_export/yolo_export）",
+   "cases_using_evidence": [
+    "sq-001",
+    "sq-002",
+    "sq-003",
+    "sq-047"
+   ]
+  },
+  {
+   "evidence_id": "EV-NEORUNTIME",
+   "authority": "官方仓库（经 wiki 引用）",
+   "source_type": "git repositories",
+   "repository": "camthink-ai/neoruntime | neoruntime-apps | neoruntime-sdks",
+   "snapshot_date": "2026-09-07（wiki 引用核验）",
+   "cases_using_evidence": [
+    "cg-r02"
+   ]
+  },
+  {
+   "evidence_id": "EV-KB-A35",
+   "authority": "权威案例记录（历史 provenance）",
+   "source_type": "knowledge files",
+   "snapshot_date": "2026-09-07（存在性+sha256_16+claim 支持度核验）",
+   "files": "30 个 A 案源文件（逐案 sha256_16 与 claim 核验结果见 a35 记录；27 SUPPORTED/3 复核后支持）",
+   "cases_using_evidence": [
+    "sq-004",
+    "sq-006",
+    "sq-007",
+    "sq-009",
+    "sq-010",
+    "sq-021",
+    "sq-023",
+    "sq-024",
+    "sq-027",
+    "sq-028",
+    "sq-032",
+    "sq-037",
+    "sq-038",
+    "sq-042",
+    "sq-043",
+    "sq-053",
+    "sq-056",
+    "sq-057",
+    "sq-058",
+    "sq-059",
+    "sq-067",
+    "sq-069",
+    "sq-072",
+    "sq-076",
+    "sq-079",
+    "sq-081",
+    "sq-085",
+    "sq-087",
+    "sq-089",
+    "sq-092"
+   ]
+  },
+  {
+   "evidence_id": "EV-KB-NEW24",
+   "authority": "权威案例记录",
+   "source_type": "knowledge files",
+   "snapshot_date": "2026-09-05/07",
+   "cases_using_evidence": [
+    "cg-r07",
+    "cg-r08",
+    "cg-r09",
+    "cg-r10",
+    "cg-r11",
+    "cg-r12",
+    "cg-r13",
+    "cg-r14",
+    "cg-r15",
+    "cg-r16",
+    "cg-r17",
+    "cg-r18",
+    "cg-r19",
+    "cg-r20",
+    "cg-r21",
+    "cg-r22",
+    "cg-r23"
+   ]
+  },
+  {
+   "evidence_id": "EV-STORE",
+   "authority": "官方 Store",
+   "source_type": "web（静态已接受快照）",
+   "url": "camthink.ai/store（NE101: $69.00–$112.00, 连接 5×镜头 4, 5 SKU 族；NE301 三配置价）",
+   "snapshot_date": "2026-09-05（GT Gate 取证）/2026-09-07（issue #28 生产证据）",
+   "revalidate_at": "下次 Freeze",
+   "cases_using_evidence": [
+    "cg-r03",
+    "cg-r05",
+    "cg-r12",
+    "sq-026",
+    "sq-035",
+    "sq-109"
+   ]
+  },
+  {
+   "evidence_id": "EV-CALC",
+   "authority": "官方工具页",
+   "source_type": "web（静态已接受快照）",
+   "url": "camthink.ai/tools/battery-calculator（Lab Test Data · May 2026，NE101/NE301）",
+   "snapshot_date": "2026-09-05（issue #29 生产证据）",
+   "revalidate_at": "下次 Freeze",
+   "cases_using_evidence": [
+    "cg-r06",
+    "cg-r09",
+    "cg-r10",
+    "sq-049",
+    "sq-108"
+   ]
+  },
+  {
+   "evidence_id": "EV-COMPETITOR",
+   "authority": "第三方（任务所需）",
+   "source_type": "web（案例记录内存档引用）",
+   "url": "Milesight 官方页/博客（X1 仅拍图、平台侧识别）+ Frigate/DeepStream/Nx 生态",
+   "snapshot_date": "2026-08-18（EBDS 案核查）/2026-06-11（方案记录）",
+   "revalidate_at": "下次 Freeze",
+   "cases_using_evidence": [
+    "cg-r16",
+    "cg-r11"
+   ]
+  },
+  {
+   "evidence_id": "EV-DOCS-CHAIN",
+   "authority": "验收工件链",
+   "source_type": "docs repo commits",
+   "items": [
+    {
+     "artifact": "migration_inventory_117.json",
+     "note": "REV1, corpus v2.1"
+    },
+    {
+     "artifact": "ground_truth_revalidation_41.json",
+     "commit": "54f9c9de1d55e0d7d22ea5d465491eed85c9c8d5"
+    },
+    {
+     "artifact": "marking_contracts_c30.json",
+     "commit": "573da687a3b103c5e0772b60d79d2ea463980842"
+    },
+    {
+     "artifact": "coverage_gap_additions_2026-09-07.json",
+     "commit": "8ce2e682adacde7d4e1a9673a1be97dc0621170b"
+    },
+    {
+     "artifact": "admission_ground_truth_24_2026-09-07.json",
+     "commit": "72bc4c71aeae9a4580b7ef28bac7b33e1ada2cf4"
+    },
+    {
+     "artifact": "unified_benchmark_contracts_121_2026-09-07.json",
+     "commit": "bcae44dbec39232b1a0b4c6333a3f3b262f1c4bc"
+    }
+   ],
+   "cases_using_evidence": [
+    "ALL"
+   ]
+  }
+ ],
+ "a35_snapshot_verify_summary": {
+  "SUPPORTED": 27,
+  "REVIEWED_THEN_SUPPORTED": 3,
+  "BEHAVIORAL_SEED_DEFINITIONAL": 5,
+  "STALE": 0,
+  "amendments": [
+   {
+    "case_id": "sq-085",
+    "type": "TRUTH_AMENDMENT_REQUIRED_APPLIED",
+    "reason": "代码级标识符(N6M1/stedgeai.mk)未复现于 @07150b49；诊断方向由案例记录+Wiki 锚定"
+   }
+  ]
+ }
+}

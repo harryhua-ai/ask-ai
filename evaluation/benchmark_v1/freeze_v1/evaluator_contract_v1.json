@@ -1,0 +1,35 @@
+{
+ "artifact": "ASK-AI Answer Intelligence Benchmark v1 — FROZEN EVALUATOR CONTRACT",
+ "version": "EVAL_V1",
+ "as_of": "2026-09-07",
+ "vendor_neutrality": "不绑定评测供应商/模型；执行时记录 judge vendor/model/version/config/prompt-hash",
+ "judge_inputs": [
+  "可执行案例输入（executable_corpus_v1）",
+  "被评答案全文（含引用标记与结构）",
+  "冻结契约（contracts_frozen_v1 对应 case：claims/prohibited/citation/completeness/uncertainty/critical）",
+  "证据清单指针（evidence_manifest_v1）",
+  "运行时采集的 OPERATIONAL 字段（仅入 OPERATIONAL 组）"
+ ],
+ "judge_exclusions": [
+  "不得接触：匿名化映射、历史 expected_answer 原文、其它案例答案"
+ ],
+ "grading": {
+  "scales": {
+   "A": "完全满足契约",
+   "B": "有实质价值但不完整/缺非关键限定",
+   "C": "实质错误/无据/不安全/错任务",
+   "PASS_FAIL": "真二值判据"
+  },
+  "per_case_basis": "C30=PER_CASE_DEFINITIONS_V1（逐案定义）；其余=CASE_CONTRACT_DERIVED（按该案 claims/prohibited/behavior/completeness）",
+  "applicability": "按契约 scoring_dimensions 的 APPLICABLE/NOT_APPLICABLE 执行，不制造均匀性"
+ },
+ "critical_fail_handling": "任一 VALID_OVERRIDE 触发 → case_verdict=CRITICAL_FAIL（独立记录）；逐维结果仍全部记录；CRITICAL_FAIL 不改写维度分，聚合时单列",
+ "citation_semantics": "支撑判定：被引证据须实际包含被引断言；来源错配降级；通用工程判断须标注；引用存在≠grounding",
+ "uncertainty_grading": "七分类语义独立评分；NOT_DOCUMENTED→NOT_SUPPORTED、NOT_TESTED→不可能、PLANNED→已发布 均为 factuality/uncertainty C",
+ "aggregation": "见 scoring_aggregation_spec_v1.json（四组独立，禁 opaque accuracy）",
+ "missing_output_policy": "超时/空答：interaction_correctness=FAIL，其余维度=NOT_EVALUABLE，全部记录；不剔除案例",
+ "repeat_policy": "默认每案 n=3（Planner 可调）；逐次报告+聚合中位数；judge 建议温度 0",
+ "human_calibration": "随机抽 ≥10% + 全部 CRITICAL_FAIL 案 + 全部 B/C 分歧案双人复核；分歧由 Planner 裁决；校准记录入运行报告",
+ "judge_metadata": "每次执行记录 vendor/model/version/config/prompt-hash/日期",
+ "post_freeze_change_rule": "评测语义变更 = 新 Benchmark 版本（基线开始后）或基线前显式修正案"
+}

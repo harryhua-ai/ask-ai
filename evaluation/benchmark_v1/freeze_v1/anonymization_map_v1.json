@@ -1,0 +1,267 @@
+{
+ "artifact": "ASK-AI Answer Intelligence Benchmark v1 — ANONYMIZATION MAP（仅供出处审查；禁止进入可执行模型输入）",
+ "benchmark_version": "v1",
+ "as_of": "2026-09-07",
+ "mappings": [
+  {
+   "case_id": "sq-045",
+   "original": "客户 Zac Diener ([邮箱], eLock Technologies LLC, Berkeley CA) 报告三个问题： 1. 电池完全耗尽，想查日志了解高功耗原因 2. Web UI 非常慢，切换标签页和修改配置加载时间长，偶发报错 3. SIM 卡已安装，但 System Settings > Communications > Change Communications Method 只有 Wi-Fi 选项",
+   "sanitized": "客户（美国加州，集成商）报告三个问题： 1. 电池完全耗尽，想查日志了解高功耗原因 2. Web UI 非常慢，切换标签页和修改配置加载时间长，偶发报错 3. SIM 卡已安装，但 System Settings > Communications > Change Communications Method 只有 Wi-Fi 选项"
+  },
+  {
+   "case_id": "sq-049",
+   "original": "ICU Solarcam（澳洲太阳能远程视频监控方案商，运营13+年）通过开发信回复联系 CamThink，Jim R ([邮箱]) 表示感兴趣并想要约会议。",
+   "sanitized": "某澳洲太阳能远程视频监控方案商（运营13+年）联系 CamThink，表示感兴趣并希望进一步沟通。"
+  },
+  {
+   "case_id": "sq-074",
+   "original": "Massimo 回复 6/5 Option 2 确认邮件，列出 10 项他认为应包含的规格清单，作为付款前确认： 1. PIR 运动传感器 2. 环境光传感器 3. IR-Cut 滤镜 4. IR 红外照明 LED 5. PIR + 夜视固件适配 6. 88° 镜头 7. YOLOv8 Nano 预装 8. 防水外壳 9. 自动夜视切换 10. XIAO ESP32C3 自集成",
+   "sanitized": "客户回复 6/5 Option 2 确认邮件，列出 10 项他认为应包含的规格清单，作为付款前确认： 1. PIR 运动传感器 2. 环境光传感器 3. IR-Cut 滤镜 4. IR 红外照明 LED 5. PIR + 夜视固件适配 6. 88° 镜头 7. YOLOv8 Nano 预装 8. 防水外壳 9. 自动夜视切换 10. XIAO ESP32C3 自集成"
+  },
+  {
+   "case_id": "sq-008",
+   "original": "客户 Gabe Cook（Steiner）反馈两个问题： 1. **补光灯行为差异**：按键拍照似乎忽略已保存的补光灯设置，使用默认 \"auto\" 模式；定时拍照则正常遵循保存的设置。客户提供了 4 张对比照片验证此行为。 2. **图片导出**：客户询问 Neomind 服务器上存储的图片是否可以导出，以及多摄像头定时拍照场景下是否支持定时批量导出。",
+   "sanitized": "客户反馈两个问题： 1. **补光灯行为差异**：按键拍照似乎忽略已保存的补光灯设置，使用默认 \"auto\" 模式；定时拍照则正常遵循保存的设置。客户提供了 4 张对比照片验证此行为。 2. **图片导出**：客户询问 Neomind 服务器上存储的图片是否可以导出，以及多摄像头定时拍照场景下是否支持定时批量导出。"
+  },
+  {
+   "case_id": "sq-011",
+   "original": "客户（Daniel Hii，新加坡 Kajima 建设公司）计划在新加坡户外环境使用 NE301 进行热舒适度研究，探索人们在不同气候条件下（气温、太阳辐射）对遮阳/非遮阳空间的耐受性。项目处于规划阶段，尚未与设施管理方确认安装限制。",
+   "sanitized": "客户（新加坡某建设公司）计划在新加坡户外环境使用 NE301 进行热舒适度研究，探索人们在不同气候条件下（气温、太阳辐射）对遮阳/非遮阳空间的耐受性。项目处于规划阶段，尚未与设施管理方确认安装限制。"
+  },
+  {
+   "case_id": "sq-015",
+   "original": "Cliff（ModularX，南非）通过 WhatsApp 联系 Dave 和 Harry，要求提供热成像相机 + 入侵检测（越线、人车检测）的演示视频。之前发过的链接已过期。",
+   "sanitized": "某南非客户通过 WhatsApp 联系 CamThink，要求提供热成像相机 + 入侵检测（越线、人车检测）的演示视频。之前发过的链接已过期。"
+  },
+  {
+   "case_id": "sq-019",
+   "original": "客户（Lightbox，澳大利亚，[邮箱]）通过邮件提出以下问题： 1. 太阳能板：已打开 wiki 页面，希望提供太阳能板和电池装在 NE101 上的实物照片 2. Logo 定制：客户已提供 Logo 文件（做 mockup），询问最小起订量 3. PIR 运动传感器：是否需要单独订购？能否提供 PIR 装在相机上的图片？还是集成的？ 4. 视频功能 + 建筑行业应用：当前仅需照片，但视频在 roadmap 上。问 NE101 在建筑行业怎么用",
+   "sanitized": "客户（澳大利亚）通过邮件提出以下问题： 1. 太阳能板：已打开 wiki 页面，希望提供太阳能板和电池装在 NE101 上的实物照片 2. Logo 定制：客户已提供 Logo 文件（做 mockup），询问最小起订量 3. PIR 运动传感器：是否需要单独订购？能否提供 PIR 装在相机上的图片？还是集成的？ 4. 视频功能 + 建筑行业应用：当前仅需照片，但视频在 roadmap 上。问 NE101 在建筑行业怎么用"
+  },
+  {
+   "case_id": "sq-020",
+   "original": "Marco 通过 LinkedIn 主动联系 CamThink，关注点： - 边缘 AI 部署（替代当前方案中的 AI 盒子） - 降低功耗（太阳能供电场景） - 减少误报（需要端侧 AI 做 true alarm 过滤） - 自定义模型部署 - 替代 AI 硬件架构",
+   "sanitized": "某客户通过 LinkedIn 主动联系 CamThink，关注点： - 边缘 AI 部署（替代当前方案中的 AI 盒子） - 降低功耗（太阳能供电场景） - 减少误报（需要端侧 AI 做 true alarm 过滤） - 自定义模型部署 - 替代 AI 硬件架构"
+  },
+  {
+   "case_id": "sq-029",
+   "original": "客户 Gary Andrews (PwC) 反馈另一台 NE101 相机（Rainbow Kitchen 3, SN: 6503F284378503G8, FW: NE101_V1.8_FCC）出现电池续航异常：电池百分比在 4 天内从 100% 掉到 0%（5/17-5/21）。客户表示喜欢 NE101 但对电池续航有顾虑。",
+   "sanitized": "客户反馈另一台 NE101 相机（部署点位 [已匿名], SN: [已匿名], FW: NE101_V1.8_FCC）出现电池续航异常：电池百分比在 4 天内从 100% 掉到 0%（5/17-5/21）。客户表示喜欢 NE101 但对电池续航有顾虑。"
+  },
+  {
+   "case_id": "sq-030",
+   "original": "Dave 向 Abhishek 推销 NE301 用于智能仓储（缺货检测/人员检测/车辆检测/OCR标签识别等），客户回复：\"We are interested in at least 5-10 cameras but price is becoming bottleneck.\"",
+   "sanitized": "销售工程师向客户推介 NE301 用于智能仓储（缺货检测/人员检测/车辆检测/OCR标签识别等），客户回复：\"We are interested in at least 5-10 cameras but price is becoming bottleneck.\""
+  },
+  {
+   "case_id": "sq-033",
+   "original": "Massimo 原本用 NE101（无端侧 AI），现确认需要端侧 AI（猫/狗/人识别）转向 NE301。 5/29 新邮件要求定制 NE301： 1. PIR 传感器集成并安装到外壳内（用于唤醒相机） 2. IR 红外夜视 LED（替换白色补光灯） 3. 需要最紧凑干净的方案，保持防水 4. 准备订购 3 台用于开发测试 5. YOLO 模型用于猫检测，需区分狗和人",
+   "sanitized": "客户原本用 NE101（无端侧 AI），现确认需要端侧 AI（猫/狗/人识别）转向 NE301。 5/29 新邮件要求定制 NE301： 1. PIR 传感器集成并安装到外壳内（用于唤醒相机） 2. IR 红外夜视 LED（替换白色补光灯） 3. 需要最紧凑干净的方案，保持防水 4. 准备订购 3 台用于开发测试 5. YOLO 模型用于猫检测，需区分狗和人"
+  },
+  {
+   "case_id": "sq-035",
+   "original": "Allan 看了 CamThink 官网后误以为 CamThink 是\"OEM for customized video and AI solutions\"，认为不适合他们（他们不做内部开发，只集成成品）。但他说 \"If I'm working from incorrect information, please let me know\" — 留了被纠正的门。",
+   "sanitized": "某客户看了 CamThink 官网后误以为 CamThink 是\"OEM for customized video and AI solutions\"，认为不适合他们（他们不做内部开发，只集成成品）。但他说 \"If I'm working from incorrect information, please let me know\" — 留了被纠正的门。"
+  },
+  {
+   "case_id": "sq-054",
+   "original": "阿根廷集成商 KRONSA 的终端客户（甘蔗糖厂+造纸厂，大型工业厂区）需要升级现有 CCTV 系统，首个评估场景为户外围栏入侵检测。",
+   "sanitized": "阿根廷某集成商的终端客户（甘蔗糖厂+造纸厂，大型工业厂区）需要升级现有 CCTV 系统，首个评估场景为户外围栏入侵检测。"
+  },
+  {
+   "case_id": "sq-063",
+   "original": "PwC 寄回两台 NE101 蜂窝版设备，Wei W. Rangey 请求分享分析结果： - SN: 6503F28037193G4 — 功耗异常（客户报告电池消耗过快） - SN: 6503F288788903G4 — 不准时上报图片",
+   "sanitized": "客户寄回两台 NE101 蜂窝版设备，请求分享分析结果： - 设备 A（SN: [已匿名]）— 功耗异常（客户报告电池消耗过快） - 设备 B（SN: [已匿名]）— 不准时上报图片"
+  },
+  {
+   "case_id": "sq-065",
+   "original": "客户 Ambipar（巴西大型环境环保集团）通过 [邮箱] 咨询工业垃圾箱满溢检测方案。客户发来照片展示现有垃圾箱满载溢出状态。",
+   "sanitized": "客户（巴西大型环保集团）通过 [邮箱] 咨询工业垃圾箱满溢检测方案。客户发来照片展示现有垃圾箱满载溢出状态。"
+  },
+  {
+   "case_id": "sq-070",
+   "original": "客户 Fabrice Jolivet (Maloric) 在 v2.19 固件稳定后，基于视频管线的实际开发进展，提出 8 个技术问题 + 产品路线决策。核心诉求：从当前 3 台 SPI 多机架构转向单机双镜头方案。",
+   "sanitized": "客户在 v2.19 固件稳定后，基于视频管线的实际开发进展，提出 8 个技术问题 + 产品路线决策。核心诉求：从当前 3 台 SPI 多机架构转向单机双镜头方案。"
+  },
+  {
+   "case_id": "sq-078",
+   "original": "Flipkart 团队发邮件给 Dave，要求： 1. 确认付款状态和发货状态 2. 提供一个 **cloud URL** 用于连接相机与 NG4500 做测试——IT 团队需要这个 URL 走访问审批流程",
+   "sanitized": "某大型电商客户团队发邮件，要求： 1. 确认付款状态和发货状态 2. 提供一个 **cloud URL** 用于连接相机与 NG4500 做测试——IT 团队需要这个 URL 走访问审批流程"
+  },
+  {
+   "case_id": "sq-083",
+   "original": "Kevin（台湾）使用 NE101 Cat-1 做定时抓拍 MQTT 上传（tea 种植监测）。配置了 8 个定时点（07/08/09/10/14/15/16/17），每天执行。客户反馈 16:00 没有收到图片。",
+   "sanitized": "某台湾客户使用 NE101 Cat-1 做定时抓拍 MQTT 上传（tea 种植监测）。配置了 8 个定时点（07/08/09/10/14/15/16/17），每天执行。客户反馈 16:00 没有收到图片。"
+  },
+  {
+   "case_id": "sq-090",
+   "original": "Alexandros Doganis ([邮箱], CC arisdoganis) 已购买 NE301 WiFi 版本（88°+137° HFOV）+ ball mounts 进行测试。反馈积极：固件刷写顺畅、REST API 干净、图像质量好、成功部署自定义 pose 模型（端到端: camera→NPU→keypoints）、RTMP 推流稳定（含断连自动重连）、夜间 670nm LED 测试初步可行。用户钻孔外壳通过硅胶密封接入 USB-C 供电 —— 解决 WiFi 版没有外部 USB-",
+   "sanitized": "客户已购买 NE301 WiFi 版本（88°+137° HFOV）+ ball mounts 进行测试。反馈积极：固件刷写顺畅、REST API 干净、图像质量好、成功部署自定义 pose 模型（端到端: camera→NPU→keypoints）、RTMP 推流稳定（含断连自动重连）、夜间 670nm LED 测试初步可行。用户钻孔外壳通过硅胶密封接入 USB-C 供电 —— 解决 WiFi 版没有外部 USB-"
+  },
+  {
+   "case_id": "sq-091",
+   "original": "Harry 内部评估：客户想用 NE301 + 扩展板做红外热成像，检测糖尿病患者脚底温度。需确认 MLX90642 + NE301 能否满足此医疗场景需求。",
+   "sanitized": "内部评估：客户想用 NE301 + 扩展板做红外热成像，检测糖尿病患者脚底温度。需确认 MLX90642 + NE301 能否满足此医疗场景需求。"
+  },
+  {
+   "case_id": "sq-001",
+   "original": "客户 Andrew Lohbihler 需要将 Edge Impulse 格式的可乐罐检测数据集转换为 AI tool stack 的项目 ZIP 格式，并导出为 NE301 可用的模型文件。",
+   "sanitized": "客户需要将 Edge Impulse 格式的可乐罐检测数据集转换为 AI tool stack 的项目 ZIP 格式，并导出为 NE301 可用的模型文件。"
+  },
+  {
+   "case_id": "sq-012",
+   "original": "客户（新加坡 Kajima 建设公司）使用 NE301 WiFi 版本进行现场部署，询问在无法使用付费云服务的情况下如何进行数据采集。",
+   "sanitized": "客户（新加坡某建设公司）使用 NE301 WiFi 版本进行现场部署，询问在无法使用付费云服务的情况下如何进行数据采集。"
+  },
+  {
+   "case_id": "sq-013",
+   "original": "客户 Lina Grosset ([邮箱]) 购买了多台 NE301 Wi-Fi 相机，反馈两个问题： 1. 第三台相机无法使用默认密码 `[默认凭据-已脱敏]` 登录，提示密码错误 2. 已成功登录的相机在访问 \"System Settings\" 和 \"Hardware Management\" 菜单时显示 \"Unauthorised\"",
+   "sanitized": "客户购买了多台 NE301 Wi-Fi 相机，反馈两个问题： 1. 第三台相机无法使用默认密码 `[默认凭据-已脱敏]` 登录，提示密码错误 2. 已成功登录的相机在访问 \"System Settings\" 和 \"Hardware Management\" 菜单时显示 \"Unauthorised\""
+  },
+  {
+   "case_id": "sq-018",
+   "original": "客户（Lightbox，澳大利亚，[邮箱]）已收到 NE101 HaLow 915 版本样机，咨询： 1. 支持 HaLow 915MHz 的网关推荐 2. 要求易于设置、适合野外使用 3. 需要连接 Starlink 进行回传",
+   "sanitized": "客户（澳大利亚）已收到 NE101 HaLow 915 版本样机，咨询： 1. 支持 HaLow 915MHz 的网关推荐 2. 要求易于设置、适合野外使用 3. 需要连接 Starlink 进行回传"
+  },
+  {
+   "case_id": "sq-022",
+   "original": "客户 Massimo 在 Mac 上使用 VS Code + PlatformIO 开发，ESP-IDF 安装失败，想要预编译固件通过 PlatformIO 刷入 NE101。用于动物检测项目。",
+   "sanitized": "客户在 Mac 上使用 VS Code + PlatformIO 开发，ESP-IDF 安装失败，想要预编译固件通过 PlatformIO 刷入 NE101。用于动物检测项目。"
+  },
+  {
+   "case_id": "sq-026",
+   "original": "日本合作伙伴（原邮件发给 Max）转发客户关于 NE101 的商务咨询，包含三个问题： 1. 样品单价及交期 2. Datasheet 是否有 3. 是否已获得 TELEC 认证（日本市场）",
+   "sanitized": "日本合作伙伴转发客户关于 NE101 的商务咨询，包含三个问题： 1. 样品单价及交期 2. Datasheet 是否有 3. 是否已获得 TELEC 认证（日本市场）"
+  },
+  {
+   "case_id": "sq-036",
+   "original": "客户 Fabrice Jolivet (Maloric/ASAP Safeguard) 计划在传感器板上集成全球通用的 Cat-1 模块，询问 Quectel EG21-GL 是否适合用于 4G 连接功能，有哪些局限性，以及是否有更推荐的替代产品。",
+   "sanitized": "客户 计划在传感器板上集成全球通用的 Cat-1 模块，询问 Quectel EG21-GL 是否适合用于 4G 连接功能，有哪些局限性，以及是否有更推荐的替代产品。"
+  },
+  {
+   "case_id": "sq-039",
+   "original": "Zac Diener (eLock Technologies, Berkeley CA) 咨询 CamThink 是否有 IP67 防护等级、且可通过 USB-C 或电源插孔外部供电的相机产品，要求成品可直接插线使用，无需拆解外壳或自行制造定制外壳。客户明确不希望定制外壳（成本高、可能影响保修）。",
+   "sanitized": "客户（美国加州）咨询 CamThink 是否有 IP67 防护等级、且可通过 USB-C 或电源插孔外部供电的相机产品，要求成品可直接插线使用，无需拆解外壳或自行制造定制外壳。客户明确不希望定制外壳（成本高、可能影响保修）。"
+  },
+  {
+   "case_id": "sq-041",
+   "original": "客户 Skywave (新加坡) 计划在户外活动项目中部署 NE301，用于监控 50m×10m 步道区域的客流数据采集。客户需要确认 NE301 的供电、通信、户外防护、AI 分析能力及部署方案。",
+   "sanitized": "客户（新加坡）计划在户外活动项目中部署 NE301，用于监控 50m×10m 步道区域的客流数据采集。客户需要确认 NE301 的供电、通信、户外防护、AI 分析能力及部署方案。"
+  },
+  {
+   "case_id": "sq-046",
+   "original": "客户（Daniel Hii，新加坡 Kajima）在推进户外热舒适度研究项目时，担心测试现场的隐私限制。提出两个问题： 1. 如果现场不允许存储任何图像/视频，能否仅用 microSD 卡存储人数统计数据？ 2. 如果现场允许存储遮罩图像，能否将计数数据和遮罩图像一起存到 microSD 卡？",
+   "sanitized": "客户（新加坡）在推进户外热舒适度研究项目时，担心测试现场的隐私限制。提出两个问题： 1. 如果现场不允许存储任何图像/视频，能否仅用 microSD 卡存储人数统计数据？ 2. 如果现场允许存储遮罩图像，能否将计数数据和遮罩图像一起存到 microSD 卡？"
+  },
+  {
+   "case_id": "sq-055",
+   "original": "- 客户: Noah Kuan - 邮箱: [邮箱] - 公司: Murata Singapore - 产品: NE301 Cat-1 GL912 全球版 - 来源: 邮件 - 处理人: Jade - 问题类型: 功能咨询",
+   "sanitized": "客户（新加坡某电子制造企业）就 NE301 Cat-1 GL912 全球版进行功能咨询："
+  },
+  {
+   "case_id": "sq-073",
+   "original": "Massimo 回复了 5/29 的定制方案邮件，提出 4 个技术澄清问题： 1. **AA 电池**：他引用官网上 datasheet 和 Battery Life Calculator 说 NE301 应该支持 AA 电池，对我们 5/29 回信中说不支持电池感到困惑。此外，他的架构中 \"用户相机\" 需电池供电，PIR 唤醒 → 检测 → 休眠，问续航是否可行。 2. **ESP-NOW 通信**：他的发明必须脱离互联网运行，NE301 需通过 ESP-NOW 与 ESP32 控制器通信。N",
+   "sanitized": "客户回复了 5/29 的定制方案邮件，提出 4 个技术澄清问题： 1. **AA 电池**：他引用官网上 datasheet 和 Battery Life Calculator 说 NE301 应该支持 AA 电池，对我们 5/29 回信中说不支持电池感到困惑。此外，他的架构中 \"用户相机\" 需电池供电，PIR 唤醒 → 检测 → 休眠，问续航是否可行。 2. **ESP-NOW 通信**：他的发明必须脱离互联网运行，NE301 需通过 ESP-NOW 与 ESP32 控制器通信。N"
+  },
+  {
+   "case_id": "sq-077",
+   "original": "客户 Tommaso Scuccato（[邮箱]）咨询 NE503 产品能力，涉及多个需求方向： - **LPR 车牌识别**：客户认为 NE503 不带 IR 补光灯，确认是否如此 - **人员检测与计数** + 基于时间的告警系统 - **视频异常检测**（video anomaly detection on board） - **样品**：接受付费样品 - **报价**：5 / 10 / 50 / 100 台",
+   "sanitized": "客户咨询 NE503 产品能力，涉及多个需求方向： - **LPR 车牌识别**：客户认为 NE503 不带 IR 补光灯，确认是否如此 - **人员检测与计数** + 基于时间的告警系统 - **视频异常检测**（video anomaly detection on board） - **样品**：接受付费样品 - **报价**：5 / 10 / 50 / 100 台"
+  },
+  {
+   "case_id": "sq-082",
+   "original": "Ken Vowels 使用 NE101 WiFi 版（固件 NE_101_v1.8(hw-v1.2)_FCC），网页 UI 配置 Webhook + Instant Upload，WiFi 连接正常、ping 8.8.8.8 成功，但快门拍照后出现 PUSH FAIL，JPEG 存入 flash，无 HTTP POST 到达其域名或 webhook.site。",
+   "sanitized": "客户使用 NE101 WiFi 版（固件 NE_101_v1.8(hw-v1.2)_FCC），网页 UI 配置 Webhook + Instant Upload，WiFi 连接正常、ping 8.8.8.8 成功，但快门拍照后出现 PUSH FAIL，JPEG 存入 flash，无 HTTP POST 到达其域名或 webhook.site。"
+  },
+  {
+   "case_id": "sq-084",
+   "original": "Darren（Lightbox，澳大利亚）前期咨询 NE101 用于建筑监控（见 [2026-05 案例](../2026-05/NE101-建筑监控方案咨询-太阳能PIRLogo天线.md)）。后续转向野生动物摄影场景，与生态学家合作，提出硬性需求： 1. 启动速度 < 0.2-5 秒（从 PIR 触发到拍照） 2. 连拍间隔 0.1-2 秒（burst mode） 3. IR 夜视（不可见光，不能吓跑动物） 4. 连接方式：HaLow 915MHz",
+   "sanitized": "某澳大利亚客户前期咨询 NE101 用于建筑监控（见 [2026-05 案例](../2026-05/NE101-建筑监控方案咨询-太阳能PIRLogo天线.md)）。后续转向野生动物摄影场景，与生态学家合作，提出硬性需求： 1. 启动速度 < 0.2-5 秒（从 PIR 触发到拍照） 2. 连拍间隔 0.1-2 秒（burst mode） 3. IR 夜视（不可见光，不能吓跑动物） 4. 连接方式：HaLow 915MHz"
+  },
+  {
+   "case_id": "sq-086",
+   "original": "客户 Mickael Le Stephan (Eco-Counter, [邮箱]) 发邮件给 Dave，评估 NE301 上从 YOLO11n 升级到 YOLO26n 的可行性。",
+   "sanitized": "客户发邮件评估 NE301 上从 YOLO11n 升级到 YOLO26n 的可行性。"
+  },
+  {
+   "case_id": "sq-007",
+   "original": "客户 Calvin Foo（NexAscent）反馈：NE101 定时拍照图片质量好，但按键拍照图片不理想。补光灯设为 \"Always on\"，定时模式下灯光正常，按键模式下灯光行为不同。",
+   "sanitized": "客户反馈：NE101 定时拍照图片质量好，但按键拍照图片不理想。补光灯设为 \"Always on\"，定时模式下灯光正常，按键模式下灯光行为不同。"
+  },
+  {
+   "case_id": "sq-010",
+   "original": "客户 Daniel Gauthier（ResCon Technologies）对 NE301 执行了完全重置（full reset），设备所有内容被清除。客户询问是否需要拆板并通过 USB 连接恢复系统。",
+   "sanitized": "客户对 NE301 执行了完全重置（full reset），设备所有内容被清除。客户询问是否需要拆板并通过 USB 连接恢复系统。"
+  },
+  {
+   "case_id": "sq-021",
+   "original": "客户 Massimo Caravello 关于 NE101 的多轮咨询： **第一轮**：确认 NE101 是否内置 PIR 传感器，希望实现运动检测唤醒。",
+   "sanitized": "客户关于 NE101 的多轮咨询： **第一轮**：确认 NE101 是否内置 PIR 传感器，希望实现运动检测唤醒。"
+  },
+  {
+   "case_id": "sq-027",
+   "original": "客户 Calvin Foo（NexAscent）询问 NE101 标配镜头的视场角（FOV）。客户附了一张 YOLOv5 目标检测运行截图（detect.py 执行结果），表明客户可能正在评估 NE101 用于 AI 视觉检测应用。",
+   "sanitized": "客户询问 NE101 标配镜头的视场角（FOV）。客户附了一张 YOLOv5 目标检测运行截图（detect.py 执行结果），表明客户可能正在评估 NE101 用于 AI 视觉检测应用。"
+  },
+  {
+   "case_id": "sq-032",
+   "original": "客户 Fabrice Jolivet (Maloric) 在审查 NE301 和 4G 模块原理图时，发现 J11 模块接口与 USB 版 4G 模块之间存在引脚映射冲突，并提出以下问题： 1. J11 pin 14 (PB2/SAI1_SD_A) 和 pin 16 (PB0/Halow_RST) 不支持 USB HS，而 4G 模块 USB_DM/USB_DP 通过 R31/R33 (0R/NC) 可能映射到这两个引脚 2. 确认 J15 是否为 USB 版 4G 模块指定接口 3. 是否需要",
+   "sanitized": "客户在审查 NE301 和 4G 模块原理图时，发现 J11 模块接口与 USB 版 4G 模块之间存在引脚映射冲突，并提出以下问题： 1. J11 pin 14 (PB2/SAI1_SD_A) 和 pin 16 (PB0/Halow_RST) 不支持 USB HS，而 4G 模块 USB_DM/USB_DP 通过 R31/R33 (0R/NC) 可能映射到这两个引脚 2. 确认 J15 是否为 USB 版 4G 模块指定接口 3. 是否需要"
+  },
+  {
+   "case_id": "sq-037",
+   "original": "客户 Fabrice Jolivet (Maloric/ASAP Safeguard) 提出 Phase 2 方案：在基于 NE301 (STM32N6) 芯片的定制 PCB 上安装 2 个 OS04C10 传感器（各配 138° 广角镜头），实现约 276° 方位角覆盖。核心问题是 STM32N6 的 DCMIPP 模块能否同时处理两个 OS04C10 输入信号。",
+   "sanitized": "客户 提出 Phase 2 方案：在基于 NE301 (STM32N6) 芯片的定制 PCB 上安装 2 个 OS04C10 传感器（各配 138° 广角镜头），实现约 276° 方位角覆盖。核心问题是 STM32N6 的 DCMIPP 模块能否同时处理两个 OS04C10 输入信号。"
+  },
+  {
+   "case_id": "sq-038",
+   "original": "Jason 回复了 Mindy 的第一封方案邮件，发来： 1. 活动场地布局图，要求标出推荐摄像头安装位置 2. 询问客流计数机制：人进入 FOV 就算，还是需要跨过指定计数线？",
+   "sanitized": "客户回复了首封方案邮件（前序上下文），发来： 1. 活动场地布局图，要求标出推荐摄像头安装位置 2. 询问客流计数机制：人进入 FOV 就算，还是需要跨过指定计数线？"
+  },
+  {
+   "case_id": "sq-043",
+   "original": "R. Stanik (kronospan.pl) 咨询 NE301 水表 OCR 方案，三个问题： 1. 有线供电和数据传输是否可行 2. 支持哪些通信协议（M-Bus, Modbus, RS485 等） 3. BMeters GMDX 旧式水表的兼容性",
+   "sanitized": "客户咨询 NE301 水表 OCR 方案，三个问题： 1. 有线供电和数据传输是否可行 2. 支持哪些通信协议（M-Bus, Modbus, RS485 等） 3. BMeters GMDX 旧式水表的兼容性"
+  },
+  {
+   "case_id": "sq-053",
+   "original": "客户 Richard Pedretti（INVENTA Nuove Soluzioni Tecnologiche srl，意大利）购买 OV5640 摄像头模组，使用自研 ESP32-S3 硬件集成时出现图像绿线。同一模组在 ESP32 上图像正常。",
+   "sanitized": "客户（意大利）购买 OV5640 摄像头模组，使用自研 ESP32-S3 硬件集成时出现图像绿线。同一模组在 ESP32 上图像正常。"
+  },
+  {
+   "case_id": "sq-056",
+   "original": "客户 Maxime（[邮箱]）购买 NE101 HaLow 后发现： - 设备没有内置 PIR 传感器 - 产品页面提到 PIR 触发模式，但未明确标注需要外部传感器 - 密封外壳无线缆入口/格兰头，不知如何接外部 PIR 并保持防水 - 用途：电池供电的野生动物监控 trail camera",
+   "sanitized": "客户购买 NE101 HaLow 后发现： - 设备没有内置 PIR 传感器 - 产品页面提到 PIR 触发模式，但未明确标注需要外部传感器 - 密封外壳无线缆入口/格兰头，不知如何接外部 PIR 并保持防水 - 用途：电池供电的野生动物监控 trail camera"
+  },
+  {
+   "case_id": "sq-067",
+   "original": "客户 Daniel Gauthier (Flyrescon) 使用 NE300-MB01 开发板。已成功通过 3-pin Dupont 线将 WakeCore 刷入 STM32U0。使用 4-pin JST 适配线连接板上的 DEBUG header 尝试刷 STM32N6 时，ST-Link 检测到 device ID 为 0x486（STM32U0），而非 STM32N6。",
+   "sanitized": "客户使用 NE300-MB01 开发板。已成功通过 3-pin Dupont 线将 WakeCore 刷入 STM32U0。使用 4-pin JST 适配线连接板上的 DEBUG header 尝试刷 STM32N6 时，ST-Link 检测到 device ID 为 0x486（STM32U0），而非 STM32N6。"
+  },
+  {
+   "case_id": "sq-072",
+   "original": "Massimo 确认选择 Option A（自集成 ESP32），请求： 1. J12 扩展连接器 UART/GPIO/3.3V 引脚定义 2. NE301 侧 UART 发送检测结果的代码示例 3. 双向 UART 通信确认（NE301 发检测、收 ESP32 状态） 4. 原型 3 台（1 中央 + 2 用户），量产 3-10 台/安装",
+   "sanitized": "客户确认选择 Option A（自集成 ESP32），请求： 1. J12 扩展连接器 UART/GPIO/3.3V 引脚定义 2. NE301 侧 UART 发送检测结果的代码示例 3. 双向 UART 通信确认（NE301 发检测、收 ESP32 状态） 4. 原型 3 台（1 中央 + 2 用户），量产 3-10 台/安装"
+  },
+  {
+   "case_id": "sq-076",
+   "original": "客户 Zac Diener ([邮箱], eLock Technologies LLC, Berkeley CA) 报告： - Hologram dashboard 显示 SIM 状态为 \"connected\" - 相机显示 SIM 状态为 \"ready\"，网络状态为 \"disconnected\"",
+   "sanitized": "客户（美国加州，集成商）报告： - Hologram dashboard 显示 SIM 状态为 \"connected\" - 相机显示 SIM 状态为 \"ready\"，网络状态为 \"disconnected\""
+  },
+  {
+   "case_id": "sq-081",
+   "original": "客户 Ken Vowels（[邮箱]）询问 NE101 是否支持平台远程发起抓拍命令，用于设备测试和操作开始/结束读数。具体询问： 1. 是否支持通过 MQTT 或 HTTP API 发起远程抓拍 2. 相机休眠时能否立即接收命令，还是需要等下次唤醒",
+   "sanitized": "客户询问 NE101 是否支持平台远程发起抓拍命令，用于设备测试和操作开始/结束读数。具体询问： 1. 是否支持通过 MQTT 或 HTTP API 发起远程抓拍 2. 相机休眠时能否立即接收命令，还是需要等下次唤醒"
+  },
+  {
+   "case_id": "sq-085",
+   "original": "xaralampie 在 Discord 社区提问：上传自定义模型到 NE301，加载无报错但不生效。",
+   "sanitized": "某社区用户在 Discord 提问：上传自定义模型到 NE301，加载无报错但不生效。"
+  },
+  {
+   "case_id": "sq-087",
+   "original": "客户收到 Jade 的 NE301 测试跟进邮件后回复：尝试固件升级后设备完全丢失，无法开机。在官方社交渠道发帖求助无回应，对售后支持表示担忧。",
+   "sanitized": "客户收到 CamThink 的 NE301 测试跟进邮件后回复：尝试固件升级后设备完全丢失，无法开机。在官方社交渠道发帖求助无回应，对售后支持表示担忧。"
+  }
+ ]
+}
