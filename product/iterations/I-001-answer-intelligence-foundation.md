@@ -7,7 +7,7 @@ Durable semantic record for the current ASK-AI iteration. GitHub Project #2 owns
 | Iteration ID | I-001 |
 | Title | Answer Intelligence Foundation |
 | GitHub Project | harryhua-ai / Project #2 (`@harryhua-ai's ask-ai project`, PRIVATE) |
-| GitHub native Iteration | Custom field `Iteration` (native Projects Iteration type) → **I-001 — Answer Intelligence Foundation**, window **2026-09-07 → 2026-09-20** (14d) |
+| GitHub native Iteration | Custom field `Iteration` (native Projects Iteration type) → **I-001 — Answer Intelligence Foundation**, window **2026-09-07 → 2026-09-20** (14d) — applied to Project #2 on 2026-09-07 (iteration GitHub id `ea52c27c`) |
 | Last Reconciled | 2026-09-07 |
 
 ## Goal
@@ -59,10 +59,11 @@ Parent P0 initiative / evidence issue: harryhua-ai/ask-ai#32.
 
 1. Agent A authorization is the gate for every Frozen Implementation Contract (INC-2a/INC-3 next).
 2. Discovery must precede any contract for increments currently marked MORE_DISCOVERY in the engineering discovery report.
-3. **Bootstrap credential blocker (2026-09-07):** the local GitHub credential (gh keyring OAuth, shared by the GitHub MCP) holds `read:project` only — all Project v2 mutations (creating `Iteration` / `Type` / `Initiative` fields, classifying #32, adding #5/#19, adding INC items) were rejected with `INSUFFICIENT_SCOPES`. Remediation: `gh auth refresh -h github.com -s project` (interactive) or supply a token with the `project` scope, then re-run project reconciliation. Read-only verification passed (project PRIVATE; Status workflow's 5 values untouched; existing Priority/Size/Estimate/Start date/Target date fields preserved; #32/#33/#34 already present as Backlog items; zero mutations performed).
+3. ~~Bootstrap credential blocker~~ **RESOLVED 2026-09-07.** The `project` scope was granted via `gh auth refresh` (device flow) and the full reconciliation was applied same-day via `gh`/GraphQL (the running GitHub MCP server process kept its stale pre-refresh token, so it was used for read-back verification only). Applied state: fields `Iteration` (native, I-001 `ea52c27c`) / `Initiative` / `Work Type` created; #32 → In progress / P0 / I-001 / Answer Intelligence / Work Type=Initiative; #5 + #19 added as Done / Answer Intelligence (no iteration); 8 INC draft items created (INC-1 Ready + I-001; INC-2a + INC-3 Backlog + I-001; INC-2b, INC-4..7 Backlog, no iteration; all Answer Intelligence / Feature). INC items are Projects v2 draft items because no durable issues exist for the increments; if INC-1 later gets a real issue, convert the draft item and keep one operational item per increment.
 
 ## Governance notes
 
+- **Field naming deviation (platform-forced):** GitHub reserves the field name `Type` on Projects (built-in item-type column); GraphQL and REST both reject creation with "Name cannot have a reserved value". The contracted classification field was therefore created as **`Work Type`** with exactly the contracted option set (Initiative / Requirement / Gate / Discovery / Feature / Bug / Tech Debt). Semantics are unchanged; renaming display labels later is trivial, but the name can never be exactly `Type`.
 - Built-in Project workflows (Auto-add sub-issues, Auto-add to project, Auto-close issue, Item added, Item closed, PR linked, PR merged) must not be enabled/edited/deleted; their configuration is deferred to a separate Discovery/authorization gate.
 - This document lives in the internal docs repository (local-only, no remote). Commit = persistence.
 - Iteration window 2026-09-07 → 2026-09-20 chosen at reconciliation (starts on reconcile date; no velocity claims, no future iterations manufactured).
