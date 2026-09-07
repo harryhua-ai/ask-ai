@@ -53,6 +53,7 @@ from backend.pipeline.product_resolver import (
     ProductResolution,
     resolve_products,
 )
+from backend.llm import telemetry as tel
 from backend.pipeline.query_rewrite import extract_query, rewrite_query
 from backend.pipeline.social import match_social
 from backend.product_taxonomy import UNKNOWN_SLUG, get_taxonomy
@@ -663,6 +664,7 @@ class RAGOrchestrator:
             intent="smalltalk",
             trace_payload={
                 "type": "social_reply",
+                "llm_calls": tel.current_calls(),
                 "stages": {},
                 "total_ms": elapsed,
                 "intent": "smalltalk",
@@ -1188,6 +1190,7 @@ class RAGOrchestrator:
             Exception: searcher / llm 异常向上传播(由端点层处理)。
         """
         start = time.monotonic()
+        tel.start_capture()  # INC-1:请求级 LLM 调用遥测(仅元数据)
         detected_language = detect_language(query)
         language = resolve_answer_language(query, language_hint)
         stages: dict[str, Any] = {
@@ -1198,6 +1201,8 @@ class RAGOrchestrator:
         if self._override_matcher:
             override = await self._override_matcher.match(query)
             if override:
+                for _t in ("intent", "query_extraction", "query_rewrite", "pruning", "generation"):
+                    tel.record_skipped(_t, "override_short_circuit")
                 elapsed = int((time.monotonic() - start) * 1000)
                 return RAGAnswer(
                     answer=override.override_answer,
@@ -1221,6 +1226,8 @@ class RAGOrchestrator:
         elapsed = int((time.monotonic() - start) * 1000)
         social = self._social_answer(query, language, elapsed)
         if social is not None:
+            for _t in ("intent", "query_extraction", "query_rewrite", "pruning", "generation"):
+                tel.record_skipped(_t, "smalltalk_short_circuit")
             return social
 
         # Issue #5 产品边界(契约 §2):目标解析在意图分类之前 —— 澄清/不支持
@@ -1238,6 +1245,8 @@ class RAGOrchestrator:
             stages["product_scope"] = product_scope_stage
         if resolution.mode == MODE_AMBIGUOUS or resolution.mode == MODE_UNSUPPORTED:
             elapsed = int((time.monotonic() - start) * 1000)
+            for _t in ("intent", "query_extraction", "query_rewrite", "pruning", "generation"):
+                tel.record_skipped(_t, "product_boundary_short_circuit")
             if resolution.mode == MODE_AMBIGUOUS:
                 boundary_answer = localized_message(PRODUCT_AMBIGUOUS_KEY, language)
                 result_key = PRODUCT_AMBIGUOUS_KEY
@@ -1256,6 +1265,7 @@ class RAGOrchestrator:
                 intent="product",
                 trace_payload={
                     "type": trace_type,
+                    "llm_calls": tel.current_calls(),
                     "stages": stages,
                     "total_ms": elapsed,
                     "intent": "product",
@@ -1273,6 +1283,8 @@ class RAGOrchestrator:
         }
         if intent.category == "off_topic" and not (lead_ctx and lead_ctx.capture_mode):
             elapsed = int((time.monotonic() - start) * 1000)
+            for _t in ("query_extraction", "query_rewrite", "pruning", "generation"):
+                tel.record_skipped(_t, "off_topic_short_circuit")
             return RAGAnswer(
                 answer=_off_topic_reply(language),
                 sources=[],
@@ -1283,6 +1295,7 @@ class RAGOrchestrator:
                 intent=intent.category,
                 trace_payload={
                     "type": "reject_short",
+                    "llm_calls": tel.current_calls(),
                     "stages": stages,
                     "total_ms": elapsed,
                     "intent": intent.category,
@@ -1302,11 +1315,16 @@ class RAGOrchestrator:
                 1 if intent.category in ("product", "support", "commercial") else self._min_results
             )
 
-        t_rewrite = time.monotonic()
+        t_extract = time.monotonic()
         extracted = await extract_query(query, self._llm)
+        extract_ms = int((time.monotonic() - t_extract) * 1000)
+        t_rewrite = time.monotonic()
         search_query = await rewrite_query(extracted, conversation_history, self._llm)
+        rewrite_ms = int((time.monotonic() - t_rewrite) * 1000)
         stages["rewrite"] = {
-            "ms": int((time.monotonic() - t_rewrite) * 1000),
+            "ms": extract_ms + rewrite_ms,
+            "extract_ms": extract_ms,
+            "rewrite_ms": rewrite_ms,
             "extracted": extracted,
             "rewritten": search_query,
         }
@@ -1319,6 +1337,7 @@ class RAGOrchestrator:
         if resolution.mode == MODE_COMPARISON and scope_labels:
             # T-COMPARISON-EVIDENCE-CORRECTNESS:比较证据管线,与 stream_answer()
             # 共用同一抽象(parity)—— per-target 检索 + 分层配额 + 按目标聚焦重排。
+            prune_ms = None  # 比较路径使用按目标聚焦重排,无全局剪枝阶段
             fused, reranked, cmp_stage_info = await self._comparison_evidence_pipeline(
                 raw_query=query,
                 extracted=extracted,
@@ -1380,12 +1399,16 @@ class RAGOrchestrator:
                 "results": self._rerank_snippets(reranked),
             }
 
+        prune_ms: int | None = None
         if self._pruner and cmp_stage_info is None:
             # Rev3:比较路径的剪枝已在 _comparison_evidence_pipeline 内按
             # 目标聚焦语义逐侧执行(parity;整句全局评估不得清零单侧)。
+            _t_prune = time.monotonic()
             reranked = await self._pruner.prune(search_query, reranked)
+            prune_ms = int((time.monotonic() - _t_prune) * 1000)
             pruned_count = pre_prune_count - len(reranked)
             stages["rerank"]["pruned"] = pruned_count
+            stages["rerank"]["prune_ms"] = prune_ms
 
         # 防御性二次过滤(契约 §5 纵深):检索闸门在 Weaviate 侧;若闸门缺陷
         # 导致 sibling 泄漏进候选,此处强制出清(fused 一并过滤,兜底不可回流)。
@@ -1432,6 +1455,10 @@ class RAGOrchestrator:
             _missing = tuple(_t for _t, _c in _own_after.items() if _c == 0)
             if _missing:
                 elapsed = int((time.monotonic() - start) * 1000)
+                tel.record_skipped("pruning", "comparison_focus_rerank")
+                tel.record_skipped("generation", "comparison_evidence_insufficient")
+                tel.record_skipped("pruning", "comparison_focus_rerank")
+                tel.record_skipped("generation", "comparison_evidence_insufficient")
                 reject_text, reject_key = _comparison_insufficient_reply(
                     language, resolution, taxonomy, _missing
                 )
@@ -1445,6 +1472,7 @@ class RAGOrchestrator:
                     intent=intent.category,
                     trace_payload={
                         "type": "reject_short",
+                        "llm_calls": tel.current_calls(),
                         "stages": stages,
                         "total_ms": elapsed,
                         "intent": intent.category,
@@ -1467,6 +1495,11 @@ class RAGOrchestrator:
                 elapsed = int((time.monotonic() - start) * 1000)
                 # Issue #5 契约 §8/§14:目标产品在库但证据不足 → 产品化不足
                 # 语义(绝不借 sibling 顶替);无边界时保持既有 no_evidence。
+                tel.record_skipped(
+                    "pruning",
+                    "no_candidates" if not reranked else "below_min_threshold",
+                )
+                tel.record_skipped("generation", "insufficient_evidence_reject")
                 reject_text, reject_key = _product_insufficient_reply(
                     language, resolution, taxonomy
                 )
@@ -1480,6 +1513,7 @@ class RAGOrchestrator:
                     intent=intent.category,
                     trace_payload={
                         "type": "reject_short",
+                        "llm_calls": tel.current_calls(),
                         "stages": stages,
                         "total_ms": elapsed,
                         "intent": intent.category,
@@ -1531,6 +1565,7 @@ class RAGOrchestrator:
         stages["generate"] = {
             "ms": int((time.monotonic() - t_gen) * 1000),
             "latency_ms": getattr(llm_response, "latency_ms", None),
+            "tokens_input": getattr(llm_response, "tokens_input", None),
             "tokens_output": getattr(llm_response, "tokens_output", None),
         }
         # 引用终验(幂等):剔除悬空/无据/产品不合格标记,不改正文
@@ -1555,6 +1590,7 @@ class RAGOrchestrator:
             intent=intent.category,
             trace_payload={
                 "type": "rag",
+                "llm_calls": tel.current_calls(),
                 "stages": stages,
                 "total_ms": elapsed,
                 "intent": intent.category,
@@ -1603,6 +1639,7 @@ class RAGOrchestrator:
             Exception: searcher / llm 异常向上传播。
         """
         start = time.monotonic()
+        tel.start_capture()  # INC-1:请求级 LLM 调用遥测(仅元数据)
         detected_language = detect_language(query)
         language = resolve_answer_language(query, language_hint)
 
@@ -1610,6 +1647,15 @@ class RAGOrchestrator:
         if self._override_matcher:
             override = await self._override_matcher.match(query)
             if override:
+                for _t in (
+                    "intent",
+                    "query_extraction",
+                    "query_rewrite",
+                    "pruning",
+                    "generation",
+                    "lead_qualification",
+                ):
+                    tel.record_skipped(_t, "override_short_circuit")
                 sources = override.override_sources or []
                 yield json.dumps({"type": "sources", "sources": sources})
                 yield json.dumps({"type": "token", "content": override.override_answer})
@@ -1626,6 +1672,7 @@ class RAGOrchestrator:
                         "result_key": "override",
                         "trace_payload": {
                             "type": "override",
+                            "llm_calls": tel.current_calls(),
                             "stages": {},
                             "total_ms": elapsed,
                             "intent": "product",
@@ -1640,6 +1687,16 @@ class RAGOrchestrator:
         elapsed = int((time.monotonic() - start) * 1000)
         social = self._social_answer(query, language, elapsed)
         if social is not None:
+            for _t in (
+                "intent",
+                "query_extraction",
+                "query_rewrite",
+                "pruning",
+                "generation",
+                "lead_qualification",
+            ):
+                tel.record_skipped(_t, "smalltalk_short_circuit")
+            social.trace_payload["llm_calls"] = tel.current_calls()
             yield json.dumps(
                 {
                     "type": "complete",
@@ -1668,6 +1725,15 @@ class RAGOrchestrator:
         )
         if resolution.mode == MODE_AMBIGUOUS or resolution.mode == MODE_UNSUPPORTED:
             elapsed = int((time.monotonic() - start) * 1000)
+            for _t in (
+                "intent",
+                "query_extraction",
+                "query_rewrite",
+                "pruning",
+                "generation",
+                "lead_qualification",
+            ):
+                tel.record_skipped(_t, "product_boundary_short_circuit")
             if resolution.mode == MODE_AMBIGUOUS:
                 boundary_answer = localized_message(PRODUCT_AMBIGUOUS_KEY, language)
                 result_key = PRODUCT_AMBIGUOUS_KEY
@@ -1718,6 +1784,14 @@ class RAGOrchestrator:
         intent_ms = int((time.monotonic() - t_intent) * 1000)
         if not attachments and not capture_mode and intent.category == "off_topic":
             elapsed = int((time.monotonic() - start) * 1000)
+            for _t in (
+                "query_extraction",
+                "query_rewrite",
+                "pruning",
+                "generation",
+                "lead_qualification",
+            ):
+                tel.record_skipped(_t, "off_topic_short_circuit")
             yield json.dumps(
                 {
                     "type": "complete",
@@ -1730,6 +1804,7 @@ class RAGOrchestrator:
                     "result_key": "off_topic",
                     "trace_payload": {
                         "type": "reject_short",
+                        "llm_calls": tel.current_calls(),
                         "stages": {
                             "language": {
                                 "hint": language_hint,
@@ -1755,6 +1830,11 @@ class RAGOrchestrator:
         lead_qual_task: asyncio.Task | None = None
         if lead_ctx is not None and lead_ctx.should_qualify(intent.category):
             lead_qual_task = asyncio.create_task(self._run_qualifier(query, lead_ctx))
+        else:
+            tel.record_skipped(
+                "lead_qualification",
+                "no_lead_context" if lead_ctx is None else "qualify_gate_not_met",
+            )
 
         # 评审 C1 第二道门:有附件时 effective_min=0,即使检索为空也走生成(附件作 fallback)
         # Lead capture 轮同理 effective_min=0:联系方式确认不能被「无检索结果」拒答吞掉
@@ -1766,10 +1846,13 @@ class RAGOrchestrator:
                 1 if intent.category in ("product", "support", "commercial") else self._min_results
             )
 
-        t0 = time.monotonic()
+        t_extract = time.monotonic()
         extracted = await extract_query(query, self._llm)
+        extract_ms = int((time.monotonic() - t_extract) * 1000)
+        t_rewrite = time.monotonic()
         search_query = await rewrite_query(extracted, conversation_history, self._llm)
-        rewrite_ms = int((time.monotonic() - t0) * 1000)
+        rewrite_ms = int((time.monotonic() - t_rewrite) * 1000)
+        total_rewrite_ms = extract_ms + rewrite_ms
 
         # 统一检索 + 三路 RRF 融合(与 answer 共用 _retrieve_and_fuse,保证 parity)
         t1 = time.monotonic()
@@ -1814,11 +1897,14 @@ class RAGOrchestrator:
         # 提前声明以便拒答路径的 trace 引用保持 None → 不出现 page_boost 键)
         page_boost_stage: dict | None = None
 
+        prune_ms: int | None = None
         if self._pruner and cmp_stage_info is None:
             # Rev3:比较路径的剪枝已在 _comparison_evidence_pipeline 内
             # 按目标聚焦语义逐侧执行(与 answer parity);仅非比较路径走
             # 全局剪枝。
+            _t_prune = time.monotonic()
             reranked = await self._pruner.prune(query, reranked)
+            prune_ms = int((time.monotonic() - _t_prune) * 1000)
             pruned_count = pre_prune_count - len(reranked)
 
         # 防御性二次过滤(契约 §5 纵深,先于兜底判定):检索闸门在 Weaviate 侧;
@@ -1851,6 +1937,7 @@ class RAGOrchestrator:
             "top_score": reranked[0].score if reranked else None,
             "count": len(reranked),
             "pruned": pruned_count,
+            "prune_ms": prune_ms,
             "results": self._rerank_snippets(reranked),
         }
         if cmp_stage_info is not None:
@@ -1916,6 +2003,7 @@ class RAGOrchestrator:
                         "result_key": reject_key,
                         "trace_payload": {
                             "type": "reject_short",
+                            "llm_calls": tel.current_calls(),
                             "stages": {
                                 "intent": {
                                     "ms": intent_ms,
@@ -1923,7 +2011,9 @@ class RAGOrchestrator:
                                     "reason": intent.reason,
                                 },
                                 "rewrite": {
-                                    "ms": rewrite_ms,
+                                    "ms": total_rewrite_ms,
+                                    "extract_ms": extract_ms,
+                                    "rewrite_ms": rewrite_ms,
                                     "extracted": extracted,
                                     "rewritten": search_query,
                                 },
@@ -1976,6 +2066,11 @@ class RAGOrchestrator:
                 elapsed = int((time.monotonic() - start) * 1000)
                 # Issue #5 契约 §8/§14:目标产品在库但证据不足 → 产品化不足
                 # 语义(绝不借 sibling 顶替);无边界时保持既有 no_evidence。
+                tel.record_skipped(
+                    "pruning",
+                    "no_candidates" if not reranked else "below_min_threshold",
+                )
+                tel.record_skipped("generation", "insufficient_evidence_reject")
                 reject_text, reject_key = _product_insufficient_reply(
                     language, resolution, taxonomy
                 )
@@ -1991,6 +2086,7 @@ class RAGOrchestrator:
                         "result_key": reject_key,
                         "trace_payload": {
                             "type": "reject_short",
+                            "llm_calls": tel.current_calls(),
                             "stages": {
                                 "intent": {
                                     "ms": intent_ms,
@@ -1998,7 +2094,9 @@ class RAGOrchestrator:
                                     "reason": intent.reason,
                                 },
                                 "rewrite": {
-                                    "ms": rewrite_ms,
+                                    "ms": total_rewrite_ms,
+                                    "extract_ms": extract_ms,
+                                    "rewrite_ms": rewrite_ms,
                                     "extracted": extracted,
                                     "rewritten": search_query,
                                 },
@@ -2018,6 +2116,7 @@ class RAGOrchestrator:
                                     "top_score": reranked[0].score if reranked else None,
                                     "count": len(reranked),
                                     "pruned": pruned_count,
+                                    "prune_ms": prune_ms,
                                     "results": self._rerank_snippets(reranked),
                                 },
                                 **(
@@ -2125,6 +2224,7 @@ class RAGOrchestrator:
         full_answer = ""
         t3 = time.monotonic()
         first_token_ms: int | None = None
+        _gen_usage: dict = {}
         # Issue #23(QW-2 候选):generation 禁用思考 —— 准入以
         # FASTER × NOT LESS CORRECT 评估门为准(见执行报告 §6)。
         async for chunk in self._llm.stream(messages, task="generation", thinking="disabled"):
@@ -2134,6 +2234,15 @@ class RAGOrchestrator:
             if out:
                 full_answer += out
                 yield json.dumps({"type": "token", "content": out})
+        _gen_event = next(
+            (
+                e
+                for e in reversed(tel.current_calls())
+                if e.get("task") == "generation" and e.get("success")
+            ),
+            {},
+        )
+        _gen_usage = {k: _gen_event.get(k) for k in ("tokens_input", "tokens_output")}
         out = citation_filter.finish()
         if out:
             full_answer += out
@@ -2276,6 +2385,7 @@ class RAGOrchestrator:
                 },
                 "trace_payload": {
                     "type": "rag",
+                    "llm_calls": tel.current_calls(),
                     "stages": {
                         "language": {
                             "hint": language_hint,
@@ -2288,7 +2398,9 @@ class RAGOrchestrator:
                             "reason": intent.reason,
                         },
                         "rewrite": {
-                            "ms": rewrite_ms,
+                            "ms": total_rewrite_ms,
+                            "extract_ms": extract_ms,
+                            "rewrite_ms": rewrite_ms,
                             "extracted": extracted,
                             "rewritten": search_query,
                         },
@@ -2308,6 +2420,7 @@ class RAGOrchestrator:
                             "top_score": reranked[0].score if reranked else None,
                             "count": len(reranked),
                             "pruned": pruned_count,
+                            "prune_ms": prune_ms,
                             "results": self._rerank_snippets(reranked),
                             **(
                                 {
@@ -2327,7 +2440,11 @@ class RAGOrchestrator:
                         "generate": {
                             "ms": llm_ms,
                             "ttft_ms": first_token_ms,
-                            "tokens_output": len(full_answer),
+                            # INC-1 修正:tokens_output = provider 实际用量
+                            # (原缺陷误记字符数);字符数另存 answer_chars。
+                            "tokens_input": _gen_usage.get("tokens_input"),
+                            "tokens_output": _gen_usage.get("tokens_output"),
+                            "answer_chars": len(full_answer),
                             "thinking_mode": "disabled",
                         },
                         "output": {"ms": 0, "sources_count": len(sources)},

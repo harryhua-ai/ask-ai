@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 
+from backend.llm import telemetry
 from backend.llm.base import LLMResponse
 from backend.llm.registry import LLMRegistry
 
@@ -79,6 +80,11 @@ class DeepseekProvider:
             payload["thinking"] = {"type": "disabled"}
         return payload
 
+    @property
+    def default_model(self) -> str:
+        """供应商配置的默认模型(路由链未钉住 model 时的解析结果)。"""
+        return self._model
+
     async def generate(self, messages: list[dict], **kwargs) -> LLMResponse:
         """调用非流式 /chat/completions 并返回 LLMResponse。
 
@@ -146,8 +152,24 @@ class DeepseekProvider:
         max_attempts = 2
         last_exc: Exception | None = None
         produced = False  # 本次 attempt 是否已向调用方 yield 过 token
+        # INC-1 可观测:请求 provider 报告流式 usage(DeepSeek 兼容端点在最后一个
+        # usage chunk 中返回;该 chunk 无 choices、无内容,不会进答案流)。
+        # 兼容性:个别 OpenAI 兼容端点不认 stream_options 会 400 —— 此时降级为
+        # 不带 stream_options 重发一次(发生在首个 chunk 之前,无重复输出)。
+        include_usage = True
         for attempt in range(max_attempts):
             produced = False  # 每次尝试重置:只看"本次是否已产出"
+            payload = self._apply_thinking(
+                {
+                    "model": kwargs.get("model", self._model),
+                    "messages": messages,
+                    "max_tokens": kwargs.get("max_tokens", self._max_tokens),
+                    "temperature": kwargs.get("temperature", self._temperature),
+                    "stream": True,
+                    **({"stream_options": {"include_usage": True}} if include_usage else {}),
+                },
+                kwargs,
+            )
             try:
                 async with (
                     httpx.AsyncClient(timeout=120) as client,
@@ -155,27 +177,39 @@ class DeepseekProvider:
                         "POST",
                         f"{self._api_base}/chat/completions",
                         headers=self._auth_headers(),
-                        json=self._apply_thinking(
-                            {
-                                "model": kwargs.get("model", self._model),
-                                "messages": messages,
-                                "max_tokens": kwargs.get("max_tokens", self._max_tokens),
-                                "temperature": kwargs.get("temperature", self._temperature),
-                                "stream": True,
-                            },
-                            kwargs,
-                        ),
+                        json=payload,
                     ) as resp,
                 ):
                     resp.raise_for_status()
                     async for line in resp.aiter_lines():
                         if line.startswith("data: ") and line != "data: [DONE]":
                             chunk = json.loads(line[6:])
-                            delta = chunk["choices"][0].get("delta", {})
+                            usage = chunk.get("usage")
+                            if usage:
+                                telemetry.record_stream_usage(
+                                    usage.get("prompt_tokens"),
+                                    usage.get("completion_tokens"),
+                                )
+                                continue
+                            choices = chunk.get("choices") or []
+                            if not choices:
+                                continue
+                            delta = choices[0].get("delta", {})
                             if content := delta.get("content"):
                                 produced = True
                                 yield content
                 return
+            except httpx.HTTPStatusError as exc:
+                # 端点不认 stream_options → 400:去掉该选项在首 chunk 前重发,
+                # 不消耗瞬时重试预算(与既有 _RETRYABLE_EXC 语义互不影响)。
+                if include_usage and exc.response.status_code == 400 and not produced:
+                    include_usage = False
+                    logger.warning(
+                        "deepseek stream: stream_options rejected (400), "
+                        "retrying without include_usage"
+                    )
+                    continue
+                raise
             except _RETRYABLE_EXC as exc:
                 # 已产出 token 后的 ReadTimeout:重试会重复输出,直接抛
                 # (Q32/Q50 生成中途超时走这里,由上层 SSE 降级处理)
