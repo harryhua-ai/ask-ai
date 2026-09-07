@@ -20,7 +20,6 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "toolchain",
     "dataset_format"
@@ -28,7 +27,10 @@
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-002",
@@ -46,14 +48,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "toolchain"
    ],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-003",
@@ -71,7 +75,6 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "toolchain",
     "customer_session"
@@ -79,7 +82,10 @@
    "duplicate_similarity_notes": "客户会议诉求需剥离",
    "marking_contract_candidate": "MQTT broker端口/配置要点",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-004",
@@ -97,12 +103,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "12V禁用;耐压~7V;5V/1A USB-C",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-005",
@@ -120,7 +128,6 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "firmware",
     "hw_version"
@@ -128,7 +135,10 @@
    "duplicate_similarity_notes": "近似重复:{#005,#017}",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-006",
@@ -146,12 +156,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "CEREG=3=注网被拒;APN/运营商匹配",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-007",
@@ -169,12 +181,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "近似重复:{#007,#008}",
    "marking_contract_candidate": "CONFIG模式跳过补光灯=设计",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-008",
@@ -191,13 +205,15 @@
    "truth_stability": "stable",
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "近似重复:{#007,#008};两问需拆",
    "marking_contract_candidate": "按键vs定时调用链差异",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-009",
@@ -215,12 +231,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "DIP#2烧录模式+CubeProgrammer版本",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-010",
@@ -238,12 +256,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "出厂重置仅清设置不清固件",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-011",
@@ -260,15 +280,17 @@
    "truth_stability": "contextual",
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "customer_session"
    ],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "COCO person/umbrella能力+供电选项",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-012",
@@ -286,12 +308,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-013",
@@ -309,14 +333,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "security_sensitive"
    ],
    "duplicate_similarity_notes": "默认密码出现在期望答案,冻结前需安全评审",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-014",
@@ -334,14 +360,16 @@
    "uncertainty_required": "Y",
    "historical_expected_answer_status": "stale",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "released_vs_planned"
    ],
    "duplicate_similarity_notes": "不确定性核心案例:无火灾预训练模型",
    "marking_contract_candidate": "无火灾模型=如实;NG4500替代方向",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-015",
@@ -358,15 +386,17 @@
    "truth_stability": "snapshot_bound",
    "uncertainty_required": "N",
    "historical_expected_answer_status": "stale",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "customer_session"
    ],
    "duplicate_similarity_notes": "演示视频会话语境剥离",
    "marking_contract_candidate": "MLX90642=温度触发非热像仪",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-016",
@@ -384,14 +414,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "broken",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "crm_workflow"
    ],
    "duplicate_similarity_notes": "expected=『邮件已发出等待测试』非答案",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-017",
@@ -409,14 +441,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "firmware"
    ],
    "duplicate_similarity_notes": "近似重复:{#005,#017}",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-018",
@@ -434,14 +468,16 @@
    "uncertainty_required": "Y",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "uncertainty_core"
    ],
    "duplicate_similarity_notes": "不确定性:仅Morse网关实测,其他为理论兼容",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-019",
@@ -458,8 +494,7 @@
    "truth_stability": "contextual",
    "uncertainty_required": "Y",
    "historical_expected_answer_status": "partial",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "moq",
     "commercial"
@@ -467,7 +502,10 @@
    "duplicate_similarity_notes": "MOQ事实源内未决",
    "marking_contract_candidate": "太阳能方案+PIR外挂;MOQ不可虚构",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-020",
@@ -484,15 +522,17 @@
    "truth_stability": "contextual",
    "uncertainty_required": "N",
    "historical_expected_answer_status": "stale",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "sales_pitch"
    ],
    "duplicate_similarity_notes": "LinkedIn推销语境",
    "marking_contract_candidate": "NE101+NE301组合推荐",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-021",
@@ -510,12 +550,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "家族:{#021,#056,#089}(PIR)",
    "marking_contract_candidate": "NE101无内置PIR;4Pin接口+外挂",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-022",
@@ -533,14 +575,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "releases"
    ],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-023",
@@ -558,12 +602,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "定时采集/Base64/MQTT能力矩阵(源码验证)",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-024",
@@ -581,12 +627,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "HaLow与USB Camera共用SPI冲突",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-025",
@@ -604,7 +652,6 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "moq",
     "commercial"
@@ -612,7 +659,10 @@
    "duplicate_similarity_notes": "跨源重复:{#025,#106}",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-026",
@@ -630,7 +680,6 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "price",
     "certification",
@@ -639,7 +688,10 @@
    "duplicate_similarity_notes": "定价与#112($69)矛盾,需快照裁决",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-027",
@@ -657,12 +709,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "OV5640 120° DFOV;可选60°",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-028",
@@ -680,12 +734,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "断线补传机制(littlefs回放)",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-029",
@@ -702,15 +758,17 @@
    "truth_stability": "contextual",
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "device_sn_specific"
    ],
    "duplicate_similarity_notes": "SN/设备专属;方法论可迁移",
    "marking_contract_candidate": "电量计>6000mV卡100%机制",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-030",
@@ -727,8 +785,7 @@
    "truth_stability": "contextual",
    "uncertainty_required": "N",
    "historical_expected_answer_status": "stale",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "internal_strategy",
     "price"
@@ -736,7 +793,10 @@
    "duplicate_similarity_notes": "内部销售策略非答案",
    "marking_contract_candidate": "仓储能力事实可抽",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-031",
@@ -753,15 +813,17 @@
    "truth_stability": "contextual",
    "uncertainty_required": "Y",
    "historical_expected_answer_status": "stale",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "clarify_core"
    ],
    "duplicate_similarity_notes": "需求模糊引导=CLARIFY基准种子",
    "marking_contract_candidate": "#32 #26家族同型",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-032",
@@ -779,12 +841,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "J11引脚+USB HS不可重映射",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-033",
@@ -801,8 +865,7 @@
    "truth_stability": "contextual",
    "uncertainty_required": "N",
    "historical_expected_answer_status": "stale",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "moq",
     "customization"
@@ -810,7 +873,10 @@
    "duplicate_similarity_notes": "定制MOQ/费用未决",
    "marking_contract_candidate": "PIR固件支持/外壳无PIR位/IR需定制",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-034",
@@ -828,7 +894,6 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "software_availability",
     "model"
@@ -836,7 +901,10 @@
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-035",
@@ -853,15 +921,17 @@
    "truth_stability": "snapshot_bound",
    "uncertainty_required": "N",
    "historical_expected_answer_status": "stale",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "orientation"
    ],
    "duplicate_similarity_notes": "内部销售话术需重写为能力澄清",
    "marking_contract_candidate": "CamThink=成品产品公司非OEM定制",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-036",
@@ -879,14 +949,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "module_lineup"
    ],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-037",
@@ -904,12 +976,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "DCMIPP 3 pipe+4 VC(源码验证)",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-038",
@@ -927,12 +1001,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "无内置计数线;server端tracking",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-039",
@@ -950,14 +1026,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "product_config"
    ],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-040",
@@ -975,14 +1053,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "snapshot_demo"
    ],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-041",
@@ -1000,14 +1080,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "specs"
    ],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-042",
@@ -1025,12 +1107,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "HTTP REST capture+协议边界(无Modbus)",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-043",
@@ -1048,14 +1132,16 @@
    "uncertainty_required": "Y",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "uncertainty_core"
    ],
    "duplicate_similarity_notes": "BMeters兼容为推断非实测",
    "marking_contract_candidate": "RS485/UART有;M-Bus/Modbus无原生",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-044",
@@ -1073,12 +1159,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-045",
@@ -1096,14 +1184,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "multi_part"
    ],
    "duplicate_similarity_notes": "三问混合,电池已耗尽无法取日志",
    "marking_contract_candidate": "续航基准(WiFi 2.1年/Cat-1 1.1年)",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-046",
@@ -1121,14 +1211,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "privacy"
    ],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-047",
@@ -1146,14 +1238,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "model_capacity"
    ],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-048",
@@ -1171,14 +1265,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "released_vs_planned"
    ],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-049",
@@ -1196,14 +1292,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "stale",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "customer_session"
    ],
    "duplicate_similarity_notes": "会约语境",
    "marking_contract_candidate": "NE503 20TOPS+5-6W对比两层方案",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-050",
@@ -1221,14 +1319,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "released_vs_planned"
    ],
    "duplicate_similarity_notes": "未发布样品,能力以快照为准",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-051",
@@ -1246,7 +1346,6 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "model_lineup",
     "certification"
@@ -1254,7 +1353,10 @@
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-052",
@@ -1272,14 +1374,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "wrong_task",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "internal_pricing_review"
    ],
    "duplicate_similarity_notes": "内部报价审核非知识",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-053",
@@ -1297,14 +1401,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "third_party_module"
    ],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "ESP32 vs S3接口差异+PSRAM",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-054",
@@ -1321,15 +1427,17 @@
    "truth_stability": "contextual",
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "scenario_dependent"
    ],
    "duplicate_similarity_notes": "三场景决策树=推荐标记契约",
    "marking_contract_candidate": "按现有IPC能力分级推荐",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-055",
@@ -1347,14 +1455,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "model_lineup"
    ],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-056",
@@ -1372,12 +1482,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "家族:{#021,#056,#089};产品页vs实际差异注",
    "marking_contract_candidate": "4-pin PIR引脚+NP624M-F推荐",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-057",
@@ -1395,12 +1507,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "APSTA路由+休眠断连=设计",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-058",
@@ -1418,12 +1532,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "无LoRaWAN;WiFi/Cat-1/HaLow选型",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-059",
@@ -1441,12 +1557,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "OV5640帧不更新+双路发送机制",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-060",
@@ -1464,14 +1582,16 @@
    "uncertainty_required": "Y",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "uncertainty_core"
    ],
    "duplicate_similarity_notes": "仅Morse实测;Blue Iris集成未测",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-061",
@@ -1489,14 +1609,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "board_lineup"
    ],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-062",
@@ -1514,14 +1636,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "broken",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "crm_workflow"
    ],
    "duplicate_similarity_notes": "expected=『等待确认会议』非答案",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-063",
@@ -1538,15 +1662,17 @@
    "truth_stability": "contextual",
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "device_sn_specific"
    ],
    "duplicate_similarity_notes": "SN专属实测数据",
    "marking_contract_candidate": "分阶段电流表方法论",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-064",
@@ -1564,7 +1690,6 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "license",
     "product_config"
@@ -1572,7 +1697,10 @@
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-065",
@@ -1589,15 +1717,17 @@
    "truth_stability": "contextual",
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "customer_session"
    ],
    "duplicate_similarity_notes": "照片专属分析",
    "marking_contract_candidate": "满溢检测=填充高度识别方案",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-066",
@@ -1615,14 +1745,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "broken",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "no_answer_recorded"
    ],
    "duplicate_similarity_notes": "expected=『等待客户回复』=空答案",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-067",
@@ -1640,12 +1772,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "DIP#2复用SWD;device id判别",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-068",
@@ -1663,14 +1797,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "broken",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "no_answer_recorded"
    ],
    "duplicate_similarity_notes": "expected=『等待测试反馈』=空答案",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-069",
@@ -1688,12 +1824,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "症状匹配经验库两条=DIP+版本",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-070",
@@ -1710,15 +1848,17 @@
    "truth_stability": "snapshot_bound",
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "multi_part_umbrella"
    ],
    "duplicate_similarity_notes": "8问伞形需拆解;跨源重复:{#070,#088,#097}",
    "marking_contract_candidate": "DCMIPP双镜头可行性结论表",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-071",
@@ -1736,14 +1876,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "wrong_task",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "internal_commercial_scope"
    ],
    "duplicate_similarity_notes": "内部报价 posture;边界事实(Option2不含ESP32C3)可留档",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-072",
@@ -1761,12 +1903,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "J12引脚表+UART代码示例",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-073",
@@ -1784,14 +1928,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "contradiction_customer_vs_datasheet"
    ],
    "duplicate_similarity_notes": "客户认知与官网/datasheet矛盾=优质对比点",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-074",
@@ -1809,7 +1955,6 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "stale",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "customization",
     "commercial"
@@ -1817,7 +1962,10 @@
    "duplicate_similarity_notes": "定制可行性表;商业排期语境",
    "marking_contract_candidate": "可行/不支持(IR-Cut需新增)分界",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-075",
@@ -1835,14 +1983,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "model_lineup"
    ],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-076",
@@ -1860,12 +2010,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "SIM ready≠数据会话激活",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-077",
@@ -1883,14 +2035,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "released_vs_planned"
    ],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-078",
@@ -1907,15 +2061,17 @@
    "truth_stability": "snapshot_bound",
    "uncertainty_required": "N",
    "historical_expected_answer_status": "stale",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "misconception_correction"
    ],
    "duplicate_similarity_notes": "误解纠正=优质FACTUAL种子",
    "marking_contract_candidate": "无cloud URL;本地RTSP/ONVIF",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-079",
@@ -1933,12 +2089,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "隔离对照:{#079(NE301可)vs #081(NE101不可)}",
    "marking_contract_candidate": "MQTT cmd JSON触发拍照",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-080",
@@ -1956,7 +2114,6 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "firmware",
     "hw_version"
@@ -1964,7 +2121,10 @@
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-081",
@@ -1982,12 +2142,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "隔离对照:{#081 vs #079}",
    "marking_contract_candidate": "NE101架构不支持远程抓拍",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-082",
@@ -2005,14 +2167,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "firmware"
    ],
    "duplicate_similarity_notes": "跨源重复:{#082,#096}",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-083",
@@ -2029,15 +2193,17 @@
    "truth_stability": "contextual",
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "customer_session"
    ],
    "duplicate_similarity_notes": "会话日志专属",
    "marking_contract_candidate": "ECONNRESET=对端重置诊断法",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-084",
@@ -2055,14 +2221,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "hw_limits"
    ],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-085",
@@ -2080,12 +2248,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "上传须N6M1打包.bin非裸tflite",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-086",
@@ -2103,14 +2273,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "toolchain_version"
    ],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-087",
@@ -2128,12 +2300,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "A/B双槽回退机制",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-088",
@@ -2151,14 +2325,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "wrong_task",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "nre_quote"
    ],
    "duplicate_similarity_notes": "NRE/BOM内部报价;跨源重复:{#070,#088,#097}",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-089",
@@ -2176,12 +2352,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "家族:{#021,#056,#089}",
    "marking_contract_candidate": "NP624M-F串行协议;非3-pin通用PIR",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-090",
@@ -2198,15 +2376,17 @@
    "truth_stability": "snapshot_bound",
    "uncertainty_required": "N",
    "historical_expected_answer_status": "partial",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "multi_part_umbrella"
    ],
    "duplicate_similarity_notes": "12问伞形需拆解",
    "marking_contract_candidate": "keypoint-only MQTT路径等结论",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-091",
@@ -2223,8 +2403,7 @@
    "truth_stability": "stable",
    "uncertainty_required": "Y",
    "historical_expected_answer_status": "stale",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "uncertainty_core",
     "medical_boundary"
@@ -2232,7 +2411,10 @@
    "duplicate_similarity_notes": "医疗筛查边界=不确定性核心案例",
    "marking_contract_candidate": "32×24/±1.5°C不足以医疗结论",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-092",
@@ -2250,12 +2432,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "SW1拨码1=Recovery模式",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-093",
@@ -2273,7 +2457,6 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "stale",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "halow_region",
     "commercial"
@@ -2281,7 +2464,10 @@
    "duplicate_similarity_notes": "",
    "marking_contract_candidate": "HaLow区域可用性+DevKit组合",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-094",
@@ -2299,14 +2485,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "wrong_task",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "crm_account_record"
    ],
    "duplicate_similarity_notes": "销售侧客户档案;家族:{#094,#066}",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-095",
@@ -2324,14 +2512,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "wrong_task",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "crm_account_record"
    ],
    "duplicate_similarity_notes": "销售侧跟进日志表",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-096",
@@ -2349,14 +2539,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "wrong_task",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "crm_account_record"
    ],
    "duplicate_similarity_notes": "跨源重复:{#082,#096}",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-097",
@@ -2374,14 +2566,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "wrong_task",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "crm_account_record"
    ],
    "duplicate_similarity_notes": "跨源重复:{#070,#088,#097}",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-098",
@@ -2399,14 +2593,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "wrong_task",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "crm_account_record"
    ],
    "duplicate_similarity_notes": "en;销售侧客户档案",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-099",
@@ -2424,14 +2620,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "wrong_task",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "crm_account_record"
    ],
    "duplicate_similarity_notes": "销售侧客户档案",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-100",
@@ -2449,14 +2647,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "wrong_task",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "crm_account_record"
    ],
    "duplicate_similarity_notes": "销售侧客户档案",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-101",
@@ -2473,15 +2673,17 @@
    "truth_stability": "snapshot_bound",
    "uncertainty_required": "N",
    "historical_expected_answer_status": "stale",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "bacnet_boundary"
    ],
    "duplicate_similarity_notes": "模板化问句;边界事实有价值(无原生BACnet)",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-102",
@@ -2499,14 +2701,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "wrong_task",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "crm_account_record"
    ],
    "duplicate_similarity_notes": "en;销售侧客户记录",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-103",
@@ -2524,14 +2728,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "stale",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "platform_integration"
    ],
    "duplicate_similarity_notes": "模板化问句;EarthRanger/Gundi事实",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-104",
@@ -2548,8 +2754,7 @@
    "truth_stability": "snapshot_bound",
    "uncertainty_required": "Y",
    "historical_expected_answer_status": "stale",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [
     "uncertainty_core",
     "shutter_boundary"
@@ -2557,7 +2762,10 @@
    "duplicate_similarity_notes": "模板化问句;滚动vs全局快门边界+需确认客户栈",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-105",
@@ -2574,13 +2782,15 @@
    "truth_stability": "contextual",
    "uncertainty_required": "N",
    "historical_expected_answer_status": "stale",
-   "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
+   "current_fact_revalidation_required": "N",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "模板化问句",
    "marking_contract_candidate": "NE503前端+NG4500网关组合",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-106",
@@ -2598,14 +2808,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "wrong_task",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "crm_account_record"
    ],
    "duplicate_similarity_notes": "跨源重复:{#025,#106}(显式互链)",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-107",
@@ -2623,14 +2835,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "wrong_task",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "internal_meeting_prep"
    ],
    "duplicate_similarity_notes": "内部会议准备meta问题",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-108",
@@ -2648,12 +2862,14 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "stale",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [],
    "duplicate_similarity_notes": "模板化问句",
    "marking_contract_candidate": "NE503 20TOPS+Docker+SDK",
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-109",
@@ -2671,14 +2887,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "stale",
    "current_fact_revalidation_required": "Y",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "baa_taa_boundary"
    ],
    "duplicate_similarity_notes": "模板化问句;BAA/TAA边界有价值",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "Y"
   },
   {
    "case_id": "sq-110",
@@ -2696,14 +2914,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "wrong_task",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "crm_account_record"
    ],
    "duplicate_similarity_notes": "en;销售侧客户档案",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-111",
@@ -2721,14 +2941,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "wrong_task",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "crm_account_record"
    ],
    "duplicate_similarity_notes": "销售侧客户档案",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "sq-112",
@@ -2746,7 +2968,6 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "wrong_task",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "Y",
    "special_revalidation_flags": [
     "crm_account_record",
     "price"
@@ -2754,7 +2975,10 @@
    "duplicate_similarity_notes": "报价事实($69)与#026($59)矛盾;销售侧档案",
    "marking_contract_candidate": null,
    "expected_behavior": "answered",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "Y",
+   "source_snapshot_required": "Y",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "o001",
@@ -2772,14 +2996,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "N",
    "special_revalidation_flags": [
     "seed"
    ],
    "duplicate_similarity_notes": "seed题库;拒答契约",
    "marking_contract_candidate": "拒答边界",
    "expected_behavior": "rejected",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "N",
+   "source_snapshot_required": "N",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "o002",
@@ -2797,14 +3023,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "N",
    "special_revalidation_flags": [
     "seed"
    ],
    "duplicate_similarity_notes": "seed题库",
    "marking_contract_candidate": "拒答边界",
    "expected_behavior": "rejected",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "N",
+   "source_snapshot_required": "N",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "o003",
@@ -2822,14 +3050,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "N",
    "special_revalidation_flags": [
     "seed"
    ],
    "duplicate_similarity_notes": "seed题库",
    "marking_contract_candidate": "拒答边界",
    "expected_behavior": "rejected",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "N",
+   "source_snapshot_required": "N",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "o004",
@@ -2847,14 +3077,16 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "N",
    "special_revalidation_flags": [
     "seed"
    ],
    "duplicate_similarity_notes": "中文拒答话术",
    "marking_contract_candidate": "中文拒答边界",
    "expected_behavior": "rejected",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "N",
+   "source_snapshot_required": "N",
+   "source_truth_revalidation_required": "N"
   },
   {
    "case_id": "x001",
@@ -2872,7 +3104,6 @@
    "uncertainty_required": "N",
    "historical_expected_answer_status": "usable",
    "current_fact_revalidation_required": "N",
-   "source_revalidation_required": "N",
    "special_revalidation_flags": [
     "seed",
     "security_sensitive"
@@ -2880,7 +3111,27 @@
    "duplicate_similarity_notes": "prompt injection防护契约",
    "marking_contract_candidate": "不泄露system prompt",
    "expected_behavior": "rejected",
-   "corpus_version": "2.1"
+   "corpus_version": "2.1",
+   "source_resolvable": "N",
+   "source_snapshot_required": "N",
+   "source_truth_revalidation_required": "N"
   }
- ]
+ ],
+ "discovery_revision": "REV1(Planner PARTIAL 修正已应用:复核语义三项拆分/不确定性表述/重复组拆分/#30 非前置/英文获取顺序)",
+ "counts": {
+  "A": 35,
+  "B": 32,
+  "C": 30,
+  "D": 20,
+  "NEEDS_REVIEW": 0,
+  "FACT_REVALIDATION": 41,
+  "MARKING_CONTRACT_REWRITE": 30,
+  "SOURCE_RESOLVABLE": 112,
+  "SOURCE_SNAPSHOT_REQUIRED": 112,
+  "SOURCE_TRUTH_REVALIDATION": 41,
+  "UNCERTAINTY": 8,
+  "DUPLICATE_OR_NEAR_DUPLICATE_GROUPS": 5,
+  "CONTRAST_OR_PRODUCT_ISOLATION_PAIRS": 1,
+  "ACTIVE_ENGLISH_HISTORICAL": 0
+ }
 }

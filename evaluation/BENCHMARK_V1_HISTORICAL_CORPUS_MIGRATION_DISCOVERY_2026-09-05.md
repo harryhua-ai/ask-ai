@@ -1,7 +1,7 @@
 # ASK-AI Answer Intelligence Benchmark v1 — 历史语料迁移 Discovery
 
 > **性质**:DISCOVERY ONLY / READ ONLY(对应 GitHub Issue #32;无任何生产/知识源/Answer Engine 变更)
-> **日期**:2026-09-05 · **执行**:Executor(产品窗口授权)· **状态**:DISCOVERY PASS
+> **日期**:2026-09-05 · **执行**:Executor(产品窗口授权)· **状态**:DISCOVERY PASS · **REV1**:Planner PARTIAL 修正已应用(复核语义三项拆分/不确定性=UNDERREPRESENTED 表述、15–20% 仅为参考证据/重复组 5+对照对 1/#30 非前置/英文获取顺序;A/B/C/D 分类零改动)
 
 ## 1. 语料来源与 provenance
 
@@ -13,6 +13,7 @@
 | 构建 provenance | 文件内 description:『从 support + sales 知识库梳理的真实客户问题库…expected_answer 由 build_question_bank.py 提取 + support skill』;`generated_from: support/ + sales/` |
 | 源可解析性 | 112/117 含 `source_file`,**全部**在 Knowledge 仓 `support/`、`sales/` 下解析成功(MISSING=0);5 题为 off_topic seed(无源文件) |
 | 历史评测快照 | `optimize/results/` 6 个快照(2026-08-07~08-11);其中 2026-08-11T10-25 与 T13-30 两份为 **117 题全量**运行;快照为评测输出而非语料分叉,未见其他 117 题版本文件 |
+| 源语义拆分 | source_resolvable=112(引用全部可解析=provenance/完整性证据);source_snapshot_required=112(冻结时随语料版本化快照);**source_truth_revalidation_required=41**(期望事实确需人工对源复核:全部 B 32 + C 中现势真值快照敏感的 9 题) |
 | 活索引 | `support/TS_record.md` 为支持案例活索引(日期/客户/产品/状态),与语料 source_file 一一对应;注意索引中相当部分案例状态为「待确认」 |
 
 **版本歧义结论**:仅存在一个 117 题语料文件(v2.1),未发现分叉版本;results/ 快照内嵌题目为其运行时副本,不构成第二语料。无合并动作。
@@ -37,19 +38,21 @@
 | OFF_TOPIC | 5 | COMPARE | 3 |
 | CLARIFY | 1 | ORIENT | 1 |
 
-FOLLOW_UP=0、ABSTAIN(证据不足型拒答)=0、COMPARE 仅 3——与 Issue #32 覆盖契约相比,历史语料天然缺失这些家族,须由生产种子(#26–#31)与补齐合成填充。
+FOLLOW_UP=0、ABSTAIN(证据不足型拒答)=0、COMPARE 仅 3——这些家族在历史语料中缺席;获取顺序=真实生产证据 → 既有 TS_record/support/sales/对话证据 → 仅对剩余有意义缺口做合成。
 
 ## 4. 语言 / 真值稳定性分布
 
-- 语言:zh=110,en=7。**7 个英文案例全部是 D(销售档案)或 off_topic seed——A/B/C 活跃集中英文表征为零**,EN/ZH parity(原则 9)须由新案例补齐,历史语料无法提供。
+- 语言:zh=110,en=7。**迁移后活跃历史语料的可用英文 A/B/C 表征 = 0**(7 个英文案例 = 5 个 off_topic/注入 seed + 2 个 D 档案;5 个英文 seed 拒答契约本身可用,但承载知识的英文案例为零)。EN/ZH parity(原则 9)的获取顺序:**真实生产证据 → 既有 TS_record/support/sales/对话证据 → 仅对剩余有意义缺口做合成**;不预设必须立即合成英文案例。
 - 真值稳定性:stable=37,snapshot_bound=46,contextual=34。
 
-## 5. 复核需求计数
+## 5. 复核需求计数(REV1 语义拆分)
 
-- 需事实复核(current_fact_revalidation):**62**(全部 B+C)
-- 需源快照复核(source_revalidation):**112**(凡引用源文件的案例,冻结时一并版本化快照)
-- 天然不确定性案例(uncertainty):**8** → #14(无火灾模型)、#18/#60(HaLow 网关兼容=实测 vs 理论)、#19(MOQ 未决)、#31(需求模糊须澄清)、#43(BMeters 兼容=推断)、#91(医疗筛查边界)、#104(滚筒/全局快门+待确认)——**仅 6.8%**,远低于 Issue #32 的 15–20% 目标,缺口需补齐。
-- 需标记契约重写:**30**(全部 C)
+- **FACT_REVALIDATION_COUNT = 41**:按逐题 `current_fact_revalidation_required` 重算 —— 全部 B 32 题(快照/发布物敏感)+ C 中底层**现势真值**确实会变的 9 题(#003 工具链配置、#014 模型名录、#045 续航基线、#049 NE503 规格、#074 可行性清单、#093 HaLow 区域、#103 集成状态、#108 NE503 SDK、#109 制造/合规状态)。C 其余 21 题的底层事实稳定,仅需标记契约重写,不需要现势事实复核。
+- **MARKING_CONTRACT_REWRITE_COUNT = 30**(全部 C)。
+- **SOURCE_RESOLVABLE_COUNT = 112**:全部 source_file 引用可解析 —— 这是 provenance/完整性证据,本身不等于需要人工源复核。
+- **SOURCE_SNAPSHOT_REQUIRED_COUNT = 112**:冻结时随语料一并做版本化源快照(原则 8,只读机制)。
+- **SOURCE_TRUTH_REVALIDATION_COUNT = 41**:期望事实确需人工对源复核的案例(= B 32 + 上述 C 9;复核依据即各自 source_file 快照)。
+- **UNCERTAINTY_CASE_COUNT = 8**(#14/#18/#19/#31/#43/#60/#91/#104):8/117 历史案例当前行使已识别的不确定性语义 → **UNDERREPRESENTED**:intentionally-undocumented(故意无文档)与证据不足拒答家族整体缺席。8/117 仅陈述现状;Issue #32 的 15–20% 是方法论参考证据(外部 benchmark 佐证),**不是冻结的基准配额**。
 
 ## 6. 重复 / 近似重复组
 
@@ -60,7 +63,7 @@ FOLLOW_UP=0、ABSTAIN(证据不足型拒答)=0、COMPARE 仅 3——与 Issue #3
 | 3 | #025/#106 | Lightbox 建筑监控,sales 显式互链 support 案例 |
 | 4 | #082/#096 | Ken Vowels Webhook PUSH FAIL,sales 复制 support |
 | 5 | #070/#088/#097 | Maloric 线程(support 8 问/scope 报价/sales 档案) |
-| 6 | #079/#081 | 非重复但构成**产品隔离对照对**(NE301 可远程触发 vs NE101 不可) |
+**对比/产品隔离对照对(不计入重复):1 组** —— #079(NE301 支持 MQTT 远程触发拍照)vs #081(NE101 架构不支持远程抓拍):刻意互补的产品隔离对照,证据支持其高价值保留。
 
 相关家族(非重复,建议冻结时同族抽检):#021/#056/#089(PIR)、#016/#029/#062/#063(PwC)、#011/#012/#046(Kajima)、#094/#066(Eco-Counter)。
 
@@ -255,10 +258,10 @@ FOLLOW_UP=0、ABSTAIN(证据不足型拒答)=0、COMPARE 仅 3——与 Issue #3
 
 ## 10. 迁移后推荐活跃历史基准集(不冻结 v1)
 
-- **推荐活跃集 = A+B+C = 97 题**(A 35 直接可用;B 32 复核后可用;C 30 重写后可用)——前提是完成 62 项事实复核与 30 项标记契约重写。
+- **推荐活跃集 = A+B+C = 97 题**(A 35 直接可用;B 32 复核后可用;C 30 重写后可用)——前提是完成 **41 项事实复核**(语义见 §5)与 **30 项标记契约重写**。
 - 轻量先行子集:**A+B = 67 题**(B 完成复核即可进入)。
 - 剔除 20 题 D(销售档案 14、内部商务/报价/会议 4、空答案 2);其中 #014/#030/#035/#052/#071/#088/#104 等 D/C 的**底层事实已被其他活跃案例或源文件覆盖**,无覆盖损失。
-- 对照 Issue #32 覆盖契约的缺口(需新案例填充,历史语料不提供):FOLLOW_UP(0)、证据不足型 ABSTAIN(0)、COMPARE 仅 3、英文 A/B/C=0、不确定性仅 8(目标 ≈15–20%)。
+- 对照 Issue #32 覆盖契约的缺口(历史语料不提供,需按获取顺序补位):FOLLOW_UP(0)、证据不足型 ABSTAIN(0)、COMPARE 仅 3、承载知识的英文案例=0、不确定性 8/117=UNDERREPRESENTED。
 - 强烈建议纳入的既有生产回归家族(与历史语料合并成 v1):产品隔离/对比正确性(tests/pipeline/test_issue19_comparison.py、test_product_boundary_*、test_product_resolver.py 已有契约)+ 种子 #26–#31。
 
 ## 11. 冻结 v1 前仍需的证据
@@ -266,10 +269,10 @@ FOLLOW_UP=0、ABSTAIN(证据不足型拒答)=0、COMPARE 仅 3——与 Issue #3
 1. B 组 32 题逐题对**版本化源快照**复核(尤其 price/certification/firmware/NE503 未发布能力);
 2. 30 题 C 组标记契约重写(每题产出 required/prohibited facts,不写散文金标);
 3. #026 vs #112 定价矛盾由 Store/官方快照裁决;#013 默认凭据事实的安全评审;
-4. 不确定性案例补齐至 15–20%(生产真实问句优先,候选源:生产对话/支持未决案例);
-5. 英文表征案例构造(优先把高价值中文 A 题做英文等价,而非直译);
+4. 不确定性家族补强:当前 8/117 属 UNDERREPRESENTED(缺 intentionally-undocumented 与证据不足拒答家族);获取顺序=生产真实问句 → TS_record/support/sales/对话 → 剩余缺口合成;15–20% 为参考证据而非配额;
+5. 英文表征获取(按顺序:真实生产英文证据 → 既有 support/sales/对话英文证据 → 仅剩余缺口合成);
 6. FOLLOW_UP/ABSTAIN/COMPARE 家族补充(生产种子 #26–#31 已给 5 例);
-7. 语料快照与知识源快照的版本化机制冻结(原则 8)——需先落 #30 观测底座判断证据可达性。
+7. 语料/知识源快照的版本化与可复现锚定(原则 8):可采用语料版本号、仓库 commit/SHA、源快照标识符、时间戳等**只读 provenance 机制**实现,不依赖任何未授权实现;Issue #30 若未来落地可改进生产知识可观测性,但**不是 Benchmark v1 Freeze 的前置条件**(除非新证据证明相反)。
 
 ## 12. 边界声明
 
