@@ -810,7 +810,30 @@ class RAGOrchestrator:
         # P0 PC-01:生成前按源最新可见性配置复核(纵深守卫)。
         # 主防线 = 三路检索的 chunk 级 channel_visibility 过滤;守卫拦截
         # chunk 元数据滞后/缺失(迁移未跑完、幽灵 chunk)的残余泄漏。
-        return await self._apply_visibility_guard(fused, channel), path_counts
+        fused = await self._apply_visibility_guard(fused, channel)
+
+        # INC-1 血统修订:融合候选有序身份表(仅元数据,零内容)。
+        # 身份键 (source_id, chunk_index) 全链路稳定;paths 记录各召回路成员;
+        # rank/score 为融合后位次与 RRF 融合分。
+        path_of: dict[tuple[str, int], list[str]] = {}
+        for _pname, _plist in (
+            ("hybrid", results),
+            ("symbol", symbol_results),
+            ("boost", bucket_results),
+        ):
+            for _r in _plist:
+                path_of.setdefault((_r.source_id, _r.chunk_index), []).append(_pname)
+        candidates = [
+            {
+                "rank": i + 1,
+                "source_id": r.source_id,
+                "chunk_index": r.chunk_index,
+                "score": round(r.score, 6),
+                "paths": path_of.get((r.source_id, r.chunk_index), []),
+            }
+            for i, r in enumerate(fused)
+        ]
+        return fused, path_counts, candidates
 
     async def _apply_visibility_guard(
         self,
@@ -868,7 +891,7 @@ class RAGOrchestrator:
         fused_per_target: list[list[Any]] = []
         path_counts: dict[str, int] = {}
         for target in resolution.targets:
-            results, pc = await self._retrieve_and_fuse(
+            results, pc, _ = await self._retrieve_and_fuse(
                 extracted,
                 search_query,
                 intent_category,
@@ -1004,6 +1027,8 @@ class RAGOrchestrator:
         """提取 top N reranked 结果摘要(写入 trace),含正文预览供审查比对。"""
         return [
             {
+                "source_id": r.source_id,
+                "chunk_index": r.chunk_index,
                 "title": r.title,
                 "score": round(r.score, 3) if r.score else None,
                 "source_type": r.source_type,
@@ -1372,7 +1397,7 @@ class RAGOrchestrator:
             # Rev4:局部计数与管线真相同步 —— 公共终态不得把比较剪枝数覆盖为 0
             pruned_count = cmp_stage_info["pruned_count"]
         else:
-            fused, path_counts = await self._retrieve_and_fuse(
+            fused, path_counts, fuse_candidates = await self._retrieve_and_fuse(
                 extracted,
                 search_query,
                 intent.category,
@@ -1386,6 +1411,7 @@ class RAGOrchestrator:
                 "min_results_met": len(fused) >= effective_min,
                 "effective_min": effective_min,
                 "path_counts": path_counts,
+                "candidates": fuse_candidates,
             }
 
             t_rr = time.monotonic()
@@ -1404,9 +1430,21 @@ class RAGOrchestrator:
             # Rev3:比较路径的剪枝已在 _comparison_evidence_pipeline 内按
             # 目标聚焦语义逐侧执行(parity;整句全局评估不得清零单侧)。
             _t_prune = time.monotonic()
+            _pre_ids = [(r.source_id, r.chunk_index) for r in reranked]
             reranked = await self._pruner.prune(search_query, reranked)
             prune_ms = int((time.monotonic() - _t_prune) * 1000)
             pruned_count = pre_prune_count - len(reranked)
+            # INC-1 血统修订:逐项剪枝判定(身份/剪前位次/去留),零行为变更
+            _kept = {(r.source_id, r.chunk_index) for r in reranked}
+            stages["rerank"]["prune_decisions"] = [
+                {
+                    "source_id": sid,
+                    "chunk_index": cidx,
+                    "pre_prune_rank": i + 1,
+                    "kept": (sid, cidx) in _kept,
+                }
+                for i, (sid, cidx) in enumerate(_pre_ids)
+            ]
             stages["rerank"]["pruned"] = pruned_count
             stages["rerank"]["prune_ms"] = prune_ms
 
@@ -1857,6 +1895,9 @@ class RAGOrchestrator:
         # 统一检索 + 三路 RRF 融合(与 answer 共用 _retrieve_and_fuse,保证 parity)
         t1 = time.monotonic()
         cmp_stage_info: dict[str, Any] | None = None
+        # INC-1 血统修订:融合候选有序身份表(仅元数据);比较路径保持 None,
+        # 其候选身份由 per-target diag(rerank.candidates)承载
+        fuse_candidates: list[dict[str, Any]] | None = None
         if resolution.mode == MODE_COMPARISON and scope_labels:
             # T-COMPARISON-EVIDENCE-CORRECTNESS:比较证据管线(per-target 检索
             # + 分层配额 + 按目标聚焦重排),与 answer() 共用同一抽象 ——
@@ -1878,7 +1919,7 @@ class RAGOrchestrator:
             pre_prune_count = len(reranked)
             pruned_count = cmp_stage_info["pruned_count"]
         else:
-            fused, path_counts = await self._retrieve_and_fuse(
+            fused, path_counts, fuse_candidates = await self._retrieve_and_fuse(
                 extracted,
                 search_query,
                 intent.category,
@@ -1898,14 +1939,27 @@ class RAGOrchestrator:
         page_boost_stage: dict | None = None
 
         prune_ms: int | None = None
+        prune_decisions: list[dict[str, Any]] | None = None
         if self._pruner and cmp_stage_info is None:
             # Rev3:比较路径的剪枝已在 _comparison_evidence_pipeline 内
             # 按目标聚焦语义逐侧执行(与 answer parity);仅非比较路径走
             # 全局剪枝。
             _t_prune = time.monotonic()
+            _pre_ids = [(r.source_id, r.chunk_index) for r in reranked]
             reranked = await self._pruner.prune(query, reranked)
             prune_ms = int((time.monotonic() - _t_prune) * 1000)
             pruned_count = pre_prune_count - len(reranked)
+            # INC-1 血统修订:逐项剪枝判定(身份/剪前位次/去留),零行为变更
+            _kept = {(r.source_id, r.chunk_index) for r in reranked}
+            prune_decisions = [
+                {
+                    "source_id": sid,
+                    "chunk_index": cidx,
+                    "pre_prune_rank": i + 1,
+                    "kept": (sid, cidx) in _kept,
+                }
+                for i, (sid, cidx) in enumerate(_pre_ids)
+            ]
 
         # 防御性二次过滤(契约 §5 纵深,先于兜底判定):检索闸门在 Weaviate 侧;
         # 若闸门缺陷导致 sibling 泄漏,此处强制出清(fused 一并过滤,兜底不可回流)。
@@ -1931,6 +1985,7 @@ class RAGOrchestrator:
             "hybrid_count": len(fused),
             "effective_min": effective_min,
             "path_counts": path_counts,
+            "candidates": fuse_candidates,
         }
         rerank_stage: dict[str, Any] = {
             "ms": rerank_ms,
@@ -1938,6 +1993,7 @@ class RAGOrchestrator:
             "count": len(reranked),
             "pruned": pruned_count,
             "prune_ms": prune_ms,
+            "prune_decisions": prune_decisions,
             "results": self._rerank_snippets(reranked),
         }
         if cmp_stage_info is not None:
@@ -2105,6 +2161,7 @@ class RAGOrchestrator:
                                     "hybrid_count": len(fused),
                                     "effective_min": effective_min,
                                     "path_counts": path_counts,
+                                    "candidates": fuse_candidates,
                                     **(
                                         {"page_boost": page_boost_stage}
                                         if page_boost_stage is not None
@@ -2117,6 +2174,7 @@ class RAGOrchestrator:
                                     "count": len(reranked),
                                     "pruned": pruned_count,
                                     "prune_ms": prune_ms,
+                                    "prune_decisions": prune_decisions,
                                     "results": self._rerank_snippets(reranked),
                                 },
                                 **(
@@ -2409,6 +2467,7 @@ class RAGOrchestrator:
                             "hybrid_count": len(fused),
                             "effective_min": effective_min,
                             "path_counts": path_counts,
+                            "candidates": fuse_candidates,
                             **(
                                 {"page_boost": page_boost_stage}
                                 if page_boost_stage is not None
@@ -2421,6 +2480,7 @@ class RAGOrchestrator:
                             "count": len(reranked),
                             "pruned": pruned_count,
                             "prune_ms": prune_ms,
+                            "prune_decisions": prune_decisions,
                             "results": self._rerank_snippets(reranked),
                             **(
                                 {
