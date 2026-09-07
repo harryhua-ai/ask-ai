@@ -19,12 +19,23 @@ from dataclasses import dataclass
 from typing import Any
 
 from backend.embedder.base import Embedder
+from backend.evidence_meta import EVIDENCE_PROPERTIES
 
 logger = logging.getLogger(__name__)
 
 # admin 为管理后台测试环境,数据边界独立落库,但检索可见性按访客视角:
 # 管理员所见 = 访客(widget)所见。其余渠道原样透传(零回归)。
 _VISIBILITY_CHANNEL_ALIAS: dict[str, str] = {"admin": "widget"}
+
+# INC-2a 证据属性读取缺省(存量对象缺失时):语义字段显式 unknown,
+# origin 空串表示溯源未知——均不得解释为 authoritative/public/current/citable
+_EVIDENCE_READ_DEFAULTS: dict[str, str] = {
+    "evidence_authority_class": "unknown",
+    "evidence_temporality": "unknown",
+    "evidence_sensitivity": "unknown",
+    "evidence_citation_eligibility": "unknown",
+    "evidence_origin": "",
+}
 
 
 def _visibility_probe_channel(channel: str | None) -> str | None:
@@ -101,6 +112,13 @@ class SearchResult:
     # 函数级符号检索新增字段(默认空串,兼容非代码 chunk)
     symbol_name: str = ""
     symbol_signature: str = ""
+    # INC-2a 证据语义元数据(默认 unknown/空 origin,兼容回填前的存量对象;
+    # 显式 UNKNOWN 语义,不得解释为 authoritative/public/current/citable)
+    evidence_authority_class: str = "unknown"
+    evidence_temporality: str = "unknown"
+    evidence_sensitivity: str = "unknown"
+    evidence_citation_eligibility: str = "unknown"
+    evidence_origin: str = ""
 
 
 class HybridSearcher:
@@ -273,6 +291,8 @@ class HybridSearcher:
                 "symbol_name",
                 "symbol_signature",
                 "branch",
+                # INC-2a 证据语义(与 evidence_meta.EVIDENCE_PROPERTIES 同源)
+                *EVIDENCE_PROPERTIES,
             ],
         )
         return [self._to_search_result(o) for o in resp.objects]
@@ -358,6 +378,8 @@ class HybridSearcher:
                 "symbol_name",
                 "symbol_signature",
                 "branch",
+                # INC-2a 证据语义(与 evidence_meta.EVIDENCE_PROPERTIES 同源)
+                *EVIDENCE_PROPERTIES,
             ],
         )
         return [self._to_search_result(o) for o in resp.objects]
@@ -378,6 +400,9 @@ class HybridSearcher:
         score = 1.0 - distance if distance is not None else 0.0
         cv_raw = props.get("channel_visibility", ["widget", "api"])
         cv_tuple = tuple(cv_raw) if isinstance(cv_raw, (list, tuple)) else ("widget", "api")
+        # INC-2a:存量对象缺证据属性 → 显式 unknown/空 origin(契约 §12,
+        # 缺失不得解释为 authoritative/public/current/citable)
+        evidence = {k: props.get(k, _EVIDENCE_READ_DEFAULTS[k]) for k in EVIDENCE_PROPERTIES}
         return SearchResult(
             text=props.get("text", ""),
             source_id=props.get("source_id", ""),
@@ -392,4 +417,9 @@ class HybridSearcher:
             channel_visibility=cv_tuple,
             symbol_name=props.get("symbol_name", ""),
             symbol_signature=props.get("symbol_signature", ""),
+            evidence_authority_class=evidence["evidence_authority_class"],
+            evidence_temporality=evidence["evidence_temporality"],
+            evidence_sensitivity=evidence["evidence_sensitivity"],
+            evidence_citation_eligibility=evidence["evidence_citation_eligibility"],
+            evidence_origin=evidence["evidence_origin"],
         )

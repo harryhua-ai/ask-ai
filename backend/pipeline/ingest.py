@@ -90,6 +90,59 @@ def _derived_product(doc: RawDocument) -> str:
     return get_taxonomy().derive_product(doc.product, doc.source_id, doc.url).slug
 
 
+# Weaviate Document collection 全量 property 定义(INC-2a:含证据语义元数据)。
+# 单一权威定义点:_ensure_collection 建表与 migrate_add_evidence_meta_props.py
+# 增量迁移共用;新增 property 必须同时进检索投影(search.py return_properties)。
+COLLECTION_PROPERTIES: list[tuple[str, str]] = [
+    ("source_id", "text"),
+    ("source_type", "text"),
+    ("product", "text"),
+    ("title", "text"),
+    ("text", "text"),
+    ("url", "text"),
+    ("chunk_index", "int"),
+    ("content_hash", "text"),
+    # Phase 2A 新增
+    ("channel_visibility", "text[]"),
+    ("doc_section", "text"),
+    ("chunk_type", "text"),
+    # Task 6: 多分支元数据(P8),供检索时按 branch 过滤
+    ("branch", "text"),
+    # 函数级符号检索:symbol 元数据独立 property
+    ("symbol_name", "text"),
+    ("symbol_signature", "text"),
+    ("symbol_node_type", "text"),
+    ("symbol_tokens", "text"),
+    # INC-2a 证据语义元数据(词表/溯源码见 backend.pipeline.evidence_meta)
+    ("evidence_authority_class", "text"),
+    ("evidence_temporality", "text"),
+    ("evidence_sensitivity", "text"),
+    ("evidence_citation_eligibility", "text"),
+    ("evidence_origin", "text"),
+]
+
+
+def _evidence_props(doc: RawDocument) -> dict:
+    """从 RawDocument 持久化结构事实推导证据语义 props(INC-2a)。"""
+    from backend.evidence_meta import (
+        PROP_AUTHORITY,
+        PROP_CITATION,
+        PROP_ORIGIN,
+        PROP_SENSITIVITY,
+        PROP_TEMPORALITY,
+        derive_evidence_meta,
+    )
+
+    meta = derive_evidence_meta(doc.source_type, getattr(doc, "channel_visibility", None))
+    return {
+        PROP_AUTHORITY: meta.authority_class,
+        PROP_TEMPORALITY: meta.temporality,
+        PROP_SENSITIVITY: meta.sensitivity,
+        PROP_CITATION: meta.citation_eligibility,
+        PROP_ORIGIN: meta.origin,
+    }
+
+
 def _build_props(chunk: "Any", doc: RawDocument) -> dict:
     """从 Chunk + RawDocument 构造 Weaviate properties(消除 3 处重复构造)。
 
@@ -122,6 +175,9 @@ def _build_props(chunk: "Any", doc: RawDocument) -> dict:
         "symbol_signature": chunk.symbol_signature,
         "symbol_node_type": chunk.symbol_node_type,
         "symbol_tokens": chunk.symbol_tokens,
+        # INC-2a 证据语义:确定性分类只依赖 doc 自身持久化结构事实
+        # (source_type + channel_visibility),与回填工具同函数零漂移
+        **_evidence_props(doc),
     }
 
 
@@ -194,29 +250,13 @@ class IngestionPipeline:
             logger.info("Weaviate collection %s 不存在,尝试创建", self._class_name)
             from weaviate.classes.config import Configure, DataType, Property
 
+            _DT = {"text": DataType.TEXT, "int": DataType.INT, "text[]": DataType.TEXT_ARRAY}
             self._client.collections.create(
                 name=self._class_name,
                 vectorizer_config=Configure.Vectorizer.none(),
                 properties=[
-                    Property(name="source_id", data_type=DataType.TEXT),
-                    Property(name="source_type", data_type=DataType.TEXT),
-                    Property(name="product", data_type=DataType.TEXT),
-                    Property(name="title", data_type=DataType.TEXT),
-                    Property(name="text", data_type=DataType.TEXT),
-                    Property(name="url", data_type=DataType.TEXT),
-                    Property(name="chunk_index", data_type=DataType.INT),
-                    Property(name="content_hash", data_type=DataType.TEXT),
-                    # Phase 2A 新增
-                    Property(name="channel_visibility", data_type=DataType.TEXT_ARRAY),
-                    Property(name="doc_section", data_type=DataType.TEXT),
-                    Property(name="chunk_type", data_type=DataType.TEXT),
-                    # Task 6: 多分支元数据(P8),供检索时按 branch 过滤
-                    Property(name="branch", data_type=DataType.TEXT),
-                    # 函数级符号检索:symbol 元数据独立 property
-                    Property(name="symbol_name", data_type=DataType.TEXT),
-                    Property(name="symbol_signature", data_type=DataType.TEXT),
-                    Property(name="symbol_node_type", data_type=DataType.TEXT),
-                    Property(name="symbol_tokens", data_type=DataType.TEXT),
+                    Property(name=name, data_type=_DT[dtype])
+                    for name, dtype in COLLECTION_PROPERTIES
                 ],
             )
 
@@ -584,8 +624,7 @@ class IngestionPipeline:
                 # real run failure, not a reason to re-encode per document.
                 fallback_reason = self._embedder.fallback_reason
                 raise CpuFallbackError(
-                    f"CPU fallback failed after {fallback_reason}: "
-                    f"{type(exc).__name__}: {exc}",
+                    f"CPU fallback failed after {fallback_reason}: " f"{type(exc).__name__}: {exc}",
                     reason=fallback_reason,
                     detail=(
                         f"{self._embedder.fallback_detail or 'GPU fallback'}; "
