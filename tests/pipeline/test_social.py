@@ -110,9 +110,19 @@ def _intent_llm(category: str) -> tuple[MagicMock, MagicMock, AsyncMock]:
 
     async def _generate(messages, **kwargs):
         task = kwargs.get("task", "")
-        if task == "intent":
+        if task in ("intent", "task_understanding"):
+            # INC-3:合并任务理解;interaction_mode 由 category 一致性推导
             return _make_llm_response(
-                json.dumps({"category": category, "reason": "test", "confidence": 0.9})
+                json.dumps(
+                    {
+                        "category": category,
+                        "reason": "test",
+                        "confidence": 0.9,
+                        "interaction_mode": "off_topic" if category == "off_topic" else "standard",
+                        "extracted_query": "generated answer",
+                        "rewritten_query": "generated answer",
+                    }
+                )
             )
         return _make_llm_response("generated answer")
 
@@ -163,7 +173,9 @@ async def test_off_topic_creative_request_gets_friendly_boundary():
     assert result.answer != "我只能回答与 CamThink 产品相关的问题。"
     # short-circuit 保持:不进检索、不进生成
     searcher.search.assert_not_called()
-    generate_calls = [c for c in llm.generate.call_args_list if c.kwargs.get("task") != "intent"]
+    generate_calls = [
+        c for c in llm.generate.call_args_list if c.kwargs.get("task") != "task_understanding"
+    ]
     assert generate_calls == []
 
 

@@ -21,6 +21,10 @@ PRODUCT_NOT_SUPPORTED_KEY = "product_not_supported"
 # 与 product_evidence_insufficient 的区别:按 target 明示缺侧,语义为
 # 「无法完成完整对比」而非「单产品无资料」。
 COMPARISON_EVIDENCE_INSUFFICIENT_KEY = "comparison_evidence_insufficient"
+# INC-3 交互模式路由(#26/#27):澄清与能力导向是合法交互结果,
+# 结构化 result_key 与 off_topic 拒答严格区分(Admin/trace 真相)。
+CLARIFICATION_REQUIRED_KEY = "clarification_required"
+CAPABILITY_ORIENTATION_KEY = "capability_orientation"
 
 MESSAGE_KEYS = frozenset(
     {
@@ -31,6 +35,8 @@ MESSAGE_KEYS = frozenset(
         PRODUCT_EVIDENCE_INSUFFICIENT_KEY,
         PRODUCT_NOT_SUPPORTED_KEY,
         COMPARISON_EVIDENCE_INSUFFICIENT_KEY,
+        CLARIFICATION_REQUIRED_KEY,
+        CAPABILITY_ORIENTATION_KEY,
     }
 )
 
@@ -71,6 +77,22 @@ _MESSAGES: dict[str, dict[str, str]] = {
         "en": "I couldn't find official information about {missing}, so I can't "
         "complete a full comparison of {products} yet. Information is available "
         "for the other product(s).",
+    },
+    # INC-3(#26):plausibly in-domain 但缺关键信息 → 澄清(只问最少必要信息,
+    # 不猜产品、不以拒答开场)
+    CLARIFICATION_REQUIRED_KEY: {
+        "zh": "这个问题我可以帮你解答。为了更准确地定位,请告诉我具体的产品型号或使用场景。",
+        "en": "I can help with that. To point you to the right answer, "
+        "could you tell me which product or scenario this is about?",
+    },
+    # INC-3(#27):能力/导向 → welcome → orient(如实、通用平台措辞)→ invite;
+    # 不硬编码特定厂商身份,不虚构能力
+    CAPABILITY_ORIENTATION_KEY: {
+        "zh": "你好!我可以协助你解决产品相关的问题,包括:产品选型与功能参数咨询、"
+        "价格与采购信息、技术支持与二次开发等。请直接告诉我你想了解的内容,我会尽力帮忙。",
+        "en": "Hi! I can help with product-related questions, including product "
+        "selection and features, pricing and purchasing information, and technical "
+        "support or integration. Just tell me what you'd like to know and I'll do my best.",
     },
 }
 

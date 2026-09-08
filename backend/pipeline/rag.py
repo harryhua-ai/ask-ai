@@ -35,7 +35,14 @@ from backend.pipeline.citation import (
     normalize_source_path,
     validate_citations,
 )
-from backend.pipeline.intent import classify_intent
+from backend.pipeline.intent import IntentResult
+from backend.pipeline.task_understanding import (
+    MODE_CAPABILITY,
+    MODE_CLARIFICATION,
+    MODE_OFF_TOPIC,
+    MODE_STANDARD,
+    understand_task,
+)
 from backend.pipeline.lead_qualify import (
     LEAD_ACK_INSTRUCTION,
     LEAD_INVITE_INSTRUCTION,
@@ -53,7 +60,7 @@ from backend.pipeline.product_resolver import (
     ProductResolution,
     resolve_products,
 )
-from backend.pipeline.query_rewrite import extract_query, rewrite_query
+from backend.llm import telemetry as tel
 from backend.pipeline.social import match_social
 from backend.product_taxonomy import UNKNOWN_SLUG, get_taxonomy
 from backend.retrieval.search import SearchResult
@@ -65,6 +72,8 @@ from backend.utils.user_messages import (
     PRODUCT_EVIDENCE_INSUFFICIENT_KEY,
     PRODUCT_NOT_SUPPORTED_KEY,
     localized_message,
+    CAPABILITY_ORIENTATION_KEY,
+    CLARIFICATION_REQUIRED_KEY,
 )
 
 logger = logging.getLogger(__name__)
@@ -663,6 +672,7 @@ class RAGOrchestrator:
             intent="smalltalk",
             trace_payload={
                 "type": "social_reply",
+                "llm_calls": tel.current_calls(),
                 "stages": {},
                 "total_ms": elapsed,
                 "intent": "smalltalk",
@@ -808,7 +818,30 @@ class RAGOrchestrator:
         # P0 PC-01:生成前按源最新可见性配置复核(纵深守卫)。
         # 主防线 = 三路检索的 chunk 级 channel_visibility 过滤;守卫拦截
         # chunk 元数据滞后/缺失(迁移未跑完、幽灵 chunk)的残余泄漏。
-        return await self._apply_visibility_guard(fused, channel), path_counts
+        fused = await self._apply_visibility_guard(fused, channel)
+
+        # INC-1 血统修订:融合候选有序身份表(仅元数据,零内容)。
+        # 身份键 (source_id, chunk_index) 全链路稳定;paths 记录各召回路成员;
+        # rank/score 为融合后位次与 RRF 融合分。
+        path_of: dict[tuple[str, int], list[str]] = {}
+        for _pname, _plist in (
+            ("hybrid", results),
+            ("symbol", symbol_results),
+            ("boost", bucket_results),
+        ):
+            for _r in _plist:
+                path_of.setdefault((_r.source_id, _r.chunk_index), []).append(_pname)
+        candidates = [
+            {
+                "rank": i + 1,
+                "source_id": r.source_id,
+                "chunk_index": r.chunk_index,
+                "score": round(r.score, 6),
+                "paths": path_of.get((r.source_id, r.chunk_index), []),
+            }
+            for i, r in enumerate(fused)
+        ]
+        return fused, path_counts, candidates
 
     async def _apply_visibility_guard(
         self,
@@ -866,7 +899,7 @@ class RAGOrchestrator:
         fused_per_target: list[list[Any]] = []
         path_counts: dict[str, int] = {}
         for target in resolution.targets:
-            results, pc = await self._retrieve_and_fuse(
+            results, pc, _ = await self._retrieve_and_fuse(
                 extracted,
                 search_query,
                 intent_category,
@@ -1002,6 +1035,8 @@ class RAGOrchestrator:
         """提取 top N reranked 结果摘要(写入 trace),含正文预览供审查比对。"""
         return [
             {
+                "source_id": r.source_id,
+                "chunk_index": r.chunk_index,
                 "title": r.title,
                 "score": round(r.score, 3) if r.score else None,
                 "source_type": r.source_type,
@@ -1188,6 +1223,7 @@ class RAGOrchestrator:
             Exception: searcher / llm 异常向上传播(由端点层处理)。
         """
         start = time.monotonic()
+        tel.start_capture()  # INC-1:请求级 LLM 调用遥测(仅元数据)
         detected_language = detect_language(query)
         language = resolve_answer_language(query, language_hint)
         stages: dict[str, Any] = {
@@ -1198,6 +1234,8 @@ class RAGOrchestrator:
         if self._override_matcher:
             override = await self._override_matcher.match(query)
             if override:
+                for _t in ("intent", "query_extraction", "query_rewrite", "pruning", "generation"):
+                    tel.record_skipped(_t, "override_short_circuit")
                 elapsed = int((time.monotonic() - start) * 1000)
                 return RAGAnswer(
                     answer=override.override_answer,
@@ -1221,6 +1259,8 @@ class RAGOrchestrator:
         elapsed = int((time.monotonic() - start) * 1000)
         social = self._social_answer(query, language, elapsed)
         if social is not None:
+            for _t in ("intent", "query_extraction", "query_rewrite", "pruning", "generation"):
+                tel.record_skipped(_t, "smalltalk_short_circuit")
             return social
 
         # Issue #5 产品边界(契约 §2):目标解析在意图分类之前 —— 澄清/不支持
@@ -1238,6 +1278,8 @@ class RAGOrchestrator:
             stages["product_scope"] = product_scope_stage
         if resolution.mode == MODE_AMBIGUOUS or resolution.mode == MODE_UNSUPPORTED:
             elapsed = int((time.monotonic() - start) * 1000)
+            for _t in ("intent", "query_extraction", "query_rewrite", "pruning", "generation"):
+                tel.record_skipped(_t, "product_boundary_short_circuit")
             if resolution.mode == MODE_AMBIGUOUS:
                 boundary_answer = localized_message(PRODUCT_AMBIGUOUS_KEY, language)
                 result_key = PRODUCT_AMBIGUOUS_KEY
@@ -1256,6 +1298,7 @@ class RAGOrchestrator:
                 intent="product",
                 trace_payload={
                     "type": trace_type,
+                    "llm_calls": tel.current_calls(),
                     "stages": stages,
                     "total_ms": elapsed,
                     "intent": "product",
@@ -1264,15 +1307,69 @@ class RAGOrchestrator:
                 result_key=result_key,
             )
 
-        t_intent = time.monotonic()
-        intent = await classify_intent(query, self._llm)
-        stages["intent"] = {
-            "ms": int((time.monotonic() - t_intent) * 1000),
-            "category": intent.category,
-            "reason": intent.reason,
+        # INC-3 合并任务理解:单次结构化调用替代 intent→extract→rewrite 三段串行
+        t_understand = time.monotonic()
+        understanding = await understand_task(query, conversation_history, self._llm)
+        understanding_ms = int((time.monotonic() - t_understand) * 1000)
+        intent = IntentResult(
+            category=understanding.category,
+            reason=understanding.reason,
+            confidence=understanding.confidence,
+        )
+        extracted = understanding.extracted_query
+        search_query = understanding.rewritten_query
+        stages["understanding"] = {
+            "ms": understanding_ms,
+            "interaction_mode": understanding.interaction_mode,
+            "category": understanding.category,
+            "confidence": understanding.confidence,
+            "fallback_used": understanding.fallback_used,
+            "parse_ok": understanding.parse_ok,
+            "one_call": True,
         }
-        if intent.category == "off_topic" and not (lead_ctx and lead_ctx.capture_mode):
+        # 修订 CONTEXT-AWARE-UNDERSTANDING(#26/A7):resolver 已安全确立支持目标
+        # (exact/comparison)时,欠指定问题不得仅因本轮未点名产品而澄清——
+        # 上下文可解 → 正常域内处理。resolver 仍是产品身份唯一权威;此处仅做
+        # 确定性 mode 调和(不改检索行为)。
+        context_reconciled = False
+        original_interaction_mode = understanding.interaction_mode
+        if understanding.interaction_mode == MODE_CLARIFICATION and resolution.mode in (
+            MODE_EXACT,
+            MODE_COMPARISON,
+        ):
+            understanding = replace(understanding, interaction_mode=MODE_STANDARD)
+            context_reconciled = True
+        # 修订 EFFECTIVE-INTERACTION-MODE-TRACE-01:interaction_mode 如实呈现
+        # 调和后的**生效态**;调和发生时另存原始态供归因(有界元数据,§8)。
+        stages["understanding"]["interaction_mode"] = understanding.interaction_mode
+        stages["understanding"]["context_reconciled"] = context_reconciled
+        if context_reconciled:
+            stages["understanding"]["original_interaction_mode"] = original_interaction_mode
+        # legacy 兼容键(由单次合并结果派生;ms=理解总耗时,不再代表独立 LLM 计时)
+        capture_mode = bool(lead_ctx and lead_ctx.capture_mode)
+        # PII-hard(Lead 契约):capture 轮的用户消息常是联系方式本身,
+        # 提取/改写结果不得落入 trace(检索仍用真实查询,仅 trace 脱敏)
+        traced_extracted = "(redacted: capture turn)" if capture_mode else extracted
+        traced_rewritten = "(redacted: capture turn)" if capture_mode else search_query
+        stages["rewrite"] = {
+            "ms": understanding_ms,
+            "extract_ms": None,
+            "rewrite_ms": None,
+            "extracted": traced_extracted,
+            "rewritten": traced_rewritten,
+            "consolidated": True,
+        }
+        stages["intent"] = {
+            "ms": understanding_ms,
+            "category": understanding.category,
+            "reason": understanding.reason,
+        }
+        if understanding.interaction_mode == MODE_OFF_TOPIC and not (
+            lead_ctx and lead_ctx.capture_mode
+        ):
             elapsed = int((time.monotonic() - start) * 1000)
+            for _t in ("query_extraction", "query_rewrite", "pruning", "generation"):
+                tel.record_skipped(_t, "off_topic_short_circuit")
             return RAGAnswer(
                 answer=_off_topic_reply(language),
                 sources=[],
@@ -1283,6 +1380,7 @@ class RAGOrchestrator:
                 intent=intent.category,
                 trace_payload={
                     "type": "reject_short",
+                    "llm_calls": tel.current_calls(),
                     "stages": stages,
                     "total_ms": elapsed,
                     "intent": intent.category,
@@ -1290,10 +1388,65 @@ class RAGOrchestrator:
                     "config_snapshot": self._config_snapshot(),
                 },
             )
+        # INC-3 交互模式路由(#26/#27):澄清与能力导向是合法交互结果,
+        # 不得表现为 off_topic 拒答;capture 轮豁免(不得吞掉联系方式捕获)。
+        if not capture_mode and understanding.interaction_mode == MODE_CLARIFICATION:
+            elapsed = int((time.monotonic() - start) * 1000)
+            for _t in ("pruning", "generation", "lead_qualification"):
+                tel.record_skipped(_t, "clarification_short_circuit")
+            return RAGAnswer(
+                answer=localized_message(CLARIFICATION_REQUIRED_KEY, language),
+                sources=[],
+                is_answered=False,
+                reranked_results=[],
+                language=language,
+                response_time_ms=elapsed,
+                intent=intent.category,
+                trace_payload={
+                    "type": "task_clarify",
+                    "llm_calls": tel.current_calls(),
+                    "stages": stages,
+                    "total_ms": elapsed,
+                    "intent": intent.category,
+                    "interaction_mode": understanding.interaction_mode,
+                    "confidence": intent.confidence,
+                    "config_snapshot": {
+                        **self._config_snapshot(),
+                        "result_key": CLARIFICATION_REQUIRED_KEY,
+                    },
+                },
+                result_key=CLARIFICATION_REQUIRED_KEY,
+            )
+        if not capture_mode and understanding.interaction_mode == MODE_CAPABILITY:
+            elapsed = int((time.monotonic() - start) * 1000)
+            for _t in ("pruning", "generation", "lead_qualification"):
+                tel.record_skipped(_t, "capability_orientation_short_circuit")
+            return RAGAnswer(
+                answer=localized_message(CAPABILITY_ORIENTATION_KEY, language),
+                sources=[],
+                is_answered=True,
+                reranked_results=[],
+                language=language,
+                response_time_ms=elapsed,
+                intent=intent.category,
+                trace_payload={
+                    "type": "capability_orientation",
+                    "llm_calls": tel.current_calls(),
+                    "stages": stages,
+                    "total_ms": elapsed,
+                    "intent": intent.category,
+                    "interaction_mode": understanding.interaction_mode,
+                    "confidence": intent.confidence,
+                    "config_snapshot": {
+                        **self._config_snapshot(),
+                        "result_key": CAPABILITY_ORIENTATION_KEY,
+                    },
+                },
+                result_key=CAPABILITY_ORIENTATION_KEY,
+            )
         # commercial/product/support 进入 RAG 管线
         # (commercial 原「过渡期拒答」已废:WooCommerce 产品已灌库,走 woocommerce boost 桶作答)
         # product/commercial/support 降低检索阈值(能力咨询/购买咨询容忍少结果)
-        capture_mode = bool(lead_ctx and lead_ctx.capture_mode)
         if capture_mode:
             # 联系方式捕获轮:即使检索为空也必须生成(要确认已记录联系方式)
             effective_min = 0
@@ -1302,14 +1455,7 @@ class RAGOrchestrator:
                 1 if intent.category in ("product", "support", "commercial") else self._min_results
             )
 
-        t_rewrite = time.monotonic()
-        extracted = await extract_query(query, self._llm)
-        search_query = await rewrite_query(extracted, conversation_history, self._llm)
-        stages["rewrite"] = {
-            "ms": int((time.monotonic() - t_rewrite) * 1000),
-            "extracted": extracted,
-            "rewritten": search_query,
-        }
+        # (extracted / search_query 已由合并理解产出,见 stages.understanding)
 
         # 统一检索 + 三路 RRF 融合(hybrid + symbol + intent boost 桶)
         t_ret = time.monotonic()
@@ -1319,6 +1465,7 @@ class RAGOrchestrator:
         if resolution.mode == MODE_COMPARISON and scope_labels:
             # T-COMPARISON-EVIDENCE-CORRECTNESS:比较证据管线,与 stream_answer()
             # 共用同一抽象(parity)—— per-target 检索 + 分层配额 + 按目标聚焦重排。
+            prune_ms = None  # 比较路径使用按目标聚焦重排,无全局剪枝阶段
             fused, reranked, cmp_stage_info = await self._comparison_evidence_pipeline(
                 raw_query=query,
                 extracted=extracted,
@@ -1353,7 +1500,7 @@ class RAGOrchestrator:
             # Rev4:局部计数与管线真相同步 —— 公共终态不得把比较剪枝数覆盖为 0
             pruned_count = cmp_stage_info["pruned_count"]
         else:
-            fused, path_counts = await self._retrieve_and_fuse(
+            fused, path_counts, fuse_candidates = await self._retrieve_and_fuse(
                 extracted,
                 search_query,
                 intent.category,
@@ -1367,6 +1514,7 @@ class RAGOrchestrator:
                 "min_results_met": len(fused) >= effective_min,
                 "effective_min": effective_min,
                 "path_counts": path_counts,
+                "candidates": fuse_candidates,
             }
 
             t_rr = time.monotonic()
@@ -1380,12 +1528,28 @@ class RAGOrchestrator:
                 "results": self._rerank_snippets(reranked),
             }
 
+        prune_ms: int | None = None
         if self._pruner and cmp_stage_info is None:
             # Rev3:比较路径的剪枝已在 _comparison_evidence_pipeline 内按
             # 目标聚焦语义逐侧执行(parity;整句全局评估不得清零单侧)。
+            _t_prune = time.monotonic()
+            _pre_ids = [(r.source_id, r.chunk_index) for r in reranked]
             reranked = await self._pruner.prune(search_query, reranked)
+            prune_ms = int((time.monotonic() - _t_prune) * 1000)
             pruned_count = pre_prune_count - len(reranked)
+            # INC-1 血统修订:逐项剪枝判定(身份/剪前位次/去留),零行为变更
+            _kept = {(r.source_id, r.chunk_index) for r in reranked}
+            stages["rerank"]["prune_decisions"] = [
+                {
+                    "source_id": sid,
+                    "chunk_index": cidx,
+                    "pre_prune_rank": i + 1,
+                    "kept": (sid, cidx) in _kept,
+                }
+                for i, (sid, cidx) in enumerate(_pre_ids)
+            ]
             stages["rerank"]["pruned"] = pruned_count
+            stages["rerank"]["prune_ms"] = prune_ms
 
         # 防御性二次过滤(契约 §5 纵深):检索闸门在 Weaviate 侧;若闸门缺陷
         # 导致 sibling 泄漏进候选,此处强制出清(fused 一并过滤,兜底不可回流)。
@@ -1432,6 +1596,10 @@ class RAGOrchestrator:
             _missing = tuple(_t for _t, _c in _own_after.items() if _c == 0)
             if _missing:
                 elapsed = int((time.monotonic() - start) * 1000)
+                tel.record_skipped("pruning", "comparison_focus_rerank")
+                tel.record_skipped("generation", "comparison_evidence_insufficient")
+                tel.record_skipped("pruning", "comparison_focus_rerank")
+                tel.record_skipped("generation", "comparison_evidence_insufficient")
                 reject_text, reject_key = _comparison_insufficient_reply(
                     language, resolution, taxonomy, _missing
                 )
@@ -1445,6 +1613,7 @@ class RAGOrchestrator:
                     intent=intent.category,
                     trace_payload={
                         "type": "reject_short",
+                        "llm_calls": tel.current_calls(),
                         "stages": stages,
                         "total_ms": elapsed,
                         "intent": intent.category,
@@ -1467,6 +1636,11 @@ class RAGOrchestrator:
                 elapsed = int((time.monotonic() - start) * 1000)
                 # Issue #5 契约 §8/§14:目标产品在库但证据不足 → 产品化不足
                 # 语义(绝不借 sibling 顶替);无边界时保持既有 no_evidence。
+                tel.record_skipped(
+                    "pruning",
+                    "no_candidates" if not reranked else "below_min_threshold",
+                )
+                tel.record_skipped("generation", "insufficient_evidence_reject")
                 reject_text, reject_key = _product_insufficient_reply(
                     language, resolution, taxonomy
                 )
@@ -1480,6 +1654,7 @@ class RAGOrchestrator:
                     intent=intent.category,
                     trace_payload={
                         "type": "reject_short",
+                        "llm_calls": tel.current_calls(),
                         "stages": stages,
                         "total_ms": elapsed,
                         "intent": intent.category,
@@ -1531,6 +1706,7 @@ class RAGOrchestrator:
         stages["generate"] = {
             "ms": int((time.monotonic() - t_gen) * 1000),
             "latency_ms": getattr(llm_response, "latency_ms", None),
+            "tokens_input": getattr(llm_response, "tokens_input", None),
             "tokens_output": getattr(llm_response, "tokens_output", None),
         }
         # 引用终验(幂等):剔除悬空/无据/产品不合格标记,不改正文
@@ -1555,6 +1731,7 @@ class RAGOrchestrator:
             intent=intent.category,
             trace_payload={
                 "type": "rag",
+                "llm_calls": tel.current_calls(),
                 "stages": stages,
                 "total_ms": elapsed,
                 "intent": intent.category,
@@ -1603,13 +1780,31 @@ class RAGOrchestrator:
             Exception: searcher / llm 异常向上传播。
         """
         start = time.monotonic()
+        tel.start_capture()  # INC-1:请求级 LLM 调用遥测(仅元数据)
         detected_language = detect_language(query)
         language = resolve_answer_language(query, language_hint)
 
+        # INC-3:流式路径共享 stages(此前为各载荷内联构造);language 键保持原形
+        stages: dict[str, Any] = {
+            "language": {
+                "hint": language_hint,
+                "detected": detected_language,
+                "resolved": language,
+            }
+        }
         # Phase 3A: 人工答案覆盖前置检查
         if self._override_matcher:
             override = await self._override_matcher.match(query)
             if override:
+                for _t in (
+                    "intent",
+                    "query_extraction",
+                    "query_rewrite",
+                    "pruning",
+                    "generation",
+                    "lead_qualification",
+                ):
+                    tel.record_skipped(_t, "override_short_circuit")
                 sources = override.override_sources or []
                 yield json.dumps({"type": "sources", "sources": sources})
                 yield json.dumps({"type": "token", "content": override.override_answer})
@@ -1626,6 +1821,7 @@ class RAGOrchestrator:
                         "result_key": "override",
                         "trace_payload": {
                             "type": "override",
+                            "llm_calls": tel.current_calls(),
                             "stages": {},
                             "total_ms": elapsed,
                             "intent": "product",
@@ -1640,6 +1836,16 @@ class RAGOrchestrator:
         elapsed = int((time.monotonic() - start) * 1000)
         social = self._social_answer(query, language, elapsed)
         if social is not None:
+            for _t in (
+                "intent",
+                "query_extraction",
+                "query_rewrite",
+                "pruning",
+                "generation",
+                "lead_qualification",
+            ):
+                tel.record_skipped(_t, "smalltalk_short_circuit")
+            social.trace_payload["llm_calls"] = tel.current_calls()
             yield json.dumps(
                 {
                     "type": "complete",
@@ -1668,6 +1874,15 @@ class RAGOrchestrator:
         )
         if resolution.mode == MODE_AMBIGUOUS or resolution.mode == MODE_UNSUPPORTED:
             elapsed = int((time.monotonic() - start) * 1000)
+            for _t in (
+                "intent",
+                "query_extraction",
+                "query_rewrite",
+                "pruning",
+                "generation",
+                "lead_qualification",
+            ):
+                tel.record_skipped(_t, "product_boundary_short_circuit")
             if resolution.mode == MODE_AMBIGUOUS:
                 boundary_answer = localized_message(PRODUCT_AMBIGUOUS_KEY, language)
                 result_key = PRODUCT_AMBIGUOUS_KEY
@@ -1712,12 +1927,77 @@ class RAGOrchestrator:
         # 日志排查语会被判 off_topic,但附件就是 context,必须放行。
         # Lead capture 模式(本轮消息检出联系方式)同理跳过 off_topic 拒答:
         # 用户补联系方式的消息常被判 off_topic,拒答会丢掉 capture 机会。
+        # INC-3 合并任务理解:单次结构化调用替代 intent→extract→rewrite 三段串行
+        t_understand = time.monotonic()
+        understanding = await understand_task(query, conversation_history, self._llm)
+        understanding_ms = int((time.monotonic() - t_understand) * 1000)
+        intent = IntentResult(
+            category=understanding.category,
+            reason=understanding.reason,
+            confidence=understanding.confidence,
+        )
+        extracted = understanding.extracted_query
+        search_query = understanding.rewritten_query
+        stages["understanding"] = {
+            "ms": understanding_ms,
+            "interaction_mode": understanding.interaction_mode,
+            "category": understanding.category,
+            "confidence": understanding.confidence,
+            "fallback_used": understanding.fallback_used,
+            "parse_ok": understanding.parse_ok,
+            "one_call": True,
+        }
+        # 修订 CONTEXT-AWARE-UNDERSTANDING(#26/A7):resolver 已安全确立支持目标
+        # (exact/comparison)时,欠指定问题不得仅因本轮未点名产品而澄清——
+        # 上下文可解 → 正常域内处理。resolver 仍是产品身份唯一权威;此处仅做
+        # 确定性 mode 调和(不改检索行为)。
+        context_reconciled = False
+        original_interaction_mode = understanding.interaction_mode
+        if understanding.interaction_mode == MODE_CLARIFICATION and resolution.mode in (
+            MODE_EXACT,
+            MODE_COMPARISON,
+        ):
+            understanding = replace(understanding, interaction_mode=MODE_STANDARD)
+            context_reconciled = True
+        # 修订 EFFECTIVE-INTERACTION-MODE-TRACE-01:interaction_mode 如实呈现
+        # 调和后的**生效态**;调和发生时另存原始态供归因(有界元数据,§8)。
+        stages["understanding"]["interaction_mode"] = understanding.interaction_mode
+        stages["understanding"]["context_reconciled"] = context_reconciled
+        if context_reconciled:
+            stages["understanding"]["original_interaction_mode"] = original_interaction_mode
+        # legacy 兼容键(由单次合并结果派生;ms=理解总耗时,不再代表独立 LLM 计时)
         capture_mode = bool(lead_ctx and lead_ctx.capture_mode)
-        t_intent = time.monotonic()
-        intent = await classify_intent(query, self._llm)
-        intent_ms = int((time.monotonic() - t_intent) * 1000)
-        if not attachments and not capture_mode and intent.category == "off_topic":
+        # PII-hard(Lead 契约):capture 轮的用户消息常是联系方式本身,
+        # 提取/改写结果不得落入 trace(检索仍用真实查询,仅 trace 脱敏)
+        traced_extracted = "(redacted: capture turn)" if capture_mode else extracted
+        traced_rewritten = "(redacted: capture turn)" if capture_mode else search_query
+        stages["rewrite"] = {
+            "ms": understanding_ms,
+            "extract_ms": None,
+            "rewrite_ms": None,
+            "extracted": traced_extracted,
+            "rewritten": traced_rewritten,
+            "consolidated": True,
+        }
+        stages["intent"] = {
+            "ms": understanding_ms,
+            "category": understanding.category,
+            "reason": understanding.reason,
+        }
+        if (
+            not attachments
+            and not capture_mode
+            and understanding.interaction_mode == MODE_OFF_TOPIC
+        ):
             elapsed = int((time.monotonic() - start) * 1000)
+            for _t in (
+                "query_extraction",
+                "query_rewrite",
+                "pruning",
+                "generation",
+                "lead_qualification",
+            ):
+                tel.record_skipped(_t, "off_topic_short_circuit")
             yield json.dumps(
                 {
                     "type": "complete",
@@ -1730,6 +2010,7 @@ class RAGOrchestrator:
                     "result_key": "off_topic",
                     "trace_payload": {
                         "type": "reject_short",
+                        "llm_calls": tel.current_calls(),
                         "stages": {
                             "language": {
                                 "hint": language_hint,
@@ -1737,9 +2018,9 @@ class RAGOrchestrator:
                                 "resolved": language,
                             },
                             "intent": {
-                                "ms": intent_ms,
-                                "category": intent.category,
-                                "reason": intent.reason,
+                                "ms": understanding_ms,
+                                "category": understanding.category,
+                                "reason": understanding.reason,
                             },
                         },
                         "total_ms": elapsed,
@@ -1750,11 +2031,80 @@ class RAGOrchestrator:
                 }
             )
             return
+        # INC-3 交互模式路由(#26/#27):澄清与能力导向是合法交互结果,
+        # 不得表现为 off_topic 拒答;capture 轮豁免(不得吞掉联系方式捕获)。
+        if not capture_mode and understanding.interaction_mode == MODE_CLARIFICATION:
+            elapsed = int((time.monotonic() - start) * 1000)
+            for _t in ("pruning", "generation", "lead_qualification"):
+                tel.record_skipped(_t, "clarification_short_circuit")
+            yield json.dumps(
+                {
+                    "type": "complete",
+                    "answer": localized_message(CLARIFICATION_REQUIRED_KEY, language),
+                    "sources": [],
+                    "is_answered": False,
+                    "language": language,
+                    "response_time_ms": elapsed,
+                    "intent": intent.category,
+                    "result_key": CLARIFICATION_REQUIRED_KEY,
+                    "interaction_mode": understanding.interaction_mode,
+                    "trace_payload": {
+                        "type": "task_clarify",
+                        "llm_calls": tel.current_calls(),
+                        "stages": stages,
+                        "total_ms": elapsed,
+                        "intent": intent.category,
+                        "interaction_mode": understanding.interaction_mode,
+                        "confidence": intent.confidence,
+                        "config_snapshot": {
+                            **self._config_snapshot(),
+                            "result_key": CLARIFICATION_REQUIRED_KEY,
+                        },
+                    },
+                }
+            )
+            return
+        if not capture_mode and understanding.interaction_mode == MODE_CAPABILITY:
+            elapsed = int((time.monotonic() - start) * 1000)
+            for _t in ("pruning", "generation", "lead_qualification"):
+                tel.record_skipped(_t, "capability_orientation_short_circuit")
+            yield json.dumps(
+                {
+                    "type": "complete",
+                    "answer": localized_message(CAPABILITY_ORIENTATION_KEY, language),
+                    "sources": [],
+                    "is_answered": True,
+                    "language": language,
+                    "response_time_ms": elapsed,
+                    "intent": intent.category,
+                    "result_key": CAPABILITY_ORIENTATION_KEY,
+                    "interaction_mode": understanding.interaction_mode,
+                    "trace_payload": {
+                        "type": "capability_orientation",
+                        "llm_calls": tel.current_calls(),
+                        "stages": stages,
+                        "total_ms": elapsed,
+                        "intent": intent.category,
+                        "interaction_mode": understanding.interaction_mode,
+                        "confidence": intent.confidence,
+                        "config_snapshot": {
+                            **self._config_snapshot(),
+                            "result_key": CAPABILITY_ORIENTATION_KEY,
+                        },
+                    },
+                }
+            )
+            return
         # Sales Lead Capture:资格判定 LLM 与 rewrite/retrieve 并发执行,
         # commercial/product(或已有线索/检出联系方式/明确销售请求)才跑,零延迟增加。
         lead_qual_task: asyncio.Task | None = None
         if lead_ctx is not None and lead_ctx.should_qualify(intent.category):
             lead_qual_task = asyncio.create_task(self._run_qualifier(query, lead_ctx))
+        else:
+            tel.record_skipped(
+                "lead_qualification",
+                "no_lead_context" if lead_ctx is None else "qualify_gate_not_met",
+            )
 
         # 评审 C1 第二道门:有附件时 effective_min=0,即使检索为空也走生成(附件作 fallback)
         # Lead capture 轮同理 effective_min=0:联系方式确认不能被「无检索结果」拒答吞掉
@@ -1766,14 +2116,15 @@ class RAGOrchestrator:
                 1 if intent.category in ("product", "support", "commercial") else self._min_results
             )
 
-        t0 = time.monotonic()
-        extracted = await extract_query(query, self._llm)
-        search_query = await rewrite_query(extracted, conversation_history, self._llm)
-        rewrite_ms = int((time.monotonic() - t0) * 1000)
+        # (extracted / search_query 已由合并理解产出,见 stages.understanding;
+        #  legacy stages.rewrite 由 stages.understanding 派生,已于上方写入)
 
         # 统一检索 + 三路 RRF 融合(与 answer 共用 _retrieve_and_fuse,保证 parity)
         t1 = time.monotonic()
         cmp_stage_info: dict[str, Any] | None = None
+        # INC-1 血统修订:融合候选有序身份表(仅元数据);比较路径保持 None,
+        # 其候选身份由 per-target diag(rerank.candidates)承载
+        fuse_candidates: list[dict[str, Any]] | None = None
         if resolution.mode == MODE_COMPARISON and scope_labels:
             # T-COMPARISON-EVIDENCE-CORRECTNESS:比较证据管线(per-target 检索
             # + 分层配额 + 按目标聚焦重排),与 answer() 共用同一抽象 ——
@@ -1795,7 +2146,7 @@ class RAGOrchestrator:
             pre_prune_count = len(reranked)
             pruned_count = cmp_stage_info["pruned_count"]
         else:
-            fused, path_counts = await self._retrieve_and_fuse(
+            fused, path_counts, fuse_candidates = await self._retrieve_and_fuse(
                 extracted,
                 search_query,
                 intent.category,
@@ -1814,12 +2165,28 @@ class RAGOrchestrator:
         # 提前声明以便拒答路径的 trace 引用保持 None → 不出现 page_boost 键)
         page_boost_stage: dict | None = None
 
+        prune_ms: int | None = None
+        prune_decisions: list[dict[str, Any]] | None = None
         if self._pruner and cmp_stage_info is None:
             # Rev3:比较路径的剪枝已在 _comparison_evidence_pipeline 内
             # 按目标聚焦语义逐侧执行(与 answer parity);仅非比较路径走
             # 全局剪枝。
+            _t_prune = time.monotonic()
+            _pre_ids = [(r.source_id, r.chunk_index) for r in reranked]
             reranked = await self._pruner.prune(query, reranked)
+            prune_ms = int((time.monotonic() - _t_prune) * 1000)
             pruned_count = pre_prune_count - len(reranked)
+            # INC-1 血统修订:逐项剪枝判定(身份/剪前位次/去留),零行为变更
+            _kept = {(r.source_id, r.chunk_index) for r in reranked}
+            prune_decisions = [
+                {
+                    "source_id": sid,
+                    "chunk_index": cidx,
+                    "pre_prune_rank": i + 1,
+                    "kept": (sid, cidx) in _kept,
+                }
+                for i, (sid, cidx) in enumerate(_pre_ids)
+            ]
 
         # 防御性二次过滤(契约 §5 纵深,先于兜底判定):检索闸门在 Weaviate 侧;
         # 若闸门缺陷导致 sibling 泄漏,此处强制出清(fused 一并过滤,兜底不可回流)。
@@ -1845,12 +2212,15 @@ class RAGOrchestrator:
             "hybrid_count": len(fused),
             "effective_min": effective_min,
             "path_counts": path_counts,
+            "candidates": fuse_candidates,
         }
         rerank_stage: dict[str, Any] = {
             "ms": rerank_ms,
             "top_score": reranked[0].score if reranked else None,
             "count": len(reranked),
             "pruned": pruned_count,
+            "prune_ms": prune_ms,
+            "prune_decisions": prune_decisions,
             "results": self._rerank_snippets(reranked),
         }
         if cmp_stage_info is not None:
@@ -1916,16 +2286,21 @@ class RAGOrchestrator:
                         "result_key": reject_key,
                         "trace_payload": {
                             "type": "reject_short",
+                            "llm_calls": tel.current_calls(),
                             "stages": {
+                                "understanding": stages.get("understanding"),
                                 "intent": {
-                                    "ms": intent_ms,
-                                    "category": intent.category,
-                                    "reason": intent.reason,
+                                    "ms": understanding_ms,
+                                    "category": understanding.category,
+                                    "reason": understanding.reason,
                                 },
                                 "rewrite": {
-                                    "ms": rewrite_ms,
-                                    "extracted": extracted,
-                                    "rewritten": search_query,
+                                    "ms": understanding_ms,
+                                    "extract_ms": None,
+                                    "rewrite_ms": None,
+                                    "extracted": traced_extracted,
+                                    "rewritten": traced_rewritten,
+                                    "consolidated": True,
                                 },
                                 # AC10:短路路径如实携带已执行阶段(不再 0ms/缺失)
                                 "retrieve": retrieve_stage,
@@ -1976,6 +2351,11 @@ class RAGOrchestrator:
                 elapsed = int((time.monotonic() - start) * 1000)
                 # Issue #5 契约 §8/§14:目标产品在库但证据不足 → 产品化不足
                 # 语义(绝不借 sibling 顶替);无边界时保持既有 no_evidence。
+                tel.record_skipped(
+                    "pruning",
+                    "no_candidates" if not reranked else "below_min_threshold",
+                )
+                tel.record_skipped("generation", "insufficient_evidence_reject")
                 reject_text, reject_key = _product_insufficient_reply(
                     language, resolution, taxonomy
                 )
@@ -1991,22 +2371,28 @@ class RAGOrchestrator:
                         "result_key": reject_key,
                         "trace_payload": {
                             "type": "reject_short",
+                            "llm_calls": tel.current_calls(),
                             "stages": {
+                                "understanding": stages.get("understanding"),
                                 "intent": {
-                                    "ms": intent_ms,
-                                    "category": intent.category,
-                                    "reason": intent.reason,
+                                    "ms": understanding_ms,
+                                    "category": understanding.category,
+                                    "reason": understanding.reason,
                                 },
                                 "rewrite": {
-                                    "ms": rewrite_ms,
-                                    "extracted": extracted,
-                                    "rewritten": search_query,
+                                    "ms": understanding_ms,
+                                    "extract_ms": None,
+                                    "rewrite_ms": None,
+                                    "extracted": traced_extracted,
+                                    "rewritten": traced_rewritten,
+                                    "consolidated": True,
                                 },
                                 "retrieve": {
                                     "ms": search_ms,
                                     "hybrid_count": len(fused),
                                     "effective_min": effective_min,
                                     "path_counts": path_counts,
+                                    "candidates": fuse_candidates,
                                     **(
                                         {"page_boost": page_boost_stage}
                                         if page_boost_stage is not None
@@ -2018,6 +2404,8 @@ class RAGOrchestrator:
                                     "top_score": reranked[0].score if reranked else None,
                                     "count": len(reranked),
                                     "pruned": pruned_count,
+                                    "prune_ms": prune_ms,
+                                    "prune_decisions": prune_decisions,
                                     "results": self._rerank_snippets(reranked),
                                 },
                                 **(
@@ -2125,6 +2513,7 @@ class RAGOrchestrator:
         full_answer = ""
         t3 = time.monotonic()
         first_token_ms: int | None = None
+        _gen_usage: dict = {}
         # Issue #23(QW-2 候选):generation 禁用思考 —— 准入以
         # FASTER × NOT LESS CORRECT 评估门为准(见执行报告 §6)。
         async for chunk in self._llm.stream(messages, task="generation", thinking="disabled"):
@@ -2134,6 +2523,15 @@ class RAGOrchestrator:
             if out:
                 full_answer += out
                 yield json.dumps({"type": "token", "content": out})
+        _gen_event = next(
+            (
+                e
+                for e in reversed(tel.current_calls())
+                if e.get("task") == "generation" and e.get("success")
+            ),
+            {},
+        )
+        _gen_usage = {k: _gen_event.get(k) for k in ("tokens_input", "tokens_output")}
         out = citation_filter.finish()
         if out:
             full_answer += out
@@ -2245,9 +2643,9 @@ class RAGOrchestrator:
         elapsed = int((time.monotonic() - start) * 1000)
 
         logger.info(
-            "RAG timing: rewrite=%dms search=%dms rerank=%dms ttft=%dms llm_total=%dms total=%dms "
+            "RAG timing: understanding=%dms search=%dms rerank=%dms ttft=%dms llm_total=%dms total=%dms "
             "(query=%d chars, answer=%d chars, sources=%d)",
-            rewrite_ms,
+            understanding_ms,
             search_ms,
             rerank_ms,
             first_token_ms or 0,
@@ -2268,7 +2666,7 @@ class RAGOrchestrator:
                 "response_time_ms": elapsed,
                 "intent": intent.category,
                 "timing": {
-                    "rewrite_ms": rewrite_ms,
+                    "understanding_ms": understanding_ms,
                     "search_ms": search_ms,
                     "rerank_ms": rerank_ms,
                     "first_token_ms": first_token_ms,
@@ -2276,27 +2674,33 @@ class RAGOrchestrator:
                 },
                 "trace_payload": {
                     "type": "rag",
+                    "llm_calls": tel.current_calls(),
                     "stages": {
                         "language": {
                             "hint": language_hint,
                             "detected": detected_language,
                             "resolved": language,
                         },
+                        "understanding": stages.get("understanding"),
                         "intent": {
-                            "ms": intent_ms,
-                            "category": intent.category,
-                            "reason": intent.reason,
+                            "ms": understanding_ms,
+                            "category": understanding.category,
+                            "reason": understanding.reason,
                         },
                         "rewrite": {
-                            "ms": rewrite_ms,
-                            "extracted": extracted,
-                            "rewritten": search_query,
+                            "ms": understanding_ms,
+                            "extract_ms": None,
+                            "rewrite_ms": None,
+                            "extracted": traced_extracted,
+                            "rewritten": traced_rewritten,
+                            "consolidated": True,
                         },
                         "retrieve": {
                             "ms": search_ms,
                             "hybrid_count": len(fused),
                             "effective_min": effective_min,
                             "path_counts": path_counts,
+                            "candidates": fuse_candidates,
                             **(
                                 {"page_boost": page_boost_stage}
                                 if page_boost_stage is not None
@@ -2308,6 +2712,8 @@ class RAGOrchestrator:
                             "top_score": reranked[0].score if reranked else None,
                             "count": len(reranked),
                             "pruned": pruned_count,
+                            "prune_ms": prune_ms,
+                            "prune_decisions": prune_decisions,
                             "results": self._rerank_snippets(reranked),
                             **(
                                 {
@@ -2327,7 +2733,11 @@ class RAGOrchestrator:
                         "generate": {
                             "ms": llm_ms,
                             "ttft_ms": first_token_ms,
-                            "tokens_output": len(full_answer),
+                            # INC-1 修正:tokens_output = provider 实际用量
+                            # (原缺陷误记字符数);字符数另存 answer_chars。
+                            "tokens_input": _gen_usage.get("tokens_input"),
+                            "tokens_output": _gen_usage.get("tokens_output"),
+                            "answer_chars": len(full_answer),
                             "thinking_mode": "disabled",
                         },
                         "output": {"ms": 0, "sources_count": len(sources)},

@@ -136,17 +136,28 @@ def build_citation_context(
     background_chunks: list[str] = []
     dropped_public_chunks = 0
 
+    # INC-1 血统修订:终组合逐项身份(仅元数据,零内容)
+    citable_ids: list[dict] = []
+    background_ids: list[dict] = []
+    dropped_public_ids: list[dict] = []
+
     for r in reranked:
         idx = url_to_idx.get(normalize_source_path(r.url))
         if idx is not None:
             source_texts[idx].append(r.text or "")
             source_products.setdefault(idx, r.product or "")
+            # citation_no = 来源序号(引用编号语义不变:同源 chunk 同号)
+            citable_ids.append(
+                {"source_id": r.source_id, "chunk_index": r.chunk_index, "citation_no": idx}
+            )
         elif r.source_type in PUBLIC_SOURCE_TYPES:
             # 公开但排在可见集合之外:保留即可被引用 → 不可见引用,丢弃
             dropped_public_chunks += 1
+            dropped_public_ids.append({"source_id": r.source_id, "chunk_index": r.chunk_index})
         else:
             # 授权参与生成但不对外展示(如 filesystem 内部案例)→ 背景资料
             background_chunks.append(r.text or "")
+            background_ids.append({"source_id": r.source_id, "chunk_index": r.chunk_index})
 
     citable_parts: list[str] = []
     for i, s in enumerate(sources, 1):
@@ -175,6 +186,10 @@ def build_citation_context(
         "public_chunks": sum(len(v) for v in source_texts.values()),
         "background_chunks": len(background_chunks),
         "dropped_public_chunks": dropped_public_chunks,
+        # INC-1 血统修订:逐项身份表(citable.citation_no = 引用编号语义)
+        "citable": citable_ids,
+        "background": background_ids,
+        "dropped_public": dropped_public_ids,
     }
     return CitationContext(
         context=context,

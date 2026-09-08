@@ -20,9 +20,14 @@ def _build_test_orchestrator(*, intent_category="commercial") -> RAGOrchestrator
 
     def _generate_side_effect(messages, **kwargs):
         task = kwargs.get("task", "generation")
-        if task == "intent":
+        if task == "task_understanding":
+            mode = "off_topic" if intent_category == "off_topic" else "standard"
             return LLMResponse(
-                content=f'{{"category":"{intent_category}","reason":"test"}}',
+                content=(
+                    f'{{"category":"{intent_category}","reason":"test","confidence":0.9,'
+                    f'"interaction_mode":"{mode}",'
+                    f'"extracted_query":"改写后的查询","rewritten_query":"改写后的查询"}}'
+                ),
                 model="test",
                 tokens_input=5,
                 tokens_output=5,

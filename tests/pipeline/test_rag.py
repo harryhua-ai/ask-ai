@@ -153,7 +153,9 @@ async def test_rag_generates_answer():
         latency_ms=500,
     )
 
-    rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="You are helpful.", min_results_to_answer=1)
+    rag = RAGOrchestrator(
+        searcher, reranker, llm, system_prompt="You are helpful.", min_results_to_answer=1
+    )
     result = await rag.answer("NE503 功耗是多少?", "widget")
 
     assert result.is_answered is True
@@ -406,7 +408,9 @@ async def test_answer_passes_channel_to_searcher():
     mock_llm = AsyncMock()
 
     orchestrator = RAGOrchestrator(
-        searcher=mock_searcher, reranker=mock_reranker, llm=mock_llm,
+        searcher=mock_searcher,
+        reranker=mock_reranker,
+        llm=mock_llm,
         system_prompt="test",
     )
     await orchestrator.answer("question", channel="widget")
@@ -425,9 +429,7 @@ async def test_answer_passes_channel_to_searcher():
 async def test_rag_calls_async_pruner():
     """RAGOrchestrator 应以 await 方式调用 pruner.prune()。"""
     sr = _make_sr(text="relevant", url="https://example.com/a")
-    rag, searcher, reranker, llm = _build_orchestrator(
-        searcher_results=[sr], reranked_results=[sr]
-    )
+    rag, searcher, reranker, llm = _build_orchestrator(searcher_results=[sr], reranked_results=[sr])
 
     pruner = AsyncMock()
     pruner.prune.return_value = [sr]
@@ -559,6 +561,33 @@ def _intent_response(category: str) -> MagicMock:
     return resp
 
 
+def _understanding_response(
+    category: str = "product",
+    *,
+    extracted: str = "",
+    rewritten: str = "",
+    mode: str | None = None,
+    reason: str = "test",
+) -> MagicMock:
+    """构造合并任务理解 LLM 响应(INC-3)。extracted/rewritten 缺省=原 query 语义。"""
+    resp = MagicMock()
+    import json as _json
+
+    if mode is None:
+        mode = "off_topic" if category == "off_topic" else "standard"
+    resp.content = _json.dumps(
+        {
+            "category": category,
+            "reason": reason,
+            "confidence": 0.9,
+            "interaction_mode": mode,
+            "extracted_query": extracted,
+            "rewritten_query": rewritten or extracted,
+        }
+    )
+    return resp
+
+
 @pytest.mark.unit
 async def test_rag_off_topic_rejects_without_search():
     """意图为 off_topic 时不进入检索,直接拒绝。"""
@@ -625,7 +654,9 @@ async def test_rag_product_question_answers_with_few_results():
     ]
 
     rag = RAGOrchestrator(
-        searcher, reranker, llm,
+        searcher,
+        reranker,
+        llm,
         system_prompt="test",
         min_results_to_answer=3,  # 正常阈值 3,但 product 降为 1
     )
@@ -674,16 +705,15 @@ async def test_rag_uses_symbol_recall_and_rrf():
     a = _make_sr(text="a", source_id="s1")
     b = _make_sr(text="b", source_id="s2")
     searcher = MagicMock()
-    searcher.search.return_value = [a]           # hybrid 返回 [a]
-    searcher.search_symbols.return_value = [b]   # 符号召回返回 [b]
-    searcher.search_bucket.return_value = []      # product 桶空(不干扰断言)
+    searcher.search.return_value = [a]  # hybrid 返回 [a]
+    searcher.search_symbols.return_value = [b]  # 符号召回返回 [b]
+    searcher.search_bucket.return_value = []  # product 桶空(不干扰断言)
     reranker = MagicMock()
-    reranker.rerank.return_value = [a, b]         # 透传,便于断言输入
+    reranker.rerank.return_value = [a, b]  # 透传,便于断言输入
     llm = AsyncMock()
-    # classify_intent → extract_query → generation(rewrite 无 history 短路,不调 LLM)
+    # 合并任务理解(单次,输出 extracted/rewritten)→ generation
     llm.generate.side_effect = [
-        _intent_response("product"),
-        _make_llm_response("i2c battery"),          # extract_query 输出
+        _understanding_response("product", extracted="i2c battery"),
         _make_llm_response("answer"),
     ]
     rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="test")
@@ -708,16 +738,22 @@ async def test_rag_routes_commercial_to_search():
     rag, searcher, reranker, llm = _build_orchestrator(
         searcher_results=[_make_sr(product="ne301")]  # 与查询产品一致(契约 §5)
     )
-    llm.generate = AsyncMock(side_effect=[
-        # classify_intent 返回 commercial
-        _make_llm_response('{"category": "commercial", "reason": "价格"}'),
-        _make_llm_response("extracted"),
-        _make_llm_response("rewritten"),
-        _make_llm_response("answer"),
-    ])
+    llm.generate = AsyncMock(
+        side_effect=[
+            # classify_intent 返回 commercial
+            _make_llm_response('{"category": "commercial", "reason": "价格"}'),
+            _make_llm_response("extracted"),
+            _make_llm_response("rewritten"),
+            _make_llm_response("answer"),
+        ]
+    )
     result = await rag.answer("NE301 价格多少", channel="widget")
     # commercial 走检索,不拒答
-    assert searcher.search.assert_called_once if hasattr(searcher.search, "assert_called_once") else True
+    assert (
+        searcher.search.assert_called_once
+        if hasattr(searcher.search, "assert_called_once")
+        else True
+    )
     assert result.is_answered is True
     assert "销售团队" not in result.answer
 
@@ -730,12 +766,14 @@ async def test_rag_support_intent_triggers_search_bucket():
     searcher.search_symbols.return_value = []
     searcher.search_bucket.return_value = []
     # classify → support;extract/rewrite 正常;generate 给答案
-    llm.generate = AsyncMock(side_effect=[
-        _make_llm_response('{"category": "support", "reason": "故障"}'),
-        _make_llm_response("extracted"),
-        _make_llm_response("rewritten"),
-        _make_llm_response("answer"),
-    ])
+    llm.generate = AsyncMock(
+        side_effect=[
+            _make_llm_response('{"category": "support", "reason": "故障"}'),
+            _make_llm_response("extracted"),
+            _make_llm_response("rewritten"),
+            _make_llm_response("answer"),
+        ]
+    )
     await rag.answer("NE101 蜂窝网络注册失败", channel="widget")
     searcher.search_bucket.assert_called_once()
     kwargs = searcher.search_bucket.call_args.kwargs
@@ -749,16 +787,21 @@ async def test_rag_product_intent_triggers_docs_bucket():
     rag, searcher, reranker, llm = _build_orchestrator(searcher_results=[sr])
     searcher.search_symbols.return_value = []
     searcher.search_bucket.return_value = []
-    llm.generate = AsyncMock(side_effect=[
-        _make_llm_response('{"category": "product", "reason": "产品"}'),
-        _make_llm_response("extracted"),
-        _make_llm_response("rewritten"),
-        _make_llm_response("answer"),
-    ])
+    llm.generate = AsyncMock(
+        side_effect=[
+            _make_llm_response('{"category": "product", "reason": "产品"}'),
+            _make_llm_response("extracted"),
+            _make_llm_response("rewritten"),
+            _make_llm_response("answer"),
+        ]
+    )
     await rag.answer("NE301 功能", channel="widget")
     searcher.search_bucket.assert_called_once()
     assert searcher.search_bucket.call_args.kwargs.get("chunk_types") == [
-        "paragraph", "heading", "list", "table"
+        "paragraph",
+        "heading",
+        "list",
+        "table",
     ]
 
 
@@ -769,12 +812,14 @@ async def test_rag_answer_carries_intent_field():
     rag, searcher, reranker, llm = _build_orchestrator(searcher_results=[sr])
     searcher.search_symbols.return_value = []
     searcher.search_bucket.return_value = []
-    llm.generate = AsyncMock(side_effect=[
-        _make_llm_response('{"category": "product", "reason": "x"}'),
-        _make_llm_response("e"),
-        _make_llm_response("r"),
-        _make_llm_response("answer"),
-    ])
+    llm.generate = AsyncMock(
+        side_effect=[
+            _make_llm_response('{"category": "product", "reason": "x"}'),
+            _make_llm_response("e"),
+            _make_llm_response("r"),
+            _make_llm_response("answer"),
+        ]
+    )
     result = await rag.answer("NE301 功能", channel="widget")
     assert result.intent == "product"
 
@@ -786,11 +831,13 @@ async def test_rag_stream_complete_event_carries_intent():
     rag, searcher, reranker, llm = _build_orchestrator(searcher_results=[sr])
     searcher.search_symbols.return_value = []
     searcher.search_bucket.return_value = []
-    llm.generate = AsyncMock(side_effect=[
-        _make_llm_response('{"category": "support", "reason": "x"}'),
-        _make_llm_response("e"),
-        _make_llm_response("r"),
-    ])
+    llm.generate = AsyncMock(
+        side_effect=[
+            _make_llm_response('{"category": "support", "reason": "x"}'),
+            _make_llm_response("e"),
+            _make_llm_response("r"),
+        ]
+    )
 
     async def _fake_stream(messages, task=None):
         for tok in ("ans",):
@@ -814,11 +861,13 @@ async def test_rag_stream_answer_uses_symbol_and_bucket_parity():
     rag, searcher, reranker, llm = _build_orchestrator(searcher_results=[sr])
     searcher.search_symbols.return_value = []
     searcher.search_bucket.return_value = []
-    llm.generate = AsyncMock(side_effect=[
-        _make_llm_response('{"category": "product", "reason": "x"}'),
-        _make_llm_response("e"),
-        _make_llm_response("r"),
-    ])
+    llm.generate = AsyncMock(
+        side_effect=[
+            _make_llm_response('{"category": "product", "reason": "x"}'),
+            _make_llm_response("e"),
+            _make_llm_response("r"),
+        ]
+    )
 
     async def _fake_stream(messages, task=None):
         for tok in ("ans",):
@@ -867,9 +916,9 @@ async def test_rag_falls_back_when_rerank_filters_all():
     result = await rag.answer("纺织布料缺陷检测", "widget")
 
     # 关键:不应拒答,应降级用 fused 候选继续生成
-    assert result.is_answered is True, (
-        f"reranked 空但 fused 非空时应降级生成,不应拒答(实际 is_answered={result.is_answered})"
-    )
+    assert (
+        result.is_answered is True
+    ), f"reranked 空但 fused 非空时应降级生成,不应拒答(实际 is_answered={result.is_answered})"
     assert result.answer != "暂未在官方资料中找到相关信息。"
 
 
