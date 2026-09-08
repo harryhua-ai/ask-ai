@@ -81,8 +81,7 @@ def _router_llm(intent_category="product"):
         providers={"fake": _FakeProvider(intent_category)},
         routing={
             "generation": [{"provider": "fake"}],
-            "intent": [{"provider": "fake"}],
-            "query_rewrite": [{"provider": "fake"}],
+            "task_understanding": [{"provider": "fake"}],
         },
     )
 
@@ -127,9 +126,10 @@ async def test_stream_trace_records_llm_calls_usage_split_timings():
     calls = trace["llm_calls"]
 
     tasks = [c["task"] for c in calls if not c.get("skipped")]
-    assert "intent" in tasks
-    # 无对话历史:rewrite_query 不触发 LLM(契约:history<2 直接返回)→ 仅 extract
-    assert tasks.count("query_rewrite") == 1
+    # INC-3:合并任务理解=单次调用(task_understanding);intent/extract/rewrite 不再独立存在
+    assert tasks.count("task_understanding") == 1
+    assert "intent" not in tasks
+    assert "query_rewrite" not in tasks
     assert "generation" in tasks
 
     gen = [c for c in calls if c["task"] == "generation"][0]
@@ -146,11 +146,13 @@ async def test_stream_trace_records_llm_calls_usage_split_timings():
     assert stages["generate"]["tokens_input"] == 7
     assert stages["generate"]["answer_chars"] == len(complete["answer"])
 
-    # 计时分离 + 修剪独立延迟
-    assert "extract_ms" in stages["rewrite"]
-    assert "rewrite_ms" in stages["rewrite"]
-    assert stages["rewrite"]["extract_ms"] >= 0
-    assert stages["rewrite"]["rewrite_ms"] >= 0
+    # INC-3 合并后:legacy rewrite 键由单次结果派生(extract/rewrite 计时不再伪装独立)
+    assert stages["rewrite"]["extract_ms"] is None
+    assert stages["rewrite"]["rewrite_ms"] is None
+    assert stages["rewrite"]["consolidated"] is True
+    assert stages["understanding"]["one_call"] is True
+    assert stages["understanding"]["ms"] >= 0
+    # 修剪独立延迟(不受合并影响)
     assert stages["rerank"]["prune_ms"] is not None
 
 
@@ -222,6 +224,7 @@ async def test_answer_path_records_llm_calls_and_split_timings():
     assert any(c["task"] == "generation" and c.get("success") for c in calls)
     assert "extract_ms" in trace["stages"]["rewrite"]
     assert "rewrite_ms" in trace["stages"]["rewrite"]
+    assert trace["stages"]["rewrite"]["consolidated"] is True
     assert trace["stages"]["generate"]["tokens_input"] == 11
     assert trace["stages"]["generate"]["tokens_output"] == 7
 

@@ -56,8 +56,20 @@ def _gate_llm(*, intent="product", answer="回答内容"):
 
     async def _generate(messages, **kwargs):
         task = kwargs.get("task", "generation")
-        if task == "intent":
-            return _resp(json.dumps({"category": intent, "reason": "r", "confidence": 0.9}))
+        if task in ("intent", "task_understanding"):
+            mode = "off_topic" if intent == "off_topic" else "standard"
+            return _resp(
+                json.dumps(
+                    {
+                        "category": intent,
+                        "reason": "r",
+                        "confidence": 0.9,
+                        "interaction_mode": mode,
+                        "extracted_query": "rewritten",
+                        "rewritten_query": "rewritten",
+                    }
+                )
+            )
         if task == "lead_qualification":
             return _resp(json.dumps({"lead_level": "qualified"}, ensure_ascii=False))
         if task == "query_rewrite":

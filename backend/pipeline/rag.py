@@ -35,7 +35,13 @@ from backend.pipeline.citation import (
     normalize_source_path,
     validate_citations,
 )
-from backend.pipeline.intent import classify_intent
+from backend.pipeline.intent import IntentResult
+from backend.pipeline.task_understanding import (
+    MODE_CAPABILITY,
+    MODE_CLARIFICATION,
+    MODE_OFF_TOPIC,
+    understand_task,
+)
 from backend.pipeline.lead_qualify import (
     LEAD_ACK_INSTRUCTION,
     LEAD_INVITE_INSTRUCTION,
@@ -54,7 +60,6 @@ from backend.pipeline.product_resolver import (
     resolve_products,
 )
 from backend.llm import telemetry as tel
-from backend.pipeline.query_rewrite import extract_query, rewrite_query
 from backend.pipeline.social import match_social
 from backend.product_taxonomy import UNKNOWN_SLUG, get_taxonomy
 from backend.retrieval.search import SearchResult
@@ -66,6 +71,8 @@ from backend.utils.user_messages import (
     PRODUCT_EVIDENCE_INSUFFICIENT_KEY,
     PRODUCT_NOT_SUPPORTED_KEY,
     localized_message,
+    CAPABILITY_ORIENTATION_KEY,
+    CLARIFICATION_REQUIRED_KEY,
 )
 
 logger = logging.getLogger(__name__)
@@ -1299,14 +1306,48 @@ class RAGOrchestrator:
                 result_key=result_key,
             )
 
-        t_intent = time.monotonic()
-        intent = await classify_intent(query, self._llm)
-        stages["intent"] = {
-            "ms": int((time.monotonic() - t_intent) * 1000),
-            "category": intent.category,
-            "reason": intent.reason,
+        # INC-3 合并任务理解:单次结构化调用替代 intent→extract→rewrite 三段串行
+        t_understand = time.monotonic()
+        understanding = await understand_task(query, conversation_history, self._llm)
+        understanding_ms = int((time.monotonic() - t_understand) * 1000)
+        intent = IntentResult(
+            category=understanding.category,
+            reason=understanding.reason,
+            confidence=understanding.confidence,
+        )
+        extracted = understanding.extracted_query
+        search_query = understanding.rewritten_query
+        stages["understanding"] = {
+            "ms": understanding_ms,
+            "interaction_mode": understanding.interaction_mode,
+            "category": understanding.category,
+            "confidence": understanding.confidence,
+            "fallback_used": understanding.fallback_used,
+            "parse_ok": understanding.parse_ok,
+            "one_call": True,
         }
-        if intent.category == "off_topic" and not (lead_ctx and lead_ctx.capture_mode):
+        # legacy 兼容键(由单次合并结果派生;ms=理解总耗时,不再代表独立 LLM 计时)
+        capture_mode = bool(lead_ctx and lead_ctx.capture_mode)
+        # PII-hard(Lead 契约):capture 轮的用户消息常是联系方式本身,
+        # 提取/改写结果不得落入 trace(检索仍用真实查询,仅 trace 脱敏)
+        traced_extracted = "(redacted: capture turn)" if capture_mode else extracted
+        traced_rewritten = "(redacted: capture turn)" if capture_mode else search_query
+        stages["rewrite"] = {
+            "ms": understanding_ms,
+            "extract_ms": None,
+            "rewrite_ms": None,
+            "extracted": traced_extracted,
+            "rewritten": traced_rewritten,
+            "consolidated": True,
+        }
+        stages["intent"] = {
+            "ms": understanding_ms,
+            "category": understanding.category,
+            "reason": understanding.reason,
+        }
+        if understanding.interaction_mode == MODE_OFF_TOPIC and not (
+            lead_ctx and lead_ctx.capture_mode
+        ):
             elapsed = int((time.monotonic() - start) * 1000)
             for _t in ("query_extraction", "query_rewrite", "pruning", "generation"):
                 tel.record_skipped(_t, "off_topic_short_circuit")
@@ -1328,10 +1369,65 @@ class RAGOrchestrator:
                     "config_snapshot": self._config_snapshot(),
                 },
             )
+        # INC-3 交互模式路由(#26/#27):澄清与能力导向是合法交互结果,
+        # 不得表现为 off_topic 拒答;capture 轮豁免(不得吞掉联系方式捕获)。
+        if not capture_mode and understanding.interaction_mode == MODE_CLARIFICATION:
+            elapsed = int((time.monotonic() - start) * 1000)
+            for _t in ("pruning", "generation", "lead_qualification"):
+                tel.record_skipped(_t, "clarification_short_circuit")
+            return RAGAnswer(
+                answer=localized_message(CLARIFICATION_REQUIRED_KEY, language),
+                sources=[],
+                is_answered=False,
+                reranked_results=[],
+                language=language,
+                response_time_ms=elapsed,
+                intent=intent.category,
+                trace_payload={
+                    "type": "task_clarify",
+                    "llm_calls": tel.current_calls(),
+                    "stages": stages,
+                    "total_ms": elapsed,
+                    "intent": intent.category,
+                    "interaction_mode": understanding.interaction_mode,
+                    "confidence": intent.confidence,
+                    "config_snapshot": {
+                        **self._config_snapshot(),
+                        "result_key": CLARIFICATION_REQUIRED_KEY,
+                    },
+                },
+                result_key=CLARIFICATION_REQUIRED_KEY,
+            )
+        if not capture_mode and understanding.interaction_mode == MODE_CAPABILITY:
+            elapsed = int((time.monotonic() - start) * 1000)
+            for _t in ("pruning", "generation", "lead_qualification"):
+                tel.record_skipped(_t, "capability_orientation_short_circuit")
+            return RAGAnswer(
+                answer=localized_message(CAPABILITY_ORIENTATION_KEY, language),
+                sources=[],
+                is_answered=True,
+                reranked_results=[],
+                language=language,
+                response_time_ms=elapsed,
+                intent=intent.category,
+                trace_payload={
+                    "type": "capability_orientation",
+                    "llm_calls": tel.current_calls(),
+                    "stages": stages,
+                    "total_ms": elapsed,
+                    "intent": intent.category,
+                    "interaction_mode": understanding.interaction_mode,
+                    "confidence": intent.confidence,
+                    "config_snapshot": {
+                        **self._config_snapshot(),
+                        "result_key": CAPABILITY_ORIENTATION_KEY,
+                    },
+                },
+                result_key=CAPABILITY_ORIENTATION_KEY,
+            )
         # commercial/product/support 进入 RAG 管线
         # (commercial 原「过渡期拒答」已废:WooCommerce 产品已灌库,走 woocommerce boost 桶作答)
         # product/commercial/support 降低检索阈值(能力咨询/购买咨询容忍少结果)
-        capture_mode = bool(lead_ctx and lead_ctx.capture_mode)
         if capture_mode:
             # 联系方式捕获轮:即使检索为空也必须生成(要确认已记录联系方式)
             effective_min = 0
@@ -1340,19 +1436,7 @@ class RAGOrchestrator:
                 1 if intent.category in ("product", "support", "commercial") else self._min_results
             )
 
-        t_extract = time.monotonic()
-        extracted = await extract_query(query, self._llm)
-        extract_ms = int((time.monotonic() - t_extract) * 1000)
-        t_rewrite = time.monotonic()
-        search_query = await rewrite_query(extracted, conversation_history, self._llm)
-        rewrite_ms = int((time.monotonic() - t_rewrite) * 1000)
-        stages["rewrite"] = {
-            "ms": extract_ms + rewrite_ms,
-            "extract_ms": extract_ms,
-            "rewrite_ms": rewrite_ms,
-            "extracted": extracted,
-            "rewritten": search_query,
-        }
+        # (extracted / search_query 已由合并理解产出,见 stages.understanding)
 
         # 统一检索 + 三路 RRF 融合(hybrid + symbol + intent boost 桶)
         t_ret = time.monotonic()
@@ -1681,6 +1765,14 @@ class RAGOrchestrator:
         detected_language = detect_language(query)
         language = resolve_answer_language(query, language_hint)
 
+        # INC-3:流式路径共享 stages(此前为各载荷内联构造);language 键保持原形
+        stages: dict[str, Any] = {
+            "language": {
+                "hint": language_hint,
+                "detected": detected_language,
+                "resolved": language,
+            }
+        }
         # Phase 3A: 人工答案覆盖前置检查
         if self._override_matcher:
             override = await self._override_matcher.match(query)
@@ -1816,11 +1908,50 @@ class RAGOrchestrator:
         # 日志排查语会被判 off_topic,但附件就是 context,必须放行。
         # Lead capture 模式(本轮消息检出联系方式)同理跳过 off_topic 拒答:
         # 用户补联系方式的消息常被判 off_topic,拒答会丢掉 capture 机会。
+        # INC-3 合并任务理解:单次结构化调用替代 intent→extract→rewrite 三段串行
+        t_understand = time.monotonic()
+        understanding = await understand_task(query, conversation_history, self._llm)
+        understanding_ms = int((time.monotonic() - t_understand) * 1000)
+        intent = IntentResult(
+            category=understanding.category,
+            reason=understanding.reason,
+            confidence=understanding.confidence,
+        )
+        extracted = understanding.extracted_query
+        search_query = understanding.rewritten_query
+        stages["understanding"] = {
+            "ms": understanding_ms,
+            "interaction_mode": understanding.interaction_mode,
+            "category": understanding.category,
+            "confidence": understanding.confidence,
+            "fallback_used": understanding.fallback_used,
+            "parse_ok": understanding.parse_ok,
+            "one_call": True,
+        }
+        # legacy 兼容键(由单次合并结果派生;ms=理解总耗时,不再代表独立 LLM 计时)
         capture_mode = bool(lead_ctx and lead_ctx.capture_mode)
-        t_intent = time.monotonic()
-        intent = await classify_intent(query, self._llm)
-        intent_ms = int((time.monotonic() - t_intent) * 1000)
-        if not attachments and not capture_mode and intent.category == "off_topic":
+        # PII-hard(Lead 契约):capture 轮的用户消息常是联系方式本身,
+        # 提取/改写结果不得落入 trace(检索仍用真实查询,仅 trace 脱敏)
+        traced_extracted = "(redacted: capture turn)" if capture_mode else extracted
+        traced_rewritten = "(redacted: capture turn)" if capture_mode else search_query
+        stages["rewrite"] = {
+            "ms": understanding_ms,
+            "extract_ms": None,
+            "rewrite_ms": None,
+            "extracted": traced_extracted,
+            "rewritten": traced_rewritten,
+            "consolidated": True,
+        }
+        stages["intent"] = {
+            "ms": understanding_ms,
+            "category": understanding.category,
+            "reason": understanding.reason,
+        }
+        if (
+            not attachments
+            and not capture_mode
+            and understanding.interaction_mode == MODE_OFF_TOPIC
+        ):
             elapsed = int((time.monotonic() - start) * 1000)
             for _t in (
                 "query_extraction",
@@ -1850,15 +1981,79 @@ class RAGOrchestrator:
                                 "resolved": language,
                             },
                             "intent": {
-                                "ms": intent_ms,
-                                "category": intent.category,
-                                "reason": intent.reason,
+                                "ms": understanding_ms,
+                                "category": understanding.category,
+                                "reason": understanding.reason,
                             },
                         },
                         "total_ms": elapsed,
                         "intent": intent.category,
                         "confidence": intent.confidence,
                         "config_snapshot": self._config_snapshot(),
+                    },
+                }
+            )
+            return
+        # INC-3 交互模式路由(#26/#27):澄清与能力导向是合法交互结果,
+        # 不得表现为 off_topic 拒答;capture 轮豁免(不得吞掉联系方式捕获)。
+        if not capture_mode and understanding.interaction_mode == MODE_CLARIFICATION:
+            elapsed = int((time.monotonic() - start) * 1000)
+            for _t in ("pruning", "generation", "lead_qualification"):
+                tel.record_skipped(_t, "clarification_short_circuit")
+            yield json.dumps(
+                {
+                    "type": "complete",
+                    "answer": localized_message(CLARIFICATION_REQUIRED_KEY, language),
+                    "sources": [],
+                    "is_answered": False,
+                    "language": language,
+                    "response_time_ms": elapsed,
+                    "intent": intent.category,
+                    "result_key": CLARIFICATION_REQUIRED_KEY,
+                    "interaction_mode": understanding.interaction_mode,
+                    "trace_payload": {
+                        "type": "task_clarify",
+                        "llm_calls": tel.current_calls(),
+                        "stages": stages,
+                        "total_ms": elapsed,
+                        "intent": intent.category,
+                        "interaction_mode": understanding.interaction_mode,
+                        "confidence": intent.confidence,
+                        "config_snapshot": {
+                            **self._config_snapshot(),
+                            "result_key": CLARIFICATION_REQUIRED_KEY,
+                        },
+                    },
+                }
+            )
+            return
+        if not capture_mode and understanding.interaction_mode == MODE_CAPABILITY:
+            elapsed = int((time.monotonic() - start) * 1000)
+            for _t in ("pruning", "generation", "lead_qualification"):
+                tel.record_skipped(_t, "capability_orientation_short_circuit")
+            yield json.dumps(
+                {
+                    "type": "complete",
+                    "answer": localized_message(CAPABILITY_ORIENTATION_KEY, language),
+                    "sources": [],
+                    "is_answered": True,
+                    "language": language,
+                    "response_time_ms": elapsed,
+                    "intent": intent.category,
+                    "result_key": CAPABILITY_ORIENTATION_KEY,
+                    "interaction_mode": understanding.interaction_mode,
+                    "trace_payload": {
+                        "type": "capability_orientation",
+                        "llm_calls": tel.current_calls(),
+                        "stages": stages,
+                        "total_ms": elapsed,
+                        "intent": intent.category,
+                        "interaction_mode": understanding.interaction_mode,
+                        "confidence": intent.confidence,
+                        "config_snapshot": {
+                            **self._config_snapshot(),
+                            "result_key": CAPABILITY_ORIENTATION_KEY,
+                        },
                     },
                 }
             )
@@ -1884,13 +2079,8 @@ class RAGOrchestrator:
                 1 if intent.category in ("product", "support", "commercial") else self._min_results
             )
 
-        t_extract = time.monotonic()
-        extracted = await extract_query(query, self._llm)
-        extract_ms = int((time.monotonic() - t_extract) * 1000)
-        t_rewrite = time.monotonic()
-        search_query = await rewrite_query(extracted, conversation_history, self._llm)
-        rewrite_ms = int((time.monotonic() - t_rewrite) * 1000)
-        total_rewrite_ms = extract_ms + rewrite_ms
+        # (extracted / search_query 已由合并理解产出,见 stages.understanding;
+        #  legacy stages.rewrite 由 stages.understanding 派生,已于上方写入)
 
         # 统一检索 + 三路 RRF 融合(与 answer 共用 _retrieve_and_fuse,保证 parity)
         t1 = time.monotonic()
@@ -2061,17 +2251,19 @@ class RAGOrchestrator:
                             "type": "reject_short",
                             "llm_calls": tel.current_calls(),
                             "stages": {
+                                "understanding": stages.get("understanding"),
                                 "intent": {
-                                    "ms": intent_ms,
-                                    "category": intent.category,
-                                    "reason": intent.reason,
+                                    "ms": understanding_ms,
+                                    "category": understanding.category,
+                                    "reason": understanding.reason,
                                 },
                                 "rewrite": {
-                                    "ms": total_rewrite_ms,
-                                    "extract_ms": extract_ms,
-                                    "rewrite_ms": rewrite_ms,
-                                    "extracted": extracted,
-                                    "rewritten": search_query,
+                                    "ms": understanding_ms,
+                                    "extract_ms": None,
+                                    "rewrite_ms": None,
+                                    "extracted": traced_extracted,
+                                    "rewritten": traced_rewritten,
+                                    "consolidated": True,
                                 },
                                 # AC10:短路路径如实携带已执行阶段(不再 0ms/缺失)
                                 "retrieve": retrieve_stage,
@@ -2144,17 +2336,19 @@ class RAGOrchestrator:
                             "type": "reject_short",
                             "llm_calls": tel.current_calls(),
                             "stages": {
+                                "understanding": stages.get("understanding"),
                                 "intent": {
-                                    "ms": intent_ms,
-                                    "category": intent.category,
-                                    "reason": intent.reason,
+                                    "ms": understanding_ms,
+                                    "category": understanding.category,
+                                    "reason": understanding.reason,
                                 },
                                 "rewrite": {
-                                    "ms": total_rewrite_ms,
-                                    "extract_ms": extract_ms,
-                                    "rewrite_ms": rewrite_ms,
-                                    "extracted": extracted,
-                                    "rewritten": search_query,
+                                    "ms": understanding_ms,
+                                    "extract_ms": None,
+                                    "rewrite_ms": None,
+                                    "extracted": traced_extracted,
+                                    "rewritten": traced_rewritten,
+                                    "consolidated": True,
                                 },
                                 "retrieve": {
                                     "ms": search_ms,
@@ -2412,9 +2606,9 @@ class RAGOrchestrator:
         elapsed = int((time.monotonic() - start) * 1000)
 
         logger.info(
-            "RAG timing: rewrite=%dms search=%dms rerank=%dms ttft=%dms llm_total=%dms total=%dms "
+            "RAG timing: understanding=%dms search=%dms rerank=%dms ttft=%dms llm_total=%dms total=%dms "
             "(query=%d chars, answer=%d chars, sources=%d)",
-            rewrite_ms,
+            understanding_ms,
             search_ms,
             rerank_ms,
             first_token_ms or 0,
@@ -2435,7 +2629,7 @@ class RAGOrchestrator:
                 "response_time_ms": elapsed,
                 "intent": intent.category,
                 "timing": {
-                    "rewrite_ms": rewrite_ms,
+                    "understanding_ms": understanding_ms,
                     "search_ms": search_ms,
                     "rerank_ms": rerank_ms,
                     "first_token_ms": first_token_ms,
@@ -2450,17 +2644,19 @@ class RAGOrchestrator:
                             "detected": detected_language,
                             "resolved": language,
                         },
+                        "understanding": stages.get("understanding"),
                         "intent": {
-                            "ms": intent_ms,
-                            "category": intent.category,
-                            "reason": intent.reason,
+                            "ms": understanding_ms,
+                            "category": understanding.category,
+                            "reason": understanding.reason,
                         },
                         "rewrite": {
-                            "ms": total_rewrite_ms,
-                            "extract_ms": extract_ms,
-                            "rewrite_ms": rewrite_ms,
-                            "extracted": extracted,
-                            "rewritten": search_query,
+                            "ms": understanding_ms,
+                            "extract_ms": None,
+                            "rewrite_ms": None,
+                            "extracted": traced_extracted,
+                            "rewritten": traced_rewritten,
+                            "consolidated": True,
                         },
                         "retrieve": {
                             "ms": search_ms,

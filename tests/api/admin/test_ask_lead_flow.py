@@ -58,8 +58,20 @@ class _ScriptedLLM:
         from backend.llm.base import LLMResponse
 
         task = kwargs.get("task", "generation")
+        mode = "off_topic" if self.intent == "off_topic" else "standard"
         content = {
-            "intent": json.dumps({"category": self.intent, "reason": "r", "confidence": 0.9}),
+            # INC-3:合并任务理解(单次结构化输出,含提取/改写查询)
+            "task_understanding": json.dumps(
+                {
+                    "category": self.intent,
+                    "reason": "r",
+                    "confidence": 0.9,
+                    "interaction_mode": mode,
+                    "extracted_query": "rewritten",
+                    "rewritten_query": "rewritten",
+                },
+                ensure_ascii=False,
+            ),
             "lead_qualification": self.qualification,
             "query_rewrite": "rewritten",
         }.get(task, "ignored")
