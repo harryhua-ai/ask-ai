@@ -308,7 +308,57 @@ describe("I. legacy 公共 widget(无 siteId):立即渲染,零等待", () => {
   });
 });
 
-// ------------------------------------------------------- 补:已解析后重拉不隐藏
+// ------------------------------------------------------- REV1:迟到配置独立生命周期
+
+describe("REV1:外观超时后迟到的 site-config——数据须消费,外观不二次闪变", () => {
+  it("超期回退后迟到成功:welcome/starters 仍被消费;launcher 保持回退外观(无二次闪变)", async () => {
+    vi.useFakeTimers();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<App config={baseConfig()} />);
+    });
+    await act(async () => {});
+    // 外观期限:确定性回退可见(PENDING → FAILED → FALLBACK)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(LAUNCHER_RESOLUTION_TIMEOUT_MS + 1);
+    });
+    const el = fab(container)!;
+    expect(el).not.toBeNull();
+    expect(fabAppearance(el)).toEqual({
+      icon: "current",
+      shape: "rounded-square",
+      theme: "light",
+    });
+    // 迟到成功:同时携带非外观字段(welcome/starters)与不同外观值
+    await act(async () => {
+      pendingFetches[0].resolve({
+        site_id: "i33-site",
+        welcome: "late-welcome",
+        starters: ["late-starter"],
+        launcher_icon: "bubble-sparkle-fill",
+        launcher_shape: "round",
+        launcher_theme: "dark",
+      });
+    });
+    // 1) Late Appearance Rule:回退外观已可见 → 不得再切换(无第二次闪变)
+    expect(fabAppearance(fab(container)!)).toEqual({
+      icon: "current",
+      shape: "rounded-square",
+      theme: "light",
+    });
+    // 2) 非外观数据须照常消费:面板内可见迟到 welcome/starters
+    await act(async () => {
+      fab(container)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const panelText = container.querySelector(".ask-ai-panel")?.textContent ?? "";
+    expect(panelText).toContain("late-welcome");
+    expect(panelText).toContain("late-starter");
+    root.unmount();
+    container.remove();
+  });
+});
 
 describe("补充:已解析(RESOLVED)后 uiLang 重拉,launcher 不得隐藏", () => {
   it("重拉 pending 期间 launcher 仍在,保持既有权威外观", async () => {

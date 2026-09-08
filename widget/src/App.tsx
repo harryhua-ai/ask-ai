@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type { WidgetConfig, ChatMessage, SiteExperienceConfig } from "./types";
 import { useSSE } from "./hooks/useSSE";
 import { collectPageContext } from "./utils/pageContext";
@@ -20,7 +20,12 @@ import {
   resolveLocalLauncherAppearance,
   useResolvedTheme,
 } from "./launcher/registry";
-import { fetchSiteConfig, resolveStarters, LAUNCHER_RESOLUTION_TIMEOUT_MS } from "./utils/siteConfig";
+import {
+  fetchSiteConfig,
+  resolveStarters,
+  stripLauncherAppearance,
+  LAUNCHER_RESOLUTION_TIMEOUT_MS,
+} from "./utils/siteConfig";
 
 // legacy 兜底推荐问题按 UI 语言双变体(G-L4/G-L5:站点 starters 缺失时的回落)
 const DEFAULT_STARTERS: Record<"en" | "zh", string[]> = {
@@ -80,39 +85,60 @@ export function App({ config }: { config: WidgetConfig }) {
   // Issue #33 首绘正确性 —— launcher 外观解析状态机:
   //   UNRESOLVED(权威 site-config 未到达:不绘制 provisional 外观)
   //     → RESOLVED(权威值到达;或嵌入级本地终值/legacy 无站点 → 免等)
-  //   UNRESOLVED → FAILED(失败/超时,确定性回退默认外观,绝不永久空白)
+  //   UNRESOLVED → FAILED(失败或外观期限到,确定性回退默认外观,绝不永久空白)
   // PENDING ≠ FAILED:仅初始解析失败才进入 FAILED;已 RESOLVED 后的
   // uiLang 重拉失败保留既有权威外观(不隐藏、不回退)。
+  //
+  // REV1 生命周期解耦:外观期限只是**状态转换点**,不取消请求 ——
+  // site-config 的 welcome/starters/本地化检索生命周期独立于外观解析:
+  //   - 期限前成功:UNRESOLVED → RESOLVED,首见=权威外观;
+  //   - 期限后迟到成功:非外观字段照常消费(setSiteConfig),外观维度被
+  //     stripLauncherAppearance 剥离 → 回退外观保持稳定,零二次闪变;
+  //   - 期限后失败:非外观失败语义与现状一致(默认体验)。
   const localAppearance = resolveLocalLauncherAppearance(config);
   const [appearancePhase, setAppearancePhase] = useState<"unresolved" | "resolved" | "failed">(
     () => (localAppearance || !config.siteId ? "resolved" : "unresolved"),
   );
+  // 异步回调内读取最新相位用(状态 closure 会因 effect 重跑而陈旧)
+  const appearancePhaseRef = useRef(appearancePhase);
+  const transitionAppearancePhase = (next: "resolved" | "failed") => {
+    appearancePhaseRef.current = next;
+    setAppearancePhase(next);
+  };
   useEffect(() => {
     if (!config.siteId) return;
-    // 解析上界:超时视为解析失败(契约 §4;AbortController 广播给底层 fetch)
-    const controller = new AbortController();
-    const timer = window.setTimeout(
-      () => controller.abort(),
-      LAUNCHER_RESOLUTION_TIMEOUT_MS,
-    );
+    // 外观期限:仅推动状态机转换;绝不 abort 请求(REV1)
+    const timer = window.setTimeout(() => {
+      if (appearancePhaseRef.current === "unresolved") {
+        transitionAppearancePhase("failed");
+      }
+    }, LAUNCHER_RESOLUTION_TIMEOUT_MS);
     let cancelled = false;
-    fetchSiteConfig(config.apiUrl, config.siteId, { language: uiLang, signal: controller.signal })
+    fetchSiteConfig(config.apiUrl, config.siteId, { language: uiLang })
       .then((cfg) => {
         if (cancelled) return;
-        setSiteConfig(cfg);
-        setAppearancePhase("resolved");
+        if (appearancePhaseRef.current === "unresolved") {
+          setSiteConfig(cfg);
+          transitionAppearancePhase("resolved");
+        } else if (appearancePhaseRef.current === "failed") {
+          // 迟到成功:非外观语义照常消费;外观维度剥离(无二次闪变)
+          setSiteConfig(stripLauncherAppearance(cfg));
+        } else {
+          setSiteConfig(cfg);
+        }
       })
       .catch(() => {
         if (cancelled) return;
         // 保持默认体验;不做二次降级提示,失败在 ask 时服务端可见
-        setAppearancePhase((prev) => (prev === "unresolved" ? "failed" : prev));
+        if (appearancePhaseRef.current === "unresolved") {
+          transitionAppearancePhase("failed");
+        }
       })
       .finally(() => {
         window.clearTimeout(timer);
       });
     return () => {
       cancelled = true;
-      controller.abort();
       window.clearTimeout(timer);
     };
   }, [config.apiUrl, config.siteId, uiLang]);
