@@ -132,9 +132,32 @@ HF_HUB_OFFLINE=1 .venv/bin/python -m pytest tests -q --ignore=tests/e2e
 
 未实现 INC-2b 脱敏/INC-3~INC-7 任何行为;新元数据未接入任何过滤/排序/剪枝/组合/引用/策略决策(§11 冻结)。
 
-## 13. OPEN_RISKS
+## 13. AMENDMENT = INC-2A-CLASSIFICATION-SAFETY-01(A 审查 PARTIAL → 窄化修订,已实施)
 
-1. **R1 标注粒度**:authority 规则集中 github/website/web_crawl/local_git 恒 unknown——运营如需 authoritative-doc 需后续显式 config 通道(EXPLICIT 溯源已预留 E 码,但 INC-2a 未实现 config→chunk 传递,属后续小增量)。
+**OLD(已被撤销的映射)**:
+- sensitivity:`source_type ∈ PUBLIC_SOURCE_TYPES` → public(DERIVED);filesystem → internal(DERIVED)
+- authority:filesystem → case-example;woocommerce → official-pricing
+
+**NEW(修订后)**:
+- sensitivity:**唯一判定 = 显式 `internal` 标记** → internal(EXPLICIT,溯源 s 位=E);其余一律 unknown——`PUBLIC_SOURCE_TYPES`(引用/组合语义)与 `channel_visibility`(请求渠道语义)均非敏感度证明,missing internal ≠ public
+- authority:**全量 unknown**——组合期证据只证明 filesystem 的 internal/background 处置,不证明案例语义;woocommerce 无法对**每个** chunk 建立定价证据保证(连接器含商品描述等非定价正文),按修订令"不能保证 ⇒ unknown"撤除
+- citation_eligibility:严格镜像既有组合语义且独立于 sensitivity——`build_citation_context` 既有行为即 source_type ∈ PUBLIC 白名单 → citable-numbered、其余 → background-declared(仓库证据证明等价;映射不再引用 visibility 标记)
+- 回填 unknown_unclassifiable 判据:authority+sensitivity 双 unknown(citation 镜像恒有值)
+- temporality:不变(恒 unknown)
+
+**REASON** = Frozen Contract 要求 unknown-safe 语义,禁止从非等价结构范畴推导 sensitivity/authority(渠道可见性≠敏感度;引用资格≠敏感度;源类型≠权威类;缺失标记≠public)。
+
+**UNCHANGED CONTRACT SURFACES** = 五个元数据 property/EvidenceMeta 结构/evidence_origin 概念/摄取传播/Weaviate 增量 schema/SearchResult 传播/检索投影/回填 dry-run-apply-幂等架构/稳定 chunk uuid/向量与正文保全/零新 LLM 调用/零应答行为变更/零生产触碰/INC-2b 边界/INC-3+ 范围——全部未动。
+
+**FINAL_COMMIT** = `48b9480`(追加提交于 task/inc2a-evidence-metadata,已推 origin;前序 cdbb234 未改写)
+
+**TESTS** = 分类表 11 例按新映射重写 + 修订令 10 项逐项证明测试(公开类型无标记→unknown×4 / internal→internal+E / 全空间缺标记绝不 public / filesystem≠case-example / authority 歧义恒 unknown / citation 与 sensitivity 独立 / 确定性 / 摄取回填同函数零漂移);本地 70k 回填**未重跑**(修订令:非必要不重跑;本地库现持 v1 分类值,生产/本地重放须按新分类器再授权执行);`1773+48=1821 passed / 3 skipped / 0 failed`(48.9s)。
+
+**PRODUCTION_MUTATION** = NO
+
+## 14. OPEN_RISKS(修订后)
+
+1. **R1 标注粒度**:修订后 authority 对全部源类型恒 unknown、sensitivity 仅 internal 标记可判——任何正面分类(如 authoritative-doc)需未来的显式 config 通道(EXPLICIT 溯源 E 码已预留,config→chunk 传递属后续小增量)。本地 weaviate 现持 v1 分类值(修订令禁止非必要重跑),本地/生产重放按新分类器执行时将整批改写(幂等架构不变)。
 2. **R2 生产回填规模**:生产索引体量 > 本地 7 万;回填工具支持 --source 分批 + 幂等重入,生产执行需单独授权与批次计划。
 3. **R3 存量缺失语义依赖消费端守约**:回填前读取 evidence_* 一律得 unknown(读取缺省已实现并有测试);后续 S5/S6 若忽略 unknown 语义将构成越权使用(契约 §11 由后续增量自身的审查把关)。
 4. **R4 共享测试库环境**:全量套件中 1 个既有 skip(test_sync_trigger_isolation)因共享库状态波动,与本次改动无关(迁移前基线亦波动)。
