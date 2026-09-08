@@ -1,0 +1,24 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>i33 override</title>
+<link rel="stylesheet" href="/widget/ask-ai-widget.css">
+<script>
+window.__i33 = {samples: [], t0ms: null};
+(function(){
+  function snap(){
+    if (window.__i33.t0ms === null) window.__i33.t0ms = Math.round(performance.now());
+    const b = document.querySelector('.ask-ai-fab');
+    const s = { t: Math.round(performance.now()), present: !!b,
+      icon: b ? b.getAttribute('data-launcher-icon') : null,
+      shape: b ? b.getAttribute('data-launcher-shape') : null,
+      theme: b ? b.getAttribute('data-ask-ai-theme') : null,
+      bg: b ? getComputedStyle(b).backgroundColor : null };
+    const a = window.__i33.samples, last = a[a.length-1];
+    if (!last || last.icon!==s.icon || last.shape!==s.shape || last.theme!==s.theme || last.bg!==s.bg) a.push(s);
+  }
+  setInterval(snap, 16);
+})();
+</script>
+</head><body>
+<script>window.AskAIConfig = { apiUrl: "", siteId: "i33-site", launcherIcon: "robot-smile", launcherShape: "round", launcherTheme: "light" };</script>
+<script src="/widget/widget.js"></script>
+</body></html>
