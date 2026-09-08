@@ -49,9 +49,10 @@ def test_build_props_carries_evidence_meta():
         assert key in props, f"缺少 {key}"
     assert props["evidence_authority_class"] == "unknown"
     assert props["evidence_temporality"] == "unknown"
-    assert props["evidence_sensitivity"] == "public"
+    # 修订 SAFETY-01:缺失 internal 标记 ⇒ sensitivity unknown(非 public)
+    assert props["evidence_sensitivity"] == "unknown"
     assert props["evidence_citation_eligibility"] == "citable-numbered"
-    assert props["evidence_origin"] == "UUDD"
+    assert props["evidence_origin"] == "UUUD"
 
 
 @pytest.mark.unit
@@ -76,10 +77,12 @@ def test_build_props_filesystem_classification():
         )(),
         doc,
     )
-    assert props["evidence_authority_class"] == "case-example"
-    assert props["evidence_sensitivity"] == "internal"
+    # 修订 SAFETY-01:filesystem 仅凭 source_type 不得成为 case-example;
+    # sensitivity 无显式标记 ⇒ unknown;组合语义镜像保留在 citation 维度
+    assert props["evidence_authority_class"] == "unknown"
+    assert props["evidence_sensitivity"] == "unknown"
     assert props["evidence_citation_eligibility"] == "background-declared"
-    assert props["evidence_origin"] == "DUDD"
+    assert props["evidence_origin"] == "UUUD"
 
 
 @pytest.mark.unit
@@ -114,8 +117,8 @@ def test_ingest_document_writes_evidence_props():
     props_list = _ingest_and_capture_props()
     assert props_list, "应有 chunk 写入"
     for props in props_list:
-        assert props["evidence_sensitivity"] == "public"
+        assert props["evidence_sensitivity"] == "unknown"
         assert props["evidence_citation_eligibility"] == "citable-numbered"
         assert props["evidence_authority_class"] == "unknown"
         assert props["evidence_temporality"] == "unknown"
-        assert props["evidence_origin"] == "UUDD"
+        assert props["evidence_origin"] == "UUUD"

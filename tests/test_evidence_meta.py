@@ -1,10 +1,12 @@
-"""INC-2a 证据语义确定性分类单元测试。
+"""INC-2a 证据语义确定性分类单元测试(修订 INC-2A-CLASSIFICATION-SAFETY-01 后)。
 
-契约要求(§4/§5/§15):
+契约要求(§4/§5/§15 + 修订令 10 项):
 - 相同持久化输入 → 恒等输出(确定性/可复算);
 - 歧义/不可判定 → 显式 unknown(不得推断 stronger class);
-- personal-data 永不由规则赋值(内容审查属 INC-2b);
-- 溯源码 A/T/S/C ∈ {E,D,U},internal 显式标记 → sensitivity=E。
+- sensitivity 唯一判定 = 显式 internal 标记(EXPLICIT);缺失标记绝不推出 public;
+- filesystem 不得仅凭 source_type 成为 case-example;authority 歧义恒 unknown;
+- citation eligibility 严格镜像组合语义且独立于 sensitivity;
+- personal-data 永不由规则赋值(内容审查属 INC-2b)。
 """
 
 import itertools
@@ -26,54 +28,59 @@ PUBLIC_TYPES = ["github", "local_git", "website", "web_crawl", "woocommerce"]
 @pytest.mark.parametrize(
     "source_type,visibility,expected",
     [
-        # filesystem = 内部支持案例库:case-example / internal / background-declared
+        # 修订后:authority 全量 unknown;sensitivity 仅显式 internal 标记;
+        # citation 严格镜像组合语义(PUBLIC 白名单 → citable;其余 → background)
         (
             "filesystem",
             ("widget", "api"),
-            ("case-example", "unknown", "internal", "background-declared", "DUDD"),
+            ("unknown", "unknown", "unknown", "background-declared", "UUUD"),
         ),
-        # woocommerce = 官方商城目录(含价格账本):official-pricing / public / citable
         (
             "woocommerce",
             ("widget", "api"),
-            ("official-pricing", "unknown", "public", "citable-numbered", "DUDD"),
+            ("unknown", "unknown", "unknown", "citable-numbered", "UUUD"),
         ),
-        # 公开文档源:权威类不唯一蕴含 → unknown(契约 §5,不推断 stronger class)
-        ("github", ("widget", "api"), ("unknown", "unknown", "public", "citable-numbered", "UUDD")),
+        (
+            "github",
+            ("widget", "api"),
+            ("unknown", "unknown", "unknown", "citable-numbered", "UUUD"),
+        ),
         (
             "website",
             ("widget", "api"),
-            ("unknown", "unknown", "public", "citable-numbered", "UUDD"),
+            ("unknown", "unknown", "unknown", "citable-numbered", "UUUD"),
         ),
         (
             "web_crawl",
             ("widget", "api"),
-            ("unknown", "unknown", "public", "citable-numbered", "UUDD"),
+            ("unknown", "unknown", "unknown", "citable-numbered", "UUUD"),
         ),
         (
             "local_git",
             ("widget", "api"),
-            ("unknown", "unknown", "public", "citable-numbered", "UUDD"),
+            ("unknown", "unknown", "unknown", "citable-numbered", "UUUD"),
         ),
-        # 显式 internal 标记(EXPLICIT):sensitivity 溯源为 E
-        (
-            "github",
-            ("internal",),
-            ("unknown", "unknown", "internal", "background-declared", "UUED"),
-        ),
+        # 显式 internal 标记:唯一 sensitivity 判定(EXPLICIT,溯源 s 位=E);
+        # citation 仍按 source_type 镜像(与 sensitivity 独立)
+        ("github", ("internal",), ("unknown", "unknown", "internal", "citable-numbered", "UUED")),
         (
             "web_crawl",
             ("internal", "api"),
+            ("unknown", "unknown", "internal", "citable-numbered", "UUED"),
+        ),
+        (
+            "filesystem",
+            ("internal",),
             ("unknown", "unknown", "internal", "background-declared", "UUED"),
         ),
-        # 未知类型:全 unknown(UUUU)
+        # 未知类型:authority/sensitivity unknown;citation 镜像组合(非 PUBLIC → background)
         (
             "future-connector",
             ("widget", "api"),
-            ("unknown", "unknown", "unknown", "unknown", "UUUU"),
+            ("unknown", "unknown", "unknown", "background-declared", "UUUD"),
         ),
-        # 缺失 channel_visibility(存量兼容)按公开默认解释
-        ("github", None, ("unknown", "unknown", "public", "citable-numbered", "UUDD")),
+        # 缺失 channel_visibility(存量兼容)按公开默认解释,不产生 sensitivity
+        ("github", None, ("unknown", "unknown", "unknown", "citable-numbered", "UUUD")),
     ],
 )
 def test_deterministic_mapping_table(source_type, visibility, expected):
@@ -88,9 +95,73 @@ def test_deterministic_mapping_table(source_type, visibility, expected):
     assert got == expected
 
 
+# --------------------------------------------------------------------------- #
+# 修订令要求的逐项证明
+# --------------------------------------------------------------------------- #
+
+
 @pytest.mark.unit
-def test_same_input_same_output():
-    """确定性:相同存储输入恒等输出(含 dataclass 相等与 hash 稳定)。"""
+@pytest.mark.parametrize("source_type", ["github", "website", "web_crawl", "local_git"])
+def test_amendment_1_2_public_types_without_marker_sensitivity_unknown(source_type):
+    """修订令 1/2:公开文档类型无 internal 标记 → sensitivity=unknown(非 public)。"""
+    meta = derive_evidence_meta(source_type, ("widget", "api"))
+    assert meta.sensitivity == "unknown"
+    assert meta.origin[2] == "U"
+
+
+@pytest.mark.unit
+def test_amendment_3_explicit_internal_marker_is_internal_explicit():
+    """修订令 3:显式 internal 标记 → internal,溯源 EXPLICIT。"""
+    meta = derive_evidence_meta("github", ("internal",))
+    assert meta.sensitivity == "internal"
+    assert meta.origin[2] == "E"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("source_type", [*PUBLIC_TYPES, "filesystem", "future-connector", ""])
+@pytest.mark.parametrize("visibility", [None, (), ("widget", "api"), ("admin",)])
+def test_amendment_4_absence_of_marker_never_produces_public(source_type, visibility):
+    """修订令 4:internal 标记缺省本身永不产生 public(全类型 × 全缺省形态)。"""
+    meta = derive_evidence_meta(source_type, visibility)
+    assert meta.sensitivity != "public"
+    if "internal" not in (visibility or ()):
+        assert meta.sensitivity == "unknown"
+
+
+@pytest.mark.unit
+def test_amendment_5_filesystem_not_case_example_from_source_type_alone():
+    """修订令 5:filesystem 仅凭 source_type 不得成为 case-example。"""
+    meta = derive_evidence_meta("filesystem", ("widget", "api"))
+    assert meta.authority_class == "unknown"
+    assert meta.origin[0] == "U"
+    # 既有组合语义保留在 citation 维度:非 PUBLIC → background-declared
+    assert meta.citation_eligibility == "background-declared"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("source_type", [*PUBLIC_TYPES, "filesystem", "future-connector"])
+def test_amendment_6_ambiguous_authority_remains_unknown(source_type):
+    """修订令 6:无正面事实的 authority 恒 unknown(woocommerce 同撤)。"""
+    for visibility in (None, ("widget", "api"), ("internal",)):
+        assert derive_evidence_meta(source_type, visibility).authority_class == "unknown"
+
+
+@pytest.mark.unit
+def test_amendment_7_citation_independent_from_sensitivity():
+    """修订令 7:citation 只随 source_type 镜像组合语义,不随 sensitivity 变。"""
+    plain = derive_evidence_meta("github", ("widget", "api"))
+    marked = derive_evidence_meta("github", ("internal",))
+    assert plain.sensitivity != marked.sensitivity
+    assert plain.citation_eligibility == marked.citation_eligibility == "citable-numbered"
+    fs_plain = derive_evidence_meta("filesystem", ("widget", "api"))
+    fs_marked = derive_evidence_meta("filesystem", ("internal",))
+    assert fs_plain.sensitivity != fs_marked.sensitivity
+    assert fs_plain.citation_eligibility == fs_marked.citation_eligibility == "background-declared"
+
+
+@pytest.mark.unit
+def test_determinism_same_input_same_output():
+    """修订令 8:确定性——相同存储输入恒等输出。"""
     a = derive_evidence_meta("filesystem", ("widget", "api"))
     b = derive_evidence_meta("filesystem", ("widget", "api"))
     assert a == b and hash(a) == hash(b)
@@ -118,8 +189,7 @@ def test_personal_data_and_user_provided_never_assigned():
     types = [*PUBLIC_TYPES, "filesystem", "future-connector", ""]
     visibilities = [None, (), ("widget",), ("internal",), ("widget", "internal")]
     for st, cv in itertools.product(types, visibilities):
-        meta = derive_evidence_meta(st, cv)
-        assert meta.sensitivity not in {"personal-data", "user-provided"}
+        assert derive_evidence_meta(st, cv).sensitivity not in {"personal-data", "user-provided"}
 
 
 @pytest.mark.unit

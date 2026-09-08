@@ -118,11 +118,9 @@ def plan_backfill(
         counters.authority_hist[target[PROP_AUTHORITY]] += 1
         counters.sensitivity_hist[target[PROP_SENSITIVITY]] += 1
         counters.citation_hist[target[PROP_CITATION]] += 1
-        if (
-            target[PROP_AUTHORITY] == "unknown"
-            and target[PROP_SENSITIVITY] == "unknown"
-            and target[PROP_CITATION] == "unknown"
-        ):
+        # 修订 SAFETY-01:citation 严格镜像组合语义恒有值,
+        # "不可分类"判据 = 两个安全维度(authority+sensitivity)双 unknown
+        if target[PROP_AUTHORITY] == "unknown" and target[PROP_SENSITIVITY] == "unknown":
             counters.unknown_unclassifiable += 1
         current = {k: rec.get(k) for k in EVIDENCE_PROPERTIES}
         if current != target:

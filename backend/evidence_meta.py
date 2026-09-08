@@ -116,21 +116,25 @@ def derive_evidence_meta(
     Returns:
         :class:`EvidenceMeta`。相同输入恒等输出(确定性、可复算、可测试)。
 
-    规则(全部源自既有系统语义,逐条可解释):
+    规则(修订 INC-2A-CLASSIFICATION-SAFETY-01:unknown-safe,窄化授权):
 
-    - authority:``filesystem`` → case-example(本系统 filesystem 源即内部
-      支持案例库,架构 case-example 类);``woocommerce`` → official-pricing
-      (本系统 woocommerce 源即官方商城目录,含价格账本);其余一律 unknown
-      ——github/website 等不唯一蕴含单一权威类(契约 §5 明示),不推断
-      stronger class。
-    - sensitivity:源显式 ``internal`` 标记 → internal(EXPLICIT);
-      ``filesystem`` → internal(DERIVED,既有背景通道语义);公开源类型
-      → public(DERIVED,既有展示白名单语义);否则 unknown。``personal-data``
-      永不由本映射赋值(内容审查属 INC-2b)。
-    - citation_eligibility:internal 标记或 filesystem → background-declared
-      (与既有背景通道一致);公开源类型(且非内部)→ citable-numbered
-      (与既有组合白名单一致);否则 unknown。只表达语义,**不改当前引用行为**
-      (契约 §3/§11)。
+    - authority:**一律 unknown**。现有持久化事实中不存在正面标识权威类的
+      结构不变量——source_type=filesystem 不证明案例语义(组合期只证明
+      internal/background 处置)、woocommerce 不保证每个 chunk 都是定价证据
+      (连接器含商品描述等非定价正文)、github/website 等更不唯一蕴含单一
+      权威类。权威类等待未来的显式配置通道(EXPLICIT),不推断 stronger
+      class(契约 §5 / 修订令 Gap 2)。
+    - sensitivity:**唯一被授权的判定** = 源显式 ``internal`` 标记 →
+      internal(EXPLICIT,溯源 E)。其余一律 unknown——``missing internal``
+      绝不自动等于 public:``PUBLIC_SOURCE_TYPES`` 是引用/组合展示语义,
+      channel_visibility 是请求渠道语义,二者都不是敏感度证明(修订令
+      Gap 1)。``personal-data`` 永不由本映射赋值(内容审查属 INC-2b)。
+    - citation_eligibility:严格镜像既有组合语义且**独立于 sensitivity**——
+      ``build_citation_context`` 的既有行为即:``source_type ∈
+      PUBLIC_SOURCE_TYPES`` → 可引用编号段(citable-numbered);其余类型 →
+      背景资料段(background-declared)。仓库证据证明该等价(镜像),且本
+      映射不引用 visibility 标记 ⇒ 与 sensitivity 完全解耦。只表达语义,
+      **不改当前引用行为**(契约 §3/§11)。
     - temporality:恒 unknown——无任何持久化 source-valid 日期;摄取/同步
       时间戳不得冒充(契约 §3/§9)。
     """
@@ -142,31 +146,24 @@ def derive_evidence_meta(
 
     is_public_type = source_type in PUBLIC_SOURCE_TYPES
 
-    # authority
-    if source_type == "filesystem":
-        authority, auth_origin = "case-example", ORIGIN_DERIVED
-    elif source_type == "woocommerce":
-        authority, auth_origin = "official-pricing", ORIGIN_DERIVED
-    else:
-        authority, auth_origin = AUTHORITY_UNKNOWN, ORIGIN_UNKNOWN
+    # authority:无正面结构不变量 → 全量 unknown(修订令 Gap 2;
+    # woocommerce 同撤——价格字段存在于部分 payload ≠ 每个 chunk 都是定价证据)
+    authority, auth_origin = AUTHORITY_UNKNOWN, ORIGIN_UNKNOWN
 
-    # sensitivity
+    # sensitivity:仅显式 internal 标记(EXPLICIT);缺失标记 ⇒ unknown,
+    # 绝不推出 public(修订令 Gap 1)
     if internal_marker:
         sensitivity, sens_origin = "internal", ORIGIN_EXPLICIT
-    elif source_type == "filesystem":
-        sensitivity, sens_origin = "internal", ORIGIN_DERIVED
-    elif is_public_type:
-        sensitivity, sens_origin = "public", ORIGIN_DERIVED
     else:
         sensitivity, sens_origin = SENSITIVITY_UNKNOWN, ORIGIN_UNKNOWN
 
-    # citation eligibility(语义表达;不改任何现行行为)
-    if internal_marker or source_type == "filesystem":
-        citation, cite_origin = "background-declared", ORIGIN_DERIVED
-    elif is_public_type:
+    # citation eligibility:严格镜像组合语义(source_type ∈ PUBLIC 白名单 →
+    # citable-numbered;否则 background-declared——build_citation_context 的
+    # 既有行为),独立于 sensitivity,不改任何现行行为
+    if is_public_type:
         citation, cite_origin = "citable-numbered", ORIGIN_DERIVED
     else:
-        citation, cite_origin = CITATION_UNKNOWN, ORIGIN_UNKNOWN
+        citation, cite_origin = "background-declared", ORIGIN_DERIVED
 
     # temporality:INC-2a 恒 unknown(契约 §9 SOURCE_DATA_REQUIRED 不物化)
     temporality, temp_origin = TEMPORALITY_UNKNOWN, ORIGIN_UNKNOWN

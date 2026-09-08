@@ -39,18 +39,18 @@ KNOWN = frozenset({"gh-docs", "kb-support", "store", "site"})
 @pytest.mark.unit
 def test_plan_backfill_counters_and_changes():
     records = [
-        _rec("u1", "gh-docs/readme", "github"),  # 待写:UUDD
-        _rec("u2", "kb-support/case-1", "filesystem"),  # 待写:DUDD
-        _rec("u3", "store/p-1", "woocommerce"),  # 待写:DUDD
+        _rec("u1", "gh-docs/readme", "github"),  # 待写:UUUD
+        _rec("u2", "kb-support/case-1", "filesystem"),  # 待写:UUUD
+        _rec("u3", "store/p-1", "woocommerce"),  # 待写:UUUD
         _rec(
             "u4",
             "gh-docs/old",
             "github",
             evidence_authority_class="unknown",
             evidence_temporality="unknown",
-            evidence_sensitivity="public",
+            evidence_sensitivity="unknown",
             evidence_citation_eligibility="citable-numbered",
-            evidence_origin="UUDD",
+            evidence_origin="UUUD",
         ),  # 已正确
         _rec("u5", "ghost/1", "github"),  # 孤儿:只上报
     ]
@@ -62,9 +62,13 @@ def test_plan_backfill_counters_and_changes():
     assert counters.unchanged == 1
     assert counters.failures == 0
     assert [u for u, _ in changes] == ["u1", "u2", "u3"]
-    assert changes[0][1]["evidence_sensitivity"] == "public"
-    assert changes[1][1]["evidence_authority_class"] == "case-example"
-    assert changes[2][1]["evidence_authority_class"] == "official-pricing"
+    # 修订 SAFETY-01:authority 全 unknown;sensitivity 无标记即 unknown;
+    # citation 镜像组合语义(PUBLIC → citable;filesystem → background)
+    assert changes[0][1]["evidence_sensitivity"] == "unknown"
+    assert changes[0][1]["evidence_citation_eligibility"] == "citable-numbered"
+    assert changes[1][1]["evidence_authority_class"] == "unknown"
+    assert changes[1][1]["evidence_citation_eligibility"] == "background-declared"
+    assert changes[2][1]["evidence_authority_class"] == "unknown"
     # 孤儿绝不进写集
     assert all(u != "u5" for u, _ in changes)
 
@@ -104,9 +108,14 @@ def test_unknown_type_counted_unclassifiable_but_written():
     """未知类型对象:显式 unknown 仍写入(不静默留下空值),计数单独上报。"""
     records = [_rec("u1", "gh-docs/x", "mystery-connector")]
     counters, changes = plan_backfill(iter(records), KNOWN)
+    # 修订后:authority+sensitivity 双 unknown ⇒ 不可分类计数;
+    # citation 镜像组合语义(非 PUBLIC → background-declared)恒有值
     assert counters.unknown_unclassifiable == 1
     assert counters.changed == 1
-    assert changes[0][1]["evidence_origin"] == "UUUU"
+    assert changes[0][1]["evidence_authority_class"] == "unknown"
+    assert changes[0][1]["evidence_sensitivity"] == "unknown"
+    assert changes[0][1]["evidence_citation_eligibility"] == "background-declared"
+    assert changes[0][1]["evidence_origin"] == "UUUD"
 
 
 @pytest.mark.unit
