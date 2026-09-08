@@ -36,6 +36,12 @@ from backend.pipeline.citation import (
     validate_citations,
 )
 from backend.pipeline.evidence_planning import derive_evidence_plan
+from backend.pipeline.evidence_selection import (
+    build_coverage_report,
+    build_evidence_stage,
+    context_id_sets,
+    order_candidates_for_plan,
+)
 from backend.pipeline.intent import IntentResult
 from backend.pipeline.task_understanding import (
     MODE_CAPABILITY,
@@ -1624,6 +1630,12 @@ class RAGOrchestrator:
                 tel.record_skipped("generation", "comparison_evidence_insufficient")
                 tel.record_skipped("pruning", "comparison_focus_rerank")
                 tel.record_skipped("generation", "comparison_evidence_insufficient")
+                # INC-5:拒答=零证据达生成 → 覆盖真值全 uncovered
+                # (matched 保留候选面诊断:哪侧证据存在但未达生成)
+                if plan.slots:
+                    stages["evidence"] = build_evidence_stage(
+                        build_coverage_report(plan, reranked, taxonomy=taxonomy)
+                    )
                 reject_text, reject_key = _comparison_insufficient_reply(
                     language, resolution, taxonomy, _missing
                 )
@@ -1665,6 +1677,11 @@ class RAGOrchestrator:
                     "no_candidates" if not reranked else "below_min_threshold",
                 )
                 tel.record_skipped("generation", "insufficient_evidence_reject")
+                # INC-5:拒答=零证据达生成 → 覆盖真值全 uncovered(缺失可观察)
+                if plan.slots:
+                    stages["evidence"] = build_evidence_stage(
+                        build_coverage_report(plan, reranked, taxonomy=taxonomy)
+                    )
                 reject_text, reject_key = _product_insufficient_reply(
                     language, resolution, taxonomy
                 )
@@ -1702,10 +1719,31 @@ class RAGOrchestrator:
             reranked = apply_page_context_boost(reranked, page_context)
             stages["retrieve"]["page_boost"] = {"applied": hint is not None, "hint": hint}
 
+        # INC-5:确定性证据选择/组合——required 槽命中证据稳定前置
+        # (纯函数,零 LLM;不增删证据只定序,既有排名/剪枝/上下文安全约束保持;
+        # 定序决定可见源截断预算的归属,故必须先于 sources 提取)
+        selection_info: dict[str, Any] | None = None
+        if plan.slots:
+            reranked, selection_info = order_candidates_for_plan(plan, reranked, taxonomy=taxonomy)
+
         sources = self._extract_sources(reranked)
         # 引用完整性:LLM 编号集 = 访客可见集合(权威编号上下文);
         # CIT-03:编号携带产品标签,产品边界启用时同步做资格校验
         cite_ctx = build_citation_context(reranked, sources, taxonomy=taxonomy)
+        # INC-5:覆盖真值 = 终局生成上下文事实(可引用段+背景段;
+        # dropped_public 未进入生成,不得计入覆盖)
+        if plan.slots:
+            citable_ids, background_ids = context_id_sets(cite_ctx.stats)
+            stages["evidence"] = build_evidence_stage(
+                build_coverage_report(
+                    plan,
+                    reranked,
+                    taxonomy=taxonomy,
+                    citable_ids=citable_ids,
+                    background_ids=background_ids,
+                ),
+                selection_info,
+            )
         # Sales Lead:资格判定(同步路径串行执行)+ 邀请/确认决策
         lead_qual: LeadQualification | None = None
         lead_instruction = ""
@@ -2296,6 +2334,12 @@ class RAGOrchestrator:
             _missing = tuple(_t for _t, _c in _own_after.items() if _c == 0)
             if _missing:
                 elapsed = int((time.monotonic() - start) * 1000)
+                # INC-5:拒答=零证据达生成 → 覆盖真值全 uncovered
+                # (matched 保留候选面诊断:哪侧证据存在但未达生成)
+                if plan.slots:
+                    stages["evidence"] = build_evidence_stage(
+                        build_coverage_report(plan, reranked, taxonomy=taxonomy)
+                    )
                 reject_text, reject_key = _comparison_insufficient_reply(
                     language, resolution, taxonomy, _missing
                 )
@@ -2351,6 +2395,7 @@ class RAGOrchestrator:
                                 # AC10:短路路径如实携带已执行阶段(不再 0ms/缺失)
                                 "retrieve": retrieve_stage,
                                 "rerank": rerank_stage,
+                                "evidence": stages.get("evidence"),
                                 **(
                                     {"product_scope": product_scope_stage}
                                     if product_scope_in_trace
@@ -2402,6 +2447,11 @@ class RAGOrchestrator:
                     "no_candidates" if not reranked else "below_min_threshold",
                 )
                 tel.record_skipped("generation", "insufficient_evidence_reject")
+                # INC-5:拒答=零证据达生成 → 覆盖真值全 uncovered(缺失可观察)
+                if plan.slots:
+                    stages["evidence"] = build_evidence_stage(
+                        build_coverage_report(plan, reranked, taxonomy=taxonomy)
+                    )
                 reject_text, reject_key = _product_insufficient_reply(
                     language, resolution, taxonomy
                 )
@@ -2455,6 +2505,7 @@ class RAGOrchestrator:
                                     "prune_decisions": prune_decisions,
                                     "results": self._rerank_snippets(reranked),
                                 },
+                                "evidence": stages.get("evidence"),
                                 **(
                                     {"product_scope": product_scope_stage}
                                     if product_scope_in_trace
@@ -2529,10 +2580,30 @@ class RAGOrchestrator:
                 "ms": lead_ms,
             }
 
+        # INC-5:确定性证据选择/组合(与 answer 同位同语义,parity)——
+        # required 槽命中证据稳定前置;定序决定可见源截断预算归属,
+        # 故必须先于 sources 提取。纯函数,零 LLM;不增删证据只定序。
+        selection_info: dict[str, Any] | None = None
+        if plan.slots:
+            reranked, selection_info = order_candidates_for_plan(plan, reranked, taxonomy=taxonomy)
+
         sources = self._extract_sources(reranked)
         # 引用完整性:LLM 编号集 = 访客可见集合(权威编号上下文);
         # CIT-03:编号携带产品标签,产品边界启用时同步做资格校验
         cite_ctx = build_citation_context(reranked, sources, taxonomy=taxonomy)
+        # INC-5:覆盖真值 = 终局生成上下文事实(answer/stream 同口径)
+        if plan.slots:
+            citable_ids, background_ids = context_id_sets(cite_ctx.stats)
+            stages["evidence"] = build_evidence_stage(
+                build_coverage_report(
+                    plan,
+                    reranked,
+                    taxonomy=taxonomy,
+                    citable_ids=citable_ids,
+                    background_ids=background_ids,
+                ),
+                selection_info,
+            )
         messages = self._build_messages(
             query,
             cite_ctx.context,
@@ -2646,6 +2717,9 @@ class RAGOrchestrator:
                             "stages": {
                                 "generate": {"ms": int((time.monotonic() - t3) * 1000)},
                                 "citation_integrity": {**cite_ctx.stats, **citation_filter.stats},
+                                # INC-5:证据已达生成(空答案属生成段缺陷,
+                                # 非证据缺失)→ 覆盖照终局上下文如实计算
+                                "evidence": stages.get("evidence"),
                                 **(
                                     {"product_scope": product_scope_stage}
                                     if product_scope_in_trace
@@ -2793,6 +2867,7 @@ class RAGOrchestrator:
                             **cite_ctx.stats,
                             **citation_filter.stats,
                         },
+                        "evidence": stages.get("evidence"),
                         **({"lead": lead_stage} if lead_stage else {}),
                         **(
                             {"product_scope": product_scope_stage} if product_scope_in_trace else {}
