@@ -100,10 +100,13 @@ def test_github_ensure_cloned_exists_no_op(tmp_path) -> None:
 def test_github_ensure_cloned_failure_raises(tmp_path) -> None:
     """clone 失败 → 报 RuntimeError(token 脱敏 + stderr 摘要),不降级逐文件 API。"""
     conn = ConnectorRegistry.create(_make_config(clone_path=str(tmp_path / "fail")))
-    with patch(
-        "backend.connectors.github.subprocess.run",
-        side_effect=subprocess.CalledProcessError(1, "git"),
-    ), pytest.raises(RuntimeError):
+    with (
+        patch(
+            "backend.connectors.github.subprocess.run",
+            side_effect=subprocess.CalledProcessError(1, "git"),
+        ),
+        pytest.raises(RuntimeError),
+    ):
         conn._ensure_cloned("main")
 
 
@@ -135,7 +138,6 @@ def test_github_clone_failure_redacts_token_and_reports_stderr(monkeypatch, tmp_
     assert "x-access-token:***@" in msg  # 鉴权 URL 保留脱敏形态(可诊断)
 
 
-
 # ====================  fetch + reset 同步(修 staleness bug)  ====================
 
 
@@ -153,39 +155,47 @@ def test_github_git_sync_branch_fetch_and_reset(tmp_path) -> None:
     assert all("checkout" not in c for c in cmds), f"unexpected checkout in {cmds}"
 
 
-# ====================  API SHA 感知  ====================
+# ====================  API SHA 感知(分支特定,#34A)  ====================
 
 
 @pytest.mark.unit
 def test_github_remote_has_updates_sha_diff(tmp_path) -> None:
-    """API SHA != 本地 HEAD → True(需 fetch)。"""
+    """API SHA != 该分支远端跟踪 ref → True(需 fetch)。"""
     conn = ConnectorRegistry.create(_make_config(clone_path=str(tmp_path)))
     with (
         patch.object(conn, "_api_get_latest_sha", return_value="remote-abc"),
-        patch.object(conn, "_git_local_sha", return_value="local-xyz"),
+        patch.object(conn, "_local_branch_sha", return_value="local-xyz"),
     ):
         assert conn._remote_has_updates("main") is True
 
 
 @pytest.mark.unit
 def test_github_remote_has_updates_sha_same(tmp_path) -> None:
-    """API SHA == 本地 HEAD → False(跳过 fetch)。"""
+    """API SHA == 该分支远端跟踪 ref → False(跳过 fetch)。"""
     conn = ConnectorRegistry.create(_make_config(clone_path=str(tmp_path)))
     with (
         patch.object(conn, "_api_get_latest_sha", return_value="same-sha"),
-        patch.object(conn, "_git_local_sha", return_value="same-sha"),
+        patch.object(conn, "_local_branch_sha", return_value="same-sha"),
     ):
         assert conn._remote_has_updates("main") is False
+
+
+@pytest.mark.unit
+def test_github_remote_has_updates_missing_tracking_ref(tmp_path) -> None:
+    """本地无该分支跟踪状态(首同步/从未 fetch)→ True(安全同步)。"""
+    conn = ConnectorRegistry.create(_make_config(clone_path=str(tmp_path)))
+    with (
+        patch.object(conn, "_api_get_latest_sha", return_value="remote-abc"),
+        patch.object(conn, "_local_branch_sha", return_value=None),
+    ):
+        assert conn._remote_has_updates("main") is True
 
 
 @pytest.mark.unit
 def test_github_remote_has_updates_api_failure_degrade(tmp_path) -> None:
     """API 异常 → True(降级触发 fetch,不阻断同步)。"""
     conn = ConnectorRegistry.create(_make_config(clone_path=str(tmp_path)))
-    with (
-        patch.object(conn, "_api_get_latest_sha", side_effect=RuntimeError("API down")),
-        patch.object(conn, "_git_local_sha", return_value="any"),
-    ):
+    with patch.object(conn, "_api_get_latest_sha", side_effect=RuntimeError("API down")):
         assert conn._remote_has_updates("main") is True
 
 
@@ -265,5 +275,5 @@ def test_local_git_not_registered() -> None:
     显式 import local_git 模块,确保即便有人误加回 @register 也会被本测试拦截。
     """
     import backend.connectors.local_git  # noqa: F401
-    assert "local_git" not in ConnectorRegistry._connectors
 
+    assert "local_git" not in ConnectorRegistry._connectors
