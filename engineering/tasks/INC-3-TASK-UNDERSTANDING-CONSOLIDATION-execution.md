@@ -129,3 +129,30 @@ A1 ✓(单调用,mock 计数断言)· A2 ✓(强制等价+测试)· A3 ✓(短�
 3. **R3 生产路由生效值**:task_understanding 链已入 yaml,生产 DB llm_routing 无该行时按 yaml 生效;生产部署(需单独授权)时须确认链配置符合预期。
 4. **R4 兼容模块弃用**:intent.py/query_rewrite.py 主路径不再调用但保留(含其单测);后续增量可清理。
 5. **R5 capability 文案**:当前为保守通用描述(§9 授权);配置化能力文案(站点/助手配置驱动)留待后续增量(契约 §9 "where technically available")。
+
+
+---
+
+# 修订记录:CONTEXT-AWARE-UNDERSTANDING + GENERIC-CORE-01(A 审查窄化修正,已实施)
+
+## AMENDMENT = CONTEXT-AWARE-UNDERSTANDING + GENERIC-CORE-01
+
+**GAP 1(上下文可解仍冗余澄清)**
+- OLD:resolver 先行执行,但合并理解仅接收 query+history;clarification_required 判定不知晓 resolver 已安全确立目标 → 上下文可解时仍可能「再问一遍产品」,违反 A7/#26。
+- NEW:**确定性调和**(§4 授权的最小正确设计之一)——resolver 已进入 `exact`/`comparison`(即已安全确立支持目标)而理解输出为 `clarification_required` 时,mode 确定性调和为 `standard`,继续正常域内管线;`stages.understanding.context_reconciled=True` 如实记录调和发生(§8,仅布尔元数据,零敏感上下文落盘)。resolver 仍是产品身份唯一权威,调和只改 mode、不改检索行为、不改 scope/eligible 集合;off_topic 不参与调和(真无关仍拒答);ambiguous/unsupported 短路不变。
+- 证据:page_context={"product":"NE503"} + "What is included in the box?" → context_reconciled=True、result_key=answered(检索 product_labels 绑定 ne503,证明作用域来自 resolver);product_hint 同;会话确立(「看看 NE301」→「这个设备支持热成像吗」)同。
+
+**GAP 2(通用核心硬编码厂商身份)**
+- OLD:prompt 身份行含 "CamThink 智能应答"。
+- NEW:身份行与定义/示例全部部署中立(「智能应答系统」;示例占位符 X/Y 泛指所配置产品域内产品);新增判定示例块(覆盖 standard/clarification/capability/off_topic)提升新模式分类稳健性。模块源文件 "CamThink" 出现次数 = 0(源级断言测试 T9)。意图分类标记短语保持兼容(INC-1 测试桩依赖)。
+
+**能力文案真相核验(§6,选项 A:证明既有能力)**
+capability_orientation 冻结文案三项声明(产品选型与功能参数咨询 / 价格与采购信息 / 技术支持与二次开发)与运行时既有路由能力一一对应:四类意图中的 commercial/product/support 三类 + `INTENT_BOOST_FILTERS`(support→filesystem 桶、product→chunk_type 桶、commercial→woocommerce 桶)+ WooCommerce 已灌库语义。无越权声明,无需收窄措辞,无需新配置子系统。
+
+**修订提交**:`820734f`(追加于 task/inc3-task-understanding,已推 origin;3eb734c 未改写)
+**测试**:新增 `tests/pipeline/test_inc3_context_amendment.py` 10 测(T1 无上下文澄清/T2 page_context 调和继续+作用域绑定 resolver/T3 product_hint 同/T4 会话确立同/T5 ambiguous 短路不变且理解零调用/T6 unsupported 不变/T7 作用域绑定 resolver 权威/T8 answer-stream parity/T9 源级无厂商身份/T11 fail-open 不回归/T12 单调用保持);#26/#27 既有回归绿;**全量离线 1851 passed / 4 skipped / 0 failed(52.4s)**。
+**UNCHANGED CONTRACT SURFACES**:resolver 顺序与权威/五元数据与交互模式词表/检索重排剪枝组合/零新 LLM 调用(仍 1 次)/legacy 枚举/INC-1 观测/生产与 Benchmark 零触碰——全部未动。
+
+# 最终验收(修订后 A1-A12)
+
+A1 ✓(T2/T3/T4 reconciled)· A2 ✓(T1 澄清保持)· A3 ✓(T5/T6)· A4 ✓(T7 作用域绑定 resolver)· A5 ✓(T12 单调用)· A6 ✓(T9 源级断言)· A7 ✓(能力声明=运行时既有路由能力,证据在案)· A8 ✓(#26/#27 焦点回归绿)· A9 ✓(T8 parity)· A10 ✓(T11)· A11 ✓(1851/4/0)· A12 ✓(生产/Benchmark 零触碰)
