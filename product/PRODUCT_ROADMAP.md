@@ -8,7 +8,8 @@
 
 ## 0. 速览(NOW / NEXT / LATER)
 
-- **NOW**:**v1.1.0 已正式发布(2026-09-04,FINAL PRODUCTION PASS)**——tag/Release/#22/#24 关闭;GPU 运行时瞬态计划生产生效(reranker_transient,容量 HEALTHY,余量 964MiB)
+- **NOW**:**I-001 Answer Intelligence Foundation 已 COMPLETE(2026-09-08,9/9)**——PR #35(merge `1790909`)并入 main(`a364240`);父 Issue #32 保持 OPEN;生产未授权部署(生产仍为 v1.1.0 `sha-762eae3`);交付记录见 §0.2
+- **NOW(此前)**:v1.1.0 已正式发布(2026-09-04,FINAL PRODUCTION PASS)——tag/Release/#22/#24 关闭;GPU 运行时瞬态计划生产生效(reranker_transient,容量 HEALTHY,余量 964MiB)
 - **NEXT(当前前沿,按既定路线)**:**T1a Phase 4 wiki 灰度嵌入**(唯一挡真实访客的事项;上线窗口待用户确认)→ week-1 基线报告(L1~L3);其后按 §3 候选池既定节奏(T1a 收尾遗留、B 组评审项、D-12 恢复预案待停机窗口)
 - **LATER**:官网 → 商城波次 → T2/T3(commercial 占比数据裁决)→ T4 通用化 → T1b 标准件分发;灰度阈值冻结(week 2+,用户批)
 - **CONTINUOUS**:候选池维护、D-12 恢复预案待窗口、数据侧用户持有项跟进
@@ -24,6 +25,25 @@
 | **v1.1.0 Production Release** | ✅ 已发布(main=生产=tag=762eae3;容量 HEALTHY/预算 4210MiB/余量 964MiB/0 OOM) |
 
 > 交付细节:`docs/implementation/CAMTHINK_V1_1_PRODUCTION_RELEASE_2026-09-04.md`(FINAL PASS 定稿)、`CAMTHINK_GPU_RUNTIME_MODELS_ADMIN_EXECUTION_2026-09-04.md`(REV0-REV3.1)。
+
+### 0.2 I-001 Answer Intelligence Foundation 交付记录(2026-09-08 关闭,COMPLETE 9/9)
+
+| # | 工作项 | 状态 |
+|---|---|---|
+| 1 | Target Architecture(答案智能目标架构) | ✅ FINAL PASS |
+| 2 | Engineering Discovery | ✅ FINAL PASS |
+| 3 | Benchmark v1 Freeze | ✅ 冻结基线 **80.2/100**(I-001 前) |
+| 4 | Production Baseline Measurement | ✅ FINAL PASS |
+| 5 | Independent Baseline Review | ✅ FINAL PASS |
+| 6 | Failure Attribution | ✅ FINAL PASS |
+| 7 | INC-1 — Answer Pipeline Observability(请求级 LLM 遥测+证据血统) | ✅ FINAL PASS |
+| 8 | INC-2a — Evidence Metadata Schema + Deterministic Backfill | ✅ FINAL PASS(SAFETY-01 修订后) |
+| 9 | INC-3 — Task Understanding Consolidation(单次调用+交互模式) | ✅ FINAL PASS(final=`a47be89`,EFFECTIVE-MODE-TRACE 修订后) |
+
+- **集成**:PR #35 已合并(merge commit `1790909`),main = `a364240`;关闭报告见代码仓 `docs/product/iterations/I-001-ANSWER-INTELLIGENCE-FOUNDATION-CLOSE.md`(提交 `a364240` 系)
+- **Benchmark 真相**:冻结基线 80.2/100 为 I-001 前基线;**post-I-001 分数 NOT YET MEASURED;Product Target Score NOT YET FROZEN**(须在 post 测量后冻结,不预填)
+- **范围边界**:INC-2b / INC-4 / INC-5 / INC-6 / INC-7 保持 Backlog,**不属 I-001、不追溯并入**;父 Issue #32 保持 OPEN
+- **下一步**:下一迭代选择待定(就绪候选:Issue #34-A Multi-Branch GitHub Change Detection;post-I-001 基准测量待产品窗口安排)
 
 ## 1. 原始四阶段规划(2026-07-27 founding spec)
 

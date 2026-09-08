@@ -1,7 +1,7 @@
 # ask-ai PRODUCT STATE
 
 > **性质**:当前产品状态快照 — 每次 significant FINAL PASS / 能力成熟度变化 / 产品假设失效后更新(协议 PART VI §27)。
-> **本版**:2026-09-04(v1.1.0 发布定稿,FINAL PRODUCTION PASS)。定位/原则见 `PRODUCT_VISION.md`,规划与候选池见 `PRODUCT_ROADMAP.md`。(上一版 2026-08-31 的内容保留于 git 历史。)
+> **本版**:2026-09-04(v1.1.0 发布定稿,FINAL PRODUCTION PASS)。**2026-09-08 增注:I-001 Answer Intelligence Foundation 已完成(9/9)并入主干,未部署生产——见 §1.1。**定位/原则见 `PRODUCT_VISION.md`,规划与候选池见 `PRODUCT_ROADMAP.md`。(上一版 2026-08-31 的内容保留于 git 历史。)
 
 ---
 
@@ -14,6 +14,15 @@
 - GPU 运行时(本版核心):MODEL×WORKLOAD×DEVICE 契约;单一 backend GPU 所有权(sync 零自载模型);GPU 执行闸(查询优先+有界公平);容量计划 **reranker_transient** 生效(预算 auto=4210MiB,HEALTHY);**瞬态重排**生产实测 pre1238→峰3375→post1238 MiB 精确回落;容量分级数值化呈现(UUID 归一化修复后)
 - 质量面:后端全量 1665/6/0;admin 274/0;生产 16+9 次 Ask 零 OOM;#22/#24 生产冒烟过并关闭
 - 既有风险延续:admin 种子密码仍有效;三方显存增长会压缩预算(计划器会如实降级并可见)
+
+### 1.1 增量(2026-09-08):I-001 Answer Intelligence Foundation 关闭
+
+- **状态:COMPLETE(9/9)**——Target Architecture / Engineering Discovery / Benchmark v1 Freeze / Production Baseline Measurement / Independent Baseline Review / Failure Attribution / INC-1(请求级 LLM 遥测+证据血统)/ INC-2a(证据元数据词表+确定性回填)/ INC-3(任务理解合并+交互模式)全部 FINAL PASS;Project #2 对应条目全部 Done
+- **集成**:PR #35 已合并(merge `1790909`),main = `a364240`;父 Issue #32 保持 OPEN
+- **Benchmark 真相**:冻结基线 = **80.2/100**(I-001 前);**post-I-001 分数 NOT YET MEASURED;Product Target Score NOT YET FROZEN**(待 post 测量后冻结,不预填)
+- **生产状态:未变更**——I-001 代码未部署生产(未授权);生产仍为 v1.1.0 `sha-762eae3`,§1 快照对生产仍然成立
+- **能力增量(已并入主干、未上线)**:LLM 调用请求级遥测;证据元数据(authority/temporality/sensitivity/citation 词表 + unknown 安全域);合并任务理解(单次 LLM 调用,交互模式 standard / clarification_required / capability_orientation / off_topic,trace 呈现生效态)
+- **后续**:INC-2b / INC-4~7 保持 Backlog(不属 I-001,不追溯并入);下一迭代选择待定(就绪候选:Issue #34-A Multi-Branch GitHub Change Detection)
 
 ## 2. 能力成熟度(2026-08-31)
 
