@@ -218,3 +218,46 @@ async def test_t12_single_understanding_call_maintained():
     assert not any(
         c.kwargs.get("task") in ("intent", "query_rewrite") for c in llm.generate.call_args_list
     )
+
+
+# --------------------------------------------------------------------------- #
+# EFFECTIVE-INTERACTION-MODE-TRACE-01:trace 呈现调和后的生效态
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+async def test_micro1_reconciled_trace_shows_effective_standard_mode():
+    """调和发生:interaction_mode=生效态 standard + context_reconciled=True
+    + original_interaction_mode 保留原始态供归因。"""
+    rag, _, _ = _orchestrator(_UNDERSTAND_CLARIFY, with_result=True)
+    result = await rag.answer(BOX_QUERY, "widget", page_context={"product": "NE503"})
+    stages = result.trace_payload["stages"]["understanding"]
+    assert stages["interaction_mode"] == "standard"
+    assert stages["context_reconciled"] is True
+    assert stages["original_interaction_mode"] == "clarification_required"
+
+
+@pytest.mark.unit
+async def test_micro2_unresolved_clarify_trace_shows_original_mode():
+    """未调和:interaction_mode 保持 clarification_required + context_reconciled=False。"""
+    rag, _, _ = _orchestrator(_UNDERSTAND_CLARIFY)
+    result = await rag.answer(BOX_QUERY, "widget")
+    stages = result.trace_payload["stages"]["understanding"]
+    assert stages["interaction_mode"] == "clarification_required"
+    assert stages["context_reconciled"] is False
+    assert "original_interaction_mode" not in stages
+
+
+@pytest.mark.unit
+async def test_micro3_answer_stream_parity_for_effective_mode():
+    """micro 修正的 answer/stream parity:两路径 effective mode 真相一致。"""
+    llm_payload = _UNDERSTAND_CLARIFY
+    rag1, _, _ = _orchestrator(llm_payload, with_result=True)
+    r1 = await rag1.answer(BOX_QUERY, "widget", page_context={"product": "NE503"})
+    rag2, _, _ = _orchestrator(llm_payload, with_result=True)
+    events2 = await _collect(rag2, BOX_QUERY, page_context={"product": "NE503"})
+    c2 = [e for e in events2 if e["type"] == "complete"][-1]
+    s1 = r1.trace_payload["stages"]["understanding"]
+    s2 = c2["trace_payload"]["stages"]["understanding"]
+    assert s1 == s2
+    assert s1["interaction_mode"] == "standard" and s1["context_reconciled"] is True
