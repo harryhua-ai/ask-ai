@@ -72,6 +72,47 @@ export function resolveLauncherShape(value: unknown): LauncherShape {
     : DEFAULT_LAUNCHER_SHAPE;
 }
 
+// ---------------------------------------------------------------------------
+// Issue #33:首绘正确性 — 嵌入级(local)外观终值判定
+// ---------------------------------------------------------------------------
+
+/** 嵌入级(优先级高于 site-config)已完整决定的三维外观。 */
+export interface LocalLauncherAppearance {
+  icon: LauncherIcon;
+  shape: LauncherShape;
+  themePref: LauncherThemePref;
+}
+
+/**
+ * 判定嵌入配置是否已**完整**决定 launcher 最终外观(与 site-config 无关)。
+ *
+ * 依据既有优先级契约(Amendment #2 §3):显式 data-launcher-icon/shape/theme
+ * 与遗留 data-launcher-style 均压过 site-config。仅当 icon/shape/theme 三维
+ * 全部能由嵌入值给出时,最终外观才与权威配置无关 → 允许立即渲染(契约 §3:
+ * 不为已本地定案的 appearance 无谓等待);返回 null = 至少一维仍需权威
+ * site-config 解析 —— 即便该维「缺省=默认值」,在权威缺席/失败前也不得
+ * 抢先绘制 provisional 外观(Issue #33 冻结契约 §2)。
+ */
+export function resolveLocalLauncherAppearance(config: {
+  launcherIcon?: string;
+  launcherShape?: string;
+  launcherTheme?: string;
+  /** @deprecated REV0 遗留(仅作用于 icon 维度,退役为 current) */
+  launcherStyle?: string;
+}): LocalLauncherAppearance | null {
+  const hasLocalIcon = config.launcherIcon !== undefined || config.launcherStyle !== undefined;
+  if (!hasLocalIcon || config.launcherShape === undefined || config.launcherTheme === undefined) {
+    return null;
+  }
+  return {
+    icon: resolveLauncherIcon(
+      config.launcherIcon ?? legacyStyleToIcon(config.launcherStyle),
+    ),
+    shape: resolveLauncherShape(config.launcherShape),
+    themePref: resolveLauncherThemePref(config.launcherTheme),
+  };
+}
+
 /** 持久/配置值 → 有效主题偏好;未知/非法回落 auto。 */
 export function resolveLauncherThemePref(value: unknown): LauncherThemePref {
   return typeof value === "string" && (LAUNCHER_THEME_PREFS as readonly string[]).includes(value)

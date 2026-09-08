@@ -3,6 +3,13 @@
 // 体验;site_id 仍随 ask 发送,由服务端裁决(未授权 → SSE 层可见失败)。
 import type { SiteExperienceConfig } from "../types";
 
+/**
+ * Issue #33:launcher 外观权威解析的确定性上界(PENDING ≠ FAILED)。
+ * 超时 = RESOLUTION_FAILED → 确定性回退默认可用外观(绝不永久空白)。
+ * 取值须覆盖慢网(3G 级 RTT)下正常到达的配置,又不让 launcher 长期缺席。
+ */
+export const LAUNCHER_RESOLUTION_TIMEOUT_MS = 5000;
+
 /** 拉取站点体验配置;非 2xx 抛错(含状态码)。
  *  ML 闭环(G-L5):language 可选 —— 服务端按归一化语言返回本地化
  *  welcome/starters 变体,无变体时回落站点默认。 */

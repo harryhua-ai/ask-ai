@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import type { WidgetConfig, ChatMessage, SiteExperienceConfig } from "./types";
 import { useSSE } from "./hooks/useSSE";
-import { fetchSiteConfig, resolveStarters } from "./utils/siteConfig";
 import { collectPageContext } from "./utils/pageContext";
 import {
   readBrowserLanguage,
@@ -18,8 +17,10 @@ import {
   resolveLauncherIcon,
   resolveLauncherShape,
   resolveLauncherThemePref,
+  resolveLocalLauncherAppearance,
   useResolvedTheme,
 } from "./launcher/registry";
+import { fetchSiteConfig, resolveStarters, LAUNCHER_RESOLUTION_TIMEOUT_MS } from "./utils/siteConfig";
 
 // legacy 兜底推荐问题按 UI 语言双变体(G-L4/G-L5:站点 starters 缺失时的回落)
 const DEFAULT_STARTERS: Record<"en" | "zh", string[]> = {
@@ -75,18 +76,44 @@ export function App({ config }: { config: WidgetConfig }) {
 
   // 站点体验配置按当前 UI 语言拉取本地化 welcome/starters(G-L5);
   // UI 语言变化(页内热切换)时重新拉取。
+  //
+  // Issue #33 首绘正确性 —— launcher 外观解析状态机:
+  //   UNRESOLVED(权威 site-config 未到达:不绘制 provisional 外观)
+  //     → RESOLVED(权威值到达;或嵌入级本地终值/legacy 无站点 → 免等)
+  //   UNRESOLVED → FAILED(失败/超时,确定性回退默认外观,绝不永久空白)
+  // PENDING ≠ FAILED:仅初始解析失败才进入 FAILED;已 RESOLVED 后的
+  // uiLang 重拉失败保留既有权威外观(不隐藏、不回退)。
+  const localAppearance = resolveLocalLauncherAppearance(config);
+  const [appearancePhase, setAppearancePhase] = useState<"unresolved" | "resolved" | "failed">(
+    () => (localAppearance || !config.siteId ? "resolved" : "unresolved"),
+  );
   useEffect(() => {
     if (!config.siteId) return;
+    // 解析上界:超时视为解析失败(契约 §4;AbortController 广播给底层 fetch)
+    const controller = new AbortController();
+    const timer = window.setTimeout(
+      () => controller.abort(),
+      LAUNCHER_RESOLUTION_TIMEOUT_MS,
+    );
     let cancelled = false;
-    fetchSiteConfig(config.apiUrl, config.siteId, { language: uiLang })
+    fetchSiteConfig(config.apiUrl, config.siteId, { language: uiLang, signal: controller.signal })
       .then((cfg) => {
-        if (!cancelled) setSiteConfig(cfg);
+        if (cancelled) return;
+        setSiteConfig(cfg);
+        setAppearancePhase("resolved");
       })
       .catch(() => {
-        /* 保持默认体验;不做二次降级提示,失败在 ask 时服务端可见 */
+        if (cancelled) return;
+        // 保持默认体验;不做二次降级提示,失败在 ask 时服务端可见
+        setAppearancePhase((prev) => (prev === "unresolved" ? "failed" : prev));
+      })
+      .finally(() => {
+        window.clearTimeout(timer);
       });
     return () => {
       cancelled = true;
+      controller.abort();
+      window.clearTimeout(timer);
     };
   }, [config.apiUrl, config.siteId, uiLang]);
 
@@ -204,7 +231,10 @@ export function App({ config }: { config: WidgetConfig }) {
 
   return (
     <>
-      {!isOpen && (
+      {/* Issue #33:UNRESOLVED 段不渲染 launcher —— 首个可见外观即最终解析值
+          (FIRST_VISIBLE_LAUNCHER_APPEARANCE = FINAL_RESOLVED_APPEARANCE);
+          本地终值/失败回退/legacy 无站点路径不受影响(phase ≠ unresolved)。 */}
+      {!isOpen && appearancePhase !== "unresolved" && (
         <Launcher
           icon={launcherIcon}
           shape={launcherShape}
