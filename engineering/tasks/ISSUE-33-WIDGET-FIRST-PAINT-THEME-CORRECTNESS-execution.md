@@ -112,3 +112,54 @@ UNRESOLVED(权威外观未定:不渲染 launcher)
 - 主仓候选:`2cff7bf` @ `origin/worktree-exec/issue33-first-paint-theme-20260908`
 - 本报告:docs 仓 `docs/engineering/tasks/ISSUE-33-WIDGET-FIRST-PAINT-THEME-CORRECTNESS-execution.md`
 - 截图证据:docs 仓 `docs/evidence/issue33-theme-flash/fixed/`
+
+---
+
+## REV1 — 外观期限与 site-config 检索生命周期解耦(2026-09-08)
+
+### Blocker(评审结论)
+
+2cff7bf 将 AbortController signal 传入共享 `fetchSiteConfig()` 并在 5s 外观期限 abort——而 site-config 同时承载 welcome/starters/本地化等非外观语义。后果:外观超时 → 整条请求被取消 → 迟到的有效站点体验数据被连带丢弃,违反 Functional Freeze。
+
+### REV1 RED Reproduction(在 2cff7bf 上取证)
+
+新增用例「超期回退后迟到成功」(firstPaint.test.tsx,与 12 条既有用例并存):
+1. fetch 永挂起 → 推进跨 `LAUNCHER_RESOLUTION_TIMEOUT_MS` → 回退外观可见 ✓(2cff7bf 上亦过);
+2. 迟到成功(携带 `welcome:"late-welcome"` / `starters:["late-starter"]` 与不同外观值);
+3. 断言面板消费迟到数据 + launcher 无二次闪变。
+
+**2cff7bf 实跑:1 failed / 12 passed**——失败断言:`expected 'Ask Camthink.ai✕Hi! I\'m Ask Camthink.ai — how can I help?…' to contain 'late-welcome'`(迟到数据被 abort 连带丢弃,面板只得默认 welcome/starters)。
+
+### Lifecycle Correction(精确修正,3 文件 +112/−17)
+
+- `App.tsx`:删除 AbortController/signal;期限 timer 仅推动状态机(`unresolved → failed`),**绝不取消请求**;success 回调按相位分派——
+  - `unresolved`:`setSiteConfig(cfg)` + → `resolved`(Case 1 不变);
+  - `failed`(回退已可见):`setSiteConfig(stripLauncherAppearance(cfg))`——非外观字段照常消费,外观维度剥离(Late Appearance Rule:该初始化周期内外观冻结于回退值,零二次闪变);
+  - `resolved`(uiLang 重拉):`setSiteConfig(cfg)`(现状不变);
+  - 失败回调:仅 `unresolved → failed`(Case 2 不变);
+- `siteConfig.ts`:新增 `stripLauncherAppearance()`(纯函数,剥 launcher_icon/shape/style/theme 四字段);`LAUNCHER_RESOLUTION_TIMEOUT_MS` 注释改为「外观状态机期限,非请求取消」;
+- 用 `appearancePhaseRef` 在异步回调内读取最新相位(effect 重跑 closure 防陈旧)。
+
+无 API/schema/Admin/后端变更;状态模型三accept面(UNRESOLVED 不可见/首见即终值/确定性回退)零改动。
+
+### Late-config Semantics(运行时实证)
+
+| Case | 行为 | 证据 |
+|---|---|---|
+| 1 期限前成功 | 不变:首见=权威外观 | jsdom A1/A2/B ✓;真实浏览器 t25→t40 |
+| 2 正常失败 | 不变:UNRESOLVED→FAILED→回退 | jsdom D1 ✓;真实浏览器 500@200ms→t239 |
+| 3 超期后迟到成功 | 期限(t≈5s)回退可见;迟到数据照常消费;外观零二次切换 | jsdom REV1 用例 ✓(late-welcome+late-starter 入面板);真实浏览器 hang20s:t5031 回退→22s 采样外观零变化→面板含迟到 welcome「hello」(starters 为服务端空数组→按现状回落默认) |
+
+### Tests / Regression(REV1 实跑)
+
+| 套件 | 结果 |
+|---|---|
+| firstPaint(REV1) | 2cff7bf:**1 failed / 12 passed**(RED)→ REV1:**13/13**(既有 12 例零弱化) |
+| widget vitest 全量 | **10 files / 123 passed** |
+| `tsc -b` / `vite build` | PASS;widget.js 259.64 kB(REV0 259.46 → +0.18 kB);CSS 不变 |
+| 后端全量离线(隔离库 i33r1_ask_ai_test) | **1855 passed / 5 skipped / 0 failed**(47s,库已 DROP) |
+| `git diff --check` | PASS |
+
+### REV1 Candidate
+
+**`3c5a56b`** @ `origin/worktree-exec/issue33-first-paint-theme-20260908`(2cff7bf 之上的单提交 delta)。PRODUCTION_MUTATION = NONE。
