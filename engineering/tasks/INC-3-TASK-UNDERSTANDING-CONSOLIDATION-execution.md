@@ -156,3 +156,19 @@ capability_orientation 冻结文案三项声明(产品选型与功能参数咨�
 # 最终验收(修订后 A1-A12)
 
 A1 ✓(T2/T3/T4 reconciled)· A2 ✓(T1 澄清保持)· A3 ✓(T5/T6)· A4 ✓(T7 作用域绑定 resolver)· A5 ✓(T12 单调用)· A6 ✓(T9 源级断言)· A7 ✓(能力声明=运行时既有路由能力,证据在案)· A8 ✓(#26/#27 焦点回归绿)· A9 ✓(T8 parity)· A10 ✓(T11)· A11 ✓(1851/4/0)· A12 ✓(生产/Benchmark 零触碰)
+
+---
+
+# 微修订记录:EFFECTIVE-INTERACTION-MODE-TRACE-01(已实施)
+
+**问题**:调和逻辑原先发生在 `stages.understanding` 写入之后,导致调和场景下 trace 的 `interaction_mode` 显示调和前的模型输出(clarification_required),与运行时生效态(standard)不一致。
+
+**修正**(两路径一致):调和逻辑前移至 stages 写入之前;`stages.understanding.interaction_mode` 如实呈现**生效态**;`context_reconciled` 内联;调和发生时附 `original_interaction_mode`(=调和前模型输出,供归因)。未动:调和语义/resolver/prompts/路由/调用数/用户可见行为/检索/Benchmark/生产。
+
+**TRACE_BEFORE**(调和场景):`{"interaction_mode": "clarification_required", ..., "context_reconciled": true}` ← 与运行时生效态矛盾
+**TRACE_AFTER**(调和场景):`{"interaction_mode": "standard", ..., "context_reconciled": true, "original_interaction_mode": "clarification_required"}`
+(未调和场景两版相同:`interaction_mode` = 原始态,`context_reconciled=false`,无 original 键)
+
+**修订提交**:`a47be89`(追加于 task/inc3-task-understanding,已推 origin)
+**测试**:新增 3 测(调和场景生效态+original 归因/未调和原样+无 original 键/answer-stream parity 字典全等);全量离线 **1854 passed / 4 skipped / 0 failed**(52.0s)。
+**PRODUCTION_MUTATION** = NO · **BENCHMARK_MUTATION** = NO
