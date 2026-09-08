@@ -257,6 +257,9 @@ def numbers_supported(window: str, texts: list[str]) -> bool:
 
 _MAX_MARKER_DIGITS = 3  # [999] 以内才算引用标记形状;[1234](年份等)原样透传
 
+# INC-6:逐标记验证事件上限(trace 有界;超出仅计数,以 truncated 标记)
+_MAX_VALIDATION_EVENTS = 32
+
 
 class CitationStreamFilter:
     """token 流上的引用标记确定性校验器。
@@ -267,7 +270,10 @@ class CitationStreamFilter:
     - 悬空(越界 / ``[0]``)标记直接剔除;合法标记解析时做数值支持校验,
       无据则剔除标记(移除虚假引用权威),两者均计入 stats;
     - 文本窗口 = 自上一个标记解析处(或空行段界)以来已下发的文本,
-      逐段归因(CIT-G007 多源映射保持)。
+      逐段归因(CIT-G007 多源映射保持);
+    - INC-6:每个解析完成的标记追加一条**显式验证结果**(四态 outcome +
+      reason + 窗口字符数,零正文),强制行为与既有逐字节一致——分类不改
+      任何剔除/保留决策(词表权威:backend.pipeline.claim_validation)。
     """
 
     def __init__(
@@ -295,9 +301,34 @@ class CitationStreamFilter:
             "dangling_dropped": 0,
             "unsupported_dropped": 0,
             "ineligible_product_dropped": 0,
+            # INC-6:结果分类(计数不截断,与事件上限解耦)
+            "outcome_counts": {
+                "SUPPORTED": 0,
+                "UNSUPPORTED": 0,
+                "UNVALIDATABLE": 0,
+                "NOT_APPLICABLE": 0,
+            },
+            "validation_events": [],
+            "validation_events_truncated": False,
         }
 
     # -- 内部工具 ---------------------------------------------------------- #
+
+    def _record_validation(self, citation_no: int, outcome: str, reason: str, window: str) -> None:
+        """追加一条有界验证事件并累计结果计数(零正文;不改变任何强制决策)。"""
+        self.stats["outcome_counts"][outcome] += 1
+        events = self.stats["validation_events"]
+        if len(events) < _MAX_VALIDATION_EVENTS:
+            events.append(
+                {
+                    "citation_no": citation_no,
+                    "outcome": outcome,
+                    "reason": reason,
+                    "window_chars": len(window),
+                }
+            )
+        else:
+            self.stats["validation_events_truncated"] = True
 
     def _emit(self, out: list[str], text: str) -> None:
         out.append(text)
@@ -314,6 +345,7 @@ class CitationStreamFilter:
         window = self._window
         self._window = ""
         if not (1 <= n <= self._n):
+            self._record_validation(n, "UNSUPPORTED", "dangling_marker", window)
             self.stats["dangling_dropped"] += 1
             return
         if self._eligible is not None:
@@ -323,12 +355,25 @@ class CitationStreamFilter:
             if product_slug is None or product_slug not in self._eligible:
                 # sibling 编号不支持 target-specific claim:剔除引用权威,
                 # 不改写主张文本(与 CIT-01/02 同语义)。
+                self._record_validation(n, "UNSUPPORTED", "product_ineligible", window)
                 self.stats["ineligible_product_dropped"] += 1
                 return
         texts = self._texts.get(n, [])
         if texts and not numbers_supported(window, texts):
+            self._record_validation(n, "UNSUPPORTED", "numeric_unsupported", window)
             self.stats["unsupported_dropped"] += 1
             return
+        # INC-6:通过强制检查的标记按窗口真值分类(行为不变,仅显式化):
+        # 空/纯空白窗口 = 无主张可验证;无显著数值(或无源文本可校验)=
+        # 无可成立的确定性必要条件;其余 = 全部可判定检查通过。
+        if not window.strip():
+            self._record_validation(n, "NOT_APPLICABLE", "vacuous_window", window)
+        elif not texts or not _significant_numbers(window):
+            self._record_validation(
+                n, "UNVALIDATABLE", "no_deterministic_necessary_condition", window
+            )
+        else:
+            self._record_validation(n, "SUPPORTED", "all_checks_passed", window)
         self._emit(out, marker)
 
     def _flush_pending(self, out: list[str]) -> None:

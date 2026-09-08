@@ -35,6 +35,7 @@ from backend.pipeline.citation import (
     normalize_source_path,
     validate_citations,
 )
+from backend.pipeline.claim_validation import build_claim_validation
 from backend.pipeline.evidence_planning import derive_evidence_plan
 from backend.pipeline.evidence_selection import (
     build_coverage_report,
@@ -1732,18 +1733,17 @@ class RAGOrchestrator:
         cite_ctx = build_citation_context(reranked, sources, taxonomy=taxonomy)
         # INC-5:覆盖真值 = 终局生成上下文事实(可引用段+背景段;
         # dropped_public 未进入生成,不得计入覆盖)
+        coverage_report = None
         if plan.slots:
             citable_ids, background_ids = context_id_sets(cite_ctx.stats)
-            stages["evidence"] = build_evidence_stage(
-                build_coverage_report(
-                    plan,
-                    reranked,
-                    taxonomy=taxonomy,
-                    citable_ids=citable_ids,
-                    background_ids=background_ids,
-                ),
-                selection_info,
+            coverage_report = build_coverage_report(
+                plan,
+                reranked,
+                taxonomy=taxonomy,
+                citable_ids=citable_ids,
+                background_ids=background_ids,
             )
+            stages["evidence"] = build_evidence_stage(coverage_report, selection_info)
         # Sales Lead:资格判定(同步路径串行执行)+ 邀请/确认决策
         lead_qual: LeadQualification | None = None
         lead_instruction = ""
@@ -1780,7 +1780,15 @@ class RAGOrchestrator:
             eligible_slugs=eligible_slugs,
         )
         stages["output"] = {"ms": 0, "sources_count": len(sources)}
-        stages["citation_integrity"] = {**cite_ctx.stats, **cite_stats}
+        # INC-6:主张—证据验证(四态结果 + reason + 角色归因;零 LLM,
+        # 数据 = 终验 stats + 终局可引用身份 + INC-5 覆盖)
+        stages["citation_integrity"] = {
+            **cite_ctx.stats,
+            **cite_stats,
+            "claim_validation": build_claim_validation(
+                cite_stats, cite_ctx.stats.get("citable", ()), coverage_report
+            ),
+        }
 
         elapsed = int((time.monotonic() - start) * 1000)
         return RAGAnswer(
@@ -2592,18 +2600,17 @@ class RAGOrchestrator:
         # CIT-03:编号携带产品标签,产品边界启用时同步做资格校验
         cite_ctx = build_citation_context(reranked, sources, taxonomy=taxonomy)
         # INC-5:覆盖真值 = 终局生成上下文事实(answer/stream 同口径)
+        coverage_report = None
         if plan.slots:
             citable_ids, background_ids = context_id_sets(cite_ctx.stats)
-            stages["evidence"] = build_evidence_stage(
-                build_coverage_report(
-                    plan,
-                    reranked,
-                    taxonomy=taxonomy,
-                    citable_ids=citable_ids,
-                    background_ids=background_ids,
-                ),
-                selection_info,
+            coverage_report = build_coverage_report(
+                plan,
+                reranked,
+                taxonomy=taxonomy,
+                citable_ids=citable_ids,
+                background_ids=background_ids,
             )
+            stages["evidence"] = build_evidence_stage(coverage_report, selection_info)
         messages = self._build_messages(
             query,
             cite_ctx.context,
@@ -2716,7 +2723,16 @@ class RAGOrchestrator:
                             "type": "reject_short",
                             "stages": {
                                 "generate": {"ms": int((time.monotonic() - t3) * 1000)},
-                                "citation_integrity": {**cite_ctx.stats, **citation_filter.stats},
+                                "citation_integrity": {
+                                    **cite_ctx.stats,
+                                    **citation_filter.stats,
+                                    # INC-6:C 型耗尽=标记全被剔除(证据已达生成)
+                                    "claim_validation": build_claim_validation(
+                                        citation_filter.stats,
+                                        cite_ctx.stats.get("citable", ()),
+                                        coverage_report,
+                                    ),
+                                },
                                 # INC-5:证据已达生成(空答案属生成段缺陷,
                                 # 非证据缺失)→ 覆盖照终局上下文如实计算
                                 "evidence": stages.get("evidence"),
@@ -2866,6 +2882,12 @@ class RAGOrchestrator:
                         "citation_integrity": {
                             **cite_ctx.stats,
                             **citation_filter.stats,
+                            # INC-6:主张—证据验证(answer/stream 同口径)
+                            "claim_validation": build_claim_validation(
+                                citation_filter.stats,
+                                cite_ctx.stats.get("citable", ()),
+                                coverage_report,
+                            ),
                         },
                         "evidence": stages.get("evidence"),
                         **({"lead": lead_stage} if lead_stage else {}),
