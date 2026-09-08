@@ -27,6 +27,11 @@
 - mode=off_topic ⇒ category=off_topic;category=off_topic ⇒ mode=off_topic
   (双向一致性修复,杜绝「standard 路由 + off_topic 枚举」的脏组合)。
 
+INC-4 增量修订(additive,同一调用):结构化输出新增 ``evidence_intent`` 维度
+(factual / recommendation),区分普通产品事实查询与选型/方案设计推荐——
+这不新增第五个 legacy category、不改变 interaction_mode 路由语义、不移动
+产品身份权威;缺失/非法/畸形一律 fail-open 为 ``factual``,检索保持可用。
+
 边界:产品身份权威仍在 Product Resolver(先于本调用,契约 §4),本模块不输出
 任何产品目标;语言权威仍是确定性 ``detect_language``;查询以用户原语言输出。
 """
@@ -50,10 +55,17 @@ MODE_CLARIFICATION = "clarification_required"
 MODE_CAPABILITY = "capability_orientation"
 MODE_OFF_TOPIC = "off_topic"
 
+# INC-4 增量修订(additive):证据意图维度,同一调用的附加结构化输出。
+# 仅区分 ordinary factual lookup 与 recommendation/solution design;
+# 不是第五个 legacy category,不影响 interaction_mode 路由语义。
+EVIDENCE_INTENT_FACTUAL = "factual"
+EVIDENCE_INTENT_RECOMMENDATION = "recommendation"
+EVIDENCE_INTENTS = (EVIDENCE_INTENT_FACTUAL, EVIDENCE_INTENT_RECOMMENDATION)
+
 # legacy 枚举唯一权威定义点(intent.py);合并理解不新增第五个 legacy 值
 from backend.pipeline.intent import VALID_CATEGORIES  # noqa: E402
 
-_UNDERSTANDING_PROMPT = """你是智能应答系统的任务理解助手。请基于用户输入与对话历史,一次性完成四件事:意图分类、核心检索问题提取、自包含查询改写、交互模式判定。
+_UNDERSTANDING_PROMPT = """你是智能应答系统的任务理解助手。请基于用户输入与对话历史,一次性完成五件事:意图分类、证据意图判定、核心检索问题提取、自包含查询改写、交互模式判定。
 
 ## 第一步:交互模式判定(决定路由,先于分类)
 - capability_orientation: 用户在询问**助手本身**——它能做什么/能帮什么忙/服务范围/怎么使用它。中英文语义等价表达都算(如「你会干什么」「你可以帮我什么」「怎么用你」「What can you do?」「How can you help me?」)。这是合法交互,**不是闲聊,也不是 off_topic**。
@@ -84,8 +96,13 @@ _UNDERSTANDING_PROMPT = """你是智能应答系统的任务理解助手。请�
 ## 第四步:自包含查询改写(rewritten_query)
 {history_rules}
 
+## 第五步:证据意图判定(evidence_intent,INC-4)
+- recommendation: 用户在寻求**选型/推荐/方案设计**帮助——"帮我推荐 / 怎么选 / 哪个更适合 / 方案设计 / best product for X / which should I choose"及其它语言的语义等价表达。
+- factual: 其余产品/商务/支持问题(功能查询、参数、故障、价格等)。
+- 仅 category=product 时该字段有路由意义;commercial / support / off_topic 一律填 factual。
+
 只输出 JSON(不要 markdown 代码块、不要解释):
-{{"category": "commercial|product|support|off_topic", "reason": "简短理由", "confidence": 0.0到1.0, "interaction_mode": "standard|clarification_required|capability_orientation|off_topic", "extracted_query": "核心检索问题", "rewritten_query": "自包含查询"}}
+{{"category": "commercial|product|support|off_topic", "reason": "简短理由", "confidence": 0.0到1.0, "interaction_mode": "standard|clarification_required|capability_orientation|off_topic", "evidence_intent": "factual|recommendation", "extracted_query": "核心检索问题", "rewritten_query": "自包含查询"}}
 
 ## 对话历史(最近 3 轮)
 {history}
@@ -121,6 +138,8 @@ class TaskUnderstanding:
         extracted_query: 核心检索问题(符号/boost 桶/比较检索消费者)。
         rewritten_query: 自包含查询(主 hybrid/重排消费者);无合格历史时
             确定性等于 extracted_query。
+        evidence_intent: 证据意图(factual / recommendation;INC-4 增量修订,
+            缺失/非法 fail-open 为 factual)。
         fallback_used: 是否发生了整体或逐字段回退(可观测,契约 §7)。
         parse_ok: 结构化 JSON 是否解析成功。
     """
@@ -131,6 +150,7 @@ class TaskUnderstanding:
     interaction_mode: str = MODE_STANDARD
     extracted_query: str = ""
     rewritten_query: str = ""
+    evidence_intent: str = EVIDENCE_INTENT_FACTUAL
     fallback_used: bool = False
     parse_ok: bool = True
 
@@ -229,6 +249,17 @@ async def understand_task(
         mode = MODE_OFF_TOPIC if category == "off_topic" else MODE_STANDARD
         fallback_used = True
 
+    # evidence_intent(INC-4 增量修订):缺失 = legacy INC-3 形态,属合法兼容
+    # 形态,缺省 factual 且**不视为退化**(不改 fallback_used,向后兼容);
+    # 非法值 → factual + 回退可观测。均不影响路由语义,检索保持可用。
+    if "evidence_intent" in data:
+        evidence_intent = data.get("evidence_intent")
+        if evidence_intent not in EVIDENCE_INTENTS:
+            evidence_intent = EVIDENCE_INTENT_FACTUAL
+            fallback_used = True
+    else:
+        evidence_intent = EVIDENCE_INTENT_FACTUAL
+
     # reason:缺失容错;有界(不持久化思维链)
     reason = data.get("reason", "")
     if not isinstance(reason, str):
@@ -270,6 +301,7 @@ async def understand_task(
         interaction_mode=mode,
         extracted_query=extracted,
         rewritten_query=rewritten,
+        evidence_intent=evidence_intent,
         fallback_used=fallback_used,
         parse_ok=True,
     )

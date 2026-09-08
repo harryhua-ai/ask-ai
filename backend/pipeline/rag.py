@@ -35,6 +35,7 @@ from backend.pipeline.citation import (
     normalize_source_path,
     validate_citations,
 )
+from backend.pipeline.evidence_planning import derive_evidence_plan
 from backend.pipeline.intent import IntentResult
 from backend.pipeline.task_understanding import (
     MODE_CAPABILITY,
@@ -1444,6 +1445,29 @@ class RAGOrchestrator:
                 },
                 result_key=CAPABILITY_ORIENTATION_KEY,
             )
+        # INC-4:确定性证据规划(零 LLM/零 IO)——把已完成的任务理解与产品解析
+        # 转换为显式证据需求。本增量只产出计划供 trace/下游消费;证据的最终
+        # 选择/组合属 INC-5,检索执行行为不变(comparison 管线保持冻结)。
+        plan = derive_evidence_plan(understanding, resolution)
+        stages["plan"] = {
+            "evidence_intent": plan.evidence_intent,
+            "slots": [
+                {
+                    "role": slot.role,
+                    "product_scope": list(slot.product_scope),
+                    "required": slot.required,
+                    "citation_requirement": slot.citation_requirement,
+                }
+                for slot in plan.slots
+            ],
+            "derived_from": {
+                "category": plan.category,
+                "interaction_mode": plan.interaction_mode,
+                "resolution_mode": plan.resolution_mode,
+                "resolution_targets": list(plan.resolution_targets),
+            },
+            "fallback_used": plan.fallback_used,
+        }
         # commercial/product/support 进入 RAG 管线
         # (commercial 原「过渡期拒答」已废:WooCommerce 产品已灌库,走 woocommerce boost 桶作答)
         # product/commercial/support 降低检索阈值(能力咨询/购买咨询容忍少结果)
@@ -2095,6 +2119,27 @@ class RAGOrchestrator:
                 }
             )
             return
+        # INC-4:确定性证据规划(与 answer() 同位同语义,parity;见 answer 路径注)
+        plan = derive_evidence_plan(understanding, resolution)
+        stages["plan"] = {
+            "evidence_intent": plan.evidence_intent,
+            "slots": [
+                {
+                    "role": slot.role,
+                    "product_scope": list(slot.product_scope),
+                    "required": slot.required,
+                    "citation_requirement": slot.citation_requirement,
+                }
+                for slot in plan.slots
+            ],
+            "derived_from": {
+                "category": plan.category,
+                "interaction_mode": plan.interaction_mode,
+                "resolution_mode": plan.resolution_mode,
+                "resolution_targets": list(plan.resolution_targets),
+            },
+            "fallback_used": plan.fallback_used,
+        }
         # Sales Lead Capture:资格判定 LLM 与 rewrite/retrieve 并发执行,
         # commercial/product(或已有线索/检出联系方式/明确销售请求)才跑,零延迟增加。
         lead_qual_task: asyncio.Task | None = None
@@ -2289,6 +2334,7 @@ class RAGOrchestrator:
                             "llm_calls": tel.current_calls(),
                             "stages": {
                                 "understanding": stages.get("understanding"),
+                                "plan": stages.get("plan"),
                                 "intent": {
                                     "ms": understanding_ms,
                                     "category": understanding.category,
@@ -2374,6 +2420,7 @@ class RAGOrchestrator:
                             "llm_calls": tel.current_calls(),
                             "stages": {
                                 "understanding": stages.get("understanding"),
+                                "plan": stages.get("plan"),
                                 "intent": {
                                     "ms": understanding_ms,
                                     "category": understanding.category,
@@ -2682,6 +2729,7 @@ class RAGOrchestrator:
                             "resolved": language,
                         },
                         "understanding": stages.get("understanding"),
+                        "plan": stages.get("plan"),
                         "intent": {
                             "ms": understanding_ms,
                             "category": understanding.category,
