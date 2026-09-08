@@ -2855,6 +2855,17 @@ class RAGOrchestrator:
                         },
                         "understanding": stages.get("understanding"),
                         "plan": stages.get("plan"),
+                        # INC-7 流式 trace parity 矫正:complete 投影显式枚举
+                        # stages 键,漏投影 response_strategy 导致生产唯一
+                        # 应答面(流式)观测不到 INC-7(Production Gate FAIL
+                        # 唯一败项)。answer 路径透传全量 stages,本键与其
+                        # 语义等价;抑制轮(比较/lead 权威/短路)该键本就不在
+                        # stages,条件投影保持真缺席(非 null 占位)。
+                        **(
+                            {"response_strategy": stages["response_strategy"]}
+                            if "response_strategy" in stages
+                            else {}
+                        ),
                         "intent": {
                             "ms": understanding_ms,
                             "category": understanding.category,
