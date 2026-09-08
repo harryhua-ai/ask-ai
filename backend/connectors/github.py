@@ -59,15 +59,13 @@ class GitHubConnector(DataSourceConnector):
         self._owner, self._repo = self._parse_repo_url(self._repo_url)
         # branches:SourceConfig.branches(复数字段,空 tuple 表示未指定)优先,
         # 回退到 config.branches(兼容旧单数字段),最终默认 ["main"]。
-        self._branches: tuple[str, ...] = (
-            config.branches
-            or tuple(config.config.get("branches", ["main"]) or ["main"])
+        self._branches: tuple[str, ...] = config.branches or tuple(
+            config.config.get("branches", ["main"]) or ["main"]
         )
         # 不可变构造:spread 创建新集合,避免引用 config 内部可变对象
         self._file_types: set[str] = {*config.config.get("file_types", [".py"])}
         self._clone_path: Path = Path(
-            config.config.get("clone_path")
-            or f"~/ask-ai-corpus/{self._repo}"
+            config.config.get("clone_path") or f"~/ask-ai-corpus/{self._repo}"
         ).expanduser()
         self._channel_visibility: tuple[str, ...] = config.channel_visibility
         self._policy = ExclusionPolicy(config.config)
@@ -106,9 +104,7 @@ class GitHubConnector(DataSourceConnector):
         """
         if not self._token:
             return self._repo_url
-        return self._repo_url.replace(
-            "https://", f"https://x-access-token:{self._token}@"
-        )
+        return self._repo_url.replace("https://", f"https://x-access-token:{self._token}@")
 
     def _sanitize(self, text: str) -> str:
         """错误信息脱敏:抹去内嵌 token,鉴权 URL 保留 `x-access-token:***@` 形态(C10)。"""
@@ -162,9 +158,7 @@ class GitHubConnector(DataSourceConnector):
         if self._clone_path.exists():
             return
         self._clone_path.parent.mkdir(parents=True, exist_ok=True)
-        self._run_git(
-            ["clone", "--branch", branch, self._authed_url(), str(self._clone_path)]
-        )
+        self._run_git(["clone", "--branch", branch, self._authed_url(), str(self._clone_path)])
 
     def _git_sync_branch(self, branch: str) -> None:
         """fetch + reset 工作区到远端最新(修 staleness bug,决策 3A)。
@@ -176,16 +170,22 @@ class GitHubConnector(DataSourceConnector):
         self._run_git(["fetch", "origin", branch], cwd=self._clone_path)
         self._run_git(["reset", "--hard", f"origin/{branch}"], cwd=self._clone_path)
 
-    def _git_local_sha(self, branch: str) -> str:
-        """本地 HEAD commit SHA(``git rev-parse HEAD``)。"""
+    def _local_branch_sha(self, branch: str) -> str | None:
+        """本地对该分支远端状态的最新认知(``refs/remotes/origin/<branch>``)。
+
+        该 ref 只随本分支自己的 fetch 推进,与 HEAD 及其他分支的处理顺序无关。
+        返回 None = 本地没有该分支的跟踪状态(首同步 / 该分支从未 fetch 到)。
+        """
         result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            ["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}"],
             cwd=self._clone_path,
-            check=True,
+            check=False,
             capture_output=True,
             text=True,
         )
-        return result.stdout.strip()
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip() or None
 
     def _api_get_latest_sha(self, branch: str) -> str:
         """GitHub API:``GET /repos/{owner}/{repo}/commits/{branch}`` → 最新 SHA。"""
@@ -199,9 +199,17 @@ class GitHubConnector(DataSourceConnector):
             return resp.json()["sha"]
 
     def _remote_has_updates(self, branch: str) -> bool:
-        """API SHA vs 本地 HEAD。API 故障 → True(降级触发 fetch,不阻断同步)。"""
+        """API 远端 SHA vs **该分支自己的**远端跟踪 ref(分支特定变更检测,#34A)。
+
+        旧实现比较 ``rev-parse HEAD``:多分支源处理完分支 A 后 HEAD 停在 A 的
+        提交,分支 B 的远端 SHA 必然 ≠ 该 HEAD → 未变更分支恒判"有更新" →
+        每轮真实 fetch/reset(#34 网络事故的暴露放大器)。改为与
+        ``refs/remotes/origin/<branch>`` 比较后,判定只取决于该分支自身状态。
+        API 故障 → True(降级触发 fetch,不阻断同步);本地无跟踪 ref →
+        True(首同步安全语义)。
+        """
         try:
-            return self._api_get_latest_sha(branch) != self._git_local_sha(branch)
+            remote_sha = self._api_get_latest_sha(branch)
         except Exception as exc:  # noqa: BLE001 - 降级而非阻断
             logger.warning(
                 "API SHA 感知失败,降级直接 fetch: branch=%s err=%s",
@@ -209,6 +217,10 @@ class GitHubConnector(DataSourceConnector):
                 str(exc)[:200],
             )
             return True
+        local_sha = self._local_branch_sha(branch)
+        if local_sha is None:
+            return True
+        return remote_sha != local_sha
 
     # ---------------- 文件遍历(吸收 local_git 的 checkout+遍历) ----------------
 
@@ -289,9 +301,13 @@ class GitHubConnector(DataSourceConnector):
         since_iso = since.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S")
         result = subprocess.run(
             [
-                "git", "log", f"--since={since_iso}",
-                "--name-only", "--pretty=format:",
-                "--diff-filter=AMR", "-M",
+                "git",
+                "log",
+                f"--since={since_iso}",
+                "--name-only",
+                "--pretty=format:",
+                "--diff-filter=AMR",
+                "-M",
             ],
             cwd=self._clone_path,
             capture_output=True,
@@ -326,8 +342,11 @@ class GitHubConnector(DataSourceConnector):
         for branch in self._branches:
             result = subprocess.run(
                 [
-                    "git", "log", f"--since={since_iso}",
-                    "--name-only", "--pretty=format:",
+                    "git",
+                    "log",
+                    f"--since={since_iso}",
+                    "--name-only",
+                    "--pretty=format:",
                     "--diff-filter=D",
                 ],
                 cwd=self._clone_path,
