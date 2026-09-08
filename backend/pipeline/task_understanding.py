@@ -53,7 +53,7 @@ MODE_OFF_TOPIC = "off_topic"
 # legacy 枚举唯一权威定义点(intent.py);合并理解不新增第五个 legacy 值
 from backend.pipeline.intent import VALID_CATEGORIES  # noqa: E402
 
-_UNDERSTANDING_PROMPT = """你是 CamThink 智能应答的任务理解助手。请基于用户输入与对话历史,一次性完成四件事:意图分类、核心检索问题提取、自包含查询改写、交互模式判定。
+_UNDERSTANDING_PROMPT = """你是智能应答系统的任务理解助手。请基于用户输入与对话历史,一次性完成四件事:意图分类、核心检索问题提取、自包含查询改写、交互模式判定。
 
 ## 第一步:交互模式判定(决定路由,先于分类)
 - capability_orientation: 用户在询问**助手本身**——它能做什么/能帮什么忙/服务范围/怎么使用它。中英文语义等价表达都算(如「你会干什么」「你可以帮我什么」「怎么用你」「What can you do?」「How can you help me?」)。这是合法交互,**不是闲聊,也不是 off_topic**。
@@ -67,6 +67,14 @@ _UNDERSTANDING_PROMPT = """你是 CamThink 智能应答的任务理解助手。�
 - support: 故障排查/报错/集成/二次开发/代码/调试/寄存器/固件
 - off_topic: 仅限确证无关(见上)
 一致性规则:interaction_mode=capability_orientation → category=product;clarification_required → category 取最贴近的产品/商务/支持类(区分不了则 product);off_topic 模式 → category=off_topic。
+
+## 判定示例(占位符 X/Y 泛指所配置产品域内的产品,不指向特定厂商)
+- "产品X 多少钱 / 怎么采购" → standard + commercial
+- "产品X 支持哪些接口 / 有演示视频吗" → standard + product
+- "设备Y 蜂窝网络注册失败 / CEREG 报错" → standard + support
+- "What is included in the box?"(无任何产品上下文)→ clarification_required + product
+- "你会干什么 / What can you do?"(询问助手本身)→ capability_orientation + product
+- "今天天气怎么样 / 写一首诗"(与产品域无关)→ off_topic + off_topic
 
 ## 第三步:核心检索问题提取(extracted_query)
 - 保留核心技术意图(产品型号、错误信息、功能需求),去除寒暄/签名/无关噪音

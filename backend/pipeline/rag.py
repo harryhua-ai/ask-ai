@@ -40,6 +40,7 @@ from backend.pipeline.task_understanding import (
     MODE_CAPABILITY,
     MODE_CLARIFICATION,
     MODE_OFF_TOPIC,
+    MODE_STANDARD,
     understand_task,
 )
 from backend.pipeline.lead_qualify import (
@@ -1326,6 +1327,18 @@ class RAGOrchestrator:
             "parse_ok": understanding.parse_ok,
             "one_call": True,
         }
+        # 修订 CONTEXT-AWARE-UNDERSTANDING(#26/A7):resolver 已安全确立支持目标
+        # (exact/comparison)时,欠指定问题不得仅因本轮未点名产品而澄清——
+        # 上下文可解 → 正常域内处理。resolver 仍是产品身份唯一权威;此处仅做
+        # 确定性 mode 调和(不改检索行为),trace 如实记录调和发生(§8)。
+        context_reconciled = False
+        if understanding.interaction_mode == MODE_CLARIFICATION and resolution.mode in (
+            MODE_EXACT,
+            MODE_COMPARISON,
+        ):
+            understanding = replace(understanding, interaction_mode=MODE_STANDARD)
+            context_reconciled = True
+        stages["understanding"]["context_reconciled"] = context_reconciled
         # legacy 兼容键(由单次合并结果派生;ms=理解总耗时,不再代表独立 LLM 计时)
         capture_mode = bool(lead_ctx and lead_ctx.capture_mode)
         # PII-hard(Lead 契约):capture 轮的用户消息常是联系方式本身,
@@ -1928,6 +1941,18 @@ class RAGOrchestrator:
             "parse_ok": understanding.parse_ok,
             "one_call": True,
         }
+        # 修订 CONTEXT-AWARE-UNDERSTANDING(#26/A7):resolver 已安全确立支持目标
+        # (exact/comparison)时,欠指定问题不得仅因本轮未点名产品而澄清——
+        # 上下文可解 → 正常域内处理。resolver 仍是产品身份唯一权威;此处仅做
+        # 确定性 mode 调和(不改检索行为),trace 如实记录调和发生(§8)。
+        context_reconciled = False
+        if understanding.interaction_mode == MODE_CLARIFICATION and resolution.mode in (
+            MODE_EXACT,
+            MODE_COMPARISON,
+        ):
+            understanding = replace(understanding, interaction_mode=MODE_STANDARD)
+            context_reconciled = True
+        stages["understanding"]["context_reconciled"] = context_reconciled
         # legacy 兼容键(由单次合并结果派生;ms=理解总耗时,不再代表独立 LLM 计时)
         capture_mode = bool(lead_ctx and lead_ctx.capture_mode)
         # PII-hard(Lead 契约):capture 轮的用户消息常是联系方式本身,
