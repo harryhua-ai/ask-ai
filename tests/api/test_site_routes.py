@@ -40,6 +40,17 @@ def _make_site_row(
     row.display_name = display_name
     row.welcome = welcome
     row.language = language
+    # I-UX-001:experience 字段(MagicMock 自动属性会伪造非 None 值,须显式置 None)
+    row.launcher_motion = None
+    row.launcher_size = None
+    row.launcher_brand = None
+    row.launcher_color = None
+    row.entry_mode = None
+    row.proactive_timing = None
+    row.chat_theme = None
+    row.chat_accent_color = None
+    row.chat_size = None
+    row.greeting_override = None
     return row
 
 
@@ -47,6 +58,10 @@ def _make_site_factory(site_row: MagicMock | None) -> tuple[MagicMock, AsyncMock
     session = AsyncMock()
     session.add = MagicMock()
     session.get = AsyncMock(return_value=site_row)
+    # I-UX-001:site-config 现含 trusted-actions 查询;mock 返回空结果集
+    empty_result = MagicMock()
+    empty_result.scalars.return_value.all.return_value = []
+    session.execute = AsyncMock(return_value=empty_result)
     factory = MagicMock()
     factory.return_value.__aenter__ = AsyncMock(return_value=session)
     factory.return_value.__aexit__ = AsyncMock(return_value=None)

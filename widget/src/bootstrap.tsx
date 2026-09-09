@@ -33,6 +33,22 @@ declare global {
       launcherTheme?: string;
       /** @deprecated REV0 遗留(data-launcher-style);退役为 current */
       launcherStyle?: string;
+      /** I-UX-001:体验覆写(entry/proactive/launcher 动效尺寸品牌/聊天窗主题) */
+      entryMode?: string;
+      proactive?: string;
+      launcherMotion?: string;
+      launcherSize?: string;
+      launcherBrand?: string;
+      launcherColor?: string;
+      chatTheme?: string;
+      chatAccent?: string;
+      chatSize?: string;
+      /** Admin 预览模式(复用真实渲染路径;不产生真实 /ask 流量) */
+      previewMode?: boolean;
+      previewPageType?: string;
+      previewProduct?: string;
+      previewTitle?: string;
+      previewActions?: { type: string; label: string; query: string }[];
     };
   }
 }
@@ -46,6 +62,20 @@ type ConfigOverrides = {
   launcherShape?: string;
   launcherTheme?: string;
   launcherStyle?: string;
+  entryMode?: string;
+  proactive?: string;
+  launcherMotion?: string;
+  launcherSize?: string;
+  launcherBrand?: string;
+  launcherColor?: string;
+  chatTheme?: string;
+  chatAccent?: string;
+  chatSize?: string;
+  previewMode?: boolean;
+  previewPageType?: string;
+  previewProduct?: string;
+  previewTitle?: string;
+  previewActions?: { type: string; label: string; query: string }[];
 };
 
 function readDataset(el: HTMLElement | null | undefined): ConfigOverrides {
@@ -60,6 +90,19 @@ function readDataset(el: HTMLElement | null | undefined): ConfigOverrides {
     launcherShape: d.launcherShape || undefined,
     launcherTheme: d.launcherTheme || undefined,
     launcherStyle: d.launcherStyle || undefined,
+    entryMode: d.entryMode || undefined,
+    proactive: d.proactive || undefined,
+    launcherMotion: d.launcherMotion || undefined,
+    launcherSize: d.launcherSize || undefined,
+    launcherBrand: d.launcherBrand || undefined,
+    launcherColor: d.launcherColor || undefined,
+    chatTheme: d.chatTheme || undefined,
+    chatAccent: d.chatAccent || undefined,
+    chatSize: d.chatSize || undefined,
+    previewMode: d.previewMode === "true" ? true : undefined,
+    previewPageType: d.previewPageType || undefined,
+    previewProduct: d.previewProduct || undefined,
+    previewTitle: d.previewTitle || undefined,
   };
 }
 
@@ -103,6 +146,29 @@ export function resolveConfig(
     // @deprecated REV0 遗留通道:仅当规范属性缺位时才生效(App 侧退役为 current)
     launcherStyle:
       fromScript.launcherStyle ?? fromPreset.launcherStyle ?? fromGlobal.launcherStyle ?? undefined,
+    // I-UX-001 体验覆写(嵌入 > site-config > 默认;App 侧归一化)
+    entryMode: fromScript.entryMode ?? fromPreset.entryMode ?? fromGlobal.entryMode ?? undefined,
+    proactive: fromScript.proactive ?? fromPreset.proactive ?? fromGlobal.proactive ?? undefined,
+    launcherMotion:
+      fromScript.launcherMotion ?? fromPreset.launcherMotion ?? fromGlobal.launcherMotion ?? undefined,
+    launcherSize:
+      fromScript.launcherSize ?? fromPreset.launcherSize ?? fromGlobal.launcherSize ?? undefined,
+    launcherBrand:
+      fromScript.launcherBrand ?? fromPreset.launcherBrand ?? fromGlobal.launcherBrand ?? undefined,
+    launcherColor:
+      fromScript.launcherColor ?? fromPreset.launcherColor ?? fromGlobal.launcherColor ?? undefined,
+    chatTheme: fromScript.chatTheme ?? fromPreset.chatTheme ?? fromGlobal.chatTheme ?? undefined,
+    chatAccent: fromScript.chatAccent ?? fromPreset.chatAccent ?? fromGlobal.chatAccent ?? undefined,
+    chatSize: fromScript.chatSize ?? fromPreset.chatSize ?? fromGlobal.chatSize ?? undefined,
+    previewMode:
+      fromScript.previewMode ?? fromPreset.previewMode ?? fromGlobal.previewMode ?? undefined,
+    previewPageType:
+      fromScript.previewPageType ?? fromPreset.previewPageType ?? fromGlobal.previewPageType ?? undefined,
+    previewProduct:
+      fromScript.previewProduct ?? fromPreset.previewProduct ?? fromGlobal.previewProduct ?? undefined,
+    previewTitle:
+      fromScript.previewTitle ?? fromPreset.previewTitle ?? fromGlobal.previewTitle ?? undefined,
+    previewActions: fromGlobal.previewActions,
   };
 }
 

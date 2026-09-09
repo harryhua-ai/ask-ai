@@ -16,6 +16,7 @@ import BusinessOverview from "@/pages/BusinessOverview";
 import SalesLeads from "@/pages/SalesLeads";
 import SystemInfo from "@/pages/SystemInfo";
 import WidgetAppearance from "@/pages/WidgetAppearance";
+import WidgetExperience from "@/pages/WidgetExperience";
 
 export default function App() {
   return (
@@ -41,6 +42,7 @@ export default function App() {
                   <Route path="/users" element={<Users />} />
                   <Route path="/system" element={<SystemInfo />} />
                   <Route path="/widget-appearance" element={<WidgetAppearance />} />
+                  <Route path="/widget-experience" element={<WidgetExperience />} />
                 </Routes>
               </Layout>
             </ProtectedRoute>

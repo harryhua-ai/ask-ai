@@ -102,6 +102,11 @@ describe("ChatPanel 渲染本地化(ML-G005)", () => {
     onClose: () => {},
     onFeedback: () => {},
     onUpload: async () => [],
+    themeStyle: {},
+    character: "light" as const,
+    chatSize: "default" as const,
+    coldActions: [],
+    onColdAction: () => {},
   };
 
   it("en UI:英文占位/按钮/兜底欢迎语", () => {

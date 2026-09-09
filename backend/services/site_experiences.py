@@ -25,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.db.models import SiteExperience
+from backend.services.widget_experience import DEFAULT_NEW_SITE_ENTRY_MODE
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,18 @@ class ResolvedSite:
     launcher_shape: str = DEFAULT_LAUNCHER_SHAPE
     launcher_style: str = DEFAULT_LAUNCHER_ICON
     launcher_theme: str = DEFAULT_LAUNCHER_THEME
+    # I-UX-001:experience 快照(如实透传持久值;None = 未配置 = legacy/默认;
+    # 归一化由消费方注册表完成,此处不做语义解释)
+    launcher_motion: str | None = None
+    launcher_size: str | None = None
+    launcher_brand: str | None = None
+    launcher_color: str | None = None
+    entry_mode: str | None = None
+    proactive_timing: str | None = None
+    chat_theme: str | None = None
+    chat_accent_color: str | None = None
+    chat_size: str | None = None
+    greeting_override: str | None = None
 
     def localized_welcome(self, language: str | None) -> str | None:
         """按请求语言取欢迎语;无变体或缺省回落站点默认(语言独立于站点身份)。"""
@@ -229,6 +242,16 @@ async def resolve_site(
         launcher_shape=normalize_launcher_shape(getattr(row, "launcher_shape", None)),
         launcher_style=normalize_launcher_style(legacy_style),
         launcher_theme=normalize_launcher_theme(getattr(row, "launcher_theme", None)),
+        entry_mode=getattr(row, "entry_mode", None),
+        proactive_timing=getattr(row, "proactive_timing", None),
+        launcher_motion=getattr(row, "launcher_motion", None),
+        launcher_size=getattr(row, "launcher_size", None),
+        launcher_brand=getattr(row, "launcher_brand", None),
+        launcher_color=getattr(row, "launcher_color", None),
+        chat_theme=getattr(row, "chat_theme", None),
+        chat_accent_color=getattr(row, "chat_accent_color", None),
+        chat_size=getattr(row, "chat_size", None),
+        greeting_override=getattr(row, "greeting_override", None),
     )
 
 
@@ -257,7 +280,8 @@ async def seed_default_sites(
         for item in sites:
             site_id = str(item["site_id"])
             row = await session.get(SiteExperience, site_id)
-            if row is None:
+            row_was_new = row is None
+            if row_was_new:
                 row = SiteExperience(site_id=site_id)
                 session.add(row)
             row.display_name = str(item.get("display_name") or site_id)
@@ -268,6 +292,11 @@ async def seed_default_sites(
             row.welcome_i18n = dict(item["welcome_i18n"]) if item.get("welcome_i18n") else None
             row.starters_i18n = dict(item["starters_i18n"]) if item.get("starters_i18n") else None
             row.enabled = bool(item.get("enabled", True))
+            # I-UX-001 迁移契约:experience 列是 Admin 持久域,seed 绝不覆写
+            # (既有站点保持 NULL = legacy 行为);仅**新建行**缺省 mini_entry
+            # (新站点默认 C),YAML 可为新站点显式指定 entry_mode。
+            if row_was_new:
+                row.entry_mode = str(item.get("entry_mode") or DEFAULT_NEW_SITE_ENTRY_MODE)
         await session.commit()
     logger.info("站点体验配置已同步(%d 个站点)", len(sites))
     return len(sites)

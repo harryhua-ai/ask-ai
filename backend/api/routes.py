@@ -465,7 +465,59 @@ async def widget_site_config(
         "launcher_shape": site.launcher_shape,
         "launcher_style": site.launcher_style,
         "launcher_theme": site.launcher_theme,
+        # I-UX-001:Widget Experience(未配置 = None → Widget 保持 legacy 行为;
+        # 数值/枚举语义归一在 Widget 侧注册表完成,服务端只如实下发持久值)
+        "entry_mode": site.entry_mode,
+        "proactive_timing": site.proactive_timing,
+        "launcher_motion": site.launcher_motion,
+        "launcher_size": site.launcher_size,
+        "launcher_brand": site.launcher_brand,
+        "launcher_color": site.launcher_color,
+        "chat_theme": site.chat_theme,
+        "chat_accent_color": site.chat_accent_color,
+        "chat_size": site.chat_size,
+        "greeting_override": site.greeting_override,
+        "trusted_actions": await _published_trusted_actions(session_factory, site.site_id),
     }
+
+
+async def _published_trusted_actions(
+    session_factory: async_sessionmaker[AsyncSession],
+    site_id: str,
+    limit: int = 6,
+) -> list[dict[str, str]]:
+    """访客可曝光的 Trusted Actions(仅 state == published;Role A 修正 B)。
+
+    冻结生命周期语义:VERIFIED = 真实 ASK-AI 答案已人工接受(Admin 可见、
+    生命周期有效),PUBLISHED = 有资格进入访客主动曝光 —— 公开 site-config
+    是访客面,只下发 published。只暴露语义身份 + 展示 label + 绑定查询;
+    draft/verified 永不下发。零 LLM;页面上下文适配(选哪 2/3 个)与
+    {product}/{page_title} 绑定由 Widget 侧确定性解析(fail-closed)。
+    """
+    from sqlalchemy import select
+
+    from backend.db.models import SiteTrustedAction
+    from backend.services.widget_experience import VISITOR_ELIGIBLE_ACTION_STATES
+
+    async with session_factory() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(SiteTrustedAction)
+                    .where(
+                        SiteTrustedAction.site_id == site_id,
+                        SiteTrustedAction.state.in_(VISITOR_ELIGIBLE_ACTION_STATES),
+                    )
+                    .order_by(SiteTrustedAction.sort_order, SiteTrustedAction.created_at)
+                    .limit(limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [
+            {"type": row.action_type, "label": row.label, "query": row.query} for row in rows
+        ]
 
 
 @router.post("/feedback")

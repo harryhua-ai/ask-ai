@@ -47,6 +47,33 @@ export interface WidgetConfig {
   launcherTheme?: string;
   /** @deprecated REV0 遗留覆写(data-launcher-style);退役为 current,保留仅为兼容 */
   launcherStyle?: string;
+  // ---- I-UX-001 嵌入级覆写(优先级高于 site-config;Admin 预览/高级集成)----
+  /** data-entry-mode:legacy|pill|nudge|mini_entry */
+  entryMode?: string;
+  /** data-proactive:off|fast|balanced|gentle */
+  proactive?: string;
+  /** data-launcher-motion:static|subtle_glow|soft_pulse|sparkle */
+  launcherMotion?: string;
+  /** data-launcher-size:small|medium|large */
+  launcherSize?: string;
+  /** data-launcher-brand:askai|match|custom */
+  launcherBrand?: string;
+  /** data-launcher-color:#RRGGBB(brand=custom 时) */
+  launcherColor?: string;
+  /** data-chat-theme:match|light|dark|custom */
+  chatTheme?: string;
+  /** data-chat-accent:#RRGGBB(theme=custom 时) */
+  chatAccent?: string;
+  /** data-chat-size:default|large */
+  chatSize?: string;
+  /** I-UX-001 预览模式(Admin 实时预览;复用真实渲染路径,禁真实 /ask) */
+  previewMode?: boolean;
+  /** 预览页面上下文(仅 previewMode;喂给 greeting/action 解析器) */
+  previewPageType?: string;
+  previewProduct?: string;
+  previewTitle?: string;
+  /** 预览用 Trusted Actions(仅 Admin 预览注入;不来自站点配置) */
+  previewActions?: TrustedActionRef[];
 }
 
 /** GET /api/widget/site-config 响应(公开体验字段;不含 allowed_origins) */
@@ -62,6 +89,26 @@ export interface SiteExperienceConfig {
   launcher_theme?: string;
   /** @deprecated REV0 遗留回显(兼容缓存中的旧 Widget);新集成勿消费 */
   launcher_style?: string;
+  // ---- I-UX-001(per-site;未配置 = undefined → legacy/默认)----
+  entry_mode?: string;
+  proactive_timing?: string;
+  launcher_motion?: string;
+  launcher_size?: string;
+  launcher_brand?: string;
+  launcher_color?: string;
+  chat_theme?: string;
+  chat_accent_color?: string;
+  chat_size?: string;
+  greeting_override?: string;
+  /** 仅 verified/published 的 Trusted Actions(语义身份+展示 label+绑定查询) */
+  trusted_actions?: TrustedActionRef[];
+}
+
+/** Trusted Action 下发形态(语义身份独立于展示 label;I-UX-001 §2.14) */
+export interface TrustedActionRef {
+  type: string;
+  label: string;
+  query: string;
 }
 
 /** 宿主页面上下文(非信任语义提示;后端只作软加分与背景段) */
