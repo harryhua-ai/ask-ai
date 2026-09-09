@@ -7,7 +7,7 @@ conversation-established(仅指代追问)→ ambiguous => clarify。
 
 import pytest
 
-from backend.pipeline.product_resolver import resolve_products
+from backend.pipeline.product_resolver import has_comparison_intent, resolve_products
 
 
 @pytest.fixture(scope="module")
@@ -121,3 +121,82 @@ class TestAmbiguityAndNone:
         r = _resolve(taxonomy, "CamThink 是哪家公司?")
         assert r.mode == "none"
         assert r.source == "none"
+
+
+class TestComparisonIntentGate:
+    """I002-COMPARISON-GATE-CORRECTIVE-V1 §11:多实体共现 ≠ 比较意图。
+
+    比较模式需查询内正证据(确定性比较/取舍语);集成/兼容/配置类
+    Product→Platform 关系保留全部目标作用域,走常规 exact 路径。
+    """
+
+    # A. RCA 回归类(zh):HOW_TO 提及平台,不是产品对比
+    def test_zh_integration_howto_not_comparison(self, taxonomy):
+        r = _resolve(taxonomy, "NE101 如何接入 AI ToolStack？")
+        assert r.mode == "exact"
+        assert r.targets == ("ne101", "aitoolstack")
+        assert r.detail.get("multi_entity") is True
+
+    # B. EN 等价
+    def test_en_integration_howto_not_comparison(self, taxonomy):
+        r = _resolve(taxonomy, "How do I connect NE101 to AI ToolStack?")
+        assert r.mode == "exact"
+        assert r.targets == ("ne101", "aitoolstack")
+
+    # C. 兼容关系问句
+    def test_en_compatibility_not_comparison(self, taxonomy):
+        r = _resolve(taxonomy, "Does NE101 work with AI ToolStack?")
+        assert r.mode == "exact"
+        assert r.targets == ("ne101", "aitoolstack")
+
+    # C 变体:部署关系(HOW do I deploy X using Y)
+    def test_deploy_using_not_comparison(self, taxonomy):
+        r = _resolve(taxonomy, "How do I deploy NE503 using AI ToolStack?")
+        assert r.mode == "exact"
+        assert r.targets == ("ne503", "aitoolstack")
+
+    # D. 显式英文比较
+    def test_en_explicit_compare_is_comparison(self, taxonomy):
+        r = _resolve(taxonomy, "Compare NE101 and NE503.")
+        assert r.mode == "comparison"
+        assert r.targets == ("ne101", "ne503")
+
+    # D 变体
+    def test_en_vs_is_comparison(self, taxonomy):
+        r = _resolve(taxonomy, "NE101 vs NE503: which is better for edge vision?")
+        assert r.mode == "comparison"
+
+    # E. 显式中文比较
+    def test_zh_difference_is_comparison(self, taxonomy):
+        r = _resolve(taxonomy, "NE101 和 NE503 有什么区别？")
+        assert r.mode == "comparison"
+        assert r.targets == ("ne101", "ne503")
+
+    # F. 取舍比较
+    def test_zh_choice_is_comparison(self, taxonomy):
+        r = _resolve(taxonomy, "NE101 和 NE503 哪个更适合部署这个方案？")
+        assert r.mode == "comparison"
+
+    # F 变体:还是(双实体语境下取舍)
+    def test_zh_haishi_choice_is_comparison(self, taxonomy):
+        r = _resolve(taxonomy, "选 NE101 还是 NE503？")
+        assert r.mode == "comparison"
+
+    # 实体保真(§6):平台实体仍被识别,只是不再触发比较
+    def test_entities_remain_detected(self, taxonomy):
+        r = _resolve(taxonomy, "NE101 如何接入 AI ToolStack？")
+        assert "aitoolstack" in r.targets and "ne101" in r.targets
+
+    # 对照:单实体不受影响;显式 hint 优先级不变
+    def test_single_entity_unaffected(self, taxonomy):
+        r = _resolve(taxonomy, "NE101 怎么升级固件?")
+        assert r.mode == "exact"
+        assert r.targets == ("ne101",)
+        assert "multi_entity" not in r.detail
+
+    # 确定性检测器直测:边界用例
+    def test_marker_precision(self, taxonomy):
+        assert has_comparison_intent("NE301 和 NE503 相比如何")
+        assert has_comparison_intent("How does NE101 compare with NE503?")
+        assert not has_comparison_intent("NE101 如何接入 AI ToolStack？")
+        assert not has_comparison_intent("分别介绍 NE101 和 NE503 的包装清单")

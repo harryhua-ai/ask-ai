@@ -80,6 +80,28 @@ def _history_products(
     return tuple(ordered)
 
 
+#: I002-COMPARISON-GATE-CORRECTIVE-V1 §2(冻结产品决策):多实体共现 ≠ 比较意图;
+#: 比较模式需查询内正证据(确定性比较/取舍语,零新增 LLM)。
+#: 精度前提:仅在查询已抽出 ≥2 个 canonical 实体时检查 —— 「还是」「哪个」
+#: 在双实体语境下高概率为取舍比较;单实体查询不进本门。
+_COMPARISON_INTENT_MARKERS: tuple[str, ...] = (
+    # zh:显式比较/差异/取舍
+    "对比", "相比", "相比较", "区别", "差别", "差异",
+    "哪个", "哪种", "哪一个", "还是",
+    # en(匹配前整串小写)
+    " vs ", "vs.", " versus ", "compare", "comparison", "compared",
+    "difference between", "distinguish",
+    "which is better", "which one is better", "which is more",
+    "which should", "which one should",
+)
+
+
+def has_comparison_intent(query: str) -> bool:
+    """确定性比较意图检测:查询含显式比较/取舍语(纯函数,零 I/O)。"""
+    lowered = f" {query.lower()} "
+    return any(marker in lowered for marker in _COMPARISON_INTENT_MARKERS)
+
+
 def resolve_products(
     query: str,
     *,
@@ -97,12 +119,20 @@ def resolve_products(
             return ProductResolution(MODE_EXACT, (slug,), SOURCE_EXPLICIT)
         return ProductResolution(MODE_UNSUPPORTED, (), SOURCE_EXPLICIT)
 
-    # 2. 查询内显式型号:用户本轮亲口点名的产品;≥2 个 = 比较模式(§10)
+    # 2. 查询内显式型号:用户本轮亲口点名的产品;≥2 个 = 比较模式(§10),
+    #    但需比较意图正证据(I002-COMPARISON-GATE-CORRECTIVE-V1 §2):
+    #    集成/兼容/配置类多实体共现(HOW_TO 的 Product→Platform 关系)不构成
+    #    比较 —— 保留全部目标作用域走常规 exact 路径,不进比较专用管线,
+    #    不因单侧缺证整答拒答。
     query_products = taxonomy.extract_products(query)
     if len(query_products) == 1:
         return ProductResolution(MODE_EXACT, query_products, SOURCE_QUERY)
     if len(query_products) >= 2:
-        return ProductResolution(MODE_COMPARISON, query_products, SOURCE_QUERY)
+        if has_comparison_intent(query):
+            return ProductResolution(MODE_COMPARISON, query_products, SOURCE_QUERY)
+        return ProductResolution(
+            MODE_EXACT, query_products, SOURCE_QUERY, {"multi_entity": True},
+        )
 
     deixis = taxonomy.has_device_deixis(query)
 
