@@ -435,6 +435,54 @@ class SiteExperience(Base):
     # 有效图标 = launcher_icon 优先,遗留 launcher_style 值退役回落 current。
     launcher_icon: Mapped[str | None] = mapped_column(String(50), nullable=True)
     launcher_shape: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # I-UX-001:Widget Experience per-site 配置(全部 nullable 加列、零回填)。
+    # 迁移契约(冻结):既有站点列值 NULL = 未配置 → 保持 legacy 入口行为;
+    # 新建站点 seed 缺省 mini_entry(I-UX-001 §3);Admin 显式配置永远权威,
+    # seed 绝不覆写本组列(与 launcher_* 同域:Admin 持久值跨 YAML 重启存续)。
+    entry_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    proactive_timing: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    launcher_motion: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    launcher_size: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    launcher_brand: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    launcher_color: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    chat_theme: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    chat_accent_color: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    chat_size: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    greeting_override: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SiteTrustedAction(Base):
+    """站点 Trusted Action(I-UX-001:受控语义能力 + DRAFT/VERIFIED/PUBLISHED 生命周期)。
+
+    - action_type = 冻结语义目录(与 Widget 侧同一封闭集合);语义身份独立于
+      展示 label(本地化展示词可改,语义身份不变);
+    - query = 该动作点击后真实发给 ASK-AI 的问题(可含 {product}/{page_title}
+      占位符,由 Widget 按当前页面上下文确定性绑定);
+    - 生命周期:state ∈ draft(生产不可见)→ verified(真实 ASK-AI 输出经人工
+      验收)→ published(允许主动曝光);语义编辑(query/action_type)使既有
+      验收失效(回落 draft),纯 label 编辑不失效;
+    - TEST 必须走真实 ASK-AI 管道:结果快照存 last_test_result(答案+引用+
+      证据),Admin 据此人工验收;不引入自动评测架构(I-UX-001 §2.15)。
+    """
+
+    __tablename__ = "site_trusted_actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    site_id: Mapped[str] = mapped_column(
+        String(100), ForeignKey("site_experiences.site_id", ondelete="CASCADE"), index=True
+    )
+    action_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    label: Mapped[str] = mapped_column(String(60), nullable=False)
+    query: Mapped[str] = mapped_column(String(500), nullable=False)
+    state: Mapped[str] = mapped_column(String(10), nullable=False, default="draft")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_test_result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

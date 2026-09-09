@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
-import type { WidgetConfig, ChatMessage, AttachmentRef } from "../types";
+import type { WidgetConfig, ChatMessage, AttachmentRef, TrustedActionRef } from "../types";
 import type { UiStrings } from "../i18n";
+import type { ThemeTokens } from "../experience/theme";
 import { MessageBubble } from "./MessageBubble";
 import { SuggestedQuestions } from "./SuggestedQuestions";
 
@@ -14,22 +15,66 @@ interface Props {
   suggestedQuestions: string[];
   /** MSW:站点欢迎语;缺省回退内置问候(legacy 行为不变) */
   welcome?: string;
+  /** I-UX-001:聊天窗主题 token(落根容器 CSS 变量;不触碰宿主) */
+  themeStyle: ThemeTokens;
+  /** I-UX-001:主题明暗特征(match/custom 派生结果;驱动结构细节) */
+  character: "light" | "dark";
+  /** I-UX-001:窗口尺寸预设(default|large) */
+  chatSize: "default" | "large";
+  /** I-UX-001:冷启动态的 Trusted Actions(最多 3;会话开始后消失) */
+  coldActions: TrustedActionRef[];
+  /** I-UX-001:动作点击 → 立即开始真实会话(C→聊天同交互契约) */
+  onColdAction: (query: string) => void;
   onSend: (text: string, attachmentIds: string[]) => void;
   onClose: () => void;
   onFeedback: (msgId: string, feedback: "up" | "down") => void;
   onUpload: (files: File[]) => Promise<AttachmentRef[]>;
 }
 
-export function ChatPanel({ config, strings, messages, isStreaming, conversationId, suggestedQuestions, welcome, onSend, onClose, onFeedback, onUpload }: Props) {
+/** I-UX-001:桌面 = 右下浮动面(非全高抽屉);移动 = 底部弹层;dialog 语义。 */
+export function ChatPanel({
+  config,
+  strings,
+  messages,
+  isStreaming,
+  conversationId,
+  suggestedQuestions,
+  welcome,
+  themeStyle,
+  character,
+  chatSize,
+  coldActions,
+  onColdAction,
+  onSend,
+  onClose,
+  onFeedback,
+  onUpload,
+}: Props) {
   const [input, setInput] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentRef[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const messagesEnd = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     messagesEnd.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // 可访问性:打开时焦点入面板;Escape 关闭;关闭后焦点交还触发点
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    inputRef.current?.focus();
+    return () => previous?.focus?.();
+  }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,17 +105,36 @@ export function ChatPanel({ config, strings, messages, isStreaming, conversation
     setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
   };
 
+  const cold = messages.length === 0;
+
   return (
-    <div className="ask-ai-panel">
-      <div className="ask-ai-header" style={{ backgroundColor: "#000000" }}>
-        <span>Ask Camthink.ai</span>
-        <button onClick={onClose} style={{ float: "right", background: "none", border: "none", color: "white", cursor: "pointer" }}>✕</button>
+    <div
+      ref={panelRef}
+      className={`ask-ai-panel${chatSize === "large" ? " ask-ai-panel-large" : ""}`}
+      style={themeStyle as React.CSSProperties}
+      role="dialog"
+      aria-modal="false"
+      aria-label={strings.chatTitle}
+      data-ask-ai-character={character}
+    >
+      <div className="ask-ai-header">
+        <span className="ask-ai-header-title">{strings.chatTitle}</span>
+        <button
+          type="button"
+          className="ask-ai-header-close"
+          onClick={onClose}
+          aria-label={strings.minimize}
+          title={strings.minimize}
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
       </div>
       <div className="ask-ai-messages">
-        {messages.length === 0 && (
-          <div style={{ color: "#6b7280", fontSize: "14px", textAlign: "center", marginTop: "20px" }}>
-            {welcome ?? strings.defaultWelcome}
-          </div>
+        {cold && (
+          <div className="ask-ai-welcome">{welcome ?? strings.defaultWelcome}</div>
         )}
         {messages.map((msg) => (
           <MessageBubble
@@ -82,7 +146,22 @@ export function ChatPanel({ config, strings, messages, isStreaming, conversation
             onFeedback={onFeedback}
           />
         ))}
-        {suggestedQuestions.length > 0 && (
+        {/* 冻结 §2.8:冷启动欢迎/starter/动作只在空会话;开始后 message-first */}
+        {cold && coldActions.length > 0 && (
+          <div className="ask-ai-cold-actions" role="group" aria-label={strings.trustedActions}>
+            {coldActions.map((action) => (
+              <button
+                key={action.type + action.label}
+                type="button"
+                className="ask-ai-cold-action"
+                onClick={() => onColdAction(action.query)}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        )}
+        {cold && suggestedQuestions.length > 0 && (
           <SuggestedQuestions questions={suggestedQuestions} onSelect={(q) => onSend(q, [])} />
         )}
         <div ref={messagesEnd} />
@@ -127,13 +206,14 @@ export function ChatPanel({ config, strings, messages, isStreaming, conversation
           +
         </button>
         <input
+          ref={inputRef}
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder={strings.placeholder}
           disabled={isStreaming}
         />
-        <button type="submit" style={{ backgroundColor: "#000000" }} disabled={isStreaming || (!input.trim() && pendingAttachments.length === 0)}>
+        <button type="submit" className="ask-ai-send-btn" disabled={isStreaming || (!input.trim() && pendingAttachments.length === 0)}>
           {strings.send}
         </button>
       </form>
