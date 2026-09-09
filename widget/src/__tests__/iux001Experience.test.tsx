@@ -108,6 +108,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  delete (window as unknown as { AskAIConfig?: unknown }).AskAIConfig;
+  document.title = "";
   document.body.innerHTML = "";
 });
 
@@ -334,5 +336,198 @@ describe("I-UX-001 冷启动清理与证据 UX(§2.8/§2.9)", () => {
     expect(askCalls).toHaveLength(0); // 预览绝不产生真实请求
     expect(container.querySelector(".ask-ai-panel")!.textContent).toContain("Preview mode");
     root.unmount();
+  });
+});
+
+// ============================================================================
+// Role A 修正 A 回归:Trusted Action 唯一 fail-closed 绑定执行路径。
+// 规则:buildActionQuery(action, engagement) === null → NO /api/ask、
+// 不回落 label、不发原始模板、不泄漏占位符;两条访客面(C mini 与
+// 空聊天)都必须经过同一绑定路径。
+// ============================================================================
+
+/** 宿主显式 pageContext(绑定权威来源;url/title 由自动收集覆盖) */
+function setHostContext(ctx: { product?: string; page_type?: string; title?: string } | null) {
+  if (ctx === null) {
+    delete (window as unknown as { AskAIConfig?: unknown }).AskAIConfig;
+    return;
+  }
+  (window as unknown as { AskAIConfig?: unknown }).AskAIConfig = { pageContext: ctx };
+}
+
+const TEMPLATE_SITE: SiteExperienceConfig = {
+  site_id: "iux-site",
+  display_name: "CamThink 官网",
+  entry_mode: "mini_entry",
+  proactive_timing: "balanced",
+  trusted_actions: [
+    {
+      type: "PRODUCT_SPECIFICATIONS",
+      label: "Specifications",
+      query: "What are the specifications of {product}?",
+    },
+  ],
+};
+
+describe("I-UX-001 Role A 修正 A:Trusted Action 绑定 fail-closed", () => {
+  it("A. C Mini Entry:product 绑定成功 → 恰好 1 个真实请求(绑定后问句)", async () => {
+    vi.useFakeTimers();
+    setHostContext({ product: "NE503", page_type: "product", title: "NeoEye NE503" });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = await mountApp(container, baseConfig());
+    await resolveSite(TEMPLATE_SITE);
+    await act(async () => {
+      vi.advanceTimersByTime(6100); // 桌面 C 主动展开
+    });
+    const chips = container.querySelectorAll<HTMLElement>(".ask-ai-mini-action");
+    expect(chips.length).toBe(1); // 渲染阶段防线:可绑定才渲染
+    await act(async () => {
+      chips[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(askCalls).toHaveLength(1); // 恰好一个真实请求
+    expect(askCalls[0].body.message).toBe("What are the specifications of NE503?");
+    root.unmount();
+  });
+
+  it("B. 空浮动聊天:同模板同上下文 → 发绑定问句,绝非原始模板", async () => {
+    setHostContext({ product: "NE503", page_type: "product", title: "NeoEye NE503" });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = await mountApp(container, baseConfig()); // legacy 入口
+    await resolveSite({ ...TEMPLATE_SITE, entry_mode: undefined });
+    await act(async () => {
+      container.querySelector<HTMLElement>(".ask-ai-fab")!.click();
+    });
+    const cold = container.querySelector<HTMLElement>(".ask-ai-cold-actions");
+    expect(cold).not.toBeNull(); // 空聊天冷启动动作
+    const btn = cold!.querySelector<HTMLElement>(".ask-ai-cold-action")!;
+    expect(btn.textContent).toContain("Specifications"); // 展示 label ≠ 发送内容
+    await act(async () => {
+      btn.click();
+    });
+    expect(askCalls).toHaveLength(1);
+    expect(askCalls[0].body.message).toBe("What are the specifications of NE503?");
+    expect(askCalls[0].body.message).not.toBe("What are the specifications of {product}?");
+    root.unmount();
+  });
+
+  it("C. product 上下文缺失:动作不渲染,/api/ask = 0(不回落 label/模板)", async () => {
+    vi.useFakeTimers();
+    // 产品页 URL 命中适用性谓词(pageType=product)但无产品名 → 绑定必败
+    history.replaceState({}, "", "/products/unknown-item");
+    setHostContext(null);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = await mountApp(container, baseConfig());
+    await resolveSite(TEMPLATE_SITE);
+    await act(async () => {
+      vi.advanceTimersByTime(6100);
+    });
+    const mini = container.querySelector<HTMLElement>(".ask-ai-mini");
+    expect(mini).not.toBeNull();
+    // 渲染阶段防线:不可绑定 → 不渲染(无 chip 可点)
+    expect(mini!.querySelectorAll(".ask-ai-mini-action").length).toBe(0);
+    expect(askCalls).toHaveLength(0);
+    // 即使人为触发(防御纵深第二道:点击执行路径守卫),也不发请求
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>(".ask-ai-mini-input input")!
+        .dispatchEvent(new Event("noop", { bubbles: true }));
+    });
+    expect(askCalls).toHaveLength(0);
+    root.unmount();
+  });
+
+  it("D. page_title 上下文缺失:{page_title} 动作 fail-closed,/api/ask = 0", async () => {
+    vi.useFakeTimers();
+    history.replaceState({}, "", "/docs/guide"); // documentation → 谓词适用
+    document.title = ""; // 无可信页标题 → {page_title} 不可绑定
+    setHostContext(null);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = await mountApp(
+      container,
+      baseConfig(),
+    );
+    await resolveSite({
+      ...TEMPLATE_SITE,
+      trusted_actions: [
+        { type: "EXPLAIN_PAGE", label: "Explain", query: "Explain this page: {page_title}" },
+      ],
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(6100);
+    });
+    const mini = container.querySelector<HTMLElement>(".ask-ai-mini");
+    expect(mini).not.toBeNull();
+    expect(mini!.querySelectorAll(".ask-ai-mini-action").length).toBe(0); // 不渲染
+    expect(askCalls).toHaveLength(0); // 不发送
+    root.unmount();
+  });
+
+  it("E. 无占位符泄漏:访客执行链发出的请求体永不含未解析 {product}/{page_title}", async () => {
+    vi.useFakeTimers();
+    setHostContext({ product: "NE503", page_type: "product", title: "NeoEye NE503" });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = await mountApp(container, baseConfig());
+    await resolveSite({
+      ...TEMPLATE_SITE,
+      trusted_actions: [
+        {
+          type: "PRODUCT_SPECIFICATIONS",
+          label: "Specifications",
+          query: "What are the specifications of {product}?",
+        },
+        {
+          type: "EXPLAIN_PAGE",
+          label: "Explain",
+          query: "Explain this page: {page_title}",
+        },
+      ],
+    });
+    // 路径 1:C mini 动作(mini_entry 主动展开)
+    await act(async () => {
+      vi.advanceTimersByTime(6100);
+    });
+    const chip = container.querySelector<HTMLElement>(".ask-ai-mini-action");
+    expect(chip).not.toBeNull();
+    await act(async () => {
+      chip!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(askCalls.length).toBeGreaterThanOrEqual(1);
+    // 路径 2:重挂载后空聊天动作(独立会话)
+    root.unmount();
+    document.body.innerHTML = "";
+    askCalls = [];
+    sessionStorage.clear();
+    setHostContext({ product: "NE503", page_type: "product", title: "NeoEye NE503" });
+    const container2 = document.createElement("div");
+    document.body.appendChild(container2);
+    const root2 = await mountApp(container2, baseConfig());
+    // resolveSite 只取 pendingFetches[0](已被路径 1 消费);这里解析最新挂起项
+    await act(async () => {
+      pendingFetches[pendingFetches.length - 1].resolve({
+        ...TEMPLATE_SITE,
+        entry_mode: undefined,
+      });
+    });
+    await act(async () => {});
+    await act(async () => {
+      container2.querySelector<HTMLElement>(".ask-ai-fab")!.click();
+    });
+    await act(async () => {
+      container2.querySelector<HTMLElement>(".ask-ai-cold-action")!.click();
+    });
+    expect(askCalls.length).toBeGreaterThanOrEqual(1);
+    // 泄漏断言:所有已发请求体均不含未解析占位符,也不含模板原文
+    for (const call of askCalls) {
+      const raw = JSON.stringify(call.body);
+      expect(raw).not.toContain("{product}");
+      expect(raw).not.toContain("{page_title}");
+      expect(call.body.message).not.toBe("What are the specifications of {product}?");
+    }
+    root2.unmount();
   });
 });

@@ -198,7 +198,8 @@ export function App({ config }: { config: WidgetConfig }) {
     });
   }, [siteConfig, uiLang, pageTick, config.previewMode, config.previewPageType, config.previewProduct, config.previewTitle]);
 
-  // Trusted Actions:服务端仅下发 verified/published;此处按上下文选取(C≤2/聊天≤3)
+  // Trusted Actions:服务端仅下发 published(访客曝光闸;Role A 修正 B);
+  // 此处按上下文选取(C≤2/聊天≤3)且不可绑定动作不渲染(修正 A 防线一)
   // 预览模式:动作由 Admin 预览注入(previewActions);生产 = 站点配置下发
   const effectiveActions =
     (config.previewMode && config.previewActions?.length
@@ -333,9 +334,14 @@ export function App({ config }: { config: WidgetConfig }) {
     [openPanel],
   );
 
+  // Trusted Action 唯一访客执行路径(Role A 修正 A;fail-closed):
+  // C mini 与空聊天动作都经此处 —— 绑定失败(null)→ 不发请求、不回落 label、
+  // 不泄漏原始模板。渲染阶段的选取过滤(selectTrustedActions)是第一道防线,
+  // 此处是上下文在渲染后过期时的最终守卫。
   const handleColdAction = useCallback(
     (action: TrustedActionRef) => {
-      const bound = buildActionQuery(action, engagement) ?? action.label;
+      const bound = buildActionQuery(action, engagement);
+      if (bound === null) return;
       startConversation(bound);
     },
     [engagement, startConversation],
@@ -491,7 +497,7 @@ export function App({ config }: { config: WidgetConfig }) {
           notNowLabel={strings.notNow}
           minimizeLabel={strings.minimize}
           actionsLabel={strings.trustedActions}
-          onAction={(action) => handleColdAction(action)}
+          onAction={handleColdAction}
           onSubmit={(text) => startConversation(text)}
           onMinimize={dismissMini}
         />
@@ -509,10 +515,7 @@ export function App({ config }: { config: WidgetConfig }) {
           character={chatTheme.character}
           chatSize={resolveChatSize(config, siteConfig)}
           coldActions={chatColdActions}
-          onColdAction={(query) => {
-            openPanel();
-            void handleSendRef.current?.(query, []);
-          }}
+          onColdAction={handleColdAction}
           onSend={handleSend}
           onClose={() => setIsOpen(false)}
           onFeedback={handleFeedback}

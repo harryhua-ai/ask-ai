@@ -486,15 +486,18 @@ async def _published_trusted_actions(
     site_id: str,
     limit: int = 6,
 ) -> list[dict[str, str]]:
-    """主动可曝光的 Trusted Actions(仅 verified/published;冻结契约 §2.15)。
+    """访客可曝光的 Trusted Actions(仅 state == published;Role A 修正 B)。
 
-    只暴露语义身份 + 展示 label + 绑定查询;draft 永不下发。零 LLM;
-    页面上下文适配(选哪 2/3 个)由 Widget 侧确定性解析。
+    冻结生命周期语义:VERIFIED = 真实 ASK-AI 答案已人工接受(Admin 可见、
+    生命周期有效),PUBLISHED = 有资格进入访客主动曝光 —— 公开 site-config
+    是访客面,只下发 published。只暴露语义身份 + 展示 label + 绑定查询;
+    draft/verified 永不下发。零 LLM;页面上下文适配(选哪 2/3 个)与
+    {product}/{page_title} 绑定由 Widget 侧确定性解析(fail-closed)。
     """
     from sqlalchemy import select
 
     from backend.db.models import SiteTrustedAction
-    from backend.services.widget_experience import PROACTIVE_ELIGIBLE_ACTION_STATES
+    from backend.services.widget_experience import VISITOR_ELIGIBLE_ACTION_STATES
 
     async with session_factory() as session:
         rows = (
@@ -503,7 +506,7 @@ async def _published_trusted_actions(
                     select(SiteTrustedAction)
                     .where(
                         SiteTrustedAction.site_id == site_id,
-                        SiteTrustedAction.state.in_(PROACTIVE_ELIGIBLE_ACTION_STATES),
+                        SiteTrustedAction.state.in_(VISITOR_ELIGIBLE_ACTION_STATES),
                     )
                     .order_by(SiteTrustedAction.sort_order, SiteTrustedAction.created_at)
                     .limit(limit)

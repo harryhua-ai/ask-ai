@@ -1,8 +1,9 @@
 // I-UX-001:Trusted Action 语义目录 + 确定性选取(冻结 §2.13-§2.15)。
 //
 // - 语义身份(type)独立于展示 label;label 由站点下发(本地化展示词);
-// - 资格:仅站点下发的 verified/published 动作(服务端已过滤)∩ 页面上下文
-//   适用性(确定性谓词,零 LLM);
+// - 资格:仅站点下发的 published 动作(访客曝光闸,服务端已过滤;Role A
+//   修正 B:verified 停留 Admin 面,不进访客曝光)∩ 页面上下文适用性(确定性
+//   谓词,零 LLM)∩ 当前可绑定(占位符可完整解析);
 // - 数量上限(冻结):C 最多 2;空聊天窗最多 3;
 // - 查询绑定:动作 query 可含 {product}/{page_title} 占位符,点击时按当前
 //   参与上下文确定性替换;绑定缺失(如无产品上下文的 {product})→ 该动作
@@ -26,8 +27,11 @@ const APPLICABILITY: Record<string, (ctx: EngagementContext) => boolean> = {
 };
 
 /**
- * 从站点已发布动作中选取当前上下文适用的动作(保序;确定性)。
- * 谓词未定义的语义类型按「不适用」处理(fail-closed:未经核对的语义不主动)。
+ * 从站点已发布动作中选取当前上下文适用且**当前可绑定**的动作(保序;确定性)。
+ * 双重过滤:适用性谓词(未经核对的语义不主动)+ 绑定完备性(缺 {product}/
+ * {page_title} 上下文的动作不渲染 —— Role A 修正 A 的渲染阶段防线)。
+ * 点击执行路径另有最终 fail-closed 守卫(App.handleColdAction),防渲染后
+ * 上下文过期;两处共享同一 buildActionQuery 判定,无第二套绑定语义。
  */
 export function selectTrustedActions(
   actions: TrustedActionRef[] | undefined,
@@ -39,9 +43,16 @@ export function selectTrustedActions(
   for (const action of actions) {
     if (picked.length >= max) break;
     const predicate = APPLICABILITY[action.type];
-    if (predicate && predicate(ctx)) picked.push(action);
+    if (!predicate || !predicate(ctx)) continue;
+    if (!actionIsBindable(action, ctx)) continue;
+    picked.push(action);
   }
   return picked;
+}
+
+/** 绑定完备性:占位符在当前上下文下能否全部解析(不发送未绑定/空洞查询)。 */
+export function actionIsBindable(action: TrustedActionRef, ctx: EngagementContext): boolean {
+  return buildActionQuery(action, ctx) !== null;
 }
 
 /** 绑定动作查询:{product}/{page_title} 占位符按参与上下文确定性替换。 */

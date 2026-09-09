@@ -172,11 +172,16 @@ ACTION_STATES: tuple[str, ...] = (
     ACTION_STATE_VERIFIED,
     ACTION_STATE_PUBLISHED,
 )
-#: 允许主动曝光的状态(产品契约:仅 VERIFIED + PUBLISHED)
+#: 可进入 published 的来源状态(lifecycle 转移守卫用:仅 VERIFIED 可发布,
+#: published→published 幂等重设;Role A 修正后此元组不再用于访客曝光)
 PROACTIVE_ELIGIBLE_ACTION_STATES: tuple[str, ...] = (
     ACTION_STATE_VERIFIED,
     ACTION_STATE_PUBLISHED,
 )
+#: 访客曝光闸(Role A 修正 B;冻结生命周期语义:VERIFIED = 真实 ASK-AI 答案
+#: 已人工接受,Admin 可见、生命周期有效;PUBLISHED = 有资格进入访客主动曝光。
+#: 公开 site-config 只下发 published —— PUBLISHED 才是访客发布闸)
+VISITOR_ELIGIBLE_ACTION_STATES: tuple[str, ...] = (ACTION_STATE_PUBLISHED,)
 
 # 语义动作 → 默认查询模板(确定性;{product}/{page_title} 由 Widget 按当前
 # 页面上下文绑定,零 LLM;语义身份 = 目录 id,不依赖模板措辞)

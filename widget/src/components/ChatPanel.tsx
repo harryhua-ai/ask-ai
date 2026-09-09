@@ -23,8 +23,8 @@ interface Props {
   chatSize: "default" | "large";
   /** I-UX-001:冷启动态的 Trusted Actions(最多 3;会话开始后消失) */
   coldActions: TrustedActionRef[];
-  /** I-UX-001:动作点击 → 立即开始真实会话(C→聊天同交互契约) */
-  onColdAction: (query: string) => void;
+  /** I-UX-001:动作点击 → 立即开始真实会话(整只动作上交,由 App 唯一路径绑定;绝不直发 query) */
+  onColdAction: (action: TrustedActionRef) => void;
   onSend: (text: string, attachmentIds: string[]) => void;
   onClose: () => void;
   onFeedback: (msgId: string, feedback: "up" | "down") => void;
@@ -154,7 +154,7 @@ export function ChatPanel({
                 key={action.type + action.label}
                 type="button"
                 className="ask-ai-cold-action"
-                onClick={() => onColdAction(action.query)}
+                onClick={() => onColdAction(action)}
               >
                 {action.label}
               </button>

@@ -5,7 +5,8 @@
 - PUT 保存(合法值落库;未知枚举 422 显式拒绝;未知站点 404;viewer 403);
 - 迁移契约:既有站点 experience 列 NULL → site-config 返回 None(legacy 保持);
   seed_default_sites 新建行缺省 mini_entry(新站点 = C),既有行绝不覆写;
-- site-config 仅下发 verified/published 动作(draft 永不外泄);
+- site-config 仅下发 published 动作(Role A 修正 B:访客曝光闸 = PUBLISHED,
+  draft/verified 永不外泄,verified 保留 Admin 面与生命周期有效性);
 - Trusted Action 生命周期:新建默认 draft;Test(真实 ASK-AI 管道,stub 注入)
   落 last_test_result;Verify 需先 Test;Publish 需 verified;语义编辑
   (query/action_type)失效回落 draft;纯 label 编辑状态保持;删除;
@@ -266,8 +267,12 @@ async def test_action_semantic_edit_invalidates_label_edit_preserves(auth_header
         assert invalidated.json()["state"] == "draft"  # 语义编辑失效回落草稿
 
 
-async def test_site_config_exposes_only_verified_published_actions(experience_env):
-    """site-config 仅下发 verified/published 动作;draft 永不外泄。"""
+async def test_site_config_exposes_only_published_actions(experience_env):
+    """访客曝光闸(Role A 修正 B):site-config 只下发 published。
+
+    draft/verified 均 Admin 面、生命周期有效,但绝不进入访客 site-config
+    —— PUBLISHED 才是发布闸(verified 不可访客可见)。
+    """
     from httpx import ASGITransport, AsyncClient as _AC
 
     factory = experience_env
@@ -296,7 +301,8 @@ async def test_site_config_exposes_only_verified_published_actions(experience_en
     body = resp.json()
     assert body["entry_mode"] == "mini_entry"
     types = [a["label"] for a in body["trusted_actions"]]
-    assert "Published One" in types and "Verified One" in types
+    assert types == ["Published One"]  # 仅 published
+    assert "Verified One" not in types  # verified 不是访客发布闸
     assert "Draft One" not in types
 
 

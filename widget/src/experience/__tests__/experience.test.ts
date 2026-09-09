@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { resolveEntryMode, resolveProactiveTiming, proactiveCapable, proactiveDelayMs, isMobileViewport } from "../entry";
 import { resolveEngagement } from "../greeting";
-import { selectTrustedActions, buildActionQuery } from "../actions";
+import { selectTrustedActions, buildActionQuery, actionIsBindable } from "../actions";
 import {
   resolveChatThemeMode,
   resolveChatSize,
@@ -152,6 +152,31 @@ describe("trusted actions(冻结 §2.13-§2.15)", () => {
   it("空/缺失动作列表 → 空(服务端未发布 = 主动面无动作)", () => {
     expect(selectTrustedActions(undefined, productCtx, 2)).toEqual([]);
     expect(selectTrustedActions([], productCtx, 2)).toEqual([]);
+  });
+
+  it("Role A 修正 A:渲染阶段绑定过滤 —— 谓词适用但不可绑定 → 不选", () => {
+    // 产品页 URL(谓词适用)但无产品名:{product} 不可绑定 → 渲染层即排除
+    const productPageNoName = resolveEngagement({
+      site: null,
+      hostContext: null,
+      url: "https://x.test/products/mystery/",
+      title: "",
+      lang: "en",
+    });
+    expect(actionIsBindable(ACTIONS[0], productPageNoName)).toBe(false);
+    expect(selectTrustedActions([ACTIONS[0]], productPageNoName, 2)).toEqual([]);
+    // 同一动作,有产品名 → 可绑定、可渲染
+    expect(actionIsBindable(ACTIONS[0], productCtx)).toBe(true);
+    // {page_title} 缺可信标题 → 不可绑定(即使谓词经 documentation 适用)
+    const docNoTitle = resolveEngagement({
+      site: null,
+      hostContext: null,
+      url: "https://x.test/docs/a/",
+      title: "",
+      lang: "en",
+    });
+    expect(actionIsBindable(ACTIONS[2], docNoTitle)).toBe(false);
+    expect(selectTrustedActions([ACTIONS[2]], docNoTitle, 2)).toEqual([]);
   });
 });
 
