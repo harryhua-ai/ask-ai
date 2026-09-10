@@ -32,6 +32,17 @@
 #   3. 绝不允许:未部署先记录 / 本脚本失败仍记录 / 部署刚启动就记录成功 ——
 #      违反顺序写入的记录是伪证(守卫 production-closure 按 SHA 一致 +
 #      最新 status=success + Runtime Acceptance manifest 三重核验)。
+#
+# 两条等价部署路径(同一原语、同一证据模型,#10 生产部署编排):
+#   - 正常路径:GitHub Actions deploy-production.yml(workflow_dispatch,
+#     production Environment 审批)→ Guard → Deployment=in_progress →
+#     SSH + flock 调本脚本 → /health version+git_sha 双断言
+#     (scripts/verify_runtime_identity.py)→ Deployment=success;
+#   - break-glass 路径:手动 SSH 调本脚本 → 用同一验证器独立核验
+#     version+git_sha(发布 SHA 须来自仓库侧权威解析;主机 ~/ask-ai 目录
+#     不是 git 仓库,不得用主机侧 git 解析身份)→ 同一 recorder 记录
+#     (原子模式或 --phase success)。
+#   两路径写同一 GitHub Deployment 模型,守卫核验无差别;无第二部署真相。
 
 set -euo pipefail
 

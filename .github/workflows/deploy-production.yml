@@ -1,0 +1,246 @@
+# Production Deployment Orchestration(#10 · 生产部署编排)
+#
+# 唯一编排入口:workflow_dispatch → production Environment 审批 →
+# 冻结发布身份(tag→SHA)→ release-publish Guard → Deployment=in_progress →
+# GitHub 托管 runner SSH → 主机侧 flock → 既有 deploy/prod/update.sh <tag>
+# (唯一部署原语,本 workflow 不重实现任何 docker 逻辑)→ /health 运行时
+# 身份双断言(version + git_sha)→ Deployment=success。
+#
+# 触发设计:
+#   - 仅 workflow_dispatch(人工发起,production Environment 人工审批;
+#     ❌ 无 push/workflow_call 触发 —— 部署永不自动发生);
+#   - 输入仅接受仓库中存在的精确不可变 tag vX.Y.Z(拒 latest/分支/SHA);
+#   - main HEAD 与发布身份无关:身份只来自 tag 的 git 解析。
+#
+# 失败语义(fail-closed,与硬化守卫一致):
+#   - Guard 失败 → SSH 之前终止,无任何生产变更、无部署记录;
+#   - 记录建立后的任何失败(SSH/锁/update.sh/身份不匹配/证据收尾)→
+#     状态收尾为 failure,**绝不允许 success**;身份核验未通过前,
+#     成功状态不存在任何代码路径;
+#   - 生产可能已变更而证据收尾失败 → 打印 PRODUCTION STATE RECONCILIATION
+#     REQUIRED,等待操作员对账,绝不伪造重试成功;
+#   - 取消/传输不确定 = 状态非 success,production-closure 保持 fail-closed;
+#     回滚 = 用上一个不可变 tag 重新 dispatch 本 workflow(无自动回滚)。
+#
+# break-glass 等价路径:手动 SSH + update.sh <tag> + 独立核验
+# scripts/verify_runtime_identity.py → 同一 recorder(原子模式)→ 同一
+# GitHub Deployment 证据模型(见 deploy/prod/update.sh 头部运行簿)。
+#
+# 操作员前置(仓库设置,非本仓提交数据):
+#   - Environment `production`(建议 required reviewer 审批);
+#   - Environment secret PROD_DEPLOY_SSH_KEY(专用部署私钥);
+#   - Repository variables:PROD_SSH_HOST / PROD_SSH_USER /
+#     PROD_SSH_KNOWN_HOSTS_B64(known_hosts 行的 base64,含主机公钥钉扎)/
+#     可选 PROD_BACKEND_PORT(缺省 18000)。
+
+name: Production Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "不可变发布 tag(精确 vX.Y.Z;拒 latest/分支/SHA)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 需要全部 tag 才能 git 解析 tag→commit
+
+      # ---- 1. 校验并冻结发布身份(唯一身份源 = tag 的 git 解析) ----
+      - name: Resolve and freeze release identity
+        id: identity
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG="$INPUT_TAG"
+          if [ "$TAG" = "latest" ] || [ "$TAG" = "main" ]; then
+            echo "❌ 拒绝 '$TAG':只接受精确不可变 tag vX.Y.Z(latest/分支不是发布身份)" >&2
+            exit 2
+          fi
+          if ! [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "❌ 拒绝 '$TAG':tag 必须是精确 vX.Y.Z(拒 latest/分支/SHA/带前缀变体)" >&2
+            exit 2
+          fi
+          SHA="$(git rev-parse --verify --quiet "${TAG}^{commit}" || true)"
+          if [ -z "$SHA" ] || [ "${#SHA}" -ne 40 ]; then
+            echo "❌ tag $TAG 无法解析为 40 位 commit(仓库中不存在或非法)" >&2
+            exit 2
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG"   >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA"   >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "🔒 发布身份冻结: tag=$TAG version=$VERSION sha=$SHA(此后所有核验只对这一身份)"
+
+      # ---- 2. Pre-mutation Guard:通过之前绝不触碰生产 ----
+      - name: Release-publish guard (pre-mutation)
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GUARD_TAG: ${{ steps.identity.outputs.tag }}
+          GUARD_SHA: ${{ steps.identity.outputs.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_integrity_check.py \
+            --mode release-publish --tag "$GUARD_TAG" --expected-sha "$GUARD_SHA"
+
+      # ---- 3. 建立在途记录(in_progress;守卫侧 ≠ success) ----
+      - name: Create in_progress deployment record
+        id: record_create
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          REC_TAG: ${{ steps.identity.outputs.tag }}
+          REC_SHA: ${{ steps.identity.outputs.sha }}
+        run: |
+          set -euo pipefail
+          OUT="$(python3 scripts/record_production_deployment.py \
+            --tag "$REC_TAG" --sha "$REC_SHA" --phase create 2>&1)"
+          echo "$OUT"
+          DEPLOYMENT_ID="$(printf '%s\n' "$OUT" | sed -n 's/.*deployment id=\([0-9][0-9]*\).*/\1/p')"
+          if [ -z "$DEPLOYMENT_ID" ]; then
+            echo "❌ 在途记录已建但未取得 deployment id" >&2
+            exit 1
+          fi
+          echo "created=true"        >> "$GITHUB_OUTPUT"
+          echo "deployment_id=$DEPLOYMENT_ID" >> "$GITHUB_OUTPUT"
+
+      # ---- 4. 唯一部署原语:SSH → flock → update.sh(不重实现 docker 逻辑) ----
+      - name: Deploy via update.sh under host-side flock
+        id: deploy
+        env:
+          SSH_KEY: ${{ secrets.PROD_DEPLOY_SSH_KEY }}
+          SSH_HOST: ${{ vars.PROD_SSH_HOST }}
+          SSH_USER: ${{ vars.PROD_SSH_USER }}
+          SSH_KNOWN_HOSTS_B64: ${{ vars.PROD_SSH_KNOWN_HOSTS_B64 }}
+          DEPLOY_TAG: ${{ steps.identity.outputs.tag }}
+        run: |
+          set -euo pipefail
+          KEY_FILE="$RUNNER_TEMP/prod_deploy_key"
+          KH_FILE="$RUNNER_TEMP/prod_known_hosts"
+          cleanup() { rm -f "$KEY_FILE" "$KH_FILE"; }
+          trap cleanup EXIT
+          for v in SSH_KEY SSH_HOST SSH_USER SSH_KNOWN_HOSTS_B64; do
+            if [ -z "${!v}" ]; then
+              echo "❌ $v 未配置(production Environment secret / repository variables)" >&2
+              exit 2
+            fi
+          done
+          install -m 600 /dev/null "$KEY_FILE"
+          printf '%s\n' "$SSH_KEY" > "$KEY_FILE"
+          printf '%s' "$SSH_KNOWN_HOSTS_B64" | base64 -d > "$KH_FILE"
+          chmod 644 "$KH_FILE"
+          if [ ! -s "$KH_FILE" ] || ! grep -q "$SSH_HOST" "$KH_FILE"; then
+            echo "❌ known_hosts 钉扎缺失或与 PROD_SSH_HOST 不匹配(绝不关闭严格主机键校验)" >&2
+            exit 2
+          fi
+          # 远端命令:DEPLOY_TAG 已在身份步被 ^vX.Y.Z$ 校验(纯数据,单引号防远端展开);
+          # flock -w 0 = 非阻塞,已有部署在跑则立即失败,不排队不加塞。
+          ssh -i "$KEY_FILE" \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$KH_FILE" \
+              -o BatchMode=yes \
+              -o ConnectTimeout=15 \
+              -o ServerAliveInterval=30 \
+              "${SSH_USER}@${SSH_HOST}" \
+              "cd ~/ask-ai && flock -w 0 /tmp/askai-deploy.lock ./deploy/prod/update.sh '$DEPLOY_TAG'"
+
+      # ---- 5. 运行时身份双断言:version + git_sha(与 break-glass 共用同一验证器) ----
+      - name: Verify runtime identity (/health version + git_sha)
+        id: verify_identity
+        env:
+          SSH_KEY: ${{ secrets.PROD_DEPLOY_SSH_KEY }}
+          SSH_HOST: ${{ vars.PROD_SSH_HOST }}
+          SSH_USER: ${{ vars.PROD_SSH_USER }}
+          SSH_KNOWN_HOSTS_B64: ${{ vars.PROD_SSH_KNOWN_HOSTS_B64 }}
+          EXPECT_VERSION: ${{ steps.identity.outputs.version }}
+          EXPECT_SHA: ${{ steps.identity.outputs.sha }}
+        run: |
+          set -euo pipefail
+          KEY_FILE="$RUNNER_TEMP/prod_deploy_key"
+          KH_FILE="$RUNNER_TEMP/prod_known_hosts"
+          cleanup() { rm -f "$KEY_FILE" "$KH_FILE"; }
+          trap cleanup EXIT
+          install -m 600 /dev/null "$KEY_FILE"
+          printf '%s\n' "$SSH_KEY" > "$KEY_FILE"
+          printf '%s' "$SSH_KNOWN_HOSTS_B64" | base64 -d > "$KH_FILE"
+          chmod 644 "$KH_FILE"
+          HEALTH_FILE="$RUNNER_TEMP/prod_health.json"
+          # 远端只读 curl(读取主机 .env 的 BACKEND_PORT,缺省 18000);
+          # 远端命令单引号,${BACKEND_PORT:-18000} 由远端 shell 展开。
+          ssh -i "$KEY_FILE" \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$KH_FILE" \
+              -o BatchMode=yes \
+              -o ConnectTimeout=15 \
+              -o ServerAliveInterval=30 \
+              "${SSH_USER}@${SSH_HOST}" \
+              'set -a; . /home/ubuntu/ask-ai/.env 2>/dev/null || true; set +a; curl -sf "http://localhost:${BACKEND_PORT:-18000}/health"' \
+              > "$HEALTH_FILE"
+          python3 scripts/verify_runtime_identity.py \
+            --expect-version "$EXPECT_VERSION" --expect-sha "$EXPECT_SHA" \
+            --health-file "$HEALTH_FILE"
+
+      # ---- 6. 双断言通过后唯一允许的成功收尾 ----
+      - name: Record deployment success
+        id: record_success
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          REC_TAG: ${{ steps.identity.outputs.tag }}
+          REC_SHA: ${{ steps.identity.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if ! python3 scripts/record_production_deployment.py \
+              --tag "$REC_TAG" --sha "$REC_SHA" --phase success; then
+            echo "⚠️ PRODUCTION STATE RECONCILIATION REQUIRED:生产可能已运行新版本," \
+                 "但成功证据未落盘 —— 请用同一 recorder(原子模式或 --phase success)人工对账," \
+                 "不得伪造重试成功" >&2
+            exit 1
+          fi
+
+      # ---- 7. 失败收尾:任何失败路径都绝不留下 success ----
+      - name: Finalize failure (never success)
+        id: record_failure
+        if: >-
+          failure() &&
+          steps.record_create.outputs.created == 'true' &&
+          steps.record_success.outcome != 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          REC_TAG: ${{ steps.identity.outputs.tag }}
+          REC_SHA: ${{ steps.identity.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if ! python3 scripts/record_production_deployment.py \
+              --tag "$REC_TAG" --sha "$REC_SHA" --phase failure; then
+            echo "⚠️ PRODUCTION STATE RECONCILIATION REQUIRED:生产状态可能已变化" \
+                 "而失败证据未落盘,需操作员对账(production-closure 保持 fail-closed)" >&2
+            exit 1
+          fi
+          echo "已收尾为 failure:守卫侧非 success 一律 fail-closed,production-closure 不放行"
+
+      # ---- 8. 清理 SSH 材料(防御性;deploy/verify 步已有 trap) ----
+      - name: Cleanup
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/prod_deploy_key" "$RUNNER_TEMP/prod_known_hosts" "$RUNNER_TEMP/prod_health.json"
