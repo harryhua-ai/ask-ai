@@ -1,0 +1,10 @@
+{"status":"ok","version":"1.3.0","git_sha":"8bec1c0251d25630b5e2d461a9a5671cb2841b34","app_mode":"production"}
+restarts=0 status=running
+err-lines: 0
+--- window checkpoint 1 done
+{"status":"ok","version":"1.3.0","git_sha":"8bec1c0251d25630b5e2d461a9a5671cb2841b34","app_mode":"production"}
+restarts=0 status=running
+err-lines: 0
+--- window checkpoint 2 done
+ssh: connect to host 43.132.189.162 port 22: Network is unreachable
+--- window checkpoint 3 done
