@@ -31,7 +31,8 @@ const health = (overrides: Partial<SyncHealthItem> = {}): SyncHealthItem => ({
 describe("SourceHealthPanel(#11 Health Authority:W2 /sync-health 直呈)", () => {
   it("renders the five dimensions and overall exactly as the backend states them", () => {
     render(<SourceHealthPanel health={health()} />);
-    for (const label of ["连接", "同步", "覆盖", "新鲜度", "一致性"]) {
+    // #21:30 天同步维显式标注历史,其余四维标签不变
+    for (const label of ["连接", "同步(历史30天)", "覆盖", "新鲜度", "一致性"]) {
       expect(screen.getByRole("heading", { name: label })).toBeInTheDocument();
     }
     // 后端状态词表 → 本地化徽章(不得改判)

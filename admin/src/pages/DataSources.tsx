@@ -221,14 +221,20 @@ const LATEST_STATUS_META: Record<string, { label: string; variant: "success" | "
   partial: { label: "补齐", variant: "warning" },
 };
 
-/** 历史可靠性(health)结论的展示元数据,阈值语义由后端判定。 */
+/**
+ * 历史可靠性(health)结论的展示元数据,阈值语义由后端判定(#21)。
+ * 本列是 /analytics/source-health 的**历史窗口**参考信号(signal=
+ * historical_reliability),不是当前知识健康 —— 因此历史低成功率
+ * 「不得」使用当前 Severe/需处理同款 destructive 视觉;红牌保留给
+ * 当前态(最新同步失败、W2 ACTION_REQUIRED)。
+ */
 const HEALTH_META: Record<
   string,
   { label: string; variant: "success" | "destructive" | "warning" | "secondary" | "outline" } | undefined
 > = {
   healthy: { label: "正常", variant: "success" },
   degraded: { label: "不稳定", variant: "warning" },
-  critical: { label: "严重", variant: "destructive" },
+  critical: { label: "低成功率", variant: "outline" },
   insufficient_data: { label: "样本不足", variant: "secondary" },
   disabled: { label: "已禁用", variant: "outline" },
 };
@@ -1488,7 +1494,7 @@ export default function DataSources() {
             <TableHead>产品线</TableHead>
             <TableHead>类型</TableHead>
             <TableHead>状态</TableHead>
-            <TableHead>同步健康 (近30天)</TableHead>
+            <TableHead>历史可靠性 (近30天)</TableHead>
             <TableHead>最新同步</TableHead>
             <TableHead>内容</TableHead>
             <TableHead>同步间隔</TableHead>

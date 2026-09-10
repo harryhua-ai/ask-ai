@@ -376,16 +376,19 @@ async def source_health(
 ) -> dict[str, Any]:
     """数据源健康度:当前态(最近一次同步)+ 历史可靠性(窗口内成功率)。
 
-    语义(DSH-01,产品契约"当前 vs 历史"显式化):
+    语义(DSH-01,产品契约"当前 vs 历史"显式化;#21 矫正补充):
     - 历史可靠性 = 窗口 ``days``(默认 30 天)内 ``sync_log`` 中
       ``status=success`` 的占比。``partial``(一致性校验自愈)计入分母、
       不计入成功数——与 T28 数学口径一致,但分子/分母/窗口全部显式返回
       (window_days / success_syncs / partial_syncs / failed_syncs),
       不再出现无法解释的裸百分比。
-    - ``health`` 是管理员可操作的结论:
+    - ``health`` 是**历史窗口可靠性**结论,不是当前知识健康判定:
         disabled          数据源已禁用(禁用 ≠ 不健康,不作可靠性评价);
         insufficient_data 启用但窗口内同步次数 < MIN_SYNC_RUNS,样本不足;
         healthy / degraded / critical  既有阈值不变(≥0.9 / ≥0.5 / <0.5)。
+      每条 item 附 ``signal: "historical_reliability"`` 显式标注该语义类,
+      消费方(Admin)必须以历史可靠性呈现,不得当作当前 Severe/需处理。
+      当前知识健康唯一权威 = ``GET /sync-health``(W2 五维,读时派生)。
     - 当前态单独透出:last_sync / last_sync_status / last_sync_error
       (全部时间范围内最近一次尝试,与 /data-sources 列表同口径),
       供 UI 并排展示"现在有没有问题" vs "过去稳不稳定"。
@@ -505,6 +508,9 @@ async def source_health(
                 "partial_syncs": partial,
                 "failed_syncs": failed,
                 "sync_success_rate": success_rate,
+                # #21:显式语义类标注 —— 本条是历史窗口可靠性参考信号,
+                # 不是当前知识健康(当前权威 = W2 /sync-health)。
+                "signal": "historical_reliability",
                 "health": _health(total, success_rate, enabled),
                 "last_sync": latest["started_at"].isoformat() if latest else None,
                 "last_sync_status": latest["status"] if latest else None,

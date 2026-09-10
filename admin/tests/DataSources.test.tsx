@@ -1014,7 +1014,8 @@ describe("DSH 数据源健康语义", () => {
     expect(screen.getByText("CPU")).toBeInTheDocument();
     expect(screen.getByText("降级原因：CUDA unavailable")).toBeInTheDocument();
     expect(screen.getByText("数据源健康")).toBeInTheDocument();
-    for (const label of ["连接", "同步", "覆盖", "新鲜度", "一致性"]) {
+    // #21:30 天同步维显式标注历史
+    for (const label of ["连接", "同步(历史30天)", "覆盖", "新鲜度", "一致性"]) {
       expect(screen.getByRole("heading", { name: label })).toBeInTheDocument();
     }
     expect(screen.getAllByText("缺失 2").length).toBeGreaterThan(0);
@@ -1153,10 +1154,57 @@ describe("DSH 数据源健康语义", () => {
         }),
       ],
     );
-    const badge = screen.getByText("严重");
+    // #21:历史低成功率是中性参考信号,不再用「严重」当前严重度措辞
+    const badge = screen.getByText("低成功率");
     expect(badge).toBeInTheDocument();
     expect(badge.getAttribute("title")).toContain("12 次成功");
     expect(badge.getAttribute("title")).toContain("3 次补齐");
     expect(badge.getAttribute("title")).toContain("10 次失败");
+  });
+});
+
+describe("#21 历史可靠性列(current vs historical 语义)", () => {
+  it("列头为「历史可靠性 (近30天)」,历史低成功率不用当前严重红牌", () => {
+    (useSourceHealth as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        items: [
+          {
+            source_id: "neomind-docs",
+            health: "critical",
+            sync_success_rate: 0.025,
+            window_days: 30,
+            total_syncs: 40,
+            success_syncs: 1,
+            partial_syncs: 2,
+            failed_syncs: 37,
+            doc_count: 5,
+            chunk_count: 9,
+          },
+        ],
+      },
+      isLoading: false,
+    });
+    renderWithSources([
+      {
+        id: "neomind-docs",
+        type: "github",
+        product: "neomind",
+        enabled: true,
+        config: {},
+        sync_interval: "24h",
+        created_at: "2026-07-01T00:00:00Z",
+        updated_at: "2026-07-01T00:00:00Z",
+        last_sync: "2026-08-01T10:30:00Z",
+        last_sync_status: "success",
+      },
+    ]);
+    // 列头显式历史语义,旧「同步健康」措辞移除
+    expect(screen.getByText("历史可靠性 (近30天)")).toBeInTheDocument();
+    expect(screen.queryByText("同步健康 (近30天)")).not.toBeInTheDocument();
+    // 历史低成功率 = 中性徽章,不出现当前严重度红牌
+    expect(screen.getByText("低成功率")).toBeInTheDocument();
+    expect(screen.queryByText("严重")).not.toBeInTheDocument();
+    // 悬停明细仍保留窗口分子/分母(徽标与比率行共用同一 title)
+    expect(screen.getAllByTitle(/近 30 天 40 次同步/).length).toBeGreaterThan(0);
   });
 });

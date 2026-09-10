@@ -555,6 +555,8 @@ class TestSourceHealth:
                 "partial_syncs",
                 "last_sync_status",
                 "last_sync_error",
+                # #21 新增语义类标注(增量兼容):historical_reliability
+                "signal",
             }
             assert set(items[prefix].keys()) == expected
         finally:
@@ -786,3 +788,65 @@ class TestSourceHealthSemantics:
             assert expected.issubset(set(item.keys()))
         finally:
             await self._cleanup(prefix)
+
+
+@pytest.mark.integration
+class TestSourceHealthHistoricalSignal:
+    """#21:/source-health 的 health 字段必须显式标注为历史窗口可靠性。
+
+    - 每条 item 携带 signal="historical_reliability"(消费方据此以历史
+      参考呈现,不得当作当前知识健康 Severe/需处理);
+    - 当前知识健康权威仍是 /sync-health(W2),本端点语义/数学不变。
+    """
+
+    async def _seed_and_get(self, auth_headers, statuses: list[str]) -> dict:
+        prefix = f"t21-src-{uuid.uuid4().hex[:8]}"
+        factory = app.state.session_factory
+        async with factory() as session:
+            session.add(
+                DataSource(
+                    id=prefix,
+                    type="web_crawl",
+                    product="t21-product",
+                    enabled=True,
+                    config={"base_url": f"https://{prefix}.example.com"},
+                )
+            )
+            for status in statuses:
+                session.add(SyncLog(source_id=prefix, source_type="web_crawl", status=status))
+            await session.commit()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/admin/analytics/source-health", headers=auth_headers)
+        assert resp.status_code == 200
+        body = resp.json()
+        item = next(i for i in body["items"] if i["source_id"] == prefix)
+        # 清理
+        async with factory() as session:
+            await session.execute(
+                SyncLog.__table__.delete().where(SyncLog.source_id == prefix)
+            )
+            await session.execute(
+                DataSource.__table__.delete().where(DataSource.id == prefix)
+            )
+            await session.commit()
+        return item
+
+    async def test_items_carry_historical_reliability_signal(self, auth_headers):
+        """低成功率(critical 档)item 也必须显式标注历史可靠性信号。"""
+        item = await self._seed_and_get(auth_headers, ["failed", "failed", "failed", "success"])
+        assert item["signal"] == "historical_reliability"
+        # 30 天窗口数学不变:partial 缺席,success 1/4 < 0.5 → critical 档
+        assert item["total_syncs"] == 4
+        assert item["success_syncs"] == 1
+        assert item["health"] == "critical"
+
+    async def test_signal_present_on_all_items(self, auth_headers):
+        """全部返回条目统一携带历史可靠性信号(含零历史与禁用源)。"""
+        await self._seed_and_get(auth_headers, ["success"])
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/admin/analytics/source-health", headers=auth_headers)
+        items = resp.json()["items"]
+        assert items, "至少应有种子源"
+        assert all(i.get("signal") == "historical_reliability" for i in items)

@@ -428,10 +428,12 @@ describe("TechInsight 知识缺口 tab", () => {
 describe("DSH 技术洞察的数据源健康摘要(OBS-G008 边界)", () => {
   it("呈现一行健康摘要(按 health 计数)+ 跳转数据源管理", async () => {
     renderWithProviders(<Analytics />);
-    const summary = await screen.findByText("数据源健康(近 30 天)");
+    // #21:摘要标题与 critical 计数显式历史措辞
+    const summary = await screen.findByText("数据源历史可靠性(近 30 天)");
     expect(summary).toBeInTheDocument();
     expect(screen.getByText(/正常 1/)).toBeInTheDocument();
-    expect(screen.getByText(/严重 1/)).toBeInTheDocument();
+    expect(screen.getByText(/历史低成功率 1/)).toBeInTheDocument();
+    expect(screen.queryByText(/^严重/)).not.toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /明细与操作 → 数据源管理/ }),
     ).toHaveAttribute("href", "/data-sources");
@@ -439,7 +441,7 @@ describe("DSH 技术洞察的数据源健康摘要(OBS-G008 边界)", () => {
 
   it("不再呈现与数据源页竞争的完整健康表格(无成功率列/逐源行)", async () => {
     renderWithProviders(<Analytics />);
-    await screen.findByText("数据源健康(近 30 天)");
+    await screen.findByText("数据源历史可靠性(近 30 天)");
     expect(screen.queryByText("website-camthink")).not.toBeInTheDocument();
     expect(screen.queryByText("同步成功率")).not.toBeInTheDocument();
     expect(screen.queryByText("文档数")).not.toBeInTheDocument();

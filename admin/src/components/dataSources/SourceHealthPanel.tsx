@@ -63,7 +63,9 @@ export function SourceHealthPanel({ health }: SourceHealthPanelProps) {
         {health ? (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <DimensionCard label="连接" dimension={health.connectivity} />
-            <DimensionCard label="同步" dimension={health.sync} />
+            {/* #21:sync 维是 30 天历史窗口成功率(参考信号),显式标注历史,
+                避免其 critical 态被读成当前严重度;当前态维保持主位不动。 */}
+            <DimensionCard label="同步(历史30天)" dimension={health.sync} />
             <DimensionCard label="覆盖" dimension={health.coverage} />
             <DimensionCard label="新鲜度" dimension={health.freshness} />
             <DimensionCard label="一致性" dimension={health.consistency} />
