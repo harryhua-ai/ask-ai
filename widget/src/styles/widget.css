@@ -601,6 +601,10 @@
   border-radius: 10px;
   padding: 8px 12px;
   margin: 12px 0 4px auto;
+  /* #47:块盒默认撑满可用宽度,max-width 成了实际宽度 —— 短问题的文字贴在
+     宽气泡左缘,视觉上漂在会话区中部。shrink-to-fit 让气泡收缩到内容宽,
+     margin-left:auto 才真正把问题锚到右缘;max-width 仍约束长问题换行。 */
+  width: fit-content;
   max-width: 85%;
   font-weight: 600;
   word-break: break-word;
