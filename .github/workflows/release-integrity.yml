@@ -1,0 +1,90 @@
+# Release Integrity Guard(#10 版本与发布治理 · 生命周期一致性守卫)
+#
+# 只读核验一个 release 身份的完整性:tag ↔ 冻结 SHA ↔ GitHub Release ↔
+# 生产部署记录 ↔ 验收 manifest。逐项 EXPECTED/OBSERVED 诊断,任何矛盾
+# fail-closed(绝不降级为 warning)。核验逻辑见 scripts/release_integrity_check.py。
+#
+# 触发设计(重要):
+#   - workflow_call:供发版/部署/闭环 workflow 显式调用(推荐接入点,见
+#     docs/engineering/tasks/RELEASE-CI-INTEGRITY-GUARD-execution.md);
+#   - workflow_dispatch:人工审计任意(或最新)tag;
+#   - ❌ 不挂 push 触发 —— main 上存在"已接受未发版"代码是合法状态,
+#     守卫不得把 MAIN UPDATED 误判为 FORMAL RELEASE 未完成。
+#
+# 用法(workflow_call):
+#   jobs:
+#     release-integrity:
+#       uses: ./.github/workflows/release-integrity.yml
+#       with:
+#         tag: v1.3.0
+#         expected_sha: ${{ vars/frozen sha }}
+#         mode: production-closure   # 或 release-publish
+
+name: Release Integrity Guard
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "要核验的 release tag(空 = 最新 vX.Y.Z)"
+        required: false
+        type: string
+      expected_sha:
+        description: "冻结的接受 release SHA(release-publish 模式必填)"
+        required: false
+        type: string
+      mode:
+        description: "核验模式"
+        required: false
+        type: string
+        default: release-publish
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要核验的 release tag(空 = 最新 vX.Y.Z)"
+        required: false
+        type: string
+      expected_sha:
+        description: "冻结的接受 release SHA(release-publish 模式必填)"
+        required: false
+        type: string
+      mode:
+        description: "核验模式"
+        required: false
+        type: string
+        default: audit
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 需要全部 tag 才能解析 tag SHA / 审计最新 tag
+
+      - name: Run release integrity guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          ARGS=(--mode "${{ inputs.mode }}" --output-json release-integrity-results.json)
+          if [[ -n "${{ inputs.tag }}" ]]; then
+            ARGS+=(--tag "${{ inputs.tag }}")
+          fi
+          if [[ -n "${{ inputs.expected_sha }}" ]]; then
+            ARGS+=(--expected-sha "${{ inputs.expected_sha }}")
+          fi
+          python3 scripts/release_integrity_check.py "${ARGS[@]}"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Release Integrity Guard"
+            echo '```'
+            cat release-integrity-results.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
