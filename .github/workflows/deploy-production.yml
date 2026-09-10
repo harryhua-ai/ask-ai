@@ -1,10 +1,23 @@
-# Production Deployment Orchestration(#10 · 生产部署编排)
+# Production Deployment Orchestration(#10 · 生产部署编排 + v1.4.0 存量库迁移矫正)
 #
 # 唯一编排入口:workflow_dispatch → production Environment 审批 →
 # 冻结发布身份(tag→SHA)→ release-publish Guard → Deployment=in_progress →
-# GitHub 托管 runner SSH → 主机侧 flock → 既有 deploy/prod/update.sh <tag>
-# (唯一部署原语,本 workflow 不重实现任何 docker 逻辑)→ /health 运行时
+# 数据库迁移(发布绑定:只执行【冻结发布树】迁移清单 deploy/prod/migrations.json
+# 或窄历史桥条目,在冻结发布镜像内、任何镜像代码执行前先断言镜像 RELEASE.json
+# == 冻结身份;迁移失败 → 绝不 rollout)→ GitHub 托管 runner SSH → 主机侧
+# flock → 既有 deploy/prod/update.sh <tag>(唯一部署原语)→ /health 运行时
 # 身份双断言(version + git_sha)→ Deployment=success。
+#
+# 迁移所有权模型(scripts/release_migration_plan.py,杜绝按版本永久硬编码):
+#   - 权威 = 冻结发布树内的迁移清单(与代码同树同 tag;清单机制存在后的每个
+#     发布树必须携带,无迁移也要空列表);
+#   - 历史桥 = 封闭集合,仅覆盖清单机制诞生前已冻结的发布(现仅 v1.4.0);
+#     桥引用的脚本必须存在于该冻结镜像内(执行前镜像身份断言保证迁移代码
+#     来源 = 冻结工件,而非 mutable main);
+#   - 两者都不命中 → MIGRATION NOT REQUIRED(日志显式可辨);
+#   - 迁移执行载体 = 既有 compose 一次性服务 sync(restart:no/healthcheck
+#     disabled,README 同款 `run --rm sync python scripts/…`);不加服务、
+#     不改 update.sh、不在主机新增任何文件。
 #
 # 触发设计:
 #   - 仅 workflow_dispatch(人工发起,production Environment 人工审批;
@@ -14,7 +27,9 @@
 #
 # 失败语义(fail-closed,与硬化守卫一致):
 #   - Guard 失败 → SSH 之前终止,无任何生产变更、无部署记录;
-#   - 记录建立后的任何失败(SSH/锁/update.sh/身份不匹配/证据收尾)→
+#   - 迁移失败(计划非法/镜像身份不符/迁移脚本非零退出)→ rollout 之前终止,
+#     绝不更新 backend;记录收尾为 failure,绝无 success;
+#   - 记录建立后的任何失败(SSH/锁/迁移/update.sh/身份不匹配/证据收尾)→
 #     状态收尾为 failure,**绝不允许 success**;身份核验未通过前,
 #     成功状态不存在任何代码路径;
 #   - 生产可能已变更而证据收尾失败 → 打印 PRODUCTION STATE RECONCILIATION
@@ -121,7 +136,91 @@ jobs:
           echo "created=true"        >> "$GITHUB_OUTPUT"
           echo "deployment_id=$DEPLOYMENT_ID" >> "$GITHUB_OUTPUT"
 
-      # ---- 4. 唯一部署原语:SSH → flock → update.sh(不重实现 docker 逻辑) ----
+      # ---- 4. 数据库迁移(发布绑定;先于依赖新 schema 的应用 rollout;失败绝不 rollout) ----
+      - name: Migrate database (release-bound; before dependent app rollout)
+        id: migrate
+        env:
+          SSH_KEY: ${{ secrets.PROD_DEPLOY_SSH_KEY }}
+          SSH_HOST: ${{ vars.PROD_SSH_HOST }}
+          SSH_USER: ${{ vars.PROD_SSH_USER }}
+          SSH_KNOWN_HOSTS_B64: ${{ vars.PROD_SSH_KNOWN_HOSTS_B64 }}
+          DEPLOY_TAG: ${{ steps.identity.outputs.tag }}
+          RELEASE_SHA: ${{ steps.identity.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # 迁移计划只来自【冻结发布树】清单或窄历史桥(解析器 fail-closed:
+          # 清单非法/条目越界/树内不存在 → 中止,绝不带病 rollout)。
+          PLAN="$(python3 scripts/release_migration_plan.py \
+            --tag "$DEPLOY_TAG" --sha "$RELEASE_SHA" --repo-root .)"
+          if [ "$PLAN" = "NONE" ]; then
+            echo "MIGRATION NOT REQUIRED:$DEPLOY_TAG 无迁移(冻结树清单为空或无历史桥条目)"
+            exit 0
+          fi
+          KEY_FILE="$RUNNER_TEMP/prod_deploy_key"
+          KH_FILE="$RUNNER_TEMP/prod_known_hosts"
+          cleanup() { rm -f "$KEY_FILE" "$KH_FILE"; }
+          trap cleanup EXIT
+          for v in SSH_KEY SSH_HOST SSH_USER SSH_KNOWN_HOSTS_B64; do
+            if [ -z "${!v}" ]; then
+              echo "❌ $v 未配置(production Environment secret / repository variables)" >&2
+              exit 2
+            fi
+          done
+          install -m 600 /dev/null "$KEY_FILE"
+          printf '%s\n' "$SSH_KEY" > "$KEY_FILE"
+          printf '%s' "$SSH_KNOWN_HOSTS_B64" | base64 -d > "$KH_FILE"
+          chmod 644 "$KH_FILE"
+          if [ ! -s "$KH_FILE" ] || ! grep -q "$SSH_HOST" "$KH_FILE"; then
+            echo "❌ known_hosts 钉扎缺失或与 PROD_SSH_HOST 不匹配(绝不关闭严格主机键校验)" >&2
+            exit 2
+          fi
+          while IFS= read -r MIG; do
+            [ -z "$MIG" ] && continue
+            echo "MIGRATION BEGIN:$MIG(执行环境 = 冻结镜像 $DEPLOY_TAG;任何镜像代码执行前先断言镜像身份)"
+            # 数据经远端 env 前缀注入(DEPLOY_TAG 已 ^vX.Y.Z$ 校验 / RELEASE_SHA
+            # 40 位 hex / MIG 经解析器白名单),脚本本体经 stdin 原样传递 ——
+            # 不拼进远端命令字符串,无注入面。
+            ssh -i "$KEY_FILE" \
+                -o StrictHostKeyChecking=yes \
+                -o UserKnownHostsFile="$KH_FILE" \
+                -o BatchMode=yes \
+                -o ConnectTimeout=15 \
+                -o ServerAliveInterval=30 \
+                "${SSH_USER}@${SSH_HOST}" \
+                "DEPLOY_TAG='$DEPLOY_TAG' RELEASE_SHA='$RELEASE_SHA' MIG='$MIG' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd ~/ask-ai
+          exec 9>/tmp/askai-deploy.lock
+          flock -w 0 9 || { echo "❌ 部署锁被占用(另一生产变更在执行),拒绝迁移" >&2; exit 1; }
+          IMAGE="ghcr.io/harryhua-ai/ask-ai:$DEPLOY_TAG"
+          EXPECTED_VERSION="${DEPLOY_TAG#v}"
+          echo "[migrate 1/3] 拉取镜像 $IMAGE ..."
+          docker compose -f deploy/prod/docker-compose.yml pull sync >/dev/null
+          echo "[migrate 2/3] 镜像内 RELEASE.json 身份断言(fail-closed;先于任何镜像代码执行)"
+          CID=$(docker create "$IMAGE")
+          RELEASE_TMP="$(mktemp /tmp/askai-migrate-release.XXXXXX.json)"
+          docker cp "$CID:/app/RELEASE.json" "$RELEASE_TMP" || {
+              docker rm "$CID" >/dev/null 2>&1 || true
+              echo "❌ 镜像内无 RELEASE.json:$DEPLOY_TAG 不是版本化镜像,拒绝执行迁移"
+              exit 1
+          }
+          docker rm "$CID" >/dev/null
+          ACTUAL_VERSION=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['version'])" "$RELEASE_TMP")
+          ACTUAL_SHA=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['git_sha'])" "$RELEASE_TMP")
+          rm -f "$RELEASE_TMP"
+          if [ "$ACTUAL_VERSION" != "$EXPECTED_VERSION" ] || [ "$ACTUAL_SHA" != "$RELEASE_SHA" ]; then
+              echo "❌ 镜像身份 version=$ACTUAL_VERSION git_sha=$ACTUAL_SHA ≠ 冻结身份 $EXPECTED_VERSION/$RELEASE_SHA,拒绝迁移"
+              exit 1
+          fi
+          echo "  ✅ 镜像身份一致: version=$ACTUAL_VERSION git_sha=$ACTUAL_SHA"
+          echo "[migrate 3/3] 在冻结镜像内执行迁移: python $MIG"
+          docker compose -f deploy/prod/docker-compose.yml run --rm sync python "$MIG"
+          echo "MIGRATION SUCCESS:$MIG"
+          REMOTE
+            echo "MIGRATION DONE:$MIG"
+          done <<< "$PLAN"
+
+      # ---- 5. 唯一部署原语:SSH → flock → update.sh(不重实现 docker 逻辑) ----
       - name: Deploy via update.sh under host-side flock
         id: deploy
         env:
@@ -161,7 +260,7 @@ jobs:
               "${SSH_USER}@${SSH_HOST}" \
               "cd ~/ask-ai && flock -w 0 /tmp/askai-deploy.lock ./deploy/prod/update.sh '$DEPLOY_TAG'"
 
-      # ---- 5. 运行时身份双断言:version + git_sha(与 break-glass 共用同一验证器) ----
+      # ---- 6. 运行时身份双断言:version + git_sha(与 break-glass 共用同一验证器) ----
       - name: Verify runtime identity (/health version + git_sha)
         id: verify_identity
         env:
@@ -197,7 +296,7 @@ jobs:
             --expect-version "$EXPECT_VERSION" --expect-sha "$EXPECT_SHA" \
             --health-file "$HEALTH_FILE"
 
-      # ---- 6. 双断言通过后唯一允许的成功收尾 ----
+      # ---- 7. 双断言通过后唯一允许的成功收尾 ----
       - name: Record deployment success
         id: record_success
         if: success()
@@ -216,7 +315,7 @@ jobs:
             exit 1
           fi
 
-      # ---- 7. 失败收尾:任何失败路径都绝不留下 success ----
+      # ---- 8. 失败收尾:任何失败路径都绝不留下 success ----
       - name: Finalize failure (never success)
         id: record_failure
         if: >-
@@ -238,7 +337,7 @@ jobs:
           fi
           echo "已收尾为 failure:守卫侧非 success 一律 fail-closed,production-closure 不放行"
 
-      # ---- 8. 清理 SSH 材料(防御性;deploy/verify 步已有 trap) ----
+      # ---- 9. 清理 SSH 材料(防御性;deploy/verify 步已有 trap) ----
       - name: Cleanup
         if: always()
         run: |

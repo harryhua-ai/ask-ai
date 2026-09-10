@@ -13,7 +13,14 @@
   到既有记录(按 sha 解析最新);无记录可追加 → 拒绝;历史原子模式
   (break-glass)载荷与 create 阶段同一证据模型;
 - verify_runtime_identity:version/git_sha 双断言(任一不匹配 → 拒绝,
-  success 无代码路径)。
+  success 无代码路径);
+- 数据库迁移阶段(v1.4.0 存量库事件矫正):migrate 步位于在途记录之后、
+  rollout 之前且默认仅在前序成功后执行;迁移计划只来自冻结发布树
+  (release_migration_plan.py,--sha 冻结身份);workflow 内零版本/脚本硬编码;
+  执行载体 = 既有 compose 一次性服务 sync(不重实现部署 docker 逻辑);
+  任何镜像代码执行前先做镜像内 RELEASE.json 身份断言(且 git_sha 精确 ==
+  冻结 SHA,严于 update.sh [3/6] 的非空校验);MIGRATION NOT REQUIRED /
+  BEGIN / SUCCESS 证据行可辨;迁移步不打印凭据;deploy 步仍只调 update.sh。
 
 全部离线确定性;GitHub 交互经 monkeypatch;身份冻结步用真实临时 git 仓库。
 """
@@ -110,11 +117,23 @@ class TestWorkflowContract:
         assert 'grep -q "$SSH_HOST" "$KH_FILE"' in text
 
     def test_only_existing_primitive_no_docker_reimplementation(self, workflow):
+        """部署职责唯一原语约束(migrate 步引入后按步作用域化):
+        deploy 步仍只调既有 update.sh,绝不重实现 docker 部署逻辑;migrate 步
+        仅允许以既有 compose 一次性服务 sync 作为镜像内迁移执行载体
+        (README 同款 `run --rm sync python scripts/…`),无 build、无 up。"""
         text = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
-        assert "deploy/prod/update.sh" in text
+        deploy = [s for s in workflow["jobs"]["deploy"]["steps"] if s.get("id") == "deploy"][0]
+        assert "deploy/prod/update.sh" in deploy["run"]
         for forbidden in ("docker compose", "docker pull", "docker build", "ghcr.io/harryhua-ai/ask-ai:"):
-            assert forbidden not in text, forbidden
-        assert "flock -w 0 /tmp/askai-deploy.lock" in text
+            assert forbidden not in deploy["run"], forbidden
+        assert "flock -w 0 /tmp/askai-deploy.lock" in deploy["run"]
+        assert "docker build" not in text  # 全 workflow 禁止构建
+        migrate = [s for s in workflow["jobs"]["deploy"]["steps"] if s.get("id") == "migrate"][0]
+        assert "docker compose" in migrate["run"]  # 迁移执行载体(唯一例外,见上)
+        assert "run --rm sync python" in migrate["run"]
+        for other in workflow["jobs"]["deploy"]["steps"]:
+            if other.get("id") != "migrate" and "run" in other:
+                assert "docker compose" not in other["run"], other.get("id")
 
     def test_tag_validation_before_ssh(self, workflow):
         identity = [s for s in workflow["jobs"]["deploy"]["steps"] if s.get("id") == "identity"][0]
@@ -126,9 +145,12 @@ class TestWorkflowContract:
         assert deploy["env"]["DEPLOY_TAG"] == "${{ steps.identity.outputs.tag }}"
 
     def test_guard_before_any_mutation(self, workflow):
+        """Guard 在任何生产变更(含数据库迁移)之前;迁移在 rollout 之前。"""
         ids = [s.get("id") for s in workflow["jobs"]["deploy"]["steps"]]
-        guard, record_create, deploy = ids.index("guard"), ids.index("record_create"), ids.index("deploy")
-        assert guard < record_create < deploy
+        guard, record_create, migrate, deploy = (
+            ids.index("guard"), ids.index("record_create"), ids.index("migrate"), ids.index("deploy"),
+        )
+        assert guard < record_create < migrate < deploy
         guard_step = [s for s in workflow["jobs"]["deploy"]["steps"] if s.get("id") == "guard"][0]
         assert "--mode release-publish" in guard_step["run"]
         assert "--expected-sha" in guard_step["run"]
@@ -163,6 +185,105 @@ class TestWorkflowContract:
         text = GUARD_WORKFLOW.read_text(encoding="utf-8")
         assert "deploy-production" not in text
         assert "PROD_DEPLOY" not in text
+
+
+# ---------------------------------------------------------------- 数据库迁移阶段(v1.4.0 存量库事件矫正)
+
+
+class TestMigrationPhase:
+    def _migrate(self, workflow):
+        return [s for s in workflow["jobs"]["deploy"]["steps"] if s.get("id") == "migrate"][0]
+
+    def test_migrate_only_runs_after_prior_steps_succeed(self, workflow):
+        """迁移步无 bypass 条件:默认语义 = 仅前序(identity/guard/record_create)全成功才执行;
+        失败/取消时迁移与后续 rollout 均不发生。"""
+        migrate = self._migrate(workflow)
+        assert "if" not in migrate  # 无 if:always()/无条件执行
+
+    def test_deploy_skipped_when_migration_fails(self, workflow):
+        """迁移失败 → rollout 不发生:deploy 位于 migrate 之后且无 bypass 条件。"""
+        ids = [s.get("id") for s in workflow["jobs"]["deploy"]["steps"]]
+        assert ids.index("migrate") < ids.index("deploy")
+        deploy = [s for s in workflow["jobs"]["deploy"]["steps"] if s.get("id") == "deploy"][0]
+        assert deploy.get("if") is None  # 默认 success 语义
+        assert "--phase failure" in [
+            s for s in workflow["jobs"]["deploy"]["steps"] if s.get("id") == "record_failure"
+        ][0]["run"]  # 失败收尾在,绝不留 success
+
+    def test_plan_resolved_from_frozen_release_tree(self, workflow):
+        """迁移计划只来自冻结发布身份(--sha = identity 冻结 SHA + --repo-root),
+        绝不从可变工作区/HEAD 推断迁移需求。"""
+        run = self._migrate(workflow)["run"]
+        assert "release_migration_plan.py" in run
+        assert '--sha "$RELEASE_SHA"' in run
+        assert '--tag "$DEPLOY_TAG"' in run
+        assert "--repo-root ." in run
+        env = self._migrate(workflow)["env"]
+        assert env["RELEASE_SHA"] == "${{ steps.identity.outputs.sha }}"
+        assert env["DEPLOY_TAG"] == "${{ steps.identity.outputs.tag }}"
+
+    def test_no_release_specific_hardcode_in_workflow(self, workflow):
+        """持久机制契约:workflow 不携带任何版本/脚本级迁移知识
+        (if version == vX 永久硬编码被禁止;历史桥只存在于解析器并受测试约束)。"""
+        run = self._migrate(workflow)["run"]
+        assert "v1.4.0" not in run
+        assert "launcher_presentation" not in run
+        assert "migrate_add_site" not in run
+
+    def test_migration_not_required_evidence_line(self, workflow):
+        """§4.7:无迁移时日志必须显式可辨,而非静默。"""
+        assert "MIGRATION NOT REQUIRED" in self._migrate(workflow)["run"]
+
+    def test_migration_success_evidence_lines(self, workflow):
+        """§4.7:迁移执行与成功结果可辨(MIGRATION BEGIN / MIGRATION SUCCESS)。"""
+        run = self._migrate(workflow)["run"]
+        assert "MIGRATION BEGIN" in run
+        assert "MIGRATION SUCCESS" in run
+
+    def test_image_identity_asserted_before_any_image_code_executes(self, workflow):
+        """发布绑定闭环:执行任何镜像代码(含迁移脚本)前,先断言镜像内
+        RELEASE.json version+git_sha 与冻结身份精确一致(严于 update.sh [3/6]
+        的 git_sha 非空校验)。"""
+        run = self._migrate(workflow)["run"]
+        idx_assert = run.find('ACTUAL_SHA" != "$RELEASE_SHA"')
+        idx_exec = run.find("run --rm sync python")
+        assert idx_assert != -1 and idx_exec != -1
+        assert idx_assert < idx_exec
+        assert "docker create" in run and "docker cp" in run  # 与 update.sh [3/6] 同机制
+
+    def test_migration_step_ssh_hardening(self, workflow):
+        run = self._migrate(workflow)["run"]
+        assert "StrictHostKeyChecking=yes" in run
+        assert "BatchMode=yes" in run
+        assert 'UserKnownHostsFile="$KH_FILE"' in run
+        assert 'grep -q "$SSH_HOST" "$KH_FILE"' in run
+        assert "flock -w 0" in run  # 迁移同样受主机侧部署锁串行化
+
+    def test_migration_data_injection_safe(self, workflow):
+        """DEPLOY_TAG/RELEASE_SHA/MIG 经远端 env 前缀注入 + stdin 脚本,
+        不拼进远端命令字符串。"""
+        run = self._migrate(workflow)["run"]
+        assert "DEPLOY_TAG='$DEPLOY_TAG' RELEASE_SHA='$RELEASE_SHA' MIG='$MIG' bash -s" in run
+        assert "<<'REMOTE'" in run  # 脚本体原样传递,不插值
+
+    def test_migration_step_never_prints_secrets(self, workflow):
+        run = self._migrate(workflow)["run"]
+        assert 'echo "$SSH_KEY"' not in run
+        assert "cat .env" not in run
+        assert ".env" not in run  # 迁移路径不读取/不展示主机 .env
+
+    def test_failure_semantics_unchanged_by_migration_phase(self, workflow):
+        """§9:成功收尾唯一性/失败收尾条件不因迁移步改变
+        (迁移失败 → record_success 无代码路径,finalizer 写 failure)。"""
+        ids = [s.get("id") for s in workflow["jobs"]["deploy"]["steps"]]
+        record_success = [s for s in workflow["jobs"]["deploy"]["steps"] if s.get("id") == "record_success"][0]
+        assert record_success["if"] == "success()"
+        assert ids.index("verify_identity") < ids.index("record_success")
+        finalize = [s for s in workflow["jobs"]["deploy"]["steps"] if s.get("id") == "record_failure"][0]
+        cond = finalize["if"].replace(" ", "").replace("\n", "")
+        assert "failure()" in cond
+        assert "steps.record_create.outputs.created=='true'" in cond
+        assert "steps.record_success.outcome!='failure'" in cond
 
 
 # ---------------------------------------------------------------- 身份冻结(bash 级实证)
