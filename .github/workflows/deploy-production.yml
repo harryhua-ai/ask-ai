@@ -222,7 +222,11 @@ jobs:
           fi
           echo "  ✅ 镜像身份一致: version=$ACTUAL_VERSION git_sha=$ACTUAL_SHA"
           echo "[migrate 3/3] 在冻结镜像内执行迁移: python $MIG"
-          docker compose -f deploy/prod/docker-compose.yml run --rm sync python "$MIG"
+          # PYTHONPATH=/app:镜像 WORKDIR 为 /app(backend/ 之父)。按脚本路径执行
+          # `python scripts/x.py` 时 sys.path 前置的是 /app/scripts 而非 /app ——
+          # run 34463498223 即在此 import 时失败(ModuleNotFoundError: backend),
+          # DB 零变异。-e 注入容器内导入根,不改变 DSN 解析与发布身份语义。
+          docker compose -f deploy/prod/docker-compose.yml run --rm -e PYTHONPATH=/app sync python "$MIG"
           echo "MIGRATION SUCCESS:$MIG"
           REMOTE
             echo "MIGRATION DONE:$MIG"

@@ -131,7 +131,7 @@ class TestWorkflowContract:
         assert "docker build" not in text  # 全 workflow 禁止构建
         migrate = [s for s in workflow["jobs"]["deploy"]["steps"] if s.get("id") == "migrate"][0]
         assert "docker compose" in migrate["run"]  # 迁移执行载体(唯一例外,见上)
-        assert "run --rm sync python" in migrate["run"]
+        assert "run --rm -e PYTHONPATH=/app sync python" in migrate["run"]
         for other in workflow["jobs"]["deploy"]["steps"]:
             if other.get("id") != "migrate" and "run" in other:
                 assert "docker compose" not in other["run"], other.get("id")
@@ -247,7 +247,7 @@ class TestMigrationPhase:
         的 git_sha 非空校验)。"""
         run = self._migrate(workflow)["run"]
         idx_assert = run.find('ACTUAL_SHA" != "$RELEASE_SHA"')
-        idx_exec = run.find("run --rm sync python")
+        idx_exec = run.find("run --rm -e PYTHONPATH=/app sync python")
         assert idx_assert != -1 and idx_exec != -1
         assert idx_assert < idx_exec
         assert "docker create" in run and "docker cp" in run  # 与 update.sh [3/6] 同机制
@@ -279,6 +279,15 @@ class TestMigrationPhase:
         run = self._migrate(workflow)["run"]
         assert 'export ASKAI_IMAGE_TAG="$DEPLOY_TAG"' in run
         assert run.index("export ASKAI_IMAGE_TAG") < run.index("docker compose")
+
+    def test_compose_run_injects_container_import_root(self, workflow):
+        """容器导入路径矫正(run 34463498223):`python scripts/x.py` 的 sys.path
+        前置 /app/scripts 而非 WORKDIR /app —— compose run 必须注入
+        PYTHONPATH=/app,冻结迁移脚本方可 import backend。"""
+        run = self._migrate(workflow)["run"]
+        assert "run --rm -e PYTHONPATH=/app sync python" in run
+        # 仍晚于镜像身份断言(任何镜像代码执行前先断言身份的契约不变)
+        assert run.index('ACTUAL_SHA" != "$RELEASE_SHA"') < run.index("run --rm -e PYTHONPATH=/app")
 
     def test_failure_semantics_unchanged_by_migration_phase(self, workflow):
         """§9:成功收尾唯一性/失败收尾条件不因迁移步改变

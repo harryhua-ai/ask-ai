@@ -36,6 +36,13 @@ from sqlalchemy.engine import make_url
 from backend.config import load_settings
 from backend.db.models import SiteExperience, SiteTrustedAction
 from backend.db.session import get_engine, get_session_factory
+from tests.scripts._v140_upgrade_fixtures import (
+    V13_COLUMN_NAMES,
+    V13_DDL,
+    V13_ROWS,
+    columns as _columns,
+    dsn as _dsn,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -47,104 +54,14 @@ LAUNCHER_COLUMN = "launcher_presentation"
 # v1.3.0 site_experiences 等价 DDL(列集/类型/可空性与 git show v1.3.0:backend/db/models.py
 # 的 SiteExperience 逐一对应;Boolean 无 CHECK 约束 —— SQLAlchemy 1.4+ create_all
 # 默认 create_constraint=False,生产 v1.3.0 表即纯 BOOLEAN)。
-V13_DDL = """
-CREATE TABLE site_experiences (
-    site_id VARCHAR(100) NOT NULL,
-    display_name VARCHAR(100) NOT NULL,
-    allowed_origins JSONB,
-    starters JSONB,
-    welcome VARCHAR(500),
-    language VARCHAR(10),
-    welcome_i18n JSONB,
-    starters_i18n JSONB,
-    enabled BOOLEAN,
-    launcher_style VARCHAR(50),
-    launcher_theme VARCHAR(10),
-    launcher_icon VARCHAR(50),
-    launcher_shape VARCHAR(20),
-    entry_mode VARCHAR(20),
-    proactive_timing VARCHAR(10),
-    launcher_motion VARCHAR(20),
-    launcher_size VARCHAR(10),
-    launcher_brand VARCHAR(10),
-    launcher_color VARCHAR(20),
-    chat_theme VARCHAR(10),
-    chat_accent_color VARCHAR(20),
-    chat_size VARCHAR(10),
-    greeting_override VARCHAR(200),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (site_id)
-)
-"""
-
-# 存量行(镜像生产实况:含崩溃时正在查询的 'camthink-website';含 NULL 密集
-# legacy 行与已配置行)。
-V13_ROWS = [
-    (
-        "INSERT INTO site_experiences (site_id, display_name, allowed_origins, starters,"
-        " welcome, language, enabled, launcher_style, launcher_theme)"
-        " VALUES ('camthink-website', 'CamThink Website', '[\"https://camthink.ai\"]'::jsonb,"
-        " '[]'::jsonb, NULL, 'zh', TRUE, 'current', 'auto')"
-    ),
-    (
-        "INSERT INTO site_experiences (site_id, display_name, allowed_origins, starters,"
-        " welcome, language, enabled)"
-        " VALUES ('legacy-site-b', 'Legacy B', '[\"https://b.example\"]'::jsonb,"
-        " '[\"q1\"]'::jsonb, '你好', 'en', TRUE)"
-    ),
-    (
-        "INSERT INTO site_experiences (site_id, display_name, allowed_origins, starters,"
-        " welcome, language, enabled, launcher_style, launcher_theme, launcher_icon,"
-        " launcher_shape, chat_theme)"
-        " VALUES ('config-site-c', 'Configured C', '[\"https://c.example\"]'::jsonb,"
-        " '[\"q2\"]'::jsonb, 'Hi', 'en', TRUE, 'pill', 'dark', 'sparkle', 'rounded',"
-        " 'light')"
-    ),
-]
-
-V13_COLUMN_NAMES = [
-    "site_id", "display_name", "allowed_origins", "starters", "welcome", "language",
-    "welcome_i18n", "starters_i18n", "enabled", "launcher_style", "launcher_theme",
-    "launcher_icon", "launcher_shape", "entry_mode", "proactive_timing",
-    "launcher_motion", "launcher_size", "launcher_brand", "launcher_color",
-    "chat_theme", "chat_accent_color", "chat_size", "greeting_override",
-    "created_at", "updated_at",
-]
-
-
-def _dsn() -> str:
-    dsn = os.environ.get("TEST_DATABASE_URL", load_settings().postgres_dsn)
-    assert "ask_ai_test" in dsn, "存量库升级测试必须在 ask_ai_test 库上运行"
-    return dsn
-
-
-async def _columns(engine, table: str = "site_experiences") -> list[dict]:
-    async with engine.begin() as conn:
-        result = await conn.execute(
-            text(
-                "SELECT column_name, data_type, character_maximum_length, is_nullable"
-                " FROM information_schema.columns WHERE table_name = :t"
-                " ORDER BY ordinal_position"
-            ),
-            {"t": table},
-        )
-        return [
-            {
-                "name": r[0],
-                "data_type": r[1],
-                "max_len": r[2],
-                "nullable": r[3],
-            }
-            for r in result.fetchall()
-        ]
-
-
 def _run_migration(dsn: str) -> subprocess.CompletedProcess:
     """以部署同一入口执行迁移:脚本作为 __main__ 子进程(镜像内即 `python scripts/...`)。"""
     env = os.environ.copy()
     env["TEST_DATABASE_URL"] = dsn
     env["APP_MODE"] = "dev"  # 非 prod:resolve_migration_dsn 路由到测试库(Issue #20 守卫)
+    # 生产调用已由 `-e PYTHONPATH=/app` 修正(容器导入根 /app;run 34463498223 矫正);
+    # 主机等价形式 = 仓库根(backend/ 之父)。未修正形态的失败由
+    # test_container_import_path.py 显式复现,这里不再掩盖生产条件。
     env["PYTHONPATH"] = str(REPO) + os.pathsep + env.get("PYTHONPATH", "")
     return subprocess.run(
         [sys.executable, "-u", str(MIGRATION_SCRIPT)],
