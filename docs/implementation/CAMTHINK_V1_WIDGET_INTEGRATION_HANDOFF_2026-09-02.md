@@ -229,3 +229,42 @@ WEBSITE_READY / WIKI_READY / STORE_READY = NO(同前,卡生产 URL;接入包含 
 PRODUCTION_ACCESS = NO
 PUSHED = YES
 ```
+
+---
+
+# 11. 生产 API 基址回填(2026-09-02,用户问询触发 + 用户确认)
+
+## 11.1 实测证据(全部只读 GET,零生产写入)
+
+| 探测 | 结果 |
+|------|------|
+| `https://wiki-data.camthink.ai`(43.132.189.162,nginx/1.18 Ubuntu) | `/health` → `{"status":"ok"}`;安全特征头(nosniff/DENY/strict-origin-when-cross-origin)与 backend 中间件逐项吻合 |
+| `/widget/widget.js` | 200,**251,209 B 与 RC 基线(1ff2936)本地构建逐字节一致** → 部署为 RC 线镜像 |
+| `/api/widget/site-config?site_id=camthink-wiki` + Origin wiki | 200 + `access-control-allow-origin: https://wiki.camthink.ai`(站点已种子启用,CORS 已放行) |
+| website @ www origin | 200 + ACAO www ✓ |
+| website @ 非 www origin | 200 但**无 ACAO** → 双层差异实证(服务端授权过、浏览器 CORS 拦) |
+| store @ store origin | 200 但**无 ACAO**;`OPTIONS /api/ask` 预检 400 → **store CORS 未放行,浏览器直连被拦** |
+| 无 Origin / 伪造 Origin | 403 fail-closed ✓ |
+| 交付时点复核 | /health、wiki site-config、widget.js 全部 200 |
+
+说明:该域名此前**不在仓库任何登记中**(PA 报告"未动 DNS/nginx"),系用户/运维侧另行配置;经用户确认为接入基址后回填。
+
+## 11.2 指南 v2.1 变更
+
+- §0 生产 API 基址章节重写:`https://wiki-data.camthink.ai` 确认为基址 + 分站就绪表(wiki ✓ / website-via-www ✓ / store 待 CORS 补录 / 非-www 未放行)。
+- 全文占位符 `<ASK-AI-PRODUCTION-API-BASE>` 回填为真实基址;Store 示例加 CORS 前置标注。
+- 公开正式开放前两项运维门写入 §0 与职责边界:① `channel_visibility` 迁移(P0 信任边界红线);② `/api/ask` 写路径真实冒烟(本轮实测均为只读,未做生产 POST)。
+- §1.2/§1.4/Part 4/Part 5/快速对照卡同步更新(含"当前 wiki 线上站点配置仍为旧种子 zh"的如实标注)。
+
+## 11.3 字段更新(覆盖 §10.Follow-up 中的同名字段)
+
+```
+PRODUCTION_API_URL = https://wiki-data.camthink.ai(2026-09-02 实测+用户确认)
+PRODUCTION_WIDGET_URL = https://wiki-data.camthink.ai/widget/widget.js
+PRODUCTION_WIDGET_URL_READY = YES(基址与脚本已实测可取;分站:wiki ✓ / website-via-www ✓ / store 待 CORS)
+WEBSITE_READY = YES(经 www 接入;非-www 未放行)
+WIKI_READY = YES(可立即接入)
+STORE_READY = NO(CORS 白名单缺 store origin,运维补录后转 YES)
+BLOCKER 更新:B1 已解除;B2 部分解除(store/非-www 待补);B3 更新为公开开放前必过 channel_visibility 迁移 + ask 全链冒烟
+```
+
