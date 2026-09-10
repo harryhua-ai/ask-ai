@@ -15,19 +15,27 @@ compose 一次性服务 `sync`,与 README 的 `run --rm sync python scripts/…`
 
        {"migrations": ["scripts/migrate_xxx.py", ...]}   # 有序;空列表 = 无迁移
 
-   契约:**清单机制存在后的每个发布树都必须携带该文件**(无迁移也要带空列表),
    条目按序执行、幂等(存量库可重复执行)。清单与代码同树同 tag —— 迁移需求
    与发布身份天然绑定,不存在 mutable-main 歧义。
 
-2. **历史桥(窄,仅清单机制诞生前的已冻结发布)**:这些树的清单永久缺失,
-   桥是唯一补救口径。桥**只允许**引用「该冻结发布镜像内确实存在」的脚本
-   (workflow 在执行任何镜像代码前先断言镜像内 RELEASE.json == 冻结身份,
-   update.sh [3/6] 同款)—— 即迁移代码来自冻结工件而非 mutable main。
-   桥是封闭集合,只减不增;新发布一律走清单。
+2. **历史桥(窄,仅清单机制诞生前的已冻结发布)**:桥是封闭集合,只允许引用
+   「该冻结发布镜像内确实存在」的脚本(workflow 在执行任何镜像代码前先断言
+   镜像内 RELEASE.json == 冻结身份,update.sh [3/6] 同款)—— 即迁移代码来自
+   冻结工件而非 mutable main。桥只减不增。
 
-解析优先级:冻结树有清单 → 只用清单(桥不再参与);无清单 → 查桥;都没有 →
-NONE(MIGRATION NOT REQUIRED)。清单缺失且无桥条目时 stderr 打印显式警告,
-提醒「清单契约发布必须携带清单」。
+**契约边界(确定性、可测试、不依赖 mutable main)**:一个冻结发布是否受清单
+契约约束,由**其自身谱系**决定 —— 谱系中存在「新增 deploy/prod/migrations.json」
+的提交(`git log <sha> --diff-filter=A`)即属契约时代。由此:
+
+- A. 契约前历史发布(谱系从未引入清单机制):只允许历史桥;桥无条目 →
+  NONE(MIGRATION NOT REQUIRED,唯一允许缺清单的路径);
+- B. 契约时代发布:树内**必须**存在 migrations.json —— 缺失 = 退出码 1
+  fail-closed,部署绝不得进行(例如清单曾入谱系后被从树中删除/遗忘,一律
+  拒绝),**绝不从「文件缺失」推断「无迁移」**;
+- C. 空清单 ``{"migrations":[]}`` = 权威的 MIGRATION NOT REQUIRED。
+
+解析优先级:树内有清单 → 只用清单(桥不参与);树内无清单且属契约时代 →
+FAIL;历史时代 → 查桥;桥无条目 → NONE。
 
 fail-closed:清单非法 JSON / 非对象 / 缺 migrations / 条目非法(绝对路径、
 路径穿越、越出 scripts/、非法字符、冻结树内不存在)→ 退出码 1,编排层随之中止,
@@ -137,6 +145,50 @@ def _validate_entries(repo_root: str, sha: str, entries: object, source: str) ->
     return plan
 
 
+def _manifest_contract_era(repo_root: str, sha: str) -> bool:
+    """判定冻结发布是否受迁移清单契约约束(§2 契约边界,确定性且不依赖 mutable main)。
+
+    边界 = **该发布自身谱系**中是否存在「新增 MANIFEST_PATH」的提交
+    (`git log <sha> --diff-filter=A -- <path>`;只读冻结 SHA 的祖先历史,与
+    main/工作区当前状态无关)::
+
+        True  = 契约时代发布:树内必须携带 migrations.json,缺失即 fail-closed;
+        False = 契约前历史发布:仅允许历史桥,桥无条目 → NONE。
+
+    前置:完整谱系(编排 checkout 为 fetch-depth: 0)。浅检出无法判定边界
+    (git log 空手而归 ≠ 历史发布)→ 证据源不足,fail-closed。git 其余错误
+    → 退出码 1(拒绝猜测)。
+    """
+    shallow = _git(repo_root, "rev-parse", "--is-shallow-repository")
+    if shallow.returncode != 0:
+        print(
+            "❌ 判定迁移清单契约边界失败(无法探测检出深度;证据源不可用,拒绝猜测):"
+            + shallow.stderr.strip()[:200],
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    if shallow.stdout.strip() == "true":
+        print(
+            "❌ 浅检出(shallow clone)无法判定迁移清单契约边界:谱系历史不完整,"
+            "缺失清单既可能是契约违例也可能是历史发布 —— 拒绝猜测(fail-closed;"
+            "编排 checkout 为 fetch-depth: 0,不受影响)",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    proc = _git(
+        repo_root, "log", "--format=%H", "-n", "1", sha,
+        "--diff-filter=A", "--", MANIFEST_PATH,
+    )
+    if proc.returncode != 0:
+        print(
+            f"❌ 判定迁移清单契约边界失败(git 退出码 {proc.returncode};证据源不可用,"
+            "拒绝猜测):\n" + proc.stderr.strip()[:300],
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    return bool(proc.stdout.strip())
+
+
 def resolve_plan(tag: str, sha: str, repo_root: str) -> list[str]:
     """返回该冻结发布需执行的迁移脚本(有序);空列表 = MIGRATION NOT REQUIRED。"""
     manifest_raw = _read_frozen_file(repo_root, sha, MANIFEST_PATH)
@@ -155,18 +207,28 @@ def resolve_plan(tag: str, sha: str, repo_root: str) -> list[str]:
         print(f"PLAN SOURCE: manifest@{sha[:12]}", file=sys.stderr)
         return _validate_entries(repo_root, sha, manifest["migrations"], MANIFEST_PATH)
 
+    # 树内无清单:先判契约时代 —— 谱系已引入清单机制的发布缺清单 = fail-closed,
+    # 绝不从「文件缺失」推断「无迁移」(v1.4.0 事故类别的最后防线)。
+    if _manifest_contract_era(repo_root, sha):
+        print(
+            f"❌ 冻结发布 {tag}@{sha[:12]} 属迁移清单契约(谱系已引入 {MANIFEST_PATH})"
+            "但树内缺失该文件 —— 缺失即失败(fail-closed),部署绝不得进行",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
     bridge = BRIDGE_MIGRATIONS.get(tag)
     if bridge is not None:
         print(
-            f"PLAN SOURCE: bridge(清单机制诞生前的历史发布 {tag};执行前镜像身份"
+            f"PLAN SOURCE: bridge(历史发布 {tag},谱系未引入清单机制;执行前镜像身份"
             "先断言)",
             file=sys.stderr,
         )
         return _validate_entries(repo_root, sha, list(bridge), f"bridge[{tag}]")
 
     print(
-        f"⚠️ 冻结树 {sha[:12]} 无 {MANIFEST_PATH} 且历史桥无 {tag} 条目 → 视为无迁移。"
-        f"契约:清单机制存在后的发布树必须携带 {MANIFEST_PATH}(无迁移也要空列表)",
+        f"⚠️ 冻结树 {sha[:12]} 无 {MANIFEST_PATH} 且谱系未引入清单机制(契约前历史发布)、"
+        f"历史桥无 {tag} 条目 → MIGRATION NOT REQUIRED(仅历史发布允许此路径)",
         file=sys.stderr,
     )
     print("PLAN SOURCE: none", file=sys.stderr)

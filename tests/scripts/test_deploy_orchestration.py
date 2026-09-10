@@ -30,6 +30,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -272,6 +273,13 @@ class TestMigrationPhase:
         assert "cat .env" not in run
         assert ".env" not in run  # 迁移路径不读取/不展示主机 .env
 
+    def test_compose_receives_frozen_tag_via_askai_image_tag(self, workflow):
+        """阻断项①:迁移 compose 调用显式注入 ASKAI_IMAGE_TAG=<冻结 tag>,
+        且先于任何 compose 调用(生产 compose 必填守卫保持不变)。"""
+        run = self._migrate(workflow)["run"]
+        assert 'export ASKAI_IMAGE_TAG="$DEPLOY_TAG"' in run
+        assert run.index("export ASKAI_IMAGE_TAG") < run.index("docker compose")
+
     def test_failure_semantics_unchanged_by_migration_phase(self, workflow):
         """§9:成功收尾唯一性/失败收尾条件不因迁移步改变
         (迁移失败 → record_success 无代码路径,finalizer 写 failure)。"""
@@ -284,6 +292,74 @@ class TestMigrationPhase:
         assert "failure()" in cond
         assert "steps.record_create.outputs.created=='true'" in cond
         assert "steps.record_success.outcome!='failure'" in cond
+
+
+# ---------------------------------------------------------------- 生产 compose 镜像 tag 绑定(Role A 阻断项①)
+
+
+COMPOSE_FILE = REPO / "deploy" / "prod" / "docker-compose.yml"
+
+
+def _compose_cli_available() -> bool:
+    try:
+        return (
+            subprocess.run(
+                ["docker", "compose", "version"], capture_output=True, check=False
+            ).returncode
+            == 0
+        )
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not _compose_cli_available(), reason="docker compose CLI 不可用;真实插值契约需 docker")
+class TestProductionComposeTagBinding:
+    """**真实生产 compose 插值契约评估**(非字符串排序):以生产
+    deploy/prod/docker-compose.yml 在临时环境实际执行 `docker compose config`,
+    证明 —— 缺 ASKAI_IMAGE_TAG 无法静默进行;冻结 tag 精确传导至全部 backend 系
+    服务;不存在 latest/默认可变镜像可选。"""
+
+    @pytest.fixture
+    def compose_env(self, tmp_path: Path):
+        prod = tmp_path / "deploy" / "prod"
+        prod.mkdir(parents=True)
+        shutil.copy2(COMPOSE_FILE, prod / "docker-compose.yml")
+        # compose 的 env_file: ../../.env(提供插值所需最小变量;非生产凭据)
+        (tmp_path / ".env").write_text(
+            "POSTGRES_USER=ask_ai\nPOSTGRES_PASSWORD=changeme\nPOSTGRES_DB=ask_ai\n",
+            encoding="utf-8",
+        )
+        return prod / "docker-compose.yml", tmp_path
+
+    def _config(self, compose_file: Path, cwd: Path, env_extra: dict):
+        env = os.environ.copy()
+        env.pop("ASKAI_IMAGE_TAG", None)  # 确保不受外界环境污染
+        env.update(env_extra)
+        return subprocess.run(
+            ["docker", "compose", "-f", str(compose_file), "config"],
+            capture_output=True, text=True, cwd=str(cwd), env=env, check=False,
+        )
+
+    def test_missing_tag_cannot_silently_proceed(self, compose_env):
+        """缺 ASKAI_IMAGE_TAG → 生产 compose 必填守卫直接拒绝(非零退出)。"""
+        compose_file, cwd = compose_env
+        proc = self._config(compose_file, cwd, {})
+        assert proc.returncode != 0
+        assert "ASKAI_IMAGE_TAG" in proc.stderr + proc.stdout
+
+    def test_frozen_tag_exact_and_no_mutable_image(self, compose_env):
+        """ASKAI_IMAGE_TAG=v1.4.0 → 全部 backend 系服务镜像精确 = 冻结 tag;
+        无任何服务落在 latest/默认可变镜像上。"""
+        compose_file, cwd = compose_env
+        proc = self._config(compose_file, cwd, {"ASKAI_IMAGE_TAG": "v1.4.0"})
+        assert proc.returncode == 0, proc.stderr
+        resolved = yaml.safe_load(proc.stdout)
+        for svc in ("backend", "sync", "sync-cron", "sync-executor"):
+            assert resolved["services"][svc]["image"] == "ghcr.io/harryhua-ai/ask-ai:v1.4.0", svc
+        for svc, cfg in resolved["services"].items():
+            image = cfg.get("image", "")
+            assert image and not image.endswith(":latest"), svc
+        assert resolved["services"]["postgres"]["image"] == "postgres:16-alpine"
 
 
 # ---------------------------------------------------------------- 身份冻结(bash 级实证)

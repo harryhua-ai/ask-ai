@@ -78,6 +78,36 @@ def _init_repo_with_tree(tmp_path: Path, files: dict[str, str], tag: str = "v9.9
     return repo, sha
 
 
+def _init_repo_with_manifest_history(tmp_path: Path, tag: str = "v2.0.0"):
+    """构造「曾引入清单、后从树中删除」的仓库(契约时代 + 树内缺失)。
+    返回 (repo, sha)。"""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@m",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@m",
+        "PATH": "/usr/bin:/bin",
+        "HOME": str(tmp_path),
+    }
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, env=env)
+    target = repo / MANIFEST
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({"migrations": []}), encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=env)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "add manifest"], check=True, env=env)
+    target.unlink()
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=env)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "remove manifest"], check=True, env=env)
+    subprocess.run(["git", "-C", str(repo), "tag", tag], check=True, env=env)
+    sha = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", f"{tag}^{{commit}}"],
+        capture_output=True, text=True, check=True, env=env,
+    ).stdout.strip()
+    return repo, sha
+
+
 def _resolve(repo: Path, sha: str, tag: str = "v9.9.9"):
     return plan_mod.resolve_plan(tag, sha, str(repo))
 
@@ -232,6 +262,72 @@ class TestCli:
         proc = self._run("--tag", "v1.5.0", "--sha", sha, "--repo-root", str(repo))
         assert proc.returncode == 0
         assert proc.stdout.strip() == "NONE"
+
+
+# ---------------------------------------------------------------- 契约时代边界(Role A 阻断项②)
+
+
+class TestManifestContractEra:
+    """契约边界 = 冻结 SHA 自身谱系是否「引入过」migrations.json(确定性、
+    不依赖 mutable main):契约时代缺清单 = fail-closed;仅历史发布允许无清单。"""
+
+    def test_repo_never_introducing_manifest_is_legacy_era(self, tmp_path):
+        repo, sha = _init_repo_with_tree(tmp_path, {"README.md": "x"})
+        assert plan_mod._manifest_contract_era(str(repo), sha) is False
+
+    def test_repo_with_manifest_in_ancestry_is_contract_era(self, tmp_path):
+        repo, sha = _init_repo_with_tree(
+            tmp_path, {MANIFEST: json.dumps({"migrations": []})}
+        )
+        assert plan_mod._manifest_contract_era(str(repo), sha) is True
+
+    def test_added_then_deleted_is_still_contract_era(self, tmp_path):
+        """清单曾入谱系后被删除:仍属契约时代(防止以删除规避契约)。"""
+        repo, sha = _init_repo_with_manifest_history(tmp_path)
+        assert plan_mod._manifest_contract_era(str(repo), sha) is True
+
+    def test_contract_era_release_missing_manifest_fails_closed(self, tmp_path, capsys):
+        """§2-B:契约时代发布缺 migrations.json → 非零失败,绝不推断为无迁移。"""
+        repo, sha = _init_repo_with_manifest_history(tmp_path)
+        with pytest.raises(SystemExit) as ei:
+            _resolve(repo, sha, tag="v2.0.0")
+        assert ei.value.code == 1
+        captured = capsys.readouterr()
+        assert "契约" in captured.err and "缺失" in captured.err
+        # stdout 不得给出任何迁移计划
+        assert captured.out.strip() != "NONE"
+
+    def test_empty_manifest_is_authoritative_none_for_contract_release(self, tmp_path):
+        """§2-C:契约时代发布携带空清单 = 权威 MIGRATION NOT REQUIRED。"""
+        repo, sha = _init_repo_with_tree(
+            tmp_path, {MANIFEST: json.dumps({"migrations": []})}, tag="v2.0.0"
+        )
+        assert _resolve(repo, sha, tag="v2.0.0") == []
+
+    def test_era_check_on_shallow_clone_fails_closed(self, tmp_path):
+        """浅检出无法判定谱系边界 → 证据源不足,fail-closed(非 HEAD 也不行)。"""
+        repo, sha = _init_repo_with_tree(tmp_path, {"README.md": "x"})
+        (repo / ".git" / "shallow").write_text("", encoding="utf-8")
+        with pytest.raises(SystemExit) as ei:
+            plan_mod._manifest_contract_era(str(repo), sha)
+        assert ei.value.code == 1
+
+    def test_era_check_git_unavailable_fails_closed(self, tmp_path):
+        bogus = tmp_path / "not-a-repo"
+        bogus.mkdir()
+        with pytest.raises(SystemExit) as ei:
+            plan_mod._manifest_contract_era(str(bogus), "a" * 40)
+        assert ei.value.code == 1
+
+    def test_real_repo_v140_is_legacy_era(self):
+        """真实 v1.4.0(41278f0)谱系从未引入清单 → 历史时代(桥的唯一入口)。"""
+        sha = subprocess.run(
+            ["git", "-C", str(REPO), "rev-parse", "--verify", "--quiet", "v1.4.0^{commit}"],
+            capture_output=True, text=True, check=False,
+        ).stdout.strip()
+        if not sha:
+            pytest.skip("本检出无 v1.4.0 tag(CI 浅检出);时代语义由临时仓库测试覆盖")
+        assert plan_mod._manifest_contract_era(str(REPO), sha) is False
 
 
 # ---------------------------------------------------------------- 真实冻结树冒烟
