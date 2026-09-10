@@ -293,6 +293,104 @@ main 合并:无;tag/Release 变异:无。
 
 ---
 
+## 17. 容器导入路径矫正(第三轮,2026-09-10)
+
+### 17.1 run 34463498223 证据(受控重部署失败)
+
+预分发七门全绿后 dispatch(main=d9223e6,tag=v1.4.0)→ identity/Guard/
+record_create(id 6369131405)✓ → migrate 步:PLAN SOURCE: bridge ✓ →
+镜像拉取 ✓ → **[migrate 2/3] 镜像内 RELEASE.json 断言精确一致:version=1.4.0
+git_sha=41278f07eb4a…** ✓ → **[migrate 3/3] 执行即
+`ModuleNotFoundError: No module named 'backend'`(脚本 line 22
+`from backend.config import …`)** → deploy 步 skip(rollout 未发生)→
+finalize failure ✓。失败发生在 **import 时、任何 SQL 之前** —— 生产库零变异
+(列检查 0、行 3 复核),生产服务全程 v1.3.0/8bec1c0 healthy(容器未重建,
+restarts=0)。记录:6369131405=[failure,in_progress];6367567977(旧失败)与
+6368008643(v1.3.0 回滚)原样;auto 噪声 6369129684(run head d9223e6)单列。
+
+### 17.2 精确根因
+
+镜像内按**脚本路径**执行 `python scripts/migrate_x.py` 时,Python 把**脚本目录**
+(`/app/scripts`)前置到 sys.path,而 WORKDIR(`/app`,`backend/` 之父)不在
+导入根中。冻结迁移脚本(v1.4.0 工件,不可改)`from backend.config import …`
+在 import 时即失败。真实镜像实证:`docker inspect` 证实镜像 ENV 仅有
+`PATH=/app/.venv/bin:…`,**无 PYTHONPATH**;`/app/backend` 与
+`/app/scripts/migrate_add_site_launcher_presentation.py` 均在位;`python` =
+`/app/.venv/bin/python`。失败纯属导入根解析,DSN 解析与发布身份语义无关。
+
+### 17.3 为什么既有测试漏检
+
+1. 升级路径测试的子进程执行显式设置了 `PYTHONPATH=<仓库根>`(沿用测试库惯例)
+   —— 在宿主上恰好补上了容器里缺失的导入根,把生产条件掩盖了(同入口 ≠ 同环境);
+2. 更深一层:宿主 dev venv 以 **editable 安装**(`__editable__.ask_ai-0.1.0.pth`
+   → `install()` 把 finder **类本身**追加进 meta_path)使仓库根在任何 cwd 下都可
+   导入 —— 本轮复现测试被迫先显式中和该机制(repr 级 meta 过滤 + cwd/'' 剥离 +
+   仓库路径过滤)才得以复现生产失败。两处均已写进测试并固化。
+
+### 17.4 精确运行时修正(仅编排一行)
+
+```
+docker compose -f deploy/prod/docker-compose.yml run --rm -e PYTHONPATH=/app sync python "$MIG"
+```
+
+不改冻结镜像/迁移脚本/迁移 SQL/update.sh/compose;不触及 DSN 解析与发布身份
+语义(`PYTHONPATH` 仅影响导入根)。`ASKAI_IMAGE_TAG` 绑定、RELEASE.json 身份
+断言先于执行、失败绝不 rollout、recorder 语义全部原样(契约测试锁定)。
+
+### 17.5 运行时忠实回归证据
+
+**真实冻结镜像(amd64 生产主机,一次性隔离容器,已清理)**:
+
+| 形态 | 结果 |
+|---|---|
+| BEFORE:无 PYTHONPATH(生产失败形态) | exit 1,`ModuleNotFoundError: No module named 'backend'`(line 22,与 run 34463498223 逐字一致);**执行后列检查=0(零 SQL)** |
+| AFTER:`-e PYTHONPATH=/app` | exit 0,`迁移完成(幂等,零回填)`;`launcher_presentation character varying(10) nullable=YES`;既有行保全 |
+| AFTER 第二次执行 | exit 0(幂等) |
+
+**自动化测试(CI 可跑,非字符串测试)**:
+
+- `test_container_import_path.py`(新):
+  - **失败复现**:容器等价布局(`<root>/backend` 符号链接 + 真实脚本逐字节
+    拷贝)下,未修正形态必须复现 `ModuleNotFoundError('backend')`(import 行,
+    不提供任何数据库)—— 本机已实证通过(含 editable/cwd 掩盖中和);
+  - **修正环境全链**:`PYTHONPATH=<容器根等价>` + 一次性 v1.3 库 → 迁移成功、
+    列语义、行保全、幂等;DSN 仍经 TEST_DATABASE_URL 路由;
+  - **真实镜像 opt-in**:docker + 本地 v1.4.0 镜像(amd64)+ 一次性 DSN/网络
+    时逐字节复现 BEFORE/AFTER;否则诚实跳过(本机 arm64 跳过;人工验证见上表)。
+- 升级路径测试重构:DDL/行集/列内省抽至共享 `_v140_upgrade_fixtures.py`;
+  `_run_migration` 的 PYTHONPATH 更名为「修正后主机等价形式」并注明不再掩盖。
+- 编排契约新增:`compose run` 必含 `-e PYTHONPATH=/app` 且仍晚于镜像身份断言;
+  `ASKAI_IMAGE_TAG` 绑定/失败语义/manifest fail-closed 契约全部保留并通过。
+
+### 17.6 回归结果
+
+```
+容器导入 + 升级路径:9 passed, 2 skipped(opt-in 真实镜像项本机 arm64 诚实跳过)
+受影响五套件(编排/plan/容器/升级/integrity):184 passed, 2 skipped
+全量(CI 同口径):1855 passed / 5 failed —— 该 5 例(recovery_semantics×4 +
+sync_executor_loop×1)已在基线 d9223e6 worktree 以同环境复现,属 main 既有
+时序性 flake,与本候选零代码交集(同 run 在更早轮次曾全过)
+守卫冒烟:v1.4.0 release-publish PASS(6 invariants)不变
+语法:workflow YAML safe_load + migrate run 块 bash -n OK;py_compile 全过
+```
+
+### 17.7 变更文件
+
+| 文件 | 变更 |
+|---|---|
+| `.github/workflows/deploy-production.yml` | migrate 步 compose run 注入 `-e PYTHONPATH=/app`(一行 + 注释) |
+| `tests/scripts/test_container_import_path.py` | **新增** 失败复现/修正全链/真实镜像 opt-in |
+| `tests/scripts/_v140_upgrade_fixtures.py` | **新增** 共享 DDL/行集/列内省 fixture |
+| `tests/scripts/test_v140_existing_db_upgrade_path.py` | 改用共享 fixture;PYTHONPATH 注释改为修正后等价形式 |
+| `tests/scripts/test_deploy_orchestration.py` | 新增 PYTHONPATH=/app 契约;两处断言字符串随新命令形态更新 |
+
+### 17.8 候选 SHA
+
+- 容器导入路径矫正实现:`aae7c59c906f87c8468acf4522646f312b402147`
+- 本报告提交(候选 tip):见下
+
+---
+
 ## Final status
 
 **V1.4.0 MIGRATION CORRECTIVE REVIEW FIX = CANDIDATE READY(两阻断项均关闭)**
