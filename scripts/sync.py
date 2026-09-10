@@ -1107,6 +1107,16 @@ async def _sync_one(
     except Exception as exc:  # noqa: BLE001 - 单源失败不中断批次
         log_entry.status = "failed"
         log_entry.error_detail = str(exc)
+        # #45:IngestFailures 携带结构化逐文档失败(.failures)—— 计入
+        # SyncRun.counters.docs_failed(零迁移),error_detail 已含逐文档
+        # 明细行(stage/分类/可重试性),操作员无需再翻日志定位。
+        ingest_failures = getattr(exc, "failures", None)
+        if ingest_failures:
+            await tel.counters(
+                session_factory,
+                docs_failed=len(ingest_failures),
+                docs_failed_retryable=sum(1 for f in ingest_failures if f.retryable),
+            )
         # 失败路径同样尽力留 coverage 痕迹(异常中断时的已抓部分不消失)
         connector_for_stats = locals().get("connector")
         stats = getattr(connector_for_stats, "run_stats", None)
@@ -1240,6 +1250,9 @@ async def run_sync(
             weaviate_client,
             class_name=settings.weaviate_class_name,
             session_factory=sync_session_factory,
+            # #45:嵌入字符契约对齐 —— 与内部嵌入端点同源配置,灌入边界
+            # 预切超限 chunk,杜绝「文本超长 → 413 → 整文档必败且重试无效」。
+            max_chunk_chars=settings.embedder_max_length,
         )
 
         marker = _resolve_triggered_by(source_id, triggered_by)

@@ -17,6 +17,7 @@
 import logging
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -32,7 +33,7 @@ from backend.connectors.safety import (
 from backend.db.models import Document
 from backend.embedder.base import Embedder
 from backend.embedder.fallback import CpuFallbackError, SyncEmbedderHandle, classify_cuda_failure
-from backend.pipeline.chunk import chunk_document_semantic
+from backend.pipeline.chunk import Chunk, chunk_document_semantic
 from backend.pipeline.chunk_code import LANG_MAP as _CODE_LANG_MAP
 from backend.pipeline.chunk_code import chunk_code
 from backend.services.sync_runs import (
@@ -43,6 +44,84 @@ from backend.services.sync_runs import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# --------------------------------------------------------------------------- #
+# #45 文档级失败契约:结构化 (source_id, stage, 分类, 可重试性, 详情)
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class DocFailure:
+    """单个文档灌入失败的结构化记录(诊断权威,替代裸 source_id 字符串)。"""
+
+    source_id: str
+    stage: str  # STAGE_CHUNK / STAGE_EMBED / STAGE_INDEX(既有词表)
+    error_class: str  # permanent_data_too_large / permanent_config / retryable_transport / error
+    retryable: bool
+    detail: str
+
+
+class IngestFailures(RuntimeError):
+    """批量灌入失败(≥1 doc):``failures`` 携带结构化 :class:`DocFailure` 列表。
+
+    消息文本包含逐文档明细行(含 stage/分类/可重试性),由调用方
+    (scripts/sync.py)原样落入 SyncLog.error_detail —— 零签名变更即诊断化。
+    """
+
+    def __init__(self, message: str, failures: list[DocFailure]) -> None:
+        super().__init__(message)
+        self.failures = failures
+
+
+def classify_ingest_failure(detail: str, default_class: str = "error") -> tuple[str, bool]:
+    """按异常文本证据分类灌入失败(413/422=permanent,网络/5xx=retryable)。
+
+    - HTTP 413(text 超嵌入字符契约)→ ``permanent_data_too_large``:
+      重试同样超限,永不生效(生产 #45:小时级 cron 无效重试 11+ 次的直接教训);
+    - HTTP 422(批次超限)→ ``permanent_config``:配置/契约错,不因重试消失;
+    - unreachable / 5xx / timeout → ``retryable_transport``;
+    - 其余 → ``default_class``(调用点按相位给默认:写库相位=error,可重试)。
+    """
+    if "HTTP 413" in detail:
+        return "permanent_data_too_large", False
+    if "HTTP 422" in detail:
+        return "permanent_config", False
+    lowered = detail.lower()
+    if "unreachable" in lowered or "timed out" in lowered or "timeout" in lowered or "http 5" in lowered:
+        return "retryable_transport", True
+    return default_class, True
+
+
+def _enforce_char_limit(chunks: list[Chunk], limit: int | None) -> list[Chunk]:
+    """嵌入字符契约对齐(#45 根因修复):超限 chunk 确定性硬切为 ≤limit 片。
+
+    分块器按 token(≈语义)封顶,不感知部署的 ``EMBEDDER_MAX_LENGTH`` 字符
+    契约;服务端对任一超长 text 显式 413 拒绝 → 整文档必败且重试无效。
+    本函数在灌入边界(切分后、embed 前)执行服务端同款判定,超限 chunk 按
+    字符上限切片;切片继承父 chunk 语义元数据并全局重编 chunk_index ——
+    确定性 UUID / 幂等覆盖 / prune 语义全部基于最终 chunk 列表,不变。
+    """
+    if not limit or limit <= 0:
+        return chunks
+    if not any(len(c.text) > limit for c in chunks):
+        return chunks
+    out: list[Chunk] = []
+    for c in chunks:
+        if len(c.text) <= limit:
+            out.append(c)
+            continue
+        for k in range(0, len(c.text), limit):
+            out.append(
+                replace(
+                    c,
+                    text=c.text[k : k + limit],
+                    start_char=c.start_char + k,
+                    end_char=min(c.start_char + k + limit, c.end_char),
+                )
+            )
+    total = len(out)
+    return [replace(c, chunk_index=i, total_chunks=total) for i, c in enumerate(out)]
 
 
 def _deterministic_uuid(source_id: str, chunk_index: int) -> str:
@@ -201,6 +280,7 @@ class IngestionPipeline:
         max_tokens: int = 600,
         overlap: int = 50,
         session_factory: sessionmaker[Session] | None = None,
+        max_chunk_chars: int | None = None,
     ) -> None:
         """初始化灌入管道。
 
@@ -212,12 +292,16 @@ class IngestionPipeline:
             overlap: 相邻 chunk 重叠的 token 数。
             session_factory: SQLAlchemy 同步 ``sessionmaker``(或任何返回
                 ``Session`` 上下文管理器的 callable)。为 None 时跳过 Postgres 写入。
+            max_chunk_chars: 嵌入字符契约上限(#45)。非空时切分后超限 chunk
+                硬切为 ≤limit 片;None(默认)保持旧行为,调用方(scripts/sync.py)
+                传 ``settings.embedder_max_length`` 与服务端判定对齐。
         """
         self._embedder = embedder
         self._client = weaviate_client
         self._class_name = class_name
         self._max_tokens = max_tokens
         self._overlap = overlap
+        self._max_chunk_chars = max_chunk_chars
         self._session_factory: sessionmaker[Session] | None = session_factory
         self._collection: Any = None
         # 技术安全第二道防线(Layer 1 内容嗅探):拦截扩展名伪装/无扩展名的
@@ -294,6 +378,8 @@ class IngestionPipeline:
             chunks = chunk_code(doc, self._max_tokens, self._overlap)
         else:
             chunks = chunk_document_semantic(doc, self._max_tokens, self._overlap)
+        # #45:嵌入字符契约对齐(超限 chunk 硬切,防 413 整文档必败)
+        chunks = _enforce_char_limit(chunks, self._max_chunk_chars)
         if not chunks:
             logger.info("文档 %s 切分为空,跳过灌入", doc.source_id)
             return 0
@@ -380,7 +466,15 @@ class IngestionPipeline:
                     )
 
         # Postgres doc 级 upsert(若提供 session)
-        if self._session_factory is not None:
+        if success_count == 0 and len(chunks) > 0:
+            # #45:零成功不写账本(同批量路径)—— 保留既有行/不留 0 行,
+            # 失败缺口对自愈与诊断保持可见。
+            logger.warning(
+                "doc=%s 0/%d chunk 成功,跳过账本 upsert(保留可诊断缺口)",
+                doc.source_id,
+                len(chunks),
+            )
+        elif self._session_factory is not None:
             try:
                 self._upsert_postgres(doc, success_count)
             except Exception as exc:  # noqa: BLE001 - Postgres 失败不影响 Weaviate
@@ -484,7 +578,7 @@ class IngestionPipeline:
                 重试幂等:source_id 路径 upsert + 确定性 UUID 覆盖写)。
         """
         results: dict[str, int] = {}
-        failed: list[str] = []
+        failed: list[DocFailure] = []
         batch_size = 64  # 每批 64 doc:控制内存,跨 doc 累积满 batch_size embed
         total = len(docs)
         for start in range(0, len(docs), batch_size):
@@ -512,18 +606,46 @@ class IngestionPipeline:
                     except Exception as exc2:  # noqa: BLE001
                         logger.error("索引失败 %s: %s", doc.source_id, exc2)
                         results[doc.source_id] = 0
-                        failed.append(doc.source_id)
+                        error_class, retryable = classify_ingest_failure(
+                            str(exc2), default_class="retryable_transport"
+                        )
+                        # 整批失败后的逐 doc 回退在 embed/write 相位重试整条管道;
+                        # 相位按异常证据映射(嵌入契约类=EMBED,其余=INDEX)。
+                        stage = (
+                            STAGE_EMBED
+                            if error_class
+                            in ("permanent_data_too_large", "permanent_config", "retryable_transport")
+                            else STAGE_INDEX
+                        )
+                        failed.append(
+                            DocFailure(
+                                source_id=doc.source_id,
+                                stage=stage,
+                                error_class=error_class,
+                                retryable=retryable,
+                                detail=str(exc2)[:200],
+                            )
+                        )
         if failed:
-            preview = ", ".join(failed[:10])
-            if len(failed) > 10:
-                preview += ", ..."
-            raise RuntimeError(
-                f"{len(failed)} 个文档灌入失败(可能 embed/写库故障,需重试): {preview}"
+            lines = [
+                (
+                    f"{f.source_id} stage={f.stage} class={f.error_class} "
+                    f"retryable={str(f.retryable).lower()} detail={f.detail[:120]}"
+                )
+                for f in failed[:10]
+            ]
+            more = len(failed) - len(lines)
+            suffix = f"; ...(另 {more} 个文档)" if more > 0 else ""
+            raise IngestFailures(
+                f"{len(failed)} 个文档灌入失败(逐文档明细含 stage/分类/可重试性): "
+                + " | ".join(lines)
+                + suffix,
+                failures=failed,
             )
         return results
 
     def _ingest_doc_batch(
-        self, docs: list[RawDocument], failed: list[str] | None = None
+        self, docs: list[RawDocument], failed: list[DocFailure] | None = None
     ) -> dict[str, int]:
         """跨 doc 批处理:chunk → 批量 embed → 按 doc 批量写 Weaviate + Postgres。
 
@@ -532,9 +654,9 @@ class IngestionPipeline:
 
         Args:
             docs: 待灌入的原始文档列表。
-            failed: 失败 doc 的 source_id 收集列表(可选)。提供时,批内
-                切分 / 逐 doc 回退失败的 doc 会被追加进去,供 ``ingest_all``
-                统一 raise;缺省时保持旧的静默计 0 行为(直接调用方兼容)。
+            failed: 失败文档的结构化记录收集列表(可选,:class:`DocFailure`)。
+                提供时,批内切分 / 逐 doc 回退失败的 doc 会被追加进去,供
+                ``ingest_all`` 统一 raise;缺省时保持旧的静默计 0 行为。
         """
         import weaviate as _wv
 
@@ -554,6 +676,8 @@ class IngestionPipeline:
                     chunks = chunk_code(doc, self._max_tokens, self._overlap)
                 else:
                     chunks = chunk_document_semantic(doc, self._max_tokens, self._overlap)
+                # #45:嵌入字符契约对齐(超限 chunk 硬切,防 413 整文档必败)
+                chunks = _enforce_char_limit(chunks, self._max_chunk_chars)
                 if not chunks:
                     logger.info("文档 %s 切分为空,跳过灌入", doc.source_id)
                     results[doc.source_id] = 0
@@ -563,7 +687,15 @@ class IngestionPipeline:
                 logger.error("索引失败 %s: %s", doc.source_id, str(exc)[:200])
                 results[doc.source_id] = 0
                 if failed is not None:
-                    failed.append(doc.source_id)
+                    failed.append(
+                        DocFailure(
+                            source_id=doc.source_id,
+                            stage=STAGE_CHUNK,
+                            error_class=classify_ingest_failure(str(exc))[0],
+                            retryable=True,
+                            detail=str(exc)[:200],
+                        )
+                    )
         if not doc_chunks:
             return results
 
@@ -645,7 +777,18 @@ class IngestionPipeline:
                         logger.error("索引失败 %s: %s", doc.source_id, exc2)
                         results[doc.source_id] = 0
                         if failed is not None:
-                            failed.append(doc.source_id)
+                            error_class, retryable = classify_ingest_failure(
+                                str(exc2), default_class="retryable_transport"
+                            )
+                            failed.append(
+                                DocFailure(
+                                    source_id=doc.source_id,
+                                    stage=STAGE_EMBED,
+                                    error_class=error_class,
+                                    retryable=retryable,
+                                    detail=str(exc2)[:200],
+                                )
+                            )
                 return results
         if len(all_vectors) != len(all_texts):
             raise RuntimeError(f"embedder 返回 {len(all_vectors)} 向量,期望 {len(all_texts)}")
@@ -715,10 +858,27 @@ class IngestionPipeline:
             success_count = total - n_failed_in_doc
             if failed is not None and n_failed_in_doc > 0:
                 # 写库彻底失败(insert 失败且 replace 也失败)→ 记入 failed,由 ingest_all raise
-                failed.append(doc.source_id)
+                failed.append(
+                    DocFailure(
+                        source_id=doc.source_id,
+                        stage=STAGE_INDEX,
+                        error_class="retryable_write",
+                        retryable=True,
+                        detail=f"{n_failed_in_doc}/{total} chunk 写入 Weaviate 彻底失败(insert+replace)",
+                    )
+                )
             # 旧 chunk 集合上界必须在账本被本次 upsert 覆盖之前读取(P0-A)
             previous_count = self._get_stored_chunk_count(doc.source_id)
-            if self._session_factory is not None:
+            if success_count == 0:
+                # #45:零成功不写账本 —— 既有行保留原 chunk_count(缺口对
+                # verify_source_vectors 自愈可见),首灌失败不留 chunk_count=0
+                # 行(避免把失败伪装成合法空文档,自愈永久失明)。
+                logger.warning(
+                    "doc=%s 0/%d chunk 成功,跳过账本 upsert(保留可诊断缺口)",
+                    doc.source_id,
+                    total,
+                )
+            elif self._session_factory is not None:
                 try:
                     self._upsert_postgres(doc, success_count)
                 except Exception as exc:  # noqa: BLE001
