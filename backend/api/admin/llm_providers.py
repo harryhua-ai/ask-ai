@@ -348,9 +348,29 @@ async def update_provider(
     )
 
 
+def _chain_item_provider(item: object) -> str | None:
+    """路由链元素 → 引用的 provider id(#4)。
+
+    兼容两种持久化形态:新格式 ``{"provider": ...}`` 与旧格式字符串。
+    非 string 的 provider 值一律视为不匹配(防御脏数据)。
+    """
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        value = item.get("provider")
+        return value if isinstance(value, str) else None
+    return None
+
+
 @router.delete("/llm-providers/{provider_id}", status_code=204)
 async def delete_provider(provider_id: str, _: EditorDep, request: Request) -> None:
-    """删除 LLM 供应商(admin / editor)。不存在返回 404。"""
+    """删除 LLM 供应商(admin / editor)。不存在返回 404。
+
+    #4 block-if-referenced:供应商仍被任何路由链引用时返回 409 Conflict,
+    ``detail`` 携带结构化 ``referenced_tasks`` 供前端指名待解除的链路;
+    此路径**零突变** —— 不删供应商、不改任何路由,Admin 须先用既有链路
+    移除控件解除引用后再删除。无级联、无悬空引用、无静默清理。
+    """
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
         provider = await session.execute(
@@ -359,6 +379,20 @@ async def delete_provider(provider_id: str, _: EditorDep, request: Request) -> N
         provider = provider.scalar_one_or_none()
         if provider is None:
             raise HTTPException(status_code=404, detail="供应商不存在")
+        routes = (await session.execute(select(LLMRouting))).scalars().all()
+        referenced = sorted(
+            route.task
+            for route in routes
+            if any(_chain_item_provider(item) == provider_id for item in route.chain)
+        )
+        if referenced:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "供应商仍被路由链引用，请先在「模型流水线」对应链路中移除后再删除",
+                    "referenced_tasks": referenced,
+                },
+            )
         await session.delete(provider)
         await session.commit()
 

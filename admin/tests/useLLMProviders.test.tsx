@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook } from "@testing-library/react";
-import { useReloadProviders, useFetchModels, useUpdateProvider } from "@/hooks/useLLMProviders";
+import { useReloadProviders, useFetchModels, useUpdateProvider, useDeleteProvider } from "@/hooks/useLLMProviders";
 import type { ReactNode } from "react";
 
 const mockFetch = vi.fn();
@@ -65,5 +65,26 @@ describe("useFetchModels", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     const opts = mockFetch.mock.calls[0][1] as RequestInit;
     expect(opts.body).toBe(JSON.stringify({ api_base: "https://new.example.com/v1", api_key: "sk-form" }));
+  });
+});
+
+describe("useDeleteProvider(#4)", () => {
+  it("DELETE /llm-providers/{id}(id 编码)成功后失效 providers+routing 两份缓存", async () => {
+    mockFetch.mockResolvedValueOnce(undefined);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+    const { result } = renderHook(() => useDeleteProvider(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      ),
+    });
+    result.current.mutate("prov/x");
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/llm-providers/prov%2Fx",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["llm-providers"] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["llm-routing"] });
   });
 });

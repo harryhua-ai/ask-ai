@@ -30,9 +30,11 @@ vi.mock("@/lib/api", () => ({
   apiFetch: (path: string, opts?: RequestInit) => mockFetch(path, opts),
   ApiError: class ApiError extends Error {
     status: number;
-    constructor(status: number, message: string) {
+    detail?: unknown;
+    constructor(status: number, message: string, detail?: unknown) {
       super(message);
       this.status = status;
+      this.detail = detail;
     }
   },
 }));
@@ -110,6 +112,102 @@ describe("LLMProviders T27 保存链路", () => {
     );
     await waitFor(() =>
       expect(screen.queryByText("编辑供应商 · deepseek")).not.toBeInTheDocument(),
+    );
+  });
+});
+
+describe("LLMProviders #4 删除链路(block-if-referenced)", () => {
+  function openCredDialog() {
+    renderPage();
+    fireEvent.click(screen.getByText("供应商凭证"));
+  }
+
+  it("删除需显式确认:垃圾桶先进入确认态且未确认前不发请求;确认后 DELETE 恰一次 + 成功 toast", async () => {
+    openCredDialog();
+    fireEvent.click(await screen.findByLabelText("删除 deepseek"));
+    // 未确认:无删除请求
+    expect(
+      mockFetch.mock.calls.some(
+        ([path, opts]) =>
+          path === "/llm-providers/deepseek" &&
+          (opts as RequestInit | undefined)?.method === "DELETE",
+      ),
+    ).toBe(false);
+    fireEvent.click(screen.getByText("确认删除"));
+    await waitFor(() =>
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/llm-providers/deepseek",
+        expect.objectContaining({ method: "DELETE" }),
+      ),
+    );
+    expect(
+      mockFetch.mock.calls.filter(
+        ([path, opts]) =>
+          path === "/llm-providers/deepseek" &&
+          (opts as RequestInit | undefined)?.method === "DELETE",
+      ),
+    ).toHaveLength(1);
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        expect.stringContaining("已删除"),
+      ),
+    );
+  });
+
+  it("取消不发起删除请求", async () => {
+    openCredDialog();
+    fireEvent.click(await screen.findByLabelText("删除 deepseek"));
+    fireEvent.click(screen.getByText("取消"));
+    expect(
+      mockFetch.mock.calls.some(
+        ([path, opts]) =>
+          path === "/llm-providers/deepseek" &&
+          (opts as RequestInit | undefined)?.method === "DELETE",
+      ),
+    ).toBe(false);
+    expect(screen.queryByText("确认删除")).not.toBeInTheDocument();
+  });
+
+  it("409:错误 toast 指名引用任务(结构化 detail),供应商保留在列表", async () => {
+    openCredDialog();
+    fireEvent.click(await screen.findByLabelText("删除 deepseek"));
+    mockFetch.mockImplementationOnce(() => {
+      throw new ApiError(
+        409,
+        "供应商仍被路由链引用，请先在「模型流水线」对应链路中移除后再删除",
+        {
+          message: "供应商仍被路由链引用，请先在「模型流水线」对应链路中移除后再删除",
+          referenced_tasks: ["intent", "generation"],
+        },
+      );
+    });
+    fireEvent.click(screen.getByText("确认删除"));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining("仍被路由链引用"),
+      ),
+    );
+    expect(toast.error).toHaveBeenCalledWith(
+      expect.stringContaining("intent、generation"),
+    );
+    // 后端零突变 → 前端列表仍含该供应商(凭证弹窗保持打开)
+    expect(screen.getByText("deepseek")).toBeInTheDocument();
+  });
+
+  it("普通失败:通用错误 toast(含后端可读原因)", async () => {
+    openCredDialog();
+    fireEvent.click(await screen.findByLabelText("删除 deepseek"));
+    mockFetch.mockImplementationOnce(() => {
+      throw new ApiError(500, "服务器内部错误");
+    });
+    fireEvent.click(screen.getByText("确认删除"));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining("删除失败"),
+      ),
+    );
+    expect(toast.error).toHaveBeenCalledWith(
+      expect.stringContaining("服务器内部错误"),
     );
   });
 });

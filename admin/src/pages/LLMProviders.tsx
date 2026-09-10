@@ -10,6 +10,7 @@ import {
   useUpdateRouting,
   useToggleProvider,
   useCreateProvider,
+  useDeleteProvider,
 } from "@/hooks/useLLMProviders";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,6 +22,7 @@ import { EndpointAuthDialog } from "@/components/EndpointAuthDialog";
 import { ProviderEditDialog } from "@/components/ProviderEditDialog";
 import { AddToTaskDialog } from "@/components/AddToTaskDialog";
 import ModelRuntimeTab from "@/components/ModelRuntimeTab";
+import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { LLMChainItem } from "@/types/api";
 
@@ -66,6 +68,7 @@ export default function LLMProviders() {
   const updateRouting = useUpdateRouting();
   const toggleProvider = useToggleProvider();
   const createProvider = useCreateProvider();
+  const deleteProvider = useDeleteProvider();
 
   const [credOpen, setCredOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
@@ -127,6 +130,27 @@ export default function LLMProviders() {
       setEditId(null);
     } catch (err) {
       toast.error(`保存失败:${err instanceof Error ? err.message : "未知错误"}`);
+    }
+  };
+
+  // #4 block-if-referenced:删除前由弹窗行内确认;409 = 仍被路由链引用,
+  // 后端零突变,指名待解除的链路;其余失败同样显式报错。成功后供应商与
+  // 路由缓存各自失效重取,无整页刷新。
+  const handleDeleteProvider = async (id: string) => {
+    try {
+      await deleteProvider.mutateAsync(id);
+      toast.success(`供应商 ${id} 已删除,点「应用变更」后生效`);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        const tasks =
+          (err.detail as { referenced_tasks?: string[] } | undefined)
+            ?.referenced_tasks?.join("、") ?? "";
+        toast.error(
+          `删除失败:${id} 仍被路由链引用(${tasks}),请先在「模型流水线」对应链路中移除后再删除`,
+        );
+      } else {
+        toast.error(`删除失败:${err instanceof Error ? err.message : "未知错误"}`);
+      }
     }
   };
 
@@ -315,7 +339,7 @@ export default function LLMProviders() {
             setEditId(id);
             setCredOpen(false);
           }}
-          onDelete={() => {}}
+          onDelete={handleDeleteProvider}
           onToggle={(id, enabled) => toggleProvider.mutate({ id, enabled })}
           onAdd={(id) => {
             createProvider.mutate(

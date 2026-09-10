@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { ProviderCredentialDialog } from "@/components/ProviderCredentialDialog";
 
 afterEach(cleanup);
@@ -102,5 +102,61 @@ describe("ProviderCredentialDialog", () => {
     fireEvent.click(screen.getByText("新增供应商"));
     fireEvent.click(screen.getByText("确认"));
     expect(onAdd).not.toHaveBeenCalled();
+  });
+});
+
+describe("#4 删除两步确认(block-if-referenced 前端守卫)", () => {
+  const props = (onDelete: (id: string) => void | Promise<void>) => ({
+    providers: providers as never,
+    onEdit: () => {},
+    onDelete,
+    onToggle: () => {},
+    onAdd: () => {},
+    onClose: () => {},
+  });
+
+  it("点垃圾桶只进入行内确认态,不调用 onDelete、不发请求", () => {
+    const onDelete = vi.fn();
+    render(<ProviderCredentialDialog {...props(onDelete)} />);
+    fireEvent.click(screen.getByLabelText("删除 deepseek"));
+    expect(screen.getByText("删除 deepseek？")).toBeInTheDocument();
+    expect(onDelete).not.toHaveBeenCalled();
+  });
+
+  it("取消退出确认态且不调用 onDelete", () => {
+    const onDelete = vi.fn();
+    render(<ProviderCredentialDialog {...props(onDelete)} />);
+    fireEvent.click(screen.getByLabelText("删除 moonshot"));
+    fireEvent.click(screen.getByText("取消"));
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(screen.queryByText("确认删除")).not.toBeInTheDocument();
+    // 垃圾桶恢复可再点
+    expect(screen.getByLabelText("删除 moonshot")).toBeInTheDocument();
+  });
+
+  it("确认删除恰调用一次 onDelete 且只带该行 id", async () => {
+    const onDelete = vi.fn().mockResolvedValue(undefined);
+    render(<ProviderCredentialDialog {...props(onDelete)} />);
+    fireEvent.click(screen.getByLabelText("删除 deepseek"));
+    fireEvent.click(screen.getByText("确认删除"));
+    await waitFor(() => expect(onDelete).toHaveBeenCalledTimes(1));
+    expect(onDelete).toHaveBeenCalledWith("deepseek");
+    // 完成后退出确认态
+    await waitFor(() =>
+      expect(screen.queryByText("确认删除")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("确认请求进行中按钮禁用,其余行垃圾桶不受影响", () => {
+    const onDelete = () => new Promise<void>(() => {});
+    render(<ProviderCredentialDialog {...props(onDelete)} />);
+    fireEvent.click(screen.getByLabelText("删除 deepseek"));
+    fireEvent.click(screen.getByText("确认删除"));
+    // 请求进行中:按钮切换为「删除中...」且禁用
+    const pendingBtn = screen.getByText("删除中...").closest("button") as HTMLButtonElement;
+    expect(pendingBtn.disabled).toBe(true);
+    expect((screen.getByText("取消").closest("button") as HTMLButtonElement).disabled).toBe(true);
+    // 另一行的垃圾桶仍是普通按钮(未进入确认态)
+    expect(screen.getByLabelText("删除 moonshot")).toBeInTheDocument();
   });
 });

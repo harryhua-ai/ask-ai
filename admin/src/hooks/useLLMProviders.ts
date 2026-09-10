@@ -42,6 +42,21 @@ export function useToggleProvider() {
   });
 }
 
+/** #4:删除供应商凭证 —— block-if-referenced(被路由链引用时后端 409,零突变)。 */
+export function useDeleteProvider() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<void>(`/llm-providers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    onSuccess: () => {
+      // 供应商与路由链是两份查询缓存;删除后两者都可能变化(链内引用由
+      // 后端保证不为悬空 —— 409 会先行拒绝),一并失效走重取。
+      qc.invalidateQueries({ queryKey: ["llm-providers"] });
+      qc.invalidateQueries({ queryKey: ["llm-routing"] });
+    },
+  });
+}
+
 export function useTestProvider() {
   return useMutation({
     mutationFn: (id: string) =>

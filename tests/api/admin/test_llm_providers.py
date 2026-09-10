@@ -40,6 +40,7 @@ _TEST_PROV_ID_5 = "test-prov-conn"
 _TEST_PROV_ID_6 = "test-prov-patch-no-key"
 _TEST_PROV_ID_7 = "test-prov-patch-masked"
 _TEST_TASK = "test-task"
+_TEST_PROV_ID_REF = "test-prov-del-ref"
 
 
 @pytest_asyncio.fixture(loop_scope="session")
@@ -69,7 +70,9 @@ async def auth_headers():
         await session.execute(
             delete(LLMProviderModel).where(LLMProviderModel.id.like(f"{_TEST_PROV_PREFIX}%"))
         )
-        await session.execute(delete(LLMRouting).where(LLMRouting.task == _TEST_TASK))
+        # #4:路由清理放宽为 test- 前缀,覆盖引用测试自建的链路任务
+        # (迁移链路 generation/intent/query_decomposition 等均不以 test- 开头,不受影响)
+        await session.execute(delete(LLMRouting).where(LLMRouting.task.like("test-%")))
         await session.execute(User.__table__.delete().where(User.id == user_id))
         await session.commit()
 
@@ -1073,3 +1076,92 @@ async def test_p1_reload_skips_provider_after_authorization_revoked(auth_headers
         del app.state.llm
         await _t27_del_provider("t27-p1-reload")
         await _p1_cleanup_hosts()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_delete_provider_referenced_409_zero_mutation(auth_headers):
+    """#4 block-if-referenced:被路由链引用的供应商删除返回 409 且零突变。
+
+    - 409 detail 携带结构化 referenced_tasks(对象格式 + 旧字符串格式两种引用都识别);
+    - 409 后供应商仍在、两条路由链语义级不变;
+    - 无引用的其他供应商删除不受影响(204);
+    - 解除引用后可正常删除(204),再删 404(既有语义保持)。
+    """
+    other_id = f"{_TEST_PROV_PREFIX}-del-other"
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for pid in (_TEST_PROV_ID_REF, other_id):
+            resp = await client.post(
+                "/api/admin/llm-providers",
+                json={
+                    "id": pid,
+                    "type": "openai_compatible",
+                    "config": {
+                        "api_base": "https://delete.example.com/v1",
+                        "api_key": "sk-ref",
+                        "model": "m-ref",
+                    },
+                },
+                headers=auth_headers,
+            )
+            assert resp.status_code == 201
+
+        # 两条引用链:对象格式(API 写入)+ 旧字符串格式(直插 DB,写侧 schema 已不接受)
+        ref_task_a = "test-task-delref"
+        ref_task_b = "test-task-delref-str"
+        chain_a = [
+            {"provider": _TEST_PROV_ID_REF, "model": "m1"},
+            {"provider": "some-other-provider", "model": None},
+        ]
+        for task, chain in ((ref_task_a, chain_a),):
+            resp = await client.put(
+                f"/api/admin/llm-routing/{task}",
+                json={"chain": chain},
+                headers=auth_headers,
+            )
+            assert resp.status_code == 200
+        factory = app.state.session_factory
+        async with factory() as session:
+            session.add(LLMRouting(task=ref_task_b, chain=[_TEST_PROV_ID_REF]))
+            await session.commit()
+
+        # 引用中删除 → 409,结构化 detail 指名全部引用任务(排序稳定)
+        del_resp = await client.delete(
+            f"/api/admin/llm-providers/{_TEST_PROV_ID_REF}", headers=auth_headers
+        )
+        assert del_resp.status_code == 409
+        detail = del_resp.json()["detail"]
+        assert detail["referenced_tasks"] == [ref_task_a, ref_task_b]
+        assert detail["message"]
+
+        # 零突变:供应商仍在;两条链语义级不变
+        list_resp = await client.get("/api/admin/llm-providers", headers=auth_headers)
+        assert _TEST_PROV_ID_REF in [p["id"] for p in list_resp.json()]
+        routing_resp = await client.get("/api/admin/llm-routing", headers=auth_headers)
+        routing = {r["task"]: r["chain"] for r in routing_resp.json()}
+        assert routing[ref_task_a] == chain_a
+        assert routing[ref_task_b] == [_TEST_PROV_ID_REF]
+
+        # 无引用的其他供应商删除不受影响
+        other_del = await client.delete(
+            f"/api/admin/llm-providers/{other_id}", headers=auth_headers
+        )
+        assert other_del.status_code == 204
+
+        # 解除引用后可正常删除;再删 404(既有语义)
+        await client.put(
+            f"/api/admin/llm-routing/{ref_task_a}",
+            json={"chain": [{"provider": "some-other-provider", "model": None}]},
+            headers=auth_headers,
+        )
+        await client.put(
+            f"/api/admin/llm-routing/{ref_task_b}", json={"chain": []}, headers=auth_headers
+        )
+        final_del = await client.delete(
+            f"/api/admin/llm-providers/{_TEST_PROV_ID_REF}", headers=auth_headers
+        )
+        assert final_del.status_code == 204
+        gone = await client.delete(
+            f"/api/admin/llm-providers/{_TEST_PROV_ID_REF}", headers=auth_headers
+        )
+        assert gone.status_code == 404

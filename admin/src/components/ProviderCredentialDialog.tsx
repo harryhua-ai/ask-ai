@@ -14,7 +14,8 @@ import type { LLMProvider } from "@/types/api";
 interface Props {
   providers: LLMProvider[];
   onEdit: (id: string) => void;
-  onDelete: (id: string) => void;
+  /** #4:删除必须显式确认后才发起;返回 Promise 时确认钮在完成前保持禁用。 */
+  onDelete: (id: string) => void | Promise<void>;
   onToggle: (id: string, enabled: boolean) => void;
   onAdd: (id: string) => void;
   onClose: () => void;
@@ -32,6 +33,21 @@ export function ProviderCredentialDialog({
   // 会被拦截返回 null,导致添加静默失效(C 修复)。
   const [adding, setAdding] = useState(false);
   const [newId, setNewId] = useState("");
+  // #4:删除两步确认 —— 点垃圾桶只进入行内确认态,不发起请求;
+  // window.confirm/prompt 同样会被嵌入式浏览器拦截,故用 UI 内确认。
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const confirmDelete = async () => {
+    if (!confirmDeleteId || deleting) return;
+    setDeleting(true);
+    try {
+      await onDelete(confirmDeleteId);
+    } finally {
+      setDeleting(false);
+      setConfirmDeleteId(null);
+    }
+  };
 
   const confirmAdd = () => {
     const id = newId.trim();
@@ -88,14 +104,40 @@ export function ProviderCredentialDialog({
                   <Power className="mr-1 h-3 w-3" />
                   {p.enabled ? "停用" : "启用"}
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => onDelete(p.id)}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
+                {confirmDeleteId === p.id ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-medium text-destructive">
+                      删除 {p.id}？
+                    </span>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={deleting}
+                      onClick={confirmDelete}
+                    >
+                      {deleting ? "删除中..." : "确认删除"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={deleting}
+                      onClick={() => setConfirmDeleteId(null)}
+                    >
+                      取消
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    aria-label={`删除 ${p.id}`}
+                    title={`删除 ${p.id}`}
+                    onClick={() => setConfirmDeleteId(p.id)}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                )}
               </div>
             );
           })}

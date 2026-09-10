@@ -29,7 +29,15 @@ export function formatApiDetail(detail: unknown): string {
 }
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  /**
+   * #4:保留后端 detail 原始结构(如 409 的 {message, referenced_tasks}),
+   * 供调用方做结构化分支;message 仍是 formatApiDetail 的可读文本。
+   */
+  constructor(
+    public status: number,
+    message: string,
+    public detail?: unknown,
+  ) {
     super(message);
     this.name = "ApiError";
   }
@@ -68,7 +76,7 @@ export async function apiFetch<T>(
       detail = body.detail || detail;
     } catch { /* ignore parse error */ }
     // T27:FastAPI 校验错误(422)的 detail 是 [{loc,msg}] 数组,扁平化为可读文本
-    throw new ApiError(resp.status, formatApiDetail(detail));
+    throw new ApiError(resp.status, formatApiDetail(detail), detail);
   }
   if (resp.status === 204) return undefined as T;
   return resp.json() as Promise<T>;

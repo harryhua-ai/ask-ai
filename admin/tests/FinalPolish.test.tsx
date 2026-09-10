@@ -50,6 +50,7 @@ vi.mock("@/hooks/useLLMProviders", () => ({
   useUpdateRouting: () => ({ mutate: vi.fn(), isPending: false }),
   useToggleProvider: () => ({ mutate: vi.fn(), isPending: false }),
   useCreateProvider: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteProvider: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 vi.mock("@/hooks/useConversations", () => ({
