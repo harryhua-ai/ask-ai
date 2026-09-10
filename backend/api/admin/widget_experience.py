@@ -35,6 +35,7 @@ from backend.services.widget_experience import (
     ENTRY_MODES,
     LAUNCHER_BRANDS,
     LAUNCHER_MOTIONS,
+    LAUNCHER_PRESENTATIONS,
     LAUNCHER_SIZES,
     PROACTIVE_ELIGIBLE_ACTION_STATES,
     PROACTIVE_TIMINGS,
@@ -67,6 +68,8 @@ class ExperienceUpdate(BaseModel):
     chat_accent_color: str | None = None
     chat_size: str | None = None
     greeting_override: str | None = None
+    # V2.3 矫正:launcher 呈现方式(pill=品牌胶囊 / icon=紧凑图标)
+    launcher_presentation: str | None = None
     # 显式清除标记(区分「不修改」与「清除为 NULL」)
     clear_launcher_color: bool = False
     clear_chat_accent_color: bool = False
@@ -101,6 +104,7 @@ def _validate_experience(body: ExperienceUpdate) -> None:
         (body.launcher_motion, LAUNCHER_MOTIONS, "launcher_motion"),
         (body.launcher_size, LAUNCHER_SIZES, "launcher_size"),
         (body.launcher_brand, LAUNCHER_BRANDS, "launcher_brand"),
+        (body.launcher_presentation, LAUNCHER_PRESENTATIONS, "launcher_presentation"),
         (body.chat_theme, CHAT_THEMES, "chat_theme"),
         (body.chat_size, CHAT_SIZES, "chat_size"),
     ]
@@ -142,6 +146,7 @@ def _serialize_experience(row: SiteExperience) -> dict[str, Any]:
         "chat_accent_color": row.chat_accent_color,
         "chat_size": row.chat_size,
         "greeting_override": row.greeting_override,
+        "launcher_presentation": getattr(row, "launcher_presentation", None),
     }
 
 
@@ -220,6 +225,7 @@ async def update_widget_experience(
             "launcher_motion",
             "launcher_size",
             "launcher_brand",
+            "launcher_presentation",
             "chat_theme",
             "chat_size",
         ):

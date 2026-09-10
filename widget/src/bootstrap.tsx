@@ -31,6 +31,8 @@ declare global {
       launcherIcon?: string;
       launcherShape?: string;
       launcherTheme?: string;
+      /** V2.3 矫正:呈现方式覆写(pill|icon;Admin 预览与高级嵌入通道) */
+      launcherPresentation?: string;
       /** @deprecated REV0 遗留(data-launcher-style);退役为 current */
       launcherStyle?: string;
       /** I-UX-001:体验覆写(entry/proactive/launcher 动效尺寸品牌/聊天窗主题) */
@@ -61,6 +63,7 @@ type ConfigOverrides = {
   launcherIcon?: string;
   launcherShape?: string;
   launcherTheme?: string;
+  launcherPresentation?: string;
   launcherStyle?: string;
   entryMode?: string;
   proactive?: string;
@@ -89,6 +92,7 @@ function readDataset(el: HTMLElement | null | undefined): ConfigOverrides {
     launcherIcon: d.launcherIcon || undefined,
     launcherShape: d.launcherShape || undefined,
     launcherTheme: d.launcherTheme || undefined,
+    launcherPresentation: d.launcherPresentation || undefined,
     launcherStyle: d.launcherStyle || undefined,
     entryMode: d.entryMode || undefined,
     proactive: d.proactive || undefined,
@@ -143,6 +147,11 @@ export function resolveConfig(
       fromScript.launcherShape ?? fromPreset.launcherShape ?? fromGlobal.launcherShape ?? undefined,
     launcherTheme:
       fromScript.launcherTheme ?? fromPreset.launcherTheme ?? fromGlobal.launcherTheme ?? undefined,
+    launcherPresentation:
+      fromScript.launcherPresentation ??
+      fromPreset.launcherPresentation ??
+      fromGlobal.launcherPresentation ??
+      undefined,
     // @deprecated REV0 遗留通道:仅当规范属性缺位时才生效(App 侧退役为 current)
     launcherStyle:
       fromScript.launcherStyle ?? fromPreset.launcherStyle ?? fromGlobal.launcherStyle ?? undefined,

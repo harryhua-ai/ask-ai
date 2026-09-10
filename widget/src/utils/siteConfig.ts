@@ -24,8 +24,11 @@ export function stripLauncherAppearance(
     ...cfg,
     launcher_icon: undefined,
     launcher_shape: undefined,
-    launcher_style: undefined,
     launcher_theme: undefined,
+    launcher_style: undefined,
+    // V2.3 矫正:呈现方式同属外观维度 —— 回退外观已可见后迟到的
+    // pill/icon 切换同样构成二次闪变,一并剥离(保持回退外观稳定)。
+    launcher_presentation: undefined,
   };
 }
 

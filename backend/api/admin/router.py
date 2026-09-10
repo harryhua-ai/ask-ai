@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from backend.api.admin.analytics import router as analytics_router
+from backend.api.admin.authorized_websites import router as authorized_websites_router
 from backend.api.admin.answer_overrides import router as answer_overrides_router
 from backend.api.admin.attachments import router as attachments_router
 from backend.api.admin.auth import router as auth_router
@@ -41,4 +42,5 @@ admin_router.include_router(business_router)
 admin_router.include_router(system_router)
 admin_router.include_router(widget_appearance_router)
 admin_router.include_router(widget_experience_router)
+admin_router.include_router(authorized_websites_router)
 admin_router.include_router(model_runtime_router)

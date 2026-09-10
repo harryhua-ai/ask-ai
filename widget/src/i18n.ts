@@ -30,6 +30,8 @@ export interface UiStrings {
   genericGreeting: string;
   /** Admin 预览模式的确定性本地回显(预览不产生真实 /ask 流量) */
   previewNotice: string;
+  /** #40:等待首个 token 的真实状态文案(✦ 品牌星点;禁三点/进度/伪阶段) */
+  preparingAnswer: string;
 }
 
 const EN: UiStrings = {
@@ -49,6 +51,7 @@ const EN: UiStrings = {
   genericGreeting: "How can I help?",
   previewNotice:
     "Preview mode: this exchange is rendered by the Admin live preview — no real request was sent.",
+  preparingAnswer: "Preparing an answer…",
 };
 
 const ZH: UiStrings = {
@@ -69,6 +72,7 @@ const ZH: UiStrings = {
   trustedActions: "推荐操作",
   genericGreeting: "有什么可以帮你?",
   previewNotice: "预览模式:本次对话由 Admin 实时预览渲染,未发送真实请求。",
+  preparingAnswer: "正在准备答案…",
 };
 
 export function uiStrings(lang: "en" | "zh"): UiStrings {

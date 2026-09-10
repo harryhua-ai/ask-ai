@@ -7,10 +7,12 @@ interface Props {
   isStreaming: boolean;
   apiUrl: string;
   conversationId: string | null;
+  /** #40:等待首个 token 的真实状态文案(UI 语言;「✦ + 文案」,禁三点/伪进度) */
+  preparingLabel: string;
   onFeedback: (msgId: string, feedback: "up" | "down") => void;
 }
 
-export function MessageBubble({ message, isStreaming, onFeedback }: Props) {
+export function MessageBubble({ message, isStreaming, preparingLabel, onFeedback }: Props) {
   const [copied, setCopied] = useState(false);
   const isUser = message.type === "user";
 
@@ -36,13 +38,19 @@ export function MessageBubble({ message, isStreaming, onFeedback }: Props) {
         </div>
       )}
       {!isUser && isStreaming && !message.content ? (
-        <div className="ask-ai-typing">
-          <span className="ask-ai-typing-dot" />
-          <span className="ask-ai-typing-dot" />
-          <span className="ask-ai-typing-dot" />
+        // #40 等待态:✦ Preparing an answer…(品牌星点 restrained 呼吸;
+        // 首个真实 token 到达即原位让位给答案内容,无重复指示器)
+        <div className="ask-ai-preparing" role="status">
+          <span className="ask-ai-preparing-spark" aria-hidden="true">
+            ✦
+          </span>
+          <span className="ask-ai-preparing-text">{preparingLabel}</span>
         </div>
       ) : (
-        <div dangerouslySetInnerHTML={{ __html: renderMarkdownSafe(message.content, message.sources) }} />
+        <div
+          className={isUser ? undefined : "ask-ai-answer-body"}
+          dangerouslySetInnerHTML={{ __html: renderMarkdownSafe(message.content, message.sources) }}
+        />
       )}
       {!isUser && message.content && !isStreaming && (
         <div className="ask-ai-feedback">

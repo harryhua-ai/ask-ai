@@ -25,7 +25,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.db.models import SiteExperience
-from backend.services.widget_experience import DEFAULT_NEW_SITE_ENTRY_MODE
+from backend.services.widget_experience import (
+    DEFAULT_LAUNCHER_PRESENTATION,
+    DEFAULT_NEW_SITE_ENTRY_MODE,
+    normalize_launcher_presentation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +137,8 @@ class ResolvedSite:
     chat_accent_color: str | None = None
     chat_size: str | None = None
     greeting_override: str | None = None
+    # V2.3 矫正:launcher 呈现方式(pill|icon;None = 未配置 = legacy icon)
+    launcher_presentation: str | None = None
 
     def localized_welcome(self, language: str | None) -> str | None:
         """按请求语言取欢迎语;无变体或缺省回落站点默认(语言独立于站点身份)。"""
@@ -169,6 +175,10 @@ def normalize_origin(raw: str | None) -> str | None:
     scheme = (parsed.scheme or "").lower()
     host = (parsed.hostname or "").lower()
     if scheme not in _DEFAULT_PORTS or not host:
+        return None
+    if "*" in host:
+        # I-UX-001 矫正(#6):通配符授权一律拒绝(fail closed;
+        # urlparse 对 ``https://*.host`` 不报错,须显式拦截)
         return None
     port = parsed.port
     if port is not None and port != _DEFAULT_PORTS[scheme]:
@@ -252,6 +262,9 @@ async def resolve_site(
         chat_accent_color=getattr(row, "chat_accent_color", None),
         chat_size=getattr(row, "chat_size", None),
         greeting_override=getattr(row, "greeting_override", None),
+        launcher_presentation=normalize_launcher_presentation(
+            getattr(row, "launcher_presentation", None)
+        ),
     )
 
 
@@ -272,7 +285,15 @@ async def seed_default_sites(
 ) -> int:
     """把 YAML 站点配置幂等 upsert 进 site_experiences 表。
 
-    YAML 为权威:已存在的 site_id 按 YAML 更新配置字段(ops 改 YAML + 重启生效);
+    权威域划分(I-UX-001 矫正,#6):
+    - YAML 权威 = 站点身份与运营内容列(display_name / starters / welcome /
+      welcome_i18n / starters_i18n / enabled)——ops 改 YAML + 重启生效;
+    - **Admin 权威 = ``allowed_origins``(Authorized Websites)**:seed 只在
+      **新建行**时写入 YAML origins 作为初始授权;既有行的 origins 由 Admin
+      API 管理,重启/重seed 绝不覆写(否则 Admin 编辑会被重启静默回滚);
+    - Admin 权威 experience 列(entry_mode / launcher_* / chat_* / greeting /
+      launcher_presentation)seed 绝不覆写;仅**新建行**缺省 mini_entry +
+      pill(YAML 可显式指定)。
     返回 seeded 站点数(当前 V1 = 3)。
     """
     sites = load_sites_config(config_path)
@@ -285,7 +306,8 @@ async def seed_default_sites(
                 row = SiteExperience(site_id=site_id)
                 session.add(row)
             row.display_name = str(item.get("display_name") or site_id)
-            row.allowed_origins = [str(o) for o in (item.get("allowed_origins") or [])]
+            if row_was_new:
+                row.allowed_origins = [str(o) for o in (item.get("allowed_origins") or [])]
             row.starters = [str(s) for s in (item.get("starters") or [])]
             row.welcome = item.get("welcome") or None
             row.language = item.get("language") or None
@@ -293,10 +315,13 @@ async def seed_default_sites(
             row.starters_i18n = dict(item["starters_i18n"]) if item.get("starters_i18n") else None
             row.enabled = bool(item.get("enabled", True))
             # I-UX-001 迁移契约:experience 列是 Admin 持久域,seed 绝不覆写
-            # (既有站点保持 NULL = legacy 行为);仅**新建行**缺省 mini_entry
-            # (新站点默认 C),YAML 可为新站点显式指定 entry_mode。
+            # (既有站点保持 NULL = legacy 行为);仅**新建行**缺省 mini_entry +
+            # pill(V2.3),YAML 可为新站点显式指定。
             if row_was_new:
                 row.entry_mode = str(item.get("entry_mode") or DEFAULT_NEW_SITE_ENTRY_MODE)
+                row.launcher_presentation = normalize_launcher_presentation(
+                    item.get("launcher_presentation")
+                ) or DEFAULT_LAUNCHER_PRESENTATION
         await session.commit()
     logger.info("站点体验配置已同步(%d 个站点)", len(sites))
     return len(sites)

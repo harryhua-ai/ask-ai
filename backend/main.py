@@ -27,12 +27,12 @@ import uvicorn
 import weaviate
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # 导入 connector 实现以触发 @ConnectorRegistry.register
@@ -505,12 +505,129 @@ _cors = [
     ).split(",")
     if o.strip()
 ]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
-)
+
+
+class DynamicCORSMiddleware:
+    """动态 CORS 执行层(I-UX-001 矫正,Issue #6 授权调和)。
+
+    取代「进程启动时一次性构建静态 allow_origins」的旧 CORSMiddleware:
+    允许集合 = env ``CORS_ALLOW_ORIGINS``(本地开发/Admin 工具,不变)∪
+    DB ``site_experiences.allowed_origins``(Authorized Websites 唯一持久
+    权威)。Admin 变更 origins 后经 TTL 缓存(≤5s)收敛到 CORS 执行层,
+    **无需重建镜像/重新部署** —— 浏览器执行层与服务端 ``resolve_site``
+    授权消费同一权威,不会静默分叉。
+
+    安全边界不变:
+    - CORS 仅为浏览器执行层;服务端站点授权仍由 /api/ask 与 site-config 的
+      ``resolve_site`` 精确 origin 校验独立执行(fail closed);
+    - DB 读取失败时仅回落 env 静态集合并记录日志(可用性优先;安全不受影响,
+      因为服务端授权独立 fail closed);
+    - 非 CORS 请求零触碰;preflight(OPTIONS + Access-Control-Request-Method)
+      本层直接应答,语义与旧 CORSMiddleware 一致(GET/POST + Content-Type)。
+    """
+
+    _CACHE_TTL_SECONDS = 5.0
+    _PREFLIGHT_MAX_AGE = "600"
+
+    def __init__(self, app, static_origins: list[str]):
+        from backend.services.site_experiences import normalize_origin
+
+        self.app = app
+        self._normalize_origin = normalize_origin
+        self._static: set[str] = {o for o in (normalize_origin(x) for x in static_origins) if o}
+        self._cached: set[str] | None = None
+        self._cached_at: float = 0.0
+
+    async def _db_origins(self, app) -> set[str]:
+        import time
+
+        now = time.monotonic()
+        if self._cached is not None and (now - self._cached_at) < self._CACHE_TTL_SECONDS:
+            return self._cached
+        origins: set[str] = set()
+        try:
+            from sqlalchemy import select
+
+            from backend.db.models import SiteExperience
+
+            factory = getattr(app.state, "session_factory", None)
+            if factory is not None:
+                async with factory() as session:
+                    rows = (
+                        (
+                            await session.execute(
+                                select(SiteExperience.allowed_origins).where(
+                                    SiteExperience.enabled.is_(True)
+                                )
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                for item in rows:
+                    for origin in item or []:
+                        normalized = self._normalize_origin(origin)
+                        if normalized:
+                            origins.add(normalized)
+        except Exception:
+            logger.exception("动态 CORS:读取 DB 授权 origins 失败,回落 env 静态集合")
+        else:
+            self._cached = origins
+            self._cached_at = now
+        return origins
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        app = scope.get("app")
+        headers = Headers(scope=scope)
+        origin = headers.get("origin")
+        if not origin:
+            await self.app(scope, receive, send)
+            return
+        allowed = self._static | await self._db_origins(app)
+        normalized = self._normalize_origin(origin)
+        if normalized is None or normalized not in allowed:
+            # 非白名单 origin:不加 CORS 头(浏览器拦截);服务端授权独立裁决
+            await self.app(scope, receive, send)
+            return
+
+        if scope["method"] == "OPTIONS" and headers.get("access-control-request-method"):
+            await self._respond_preflight(send, origin)
+            return
+
+        async def send_with_cors(message):
+            if message["type"] == "http.response.start":
+                cors_headers = [
+                    (b"access-control-allow-origin", origin.encode("latin-1")),
+                    (b"vary", b"Origin"),
+                ]
+                message = {**message, "headers": list(message.get("headers", [])) + cors_headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_cors)
+
+    async def _respond_preflight(self, send, origin: str):
+        headers = [
+            (b"access-control-allow-origin", origin.encode("latin-1")),
+            (b"vary", b"Origin"),
+            (b"access-control-allow-methods", b"GET, POST"),
+            (b"access-control-allow-headers", b"Content-Type"),
+            (b"access-control-max-age", self._PREFLIGHT_MAX_AGE.encode()),
+            (b"content-length", b"0"),
+        ]
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": headers,
+            }
+        )
+        await send({"type": "http.response.body", "body": b""})
+
+
+app.add_middleware(DynamicCORSMiddleware, static_origins=_cors)
 app.include_router(api_router)
 app.include_router(internal_embeddings_router, prefix="/api")
 app.include_router(admin_router)

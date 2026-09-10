@@ -7,7 +7,7 @@
 // - Brand = askai(默认,可发现性)/ match(站点品牌)/ custom(自定义色);
 //   独立于聊天窗主题(冻结 §2.18)。
 
-import type { SiteExperienceConfig, WidgetConfig } from "../types";
+import type { LauncherPresentation, SiteExperienceConfig, WidgetConfig } from "../types";
 
 export type LauncherMotion = "static" | "subtle_glow" | "soft_pulse" | "sparkle";
 export type LauncherSize = "small" | "medium" | "large";
@@ -69,4 +69,25 @@ export function resolveLauncherCustomColor(
 ): string | null {
   const raw = config.launcherColor ?? site?.launcher_color ?? null;
   return raw && /^#[0-9a-fA-F]{6}$/.test(raw.trim()) ? raw.trim() : null;
+}
+
+// ---------------------------------------------------------------------------
+// V2.3 矫正(#39):launcher 呈现方式解析(pill | icon;独立配置维度)
+// ---------------------------------------------------------------------------
+
+export const LAUNCHER_PRESENTATIONS: readonly LauncherPresentation[] = ["pill", "icon"] as const;
+
+/**
+ * 持久/配置值 → 有效呈现方式;NULL/未配置/未知 → undefined(= legacy icon,
+ * 既有站点行为不变;新站点由 seed 置 pill)。解析优先级与其它外观维度一致:
+ * 嵌入覆写 > site-config > 未配置。
+ */
+export function resolveLauncherPresentation(
+  config: Pick<WidgetConfig, "launcherPresentation">,
+  site: Pick<SiteExperienceConfig, "launcher_presentation"> | null,
+): LauncherPresentation | undefined {
+  const raw = config.launcherPresentation ?? site?.launcher_presentation;
+  return (LAUNCHER_PRESENTATIONS as readonly string[]).includes(raw as string)
+    ? (raw as LauncherPresentation)
+    : undefined;
 }
