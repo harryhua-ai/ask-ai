@@ -72,5 +72,10 @@ v1.4.0)已返回澄清式回答。验收 = #32 基线种子判分;若判分不�
 - 变更面:`config/product_taxonomy.yaml`、`backend/product_taxonomy.py`、
   `backend/pipeline/{evidence_planning,evidence_selection,response_strategy}.py`、
   测试 4 文件、本报告;**零新生成 LLM 调用,检索默认参数不变**
-- 验收:待 Role A;以 #32 基线(运行中)种子判分做前后对照
-  (判分完成后补 baseline 工件于 docs/evaluation/benchmark_v1/)。
+- 验收:**基线已测**(docs/evaluation/benchmark_v1/baseline_v1_2026-09-10/,363 runs/0 传输错):
+  基线种子 9/21 PASS —— #26(3/3)#27(6/6)证 INC-3 修复成立;#28/#29/#31 全败且
+  失败模式(false_absence / no_composition / cg-r07 前检索误路由)与候选设计逐一对位。
+  **追加矫正**:依据 cg-r07 判分证据(场景充分却 ~160ms 误路由 clarify),
+  `_UNDERSTANDING_PROMPT` 补场景充分性 guard(区域/规模/约束齐备 → standard,
+  型号不确定在答案内分述)—— 候选内唯一 #26 邻接改动,判分报告为直接证据。
+  回归红线:cg-r03/r04/s01 必须保持 9/9(集成后种子复测核验)。

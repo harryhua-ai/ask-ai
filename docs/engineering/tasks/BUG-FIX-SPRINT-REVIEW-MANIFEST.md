@@ -60,15 +60,16 @@
 | 项 | 值 |
 | --- | --- |
 | 已有资产 | 冻结 121 案例(contracts/corpus/evaluator/scoring 四件套,2026-09-07 冻结)+ 基线(v1.1.2 cdbcad3)+ 复测(v1.2.1 26de2b6)+ taxonomy —— `docs/evaluation/benchmark_v1/` |
-| 本次新增 | **可执行 runner 入库**:`scripts/benchmark_v1/run_benchmark.py`(契约对齐 v1:SSE widget/message 逐字/connect 15s/read 180s/3.5s 间隔);**当前基线测量**:prod v1.4.0(`41278f07`,answer-path 与 main 03e6c57 等价——#47/#4/#21 均不触答案管线)121×3=363 runs,工件落 `docs/evaluation/benchmark_v1/baseline_v1_2026-09-10/`(状态见 §6) |
+| 本次新增 | **可执行 runner 入库**:`scripts/benchmark_v1/run_benchmark.py`;**基线已测完成**:prod v1.4.0(`41278f07`)121×3=363 runs / 0 传输错,工件 `docs/evaluation/baseline_v1_2026-09-10/`→`benchmark_v1/baseline_v1_2026-09-10/`(raw jsonl + run manifest + 种子判分 sq/cg + BASELINE_V1_SUMMARY.md) |
+| 基线结论 | 种子 9/21 PASS:#26(3/3)#27(6/6)INC-3 已修;#28/#29/#31 全败,失败模式(false_absence/no_composition/cg-r07 误路由)与候选矫正逐一对位;追加 1 处 prompt guard(场景充分性),回归红线 cg-r03/r04/s01=9/9 |
 | 种子映射 | #26=cg-r03;#27=cg-r04+cg-s01;#28=cg-r05+sq-026/045/080;#29=cg-r06+sq-073;#31=cg-r07+cg-r09+sq-034/040 |
 | 判分 | EVAL_V1 LLM-assisted judge(先例:v1 复测 judge=executor session subagents);本 sprint 判种子案例 + 抽样对照,全量机械结果先落库 |
 
-## 6. 基线工件状态(随执行更新)
+## 6. 基线工件(已完成)
 
-- 机械跑批:后台执行中(121×3,预计 ~2h);完成后本清单由 sprint 编排会话补齐:
-  - `docs/evaluation/baseline_v1_2026-09-10/` 工件(raw jsonl + run manifest + 种子判分)
-  - 种子判分结论(对 #26–#31 候选的验收对照)
+`docs/evaluation/benchmark_v1/baseline_v1_2026-09-10/`:
+`baseline_results_raw.jsonl`(363 runs)| `run_manifest_v1.json` | `seed_judging_sq.md` |
+`seed_judging_cg.md` | `BASELINE_V1_SUMMARY.md`(基线通过率/失败模式/对候选的验收预测)
 
 ---
 

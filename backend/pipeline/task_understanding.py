@@ -69,7 +69,7 @@ _UNDERSTANDING_PROMPT = """你是智能应答系统的任务理解助手。请�
 
 ## 第一步:交互模式判定(决定路由,先于分类)
 - capability_orientation: 用户在询问**助手本身**——它能做什么/能帮什么忙/服务范围/怎么使用它。中英文语义等价表达都算(如「你会干什么」「你可以帮我什么」「怎么用你」「What can you do?」「How can you help me?」)。这是合法交互,**不是闲聊,也不是 off_topic**。
-- clarification_required: 请求大概率属于产品/商务/支持域(有明确的产品/技术/采购诉求),但缺少继续所需的关键信息(典型:没说产品型号),且对话历史也补不上。此时**绝不猜产品,也绝不当无关处理**。例:「What is included in the box?」(无上下文)→ clarification_required。
+- clarification_required: 请求大概率属于产品/商务/支持域(有明确的产品/技术/采购诉求),但缺少继续所需的关键信息(典型:没说产品型号),且对话历史也补不上。此时**绝不猜产品,也绝不当无关处理**。例:「What is included in the box?」(无上下文)→ clarification_required。**注意**:用户已给出场景/规模/区域/行业/约束等实质信息的选型或方案请求(如「某地区仓库群读表部署该选什么设备」)信息是充分的——应走 standard 作答,不得因未点名型号而判 clarification_required;型号不确定时在答案内按适配性分述即可。
 - off_topic: **仅当有充分证据**表明请求与产品域完全无关:天气、通用闲聊、纯无关技术问题、纯竞品闲聊。**仅缺少产品名称不足以判 off_topic**。
 - standard: 其余正常的产品/商务/支持请求,直接进入检索作答。
 
