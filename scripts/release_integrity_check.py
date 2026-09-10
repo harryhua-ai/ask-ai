@@ -14,17 +14,31 @@
     GITHUB_RELEASE_TAG == TAG      Release 对象 tag_name                    AUTOMATED
     RELEASE_NOTES_NONEMPTY         Release body 非空白                      AUTOMATED
     PRODUCTION_SHA == RELEASE_SHA  GitHub Deployments API environment=
-                                   production 最新记录                      PARTIALLY
-                                   AUTOMATED(记录接口已提供
-                                   scripts/record_production_deployment.py,
-                                   但部署运行簿尚未接入 → 记录缺失时
-                                   fail-closed,绝不放行)
+                                   production 最新记录的 sha(与
+                                   payload.git_sha 互证)                  AUTOMATED
+                                   (记录接口 scripts/record_production_
+                                   deployment.py;运行簿契约:仅在
+                                   update.sh 成功 + /health 运行时身份
+                                   核验之后记录 —— 见 deploy/prod/
+                                   update.sh 头部「部署后证据记录」)
+    PRODUCTION DEPLOYMENT
+        STATUS == success          同一权威记录的 GET /deployments/{id}/
+                                   statuses 最新状态(官方未定义列表排序,
+                                   按 status id 最大选取,免排序假设);
+                                   仅 success 放行 —— 无状态 / queued /
+                                   in_progress / pending / failure /
+                                   error / inactive / 状态源不可用 /
+                                   载荷畸形一律 fail-closed               AUTOMATED
     RUNTIME_ACCEPTANCE_SHA ==
         RELEASE_SHA                deployments/acceptance/<version>.json
                                    (人工验收证据的可审阅 manifest,经 PR
-                                   入库;缺失/非法均 fail-closed)          PARTIALLY
-                                   AUTOMATED(约定已定义,首个 manifest
-                                   待正式验收产生)
+                                   入库;缺失/非法均 fail-closed)          AUTOMATED
+                                   (约定已定义,首个 manifest 待正式验收产生)
+    RUNTIME_ACCEPTANCE_REPORT
+        _PROVENANCE                manifest.report_path 须解析为仓库内被
+                                   git 跟踪的真实文件(仓库相对;绝对/
+                                   穿越/符号链接逃逸/未跟踪/缺失一律
+                                   FAIL)                                 AUTOMATED
 
 证据源**不可用 ≠ 证据不存在**:GitHub API 非 404 错误(鉴权/限流/5xx)按
 COLLECTION ERROR 处理,绝不当作"Release 缺失"放行 —— 与 backend/release.py
@@ -51,7 +65,9 @@ main 上存在"已接受未发版"的代码是合法状态 —— 守卫不挂�
       "git_sha": "<40 位发布 commit>",      # 必填,== release_sha 才算 PASS
       "verified_at": "2026-09-10T...Z",    # 必填(权威验收钟)
       "executor": "...",                   # 必填(执行人/会话标识)
-      "report_path": "docs/...",           # 必填(人类可读报告指针)
+      "report_path": "docs/...",           # 必填,仓库相对路径;须解析为被 git
+                                           # 跟踪的真实文件(绝对/穿越/缺失/
+                                           # 未跟踪 → REPORT_PROVENANCE FAIL)
       "checks": [...]                      # 可选(逐项冒烟结果)
     }
 
@@ -129,6 +145,8 @@ class ReleaseFacts:
     release_fetch_error: str | None = None
     production_deployments: list = field(default_factory=list)
     production_fetch_error: str | None = None
+    production_statuses: list = field(default_factory=list)
+    production_statuses_error: str | None = None
     acceptance_manifest: dict | None = None
     acceptance_manifest_error: str | None = None
 
@@ -217,6 +235,8 @@ def collect_facts(
 
     deployments: list = []
     prod_err = None
+    statuses: list = []
+    statuses_err = None
     if mode in (MODE_CLOSURE, MODE_AUDIT):
         try:
             data = github_get(
@@ -225,6 +245,30 @@ def collect_facts(
             deployments = data if isinstance(data, list) else []
         except CollectionError as exc:
             prod_err = str(exc)
+        # 权威记录的状态史:仅对最新一条记录采集(它才是 closure 的 SHA 权威)。
+        # 404/非列表/网络失败都不当作"无状态" —— 状态证据源一律 fail-closed。
+        if deployments and not isinstance(deployments[0], dict):
+            statuses_err = "最新生产记录畸形(非对象),状态史无从核验"
+        elif deployments and isinstance(deployments[0], dict):
+            dep_id = deployments[0].get("id")
+            if dep_id is None or str(dep_id).strip() == "":
+                statuses_err = "最新生产记录缺 id,状态史无从核验(记录畸形)"
+            else:
+                try:
+                    payload = github_get(
+                        repo, f"/deployments/{dep_id}/statuses?per_page=100"
+                    )
+                    if payload is None:
+                        statuses_err = (
+                            f"GET /deployments/{dep_id}/statuses → 404"
+                            "(部署记录在册而状态源缺失,证据源不一致)"
+                        )
+                    elif isinstance(payload, list):
+                        statuses = payload
+                    else:
+                        statuses_err = "statuses 响应非列表(状态载荷畸形)"
+                except CollectionError as exc:
+                    statuses_err = str(exc)
 
     version = normalize_version(resolved_tag)
     manifest, manifest_err = load_acceptance_manifest(version, acceptance_dir)
@@ -238,6 +282,8 @@ def collect_facts(
         release_fetch_error=release_err,
         production_deployments=deployments,
         production_fetch_error=prod_err,
+        production_statuses=statuses,
+        production_statuses_error=statuses_err,
         acceptance_manifest=manifest,
         acceptance_manifest_error=manifest_err,
     )
@@ -275,7 +321,78 @@ def _release_sha(facts: ReleaseFacts) -> str | None:
     return facts.expected_sha or facts.tag_commit
 
 
-def evaluate(facts: ReleaseFacts, mode: str) -> list[CheckResult]:
+SUCCESS_STATE = "success"
+
+
+def effective_production_status(
+    statuses: list,
+) -> tuple[dict | None, str | None]:
+    """权威记录的 effective/latest 状态。返回 (latest_status, error)。
+
+    官方文档不保证 statuses 列表排序 → 按 status id 最大选取(id 单调递增),
+    免受 API 排序假设影响;id 缺失时退化为 created_at 字典序,再不行保持稳定。
+    空列表 → (None, None)(调用方按"无状态"FAIL);条目非 dict 或无可解析
+    state → (None, 畸形说明)。只有 state 字符串精确等于 success 才算通过。
+    """
+    if not statuses:
+        return None, None
+    entries = [s for s in statuses if isinstance(s, dict) and str(s.get("state") or "").strip()]
+    if not entries:
+        return None, "状态载荷畸形(无任何可解析的 state 字段)"
+
+    def rank(s: dict) -> tuple[int, str]:
+        raw = str(s.get("id") or "").strip()
+        return (int(raw) if raw.isdigit() else 0, str(s.get("created_at") or ""))
+
+    return max(entries, key=rank), None
+
+
+def resolve_report_artifact(
+    report_path: str,
+    repo_root: str,
+    runner: Callable,
+) -> tuple[str, str | None]:
+    """验收报告来源验证:report_path 必须解析为仓库内被 git 跟踪的真实文件。
+
+    fail-closed 矩阵:空值 / 绝对路径 / 词汇穿越(../)/ 符号链接真实路径逃逸
+    仓库边界 / 文件不存在 / 指向目录 / git 不可用(无法核验入库状态)/
+    未被 git 跟踪 —— 全部 FAIL,绝不静默放行。返回 (归一化路径, error)。
+    """
+    raw = (report_path or "").strip()
+    if not raw:
+        return "", "report_path 为空"
+    if raw.startswith("/") or os.path.isabs(raw):
+        return raw, "绝对路径拒绝(须为仓库相对路径)"
+    import posixpath
+
+    norm = posixpath.normpath(raw)
+    if norm in ("", ".", "..") or norm.startswith("../") or norm.startswith("/"):
+        return raw, "路径穿越仓库边界"
+    real_repo = os.path.realpath(repo_root)
+    real_candidate = os.path.realpath(os.path.join(repo_root, norm))
+    if real_candidate != real_repo and not real_candidate.startswith(real_repo + os.sep):
+        return norm, "真实路径解析到仓库边界之外(符号链接逃逸)"
+    if not os.path.isfile(real_candidate):
+        return norm, "指向的仓库证据文件不存在(或不是普通文件)"
+    proc = runner(["git", "-C", repo_root, "ls-files", "--", norm])
+    if proc is None or proc.returncode != 0:
+        return norm, "git 不可用,无法核验证据是否入库(fail-closed)"
+    tracked = {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+    if norm not in tracked:
+        return norm, "证据文件未被 git 跟踪(非入库证据,不构成可审阅记录)"
+    return norm, None
+
+
+def _default_runner() -> Callable:
+    return lambda cmd: subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+
+def evaluate(
+    facts: ReleaseFacts,
+    mode: str,
+    repo_root: str = ".",
+    runner: Callable | None = None,
+) -> list[CheckResult]:
     results: list[CheckResult] = []
     tag = facts.tag
 
@@ -415,7 +532,11 @@ def evaluate(facts: ReleaseFacts, mode: str) -> list[CheckResult]:
                 CheckResult("PRODUCTION_SHA == RELEASE_SHA", FAIL, detail="release SHA 无从锚定")
             )
         else:
-            latest = facts.production_deployments[0]
+            latest = (
+                facts.production_deployments[0]
+                if isinstance(facts.production_deployments[0], dict)
+                else {}
+            )
             prod_sha = normalize_sha(str(latest.get("sha") or ""))
             payload = latest.get("payload") if isinstance(latest.get("payload"), dict) else {}
             payload_sha = normalize_sha(str((payload or {}).get("git_sha") or ""))
@@ -442,6 +563,84 @@ def evaluate(facts: ReleaseFacts, mode: str) -> list[CheckResult]:
                         detail=detail,
                     )
                 )
+
+        # ---- PRODUCTION DEPLOYMENT STATUS == success(adoption 跟进 ①)----
+        # 记录存在 + SHA 一致 ≠ 生产在位:权威记录还必须持有 effective/latest
+        # status=success。无状态/queued/in_progress/pending/failure/error/
+        # inactive/状态源不可用/载荷畸形一律 FAIL,绝不降级为 warning,也绝不
+        # 把"状态源不可用"当作"无状态"或"成功"。status=success 是**已通过
+        # 运行时身份核验的部署**的机器可读镜像 —— 写记录本身不制造生产事实。
+        if facts.production_fetch_error:
+            results.append(
+                CheckResult(
+                    "PRODUCTION DEPLOYMENT STATUS == success",
+                    FAIL,
+                    observed=facts.production_fetch_error,
+                    detail="生产证据源不可用按失败处理,状态无从核验",
+                )
+            )
+        elif not facts.production_deployments:
+            results.append(
+                CheckResult(
+                    "PRODUCTION DEPLOYMENT STATUS == success",
+                    FAIL,
+                    observed="无权威生产记录",
+                    detail="记录缺失时状态无从核验(见 PRODUCTION_SHA 检查)",
+                )
+            )
+        elif facts.production_statuses_error:
+            results.append(
+                CheckResult(
+                    "PRODUCTION DEPLOYMENT STATUS == success",
+                    FAIL,
+                    observed=facts.production_statuses_error,
+                    detail="状态证据源不可用按失败处理,不得当作「无状态」或「成功」",
+                )
+            )
+        else:
+            latest_status, status_err = effective_production_status(facts.production_statuses)
+            if status_err:
+                results.append(
+                    CheckResult(
+                        "PRODUCTION DEPLOYMENT STATUS == success",
+                        FAIL,
+                        observed=status_err,
+                        detail="状态载荷畸形不放行",
+                    )
+                )
+            elif latest_status is None:
+                results.append(
+                    CheckResult(
+                        "PRODUCTION DEPLOYMENT STATUS == success",
+                        FAIL,
+                        observed="权威记录无任何 Deployment Status",
+                        detail="部署存在但从未被确认:记录方须在 update.sh 成功 +"
+                        " /health 身份核验后回写 success 状态",
+                    )
+                )
+            else:
+                state = str(latest_status.get("state") or "").strip()
+                observed = f"state={state} created_at={latest_status.get('created_at', '')}"
+                if state.lower() == SUCCESS_STATE:
+                    results.append(
+                        CheckResult(
+                            "PRODUCTION DEPLOYMENT STATUS == success",
+                            PASS,
+                            observed=observed,
+                            detail="仅 effective/latest status=success 证明部署已被确认",
+                        )
+                    )
+                else:
+                    results.append(
+                        CheckResult(
+                            "PRODUCTION DEPLOYMENT STATUS == success",
+                            FAIL,
+                            expected="success",
+                            observed=observed,
+                            detail="非 success 状态(queued/in_progress/pending/"
+                            "failure/error/inactive)不证明生产在位",
+                        )
+                    )
 
         if facts.acceptance_manifest_error:
             results.append(
@@ -482,6 +681,42 @@ def evaluate(facts: ReleaseFacts, mode: str) -> list[CheckResult]:
                 )
             )
 
+        # ---- RUNTIME_ACCEPTANCE_REPORT_PROVENANCE(adoption 跟进 ②)----
+        # report_path 仅非空不够:必须解析为仓库内被 git 跟踪的真实文件,
+        # 否则验收报告可指向任意外部路径而无法审阅。
+        if facts.acceptance_manifest_error:
+            results.append(
+                CheckResult(
+                    "RUNTIME_ACCEPTANCE_REPORT_PROVENANCE",
+                    FAIL,
+                    observed=facts.acceptance_manifest_error,
+                    detail="manifest 非法,报告来源无从验证",
+                )
+            )
+        elif facts.acceptance_manifest is None:
+            results.append(
+                CheckResult(
+                    "RUNTIME_ACCEPTANCE_REPORT_PROVENANCE",
+                    FAIL,
+                    observed=f"{ACCEPTANCE_DIR}/{normalize_version(tag)}.json 不存在",
+                    detail="无 manifest 即无验收报告来源",
+                )
+            )
+        else:
+            resolved, report_err = resolve_report_artifact(
+                str(facts.acceptance_manifest.get("report_path") or ""),
+                repo_root,
+                runner or _default_runner(),
+            )
+            results.append(
+                CheckResult(
+                    "RUNTIME_ACCEPTANCE_REPORT_PROVENANCE",
+                    FAIL if report_err else PASS,
+                    observed=resolved or "(空)",
+                    detail=report_err or "report_path 解析为仓库内被 git 跟踪的真实文件",
+                )
+            )
+
     return results
 
 
@@ -500,6 +735,8 @@ def facts_from_json(path: str) -> ReleaseFacts:
         release_fetch_error=data.get("release_fetch_error"),
         production_deployments=data.get("production_deployments") or [],
         production_fetch_error=data.get("production_fetch_error"),
+        production_statuses=data.get("production_statuses") or [],
+        production_statuses_error=data.get("production_statuses_error"),
         acceptance_manifest=data.get("acceptance_manifest"),
         acceptance_manifest_error=data.get("acceptance_manifest_error"),
     )
@@ -512,11 +749,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-sha", help="冻结的接受 release SHA(release-publish 必填)")
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY") or DEFAULT_REPO)
     parser.add_argument("--acceptance-dir", default=ACCEPTANCE_DIR)
+    parser.add_argument(
+        "--repo-root",
+        default=".",
+        help="仓库根(report_path 入库核验的 git 边界;缺省当前目录)",
+    )
     parser.add_argument("--facts-json", help="离线喂采集结果(测试/诊断),跳过 git+GitHub 采集")
     parser.add_argument("--output-json", help="把逐项判定写入该 JSON 文件")
     args = parser.parse_args(argv)
 
-    runner: Callable = lambda cmd: subprocess.run(cmd, capture_output=True, text=True, check=False)
+    runner = _default_runner()
 
     if args.facts_json:
         try:
@@ -542,7 +784,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"❌ 采集失败(fail-closed):{exc}", file=sys.stderr)
             return 1
 
-    results = evaluate(facts, args.mode)
+    results = evaluate(facts, args.mode, repo_root=args.repo_root, runner=runner)
     failures = [r for r in results if r.status == FAIL]
 
     print("== Release Integrity Guard ==")

@@ -66,16 +66,23 @@ jobs:
           fetch-depth: 0   # 需要全部 tag 才能解析 tag SHA / 审计最新 tag
 
       - name: Run release integrity guard
+        # 输入经 env 数据边界传入,不得以 ${{ inputs.* }} 直接内插进 shell
+        # 源码(adoption 跟进 ④:防注入 —— GitHub 表达式在 run: 里是文本
+        # 替换,等价于把外部输入拼进代码;env 值才是纯数据)。
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          GUARD_INPUT_MODE: ${{ inputs.mode }}
+          GUARD_INPUT_TAG: ${{ inputs.tag }}
+          GUARD_INPUT_EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
-          ARGS=(--mode "${{ inputs.mode }}" --output-json release-integrity-results.json)
-          if [[ -n "${{ inputs.tag }}" ]]; then
-            ARGS+=(--tag "${{ inputs.tag }}")
+          set -euo pipefail
+          ARGS=(--mode "$GUARD_INPUT_MODE" --output-json release-integrity-results.json)
+          if [[ -n "$GUARD_INPUT_TAG" ]]; then
+            ARGS+=(--tag "$GUARD_INPUT_TAG")
           fi
-          if [[ -n "${{ inputs.expected_sha }}" ]]; then
-            ARGS+=(--expected-sha "${{ inputs.expected_sha }}")
+          if [[ -n "$GUARD_INPUT_EXPECTED_SHA" ]]; then
+            ARGS+=(--expected-sha "$GUARD_INPUT_EXPECTED_SHA")
           fi
           python3 scripts/release_integrity_check.py "${ARGS[@]}"
 

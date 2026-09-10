@@ -21,6 +21,17 @@
 #
 # ⚠️ 本脚本只适用于内嵌 RELEASE.json 的镜像(#10 之后由 CI 构建的 tag 镜像);
 #    旧镜像(无清单)会被步骤 [3/6] 显式拒绝,不会静默部署。
+#
+# 部署后证据记录(运行簿契约,#10 · adoption 跟进 ③):
+#   顺序不可颠倒:DEPLOY → VERIFY RUNTIME IDENTITY → RECORD EVIDENCE
+#   1. 本脚本完整成功(退出码 0;含 [3/6] 镜像 RELEASE.json 断言与
+#      [5/6] /health 运行时身份核验);
+#   2. 之后才允许:
+#        GH_TOKEN=<token> python3 scripts/record_production_deployment.py --tag <tag>
+#      它回写 GitHub Deployment + status=success,作为生产 SHA 的机器可读镜像;
+#   3. 绝不允许:未部署先记录 / 本脚本失败仍记录 / 部署刚启动就记录成功 ——
+#      违反顺序写入的记录是伪证(守卫 production-closure 按 SHA 一致 +
+#      最新 status=success + Runtime Acceptance manifest 三重核验)。
 
 set -euo pipefail
 

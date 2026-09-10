@@ -10,6 +10,21 @@ GitHub Deployments API,守卫(scripts/release_integrity_check.py)即可核验。
 只记录,不部署:本脚本不 touch 任何容器/服务;部署仍由
 deploy/prod/update.sh <tag> 完成(其 fail-closed 契约不变)。
 
+运行簿契约(强制顺序,不可颠倒 —— adoption 跟进 ③):
+
+    1. DEPLOY    deploy/prod/update.sh <tag> 完整成功(退出码 0);
+    2. VERIFY    update.sh 的 fail-closed 核验全部通过:镜像内 RELEASE.json
+                 version/git_sha 断言([3/6])+ /health 运行时 version 与
+                 请求 tag 一致([5/6])+ 三服务同 tag([6/6]);
+    3. RECORD    此后才允许运行本脚本,回写 deployment + status=success。
+
+绝不允许:未部署先记录 / update.sh 失败仍记录 / 部署命令刚启动就记录成功。
+status=success 只是「已通过运行时身份核验的部署」的机器可读**镜像**,
+不是部署事实本身;本脚本无法远程核验上述顺序(低层记录原语),顺序责任
+在运行簿 —— 见 deploy/prod/update.sh 头部「部署后证据记录」。违反顺序
+写入的记录是伪证;守卫侧仍会独立核验 PRODUCTION_SHA == RELEASE_SHA 与
+Runtime Acceptance,单条记录不足以闭环。
+
 用法(tesla-t4 或任意有网络处):
 
     GH_TOKEN=<token> python3 scripts/record_production_deployment.py --tag v1.3.0
