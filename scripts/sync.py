@@ -59,6 +59,7 @@ import backend.connectors.github
 import backend.connectors.local_git  # 触发 @register 装饰器
 import backend.connectors.web_crawl  # 触发 @register 装饰器
 import backend.connectors.woocommerce  # noqa: F401 - 触发 @register 装饰器
+from backend.connectors.github import GitTransportError  # #34:传输失败证据化分类
 from backend.config import Settings, load_settings
 from backend.connectors.db_adapter import to_source_config
 from backend.connectors.registry import ConnectorRegistry, SourceConfig
@@ -854,7 +855,7 @@ async def _sync_one(
     request_id: int | None = None,
     attempt: int = 1,
     recovery_replay: bool = False,
-) -> None:
+) -> bool:
     """同步单个数据源:fetch → ingest → delete → 写 SyncLog。
 
     - 异常被捕获并记录到 SyncLog(status="failed"),**不向上传播**,
@@ -865,6 +866,9 @@ async def _sync_one(
       的 collection 删除,所有对象全新 insert(insert_many 批量写,不走
       replace 回退,远程 tunnel 下性能可接受)。
     - ``finally`` 块确保无论成功 / 失败 / 异常都会写 SyncLog(除非 dry_run)。
+    - 返回值(#34):本次是否发生**传输类**失败(GitTransportError)。
+      业务失败仍恒以 0 退出(契约 §14 不变);run_sync 聚合后决定 runner
+      退出码 → 传输失败落入 executor 既有 runner_failed 有界重试。
 
     Args:
         cfg: 数据源配置(SourceConfig)。
@@ -1103,10 +1107,18 @@ async def _sync_one(
             log_entry.items_updated,
             log_entry.items_deleted,
         )
+        return False
 
     except Exception as exc:  # noqa: BLE001 - 单源失败不中断批次
         log_entry.status = "failed"
         log_entry.error_detail = str(exc)
+        # #34:传输类失败证据化 —— 计入 SyncRun.counters.transport_failures,
+        # 并向 run_sync 上抛信号(经返回值),落入 executor 既有有界重试;
+        # 非传输类(业务/契约)失败保持旧语义:仅记 SyncLog,不触发重试。
+        transport_failure = isinstance(exc, GitTransportError)
+        if transport_failure:
+            await tel.counters(session_factory, transport_failures=1)
+            log_entry.error_detail = f"[transport][retryable] {log_entry.error_detail}"
         # 失败路径同样尽力留 coverage 痕迹(异常中断时的已抓部分不消失)
         connector_for_stats = locals().get("connector")
         stats = getattr(connector_for_stats, "run_stats", None)
@@ -1115,6 +1127,7 @@ async def _sync_one(
         log_entry.finished_at = datetime.now(UTC)
         log_entry.duration_ms = int((time.monotonic() - start) * 1000)
         logger.error("同步失败 %s: %s", cfg.id, exc)
+        return transport_failure
 
     finally:
         if not dry_run:
@@ -1173,7 +1186,7 @@ async def run_sync(
     force_replay: bool = False,
     request_id: int | None = None,
     attempt: int = 1,
-) -> None:
+) -> bool:
     """执行一次完整的同步流程。
 
     流程:
@@ -1199,9 +1212,15 @@ async def run_sync(
             schema 变更(如 Task 4 新增的 channel_visibility / doc_section /
             chunk_type)必须通过 ``--reindex`` 触发 collection 重建才能生效。
             ⚠️ 期间服务不可用(零停机迁移为后续工作)。
+
+    Returns:
+        #34:本次运行是否发生传输类失败(GitTransportError)。main 据此以
+        退出码 2 结束 runner → 落入 executor 既有 runner_failed 有界重试;
+        纯业务失败恒返回 False(退出码 0,契约 §14 不变)。
     """
     engine = get_engine(settings.postgres_dsn)
     weaviate_client: Any | None = None
+    had_transport_failure = False
     try:
         host, port = _parse_weaviate_endpoint(settings.weaviate_url)
         weaviate_client = weaviate.connect_to_local(host=host, port=port)
@@ -1251,7 +1270,7 @@ async def run_sync(
                 continue
             if source_id and cfg.id != source_id:
                 continue
-            await _sync_one(
+            if await _sync_one(
                 cfg,
                 pipeline,
                 session_factory,
@@ -1261,12 +1280,14 @@ async def run_sync(
                 request_id=request_id,
                 attempt=attempt,
                 recovery_replay=force_replay,
-            )
+            ):
+                had_transport_failure = True
     finally:
         # 无论成功 / 失败,都释放 Weaviate client 与 Postgres engine
         if weaviate_client is not None:
             weaviate_client.close()
         await engine.dispose()
+    return had_transport_failure
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -1328,14 +1349,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """CLI 入口:配置日志 → 解析参数 → 加载 Settings → 运行 run_sync。"""
+    """CLI 入口:配置日志 → 解析参数 → 加载 Settings → 运行 run_sync。
+
+    #34:退出码契约 —— 传输类失败(GitTransportError)→ 退出码 2,落入
+    executor 既有 runner_failed 有界重试(4 次/30/120/600s);纯业务失败
+    与完全成功 → 退出码 0(冻结契约 §14:业务失败不进入恢复调度)。
+    """
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     args = _parse_args(argv)
     settings = load_settings()
-    asyncio.run(
+    transport_failure = asyncio.run(
         run_sync(
             settings,
             source_id=args.source,
@@ -1347,6 +1373,8 @@ def main(argv: list[str] | None = None) -> None:
             attempt=args.attempt,
         )
     )
+    if transport_failure:
+        sys.exit(2)
 
 
 if __name__ == "__main__":
