@@ -194,30 +194,108 @@ v1.4.0 镜像内(Dockerfile COPY scripts/;blob `b6840c5a` 与候选树一致,测
 
 ## 14. Remaining risks
 
-1. **清单契约依赖纪律**:未来发布忘带 `deploy/prod/migrations.json` 且无桥条目
-   → 解析为 NONE(MIGRATION NOT REQUIRED,有显式日志警告,但编排不硬失败)。
-   缓解:清单契约写入发布 checklist + 本报告;桥为封闭集合只减不增;
-2. **主机 compose 文件陈旧风险**:migrate 步假设主机 `~/ask-ai/deploy/prod/
-   docker-compose.yml` 含 `sync` 服务(现况成立;若未来主机漂移,迁移会在
-   compose 解析处显式失败 → fail-closed,不会静默错迁);
-3. **迁移与 update.sh 之间锁间隙**:migrate 与 deploy 是两个步骤,各自持
+1. **主机 compose 文件陈旧风险**:migrate 步假设主机 `~/ask-ai/deploy/prod/
+   docker-compose.yml` 含 `sync` 服务与 `ASKAI_IMAGE_TAG` 必填守卫(现况成立;
+   若未来主机漂移,迁移会在 compose 解析处显式失败 → fail-closed,不会静默错迁);
+2. **迁移与 update.sh 之间锁间隙**:migrate 与 deploy 是两个步骤,各自持
    flock;同 workflow 并发由 GitHub concurrency 组串行化,间隙内第三方 break-glass
    理论上可插入(现单操作员风险极低;如需绝对串行,后续可把 flock 提升为
    跨步文件锁 —— 非阻塞跟进);
-4. **迁移脚本普遍无 dry-run/预检**:本次仅就 launcher_presentation 提供升级路径
+3. **迁移脚本普遍无 dry-run/预检**:本次仅就 launcher_presentation 提供升级路径
    证明;其余 24 个历史脚本未逐一验证幂等(它们属已部署历史,非本矫正范围);
-5. 已冻结 v1.4.0 的首次受控部署仍需走既有授权门(Environment/审批语义不变)。
+4. 已冻结 v1.4.0 的首次受控部署仍需走既有授权门(Environment/审批语义不变)。
+   (Role A 阻断项②修复后,原「清单契约依赖纪律」风险已消除 —— 契约时代
+   缺清单现为硬失败,见 §16。)
 
 ## 15. Exact candidate commit SHA
 
 - 实现提交:`4d34fa9d56cbc2b7058d9f67f0af2f81849bc407`
+- Role A 审查修正提交:`bf88ce3e616822a1b1aa0470fb8ad7db52553411`
 - 本报告提交(候选 tip):见 git log 下一提交
+
+---
+
+## 16. Role A REVIEW FIXES(第二轮,2026-09-10)
+
+第一轮 Role A 审查 = CHANGES REQUIRED(2 阻断项)。两处均已修复并加测试锁定。
+
+### 16.1 阻断项① — COMPOSE RELEASE TAG BINDING
+
+- **发现**:迁移步携带 DEPLOY_TAG,但远端脚本调用 `docker compose pull sync` /
+  `run --rm sync …` 前未显式提供 `ASKAI_IMAGE_TAG`,未证明 compose 拿到的就是
+  冻结 tag。
+- **根因**:实现时依赖了生产 compose 的必填插值守卫(`${ASKAI_IMAGE_TAG:?…}`)
+  兜底 —— 该守卫确会 fail-closed(缺变量即报错),但那是「隐式失败」而非
+  「显式绑定」:绑定语义未在编排层表达,失败也发生在 compose 插值处而非
+  迁移身份校验语义处。
+- **修正**:远端脚本在任何 compose 调用之前 `export ASKAI_IMAGE_TAG="$DEPLOY_TAG"`
+  (DEPLOY_TAG = identity 步冻结、经 `^vX.Y.Z$` 校验的精确发布 tag)—— pull
+  与 run 由此解析到**同一冻结镜像**,其 RELEASE.json 随后被断言 == 冻结身份
+  (tag → 冻结 40 位 SHA → 镜像 RELEASE.json 断言 → 从该镜像执行迁移,链条
+  保持)。compose 文件的必填守卫**原样保留,未削弱**。
+- **新测试证据(真实 compose 契约,非字符串排序)**:
+  `TestProductionComposeTagBinding` 将**生产** `deploy/prod/docker-compose.yml`
+  复制进临时环境并**实际执行 `docker compose config`**:
+  - 缺 `ASKAI_IMAGE_TAG` → 非零退出,报错含 `ASKAI_IMAGE_TAG`(不能静默进行);
+  - `ASKAI_IMAGE_TAG=v1.4.0` → `backend`/`sync`/`sync-cron`/`sync-executor`
+    四服务解析镜像**精确** `ghcr.io/harryhua-ai/ask-ai:v1.4.0`;全部服务无一
+    `:latest`;postgres 保持 `postgres:16-alpine`;
+  - workflow 契约测试锁定 `export ASKAI_IMAGE_TAG` 位于任何 `docker compose`
+    调用之前。
+
+### 16.2 阻断项② — FUTURE MANIFEST ABSENCE MUST FAIL CLOSED
+
+- **发现**:解析器把「无清单 + 无历史桥」一律判为 MIGRATION NOT REQUIRED
+  (仅 stderr 警告)—— 契约时代发布若忘带清单,会静默跳过迁移,重演 v1.4.0
+  事故类。
+- **根因**:第一轮把「文件缺失」同时当作「历史发布」与「忘带清单」两种情形的
+  合并信号,只靠日志提醒,没有确定性边界。
+- **修正(确定性契约边界,不依赖 mutable main)**:发布是否受清单契约约束,
+  由**其自身冻结谱系**决定 —— 谱系中存在「新增 `deploy/prod/migrations.json`」
+  的提交(`git log <sha> --diff-filter=A -- <path>`);浅检出无法判定边界 →
+  fail-closed(编排 checkout 为 fetch-depth: 0,不受影响)。由此:
+  - A. **契约前历史发布**(谱系从未引入清单):仅允许历史桥;桥无条目 →
+    NONE(唯一允许缺清单的路径);
+  - B. **契约时代发布**:树内**必须**存在 migrations.json;缺失 = 退出码 1,
+    部署绝不得进行(含「曾入谱系后被删除」的情形 —— 不得以删除规避契约);
+  - C. **空清单** `{"migrations":[]}` = 权威 MIGRATION NOT REQUIRED。
+- **新测试证据**:`TestManifestContractEra` 8 例 —— 从未引入清单 → 历史时代;
+  谱系含清单 → 契约时代;**added-then-deleted → 仍属契约时代**;契约时代
+  缺清单 → 非零失败(stdout 绝不输出 NONE);契约时代空清单 → 权威 NONE;
+  浅检出 → fail-closed;git 证据源不可用 → fail-closed;真实 v1.4.0(41278f0)
+  → 历史时代(桥入口正确)。
+
+### 16.3 §3 复验结果(全部在修正提交 bf88ce3 后执行)
+
+```
+uv run pytest tests/scripts/test_release_migration_plan.py tests/scripts/test_deploy_orchestration.py -q
+  → 82 passed(含时代 8 例 + 真实 compose 契约 2 例)
+TEST_DATABASE_URL=… uv run pytest tests/scripts/test_v140_existing_db_upgrade_path.py \
+  tests/scripts/test_release_migration_plan.py tests/scripts/test_deploy_orchestration.py -q
+  → 88 passed
+TEST_DATABASE_URL=… uv run pytest tests/scripts/test_v140_existing_db_upgrade_path.py \
+  tests/scripts/test_release_integrity_check.py -q → 98 passed
+TEST_DATABASE_URL=… uv run pytest tests/ -q --ignore=tests/api/admin \
+  --ignore=tests/scripts/test_sync_db.py --ignore=tests/embedder --ignore=tests/e2e
+  → **1856 passed / 0 failed / 0 skipped**
+守卫冒烟:v1.4.0 release-publish → PASS(6 invariants);production-closure → FAIL(10 invariants,3 failures)——不变绿保持
+语法:py_compile 全过;workflow YAML safe_load OK;migrate run 块与远端脚本 bash -n OK
+```
+
+测试规模(修正后):升级路径 6 + 解析器契约 31 + 编排契约 51(37→51)= 50 例
+净新增;2 例既有编排契约按 §13 边界修订。生产变异:零;v1.4.0 重试:无;
+main 合并:无;tag/Release 变异:无。
+
+### 16.4 修正轮提交
+
+- Role A 修正实现提交:`bf88ce3`
+- 本报告提交(新候选 tip):见下
 
 ---
 
 ## Final status
 
-**V1.4.0 EXISTING-DATABASE MIGRATION / DEPLOYMENT CORRECTIVE = CANDIDATE READY**
+**V1.4.0 MIGRATION CORRECTIVE REVIEW FIX = CANDIDATE READY(两阻断项均关闭)**
 
 - 根因系统修复(生命周期类,非一次性执行)✅
 - 存量库升级路径已进入自动化测试(v1.3 DDL → 部署同路径迁移 → 双版本兼容)✅
