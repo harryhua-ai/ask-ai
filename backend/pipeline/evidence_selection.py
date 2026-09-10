@@ -57,8 +57,19 @@ from backend.pipeline.evidence_planning import (
 # --------------------------------------------------------------------------- #
 
 #: 方案/选型结构信号(对 title + doc_section 做小写包含匹配;保守词表:
-#: 假阴性=诚实 uncovered,假阳性=虚假覆盖,故只收强信号)
-_SOLUTION_SIGNALS: tuple[str, ...] = ("选型", "方案", "solution")
+#: 假阴性=诚实 uncovered,假阳性=虚假覆盖,故只收强信号)。
+#: #31:补充第一方 Solution/案例页的强结构信号(英文 solution/case/deployment
+#: 措辞与中文「案例/应用」),修正英文方案页无法满足 SOLUTION_GUIDE 槽的
+#: 系统性假阴性(rerun cg-r07 0/3 PASS 的贡献因子)。
+_SOLUTION_SIGNALS: tuple[str, ...] = (
+    "选型",
+    "方案",
+    "solution",
+    "案例",
+    "case study",
+    "use case",
+    "deployment",
+)
 
 #: 案例证据连接器类型(support 案例存为 filesystem,product=knowledge)
 _SOURCE_CASE = "filesystem"

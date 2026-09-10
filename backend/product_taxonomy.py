@@ -41,8 +41,12 @@ KIND_STORE = "store"
 
 #: 可作为问答目标解析结果的 kind(§2 Target Product Resolution)
 TARGETABLE_KINDS = frozenset({KIND_PRODUCT, KIND_PLATFORM})
-#: 可作为共享证据入资格集合的 kind(§5 Retrieval Boundary)
-SHARABLE_KINDS = frozenset({KIND_PLATFORM, KIND_SHARED, KIND_SUPPORT})
+#: 可作为共享证据入资格集合的 kind(§5 Retrieval Boundary)。
+# #28:store 入围 —— 商城官方商业证据(价格/SKU/配置组合)与具体目标解耦,
+# 是 INC-4 STORE_OFFICIAL 的结构权威;原「store 永不入围」设计针对产品事实
+# 类被 store 冒充,不是禁止第一方商城证据本身(生产 38 个 commercial chunk
+# 被资格闸整体拦截 = 价格答案假性缺失的直接根因)。applies_to 见 taxonomy。
+SHARABLE_KINDS = frozenset({KIND_PLATFORM, KIND_SHARED, KIND_SUPPORT, KIND_STORE})
 
 UNKNOWN_SLUG = "unknown"
 
@@ -232,10 +236,11 @@ class Taxonomy:
     # -- 检索资格集合(§5 Retrieval Boundary)-------------------------------- #
 
     def eligible_slugs(self, targets: tuple[str, ...] | list[str]) -> frozenset[str]:
-        """目标产品的 canonical 资格集合(sibling / 混合标签 / store 永不入围)。
+        """目标产品的 canonical 资格集合(sibling / 混合标签 / store 证据类)。
 
-        展开规则:目标自身 + applies_to 与任一目标相交的平台/共享/支持桶
-        (any-target 语义:比较模式下任一侧适用的平台均可用)。
+        展开规则:目标自身 + applies_to 与任一目标相交的平台/共享/支持/
+        商城(store,#28)桶(any-target 语义:比较模式下任一侧适用的平台
+        均可用)。
         """
         target_list = [t for t in targets if self.is_targetable(t)]
         if not target_list:
