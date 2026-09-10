@@ -12,7 +12,7 @@ import {
 import { uiStrings } from "./i18n";
 import { ChatPanel } from "./components/ChatPanel";
 import { ContextualNudge, EntryPill, MiniConversationEntry } from "./components/EntrySurfaces";
-import { Launcher } from "./launcher/Launcher";
+import { Launcher, LauncherPill } from "./launcher/Launcher";
 import {
   legacyStyleToIcon,
   resolveLauncherIcon,
@@ -39,6 +39,7 @@ import { selectTrustedActions, buildActionQuery } from "./experience/actions";
 import { resolveChatThemeMode, resolveChatThemeTokens, resolveChatSize } from "./experience/theme";
 import {
   resolveLauncherMotion,
+  resolveLauncherPresentation,
   resolveLauncherSize,
   resolveLauncherBrand,
   resolveLauncherCustomColor,
@@ -239,6 +240,11 @@ export function App({ config }: { config: WidgetConfig }) {
       : launcherBrand === "match" && chatTheme.tokens["--ask-ai-primary"]
         ? { background: chatTheme.tokens["--ask-ai-primary"], color: chatTheme.tokens["--ask-ai-on-primary"] }
         : undefined;
+
+  // V2.3 矫正(#39):launcher 呈现方式(pill=品牌胶囊默认 / icon=紧凑图标;
+  // NULL = legacy icon,既有站点行为不变)。与其它外观维度同一解析闸门:
+  // UNRESOLVED 阶段不渲染任何 launcher(#33 首绘契约)。
+  const launcherPresentation = resolveLauncherPresentation(config, siteConfig);
 
   const starters =
     messages.length === 0 ? resolveStarters(siteConfig, DEFAULT_STARTERS[uiLang]) : [];
@@ -460,18 +466,28 @@ export function App({ config }: { config: WidgetConfig }) {
           桌面 mini_entry → launcher(点击展开 C,同一表面生长叙事) */}
       {!isOpen && !miniOpen && appearancePhase !== "unresolved" && (
         <>
-          {entryMode !== "pill" && (
-            <Launcher
-              icon={launcherIcon}
-              shape={launcherShape}
-              theme={launcherTheme}
-              label={strings.launcherOpen}
-              onOpen={entryMode === "mini_entry" && !mobile ? expandMini : openPanel}
-              motion={launcherMotion}
-              size={launcherSize}
-              brandStyle={launcherBrandStyle}
-            />
-          )}
+          {entryMode !== "pill" &&
+            (launcherPresentation === "pill" ? (
+              <LauncherPill
+                theme={launcherTheme}
+                label={strings.launcherOpen}
+                onOpen={entryMode === "mini_entry" && !mobile ? expandMini : openPanel}
+                motion={launcherMotion}
+                size={launcherSize}
+                brandStyle={launcherBrandStyle}
+              />
+            ) : (
+              <Launcher
+                icon={launcherIcon}
+                shape={launcherShape}
+                theme={launcherTheme}
+                label={strings.launcherOpen}
+                onOpen={entryMode === "mini_entry" && !mobile ? expandMini : openPanel}
+                motion={launcherMotion}
+                size={launcherSize}
+                brandStyle={launcherBrandStyle}
+              />
+            ))}
           {(entryMode === "pill" || (entryMode === "nudge" && !nudgeVisible)) && (
             <div className="ask-ai-entry-slot">
               <EntryPill label={strings.pillLabel} onOpen={openPanel} />

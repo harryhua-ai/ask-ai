@@ -124,6 +124,35 @@ function heuristicPageType(url: string, title: string): PageType {
 }
 
 /**
+ * 自定义问候模板变量解析(V2.3 矫正契约 §3.3;确定性,零 LLM)。
+ *
+ * 支持变量:{product_name}(别名 {product})、{page_title}、{page_type}。
+ * - 模板不含变量 → 原样返回(显式静态问候 = Admin 权威,总是可用);
+ * - 含变量:product/page_title 仅消费**受信**上下文(宿主显式提供/预览注入),
+ *   page_type 消费类别级(受信 page_type 或 URL/title 启发式类别 —— 启发式
+ *   永不产生产品专名,类别粒度安全);
+ * - 任一引用变量无法解析 → 返回 null(调用方回落自动问候链)。
+ *   冻结原则:绝不向访客暴露未解析占位符;错误的具体不如正确的通用。
+ */
+export function resolveGreetingTemplate(
+  template: string,
+  vars: { product: string | null; pageTitle: string | null; pageType: PageType },
+): string | null {
+  const hasVariable = /\{(?:product_name|product|page_title|page_type)\}/.test(template);
+  if (!hasVariable) return template;
+  const pageTypeSlug = vars.pageType === "unknown" ? null : vars.pageType;
+  if (/\{(?:product_name|product)\}/.test(template) && !vars.product) return null;
+  if (template.includes("{page_title}") && !vars.pageTitle) return null;
+  if (template.includes("{page_type}") && !pageTypeSlug) return null;
+  return template
+    .replace(/\{product_name\}/g, vars.product ?? "")
+    .replace(/\{product\}/g, vars.product ?? "")
+    .replace(/\{page_title\}/g, vars.pageTitle ?? "")
+    .replace(/\{page_type\}/g, pageTypeSlug ?? "")
+    .trim();
+}
+
+/**
  * 解析参与上下文(纯函数;SPA 导航/上下文变化时重算)。
  * 同一份结果同时驱动问候文案与 Trusted Action 资格(冻结 §2.10)。
  */
@@ -136,10 +165,20 @@ export function resolveEngagement(input: EngagementInput): EngagementContext {
   const hostType =
     normalizePageType(input.hostContext?.page_type) ?? normalizePageType(input.previewPageType);
 
-  // 1) Site/Admin 显式覆写(HIGH;显式配置即权威)
+  // 1) Site/Admin 显式覆写(HIGH;显式配置即权威)。
+  //    V2.3:覆写 = 可选模板(支持受控变量)。变量可解析 → 模板问候;
+  //    变量缺失(错误具体风险)→ 安全回落自动问候链(不留未解析占位符)。
   const override = input.site?.greeting_override?.trim();
   if (override) {
-    return finalize(hostType ?? heuristicPageType(input.url, input.title), product, pageTitle, override, "high");
+    const overridePageType = hostType ?? heuristicPageType(input.url, input.title);
+    const resolved = resolveGreetingTemplate(override, {
+      product,
+      pageTitle,
+      pageType: overridePageType,
+    });
+    if (resolved) {
+      return finalize(overridePageType, product, pageTitle, resolved, "high");
+    }
   }
 
   // 2) 受信 Page Context(宿主显式提供;Admin 预览同级)

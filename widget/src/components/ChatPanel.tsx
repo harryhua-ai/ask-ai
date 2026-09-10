@@ -143,6 +143,7 @@ export function ChatPanel({
             isStreaming={isStreaming}
             apiUrl={config.apiUrl}
             conversationId={conversationId}
+            preparingLabel={strings.preparingAnswer}
             onFeedback={onFeedback}
           />
         ))}

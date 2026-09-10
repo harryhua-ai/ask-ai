@@ -66,6 +66,18 @@ DEFAULT_LAUNCHER_MOTION = LAUNCHER_MOTION_SUBTLE_GLOW
 LAUNCHER_SIZES: tuple[str, ...] = ("small", "medium", "large")
 DEFAULT_LAUNCHER_SIZE = "medium"
 
+# 启动器呈现方式(V2.3 矫正契约 §3.4):
+# - pill = 品牌「✦ Ask AI」紧凑胶囊 —— **新站点/新配置默认**;
+# - icon = 紧凑图标(既有 FAB;Compact Icon 可选项);
+# NULL = 未配置 → icon(既有站点 legacy 行为,零迁移改写;不静默换装)。
+LAUNCHER_PRESENTATION_PILL = "pill"
+LAUNCHER_PRESENTATION_ICON = "icon"
+LAUNCHER_PRESENTATIONS: tuple[str, ...] = (
+    LAUNCHER_PRESENTATION_PILL,
+    LAUNCHER_PRESENTATION_ICON,
+)
+DEFAULT_LAUNCHER_PRESENTATION = LAUNCHER_PRESENTATION_PILL
+
 # 启动器品牌(独立于聊天窗主题;默认 ASK-AI 品牌保证可发现性)
 LAUNCHER_BRAND_ASKAI = "askai"
 LAUNCHER_BRAND_MATCH = "match"
@@ -136,6 +148,13 @@ def normalize_chat_size(value: str | None) -> str | None:
     if value is None:
         return None
     return value if value in CHAT_SIZES else None
+
+
+def normalize_launcher_presentation(value: str | None) -> str | None:
+    """持久 launcher_presentation → 有效值;NULL/未知 = 未配置(None = legacy icon)。"""
+    if value is None:
+        return None
+    return value if value in LAUNCHER_PRESENTATIONS else None
 
 
 # ---------------------------------------------------------------------------

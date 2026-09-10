@@ -106,9 +106,11 @@ export function MiniConversationEntry({
   return (
     <section className="ask-ai-mini" aria-label={identity}>
       <header className="ask-ai-mini-header">
-        <span className="ask-ai-mini-identity">
-          <span className="ask-ai-mini-dot" aria-hidden="true" />
-          {identity}
+        <span className="ask-ai-mini-identity" aria-label={identity}>
+          <span className="ask-ai-mini-spark" aria-hidden="true">
+            ✦
+          </span>
+          Ask AI
         </span>
         <button
           type="button"

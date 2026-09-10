@@ -34,4 +34,11 @@ describe("Sidebar", () => {
     expect(screen.getByText("对话接入")).toBeInTheDocument();
     expect(screen.queryByText("Customization")).not.toBeInTheDocument();
   });
+
+  it("#38 Widget 体验/Widget 外观 合并为单一「Widget」入口", () => {
+    renderSidebar();
+    expect(screen.getByText("Widget")).toBeInTheDocument();
+    expect(screen.queryByText("Widget 体验")).not.toBeInTheDocument();
+    expect(screen.queryByText("Widget 外观")).not.toBeInTheDocument();
+  });
 });

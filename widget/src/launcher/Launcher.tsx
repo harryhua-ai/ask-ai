@@ -49,3 +49,43 @@ export function Launcher({ icon, shape, theme, label, onOpen, motion, size, bran
     </button>
   );
 }
+
+export interface LauncherPillProps {
+  /** 已消解的落地主题(auto 在 registry 中按系统偏好消解;驱动阴影/对峙对比)。 */
+  theme: LauncherTheme;
+  /** 可访问名(按钮级;可见品牌文案恒为「Ask AI」)。 */
+  label: string;
+  onOpen: () => void;
+  /** 注意力动效预设(默认 subtle_glow;reduced-motion 由 CSS 守卫)。 */
+  motion?: LauncherMotion;
+  /** 尺寸预设(默认 medium ≈40–44px 高)。 */
+  size?: LauncherSize;
+  /** 品牌面覆写(brand=match/custom 的落色;独立于聊天窗主题)。 */
+  brandStyle?: CSSProperties;
+}
+
+/**
+ * V2.3 矫正(#39):品牌「✦ Ask AI」紧凑胶囊 launcher —— 新站点/新配置默认呈现。
+ * 与 Launcher(图标 FAB)同一交互契约(按钮可访问名 / aria-haspopup / onOpen),
+ * 仅呈现不同;目标高度 ≈40–44px,圆角胶囊几何,restrained 阴影。
+ */
+export function LauncherPill({ theme, label, onOpen, motion, size, brandStyle }: LauncherPillProps) {
+  return (
+    <button
+      type="button"
+      className="ask-ai-launcher-pill"
+      data-ask-ai-theme={theme}
+      data-launcher-motion={motion ?? "subtle_glow"}
+      data-launcher-size={size ?? "medium"}
+      style={brandStyle}
+      aria-label={label}
+      aria-haspopup="dialog"
+      onClick={onOpen}
+    >
+      <span className="ask-ai-launcher-pill-glyph" aria-hidden="true">
+        ✦
+      </span>
+      <span className="ask-ai-launcher-pill-text">Ask AI</span>
+    </button>
+  );
+}

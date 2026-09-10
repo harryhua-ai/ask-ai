@@ -473,6 +473,7 @@ async def widget_site_config(
         "launcher_size": site.launcher_size,
         "launcher_brand": site.launcher_brand,
         "launcher_color": site.launcher_color,
+        "launcher_presentation": site.launcher_presentation,
         "chat_theme": site.chat_theme,
         "chat_accent_color": site.chat_accent_color,
         "chat_size": site.chat_size,

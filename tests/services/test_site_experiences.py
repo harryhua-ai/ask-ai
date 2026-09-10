@@ -43,6 +43,11 @@ class TestNormalizeOrigin:
     def test_keeps_non_default_port(self):
         assert normalize_origin("http://localhost:8081") == "http://localhost:8081"
 
+    def test_rejects_wildcard_host(self):
+        # I-UX-001 矫正(#6):通配符不是可授权的精确来源
+        assert normalize_origin("https://*.camthink.ai") is None
+        assert normalize_origin("http://*") is None
+
     def test_rejects_non_http_scheme_and_garbage(self):
         assert normalize_origin("javascript:alert(1)") is None
         assert normalize_origin("not a url") is None
@@ -306,3 +311,102 @@ class TestConversationSitePersistence:
         await db_session.refresh(conv)
         assert conv.site_id == "camthink-wiki"
         assert conv.channel == "widget"
+
+# --------------------------------------------------------------------------- #
+# I-UX-001 矫正(#6):seed 权威域划分 + launcher_presentation
+# --------------------------------------------------------------------------- #
+
+
+class TestSeedOriginAuthority:
+    """#6 核心:allowed_origins = Admin 权威域;seed 仅在新建行写 YAML origins。"""
+
+    async def test_existing_row_origins_survive_reseed(self, db_engine):
+        """Admin 修改 origins 后重启重seed:Admin 值存续(YAML 不再覆写)。"""
+        factory = get_session_factory(db_engine)
+        await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
+        async with factory() as session:
+            row = await session.get(SiteExperience, "camthink-website")
+            row.allowed_origins = ["https://admin-managed.example.com"]
+            await session.commit()
+        # 重启语义 = 再次 seed(YAML 仍含 https://www.camthink.ai 等)
+        await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
+        async with factory() as session:
+            row = await session.get(SiteExperience, "camthink-website")
+        assert row.allowed_origins == ["https://admin-managed.example.com"]
+
+    async def test_new_row_gets_yaml_origins_as_initial_authorization(self, db_engine):
+        factory = get_session_factory(db_engine)
+        await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
+        async with factory() as session:
+            await session.delete(await session.get(SiteExperience, "camthink-store"))
+            await session.commit()
+        await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
+        async with factory() as session:
+            row = await session.get(SiteExperience, "camthink-store")
+        assert row.allowed_origins, "新建行必须从 YAML 获得初始授权"
+        assert "https://www.camthink.ai" in row.allowed_origins
+
+    async def test_identity_columns_remain_yaml_authoritative(self, db_engine):
+        """权威域划分只移交 origins/experience;身份与运营内容列仍 YAML 权威。"""
+        factory = get_session_factory(db_engine)
+        await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
+        async with factory() as session:
+            row = await session.get(SiteExperience, "camthink-website")
+            row.display_name = "Admin Renamed"
+            await session.commit()
+        await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
+        async with factory() as session:
+            row = await session.get(SiteExperience, "camthink-website")
+        assert row.display_name == "CamThink 官网"
+
+    async def test_new_row_defaults_pill_presentation_and_mini_entry(self, db_engine, tmp_path):
+        """新建行缺省 launcher_presentation=pill(V2.3);既有行 NULL = legacy icon。"""
+        from backend.services.widget_experience import DEFAULT_LAUNCHER_PRESENTATION
+
+        assert DEFAULT_LAUNCHER_PRESENTATION == "pill"
+        factory = get_session_factory(db_engine)
+        await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
+        async with factory() as session:
+            row = await session.get(SiteExperience, "camthink-website")
+            assert row.launcher_presentation == "pill"  # 本测试隔离库首seed = 新建行
+        # 删除重建 = 新站点路径
+        async with factory() as session:
+            await session.delete(await session.get(SiteExperience, "camthink-store"))
+            await session.commit()
+        await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
+        async with factory() as session:
+            row = await session.get(SiteExperience, "camthink-store")
+        assert row.launcher_presentation == "pill"
+        assert row.entry_mode == "mini_entry"
+
+
+class TestLauncherPresentationResolution:
+    async def test_resolve_site_passes_normalized_presentation(self, db_engine):
+        factory = get_session_factory(db_engine)
+        await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
+        async with factory() as session:
+            row = await session.get(SiteExperience, "camthink-website")
+            row.launcher_presentation = "pill"
+            await session.commit()
+        site = await resolve_site(factory, "camthink-website", "https://www.camthink.ai")
+        assert site.launcher_presentation == "pill"
+
+    async def test_resolve_site_null_presentation_is_legacy_none(self, db_engine):
+        factory = get_session_factory(db_engine)
+        await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
+        async with factory() as session:
+            row = await session.get(SiteExperience, "camthink-website")
+            row.launcher_presentation = None
+            await session.commit()
+        site = await resolve_site(factory, "camthink-website", "https://www.camthink.ai")
+        assert site.launcher_presentation is None
+
+    async def test_resolve_site_invalid_presentation_failsafe_none(self, db_engine):
+        factory = get_session_factory(db_engine)
+        await seed_default_sites(factory, REPO_ROOT / "config" / "sites.yaml")
+        async with factory() as session:
+            row = await session.get(SiteExperience, "camthink-website")
+            row.launcher_presentation = "banner"
+            await session.commit()
+        site = await resolve_site(factory, "camthink-website", "https://www.camthink.ai")
+        assert site.launcher_presentation is None

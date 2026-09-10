@@ -449,6 +449,10 @@ class SiteExperience(Base):
     chat_accent_color: Mapped[str | None] = mapped_column(String(20), nullable=True)
     chat_size: Mapped[str | None] = mapped_column(String(10), nullable=True)
     greeting_override: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # I-UX-001 矫正(V2.3):launcher 呈现方式(pill=品牌「✦ Ask AI」胶囊 /
+    # icon=紧凑图标)。加列、零回填:既有站点 NULL = icon(legacy 行为不变);
+    # 新建站点 seed 缺省 pill;Admin 显式配置永远权威,seed 绝不覆写本列。
+    launcher_presentation: Mapped[str | None] = mapped_column(String(10), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

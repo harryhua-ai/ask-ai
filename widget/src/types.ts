@@ -21,6 +21,13 @@ export type LauncherIcon =
 
 export type LauncherShape = "round" | "rounded-square";
 
+/**
+ * V2.3 矫正:launcher 呈现方式(pill = 品牌「✦ Ask AI」紧凑胶囊 /
+ * icon = 紧凑图标)。语义 id 与后端 LAUNCHER_PRESENTATIONS / Admin 同一冻结集合;
+ * NULL/未配置 = icon(既有站点 legacy 行为,零迁移改写)。
+ */
+export type LauncherPresentation = "pill" | "icon";
+
 /** Issue #24:launcher 主题偏好(auto = 系统主题;未知持久值回落 auto)。 */
 export type LauncherThemePref = "auto" | "light" | "dark";
 
@@ -43,6 +50,8 @@ export interface WidgetConfig {
   launcherIcon?: string;
   /** REV1 高级覆写(data-launcher-shape);优先级高于 site-config */
   launcherShape?: string;
+  /** V2.3 矫正覆写(data-launcher-presentation);优先级高于 site-config */
+  launcherPresentation?: string;
   /** Issue #24 预览/测试覆写(data-launcher-theme);优先级高于 site-config */
   launcherTheme?: string;
   /** @deprecated REV0 遗留覆写(data-launcher-style);退役为 current,保留仅为兼容 */
@@ -87,6 +96,8 @@ export interface SiteExperienceConfig {
   launcher_icon?: string;
   launcher_shape?: string;
   launcher_theme?: string;
+  /** V2.3 矫正:呈现方式(pill|icon);未配置 = undefined → icon(legacy) */
+  launcher_presentation?: string;
   /** @deprecated REV0 遗留回显(兼容缓存中的旧 Widget);新集成勿消费 */
   launcher_style?: string;
   // ---- I-UX-001(per-site;未配置 = undefined → legacy/默认)----
