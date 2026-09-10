@@ -1,0 +1,16 @@
+{
+  "version": "1.4.0",
+  "tag": "v1.4.0",
+  "git_sha": "41278f07eb4abbf4f3420b2d7b65db28c7fdcbb1",
+  "verified_at": "2026-09-10T11:35:00Z",
+  "executor": "Agent B executor (ZCode session sess_3c96fc23-7b18-4810-8a84-e49b8bc439e8, operator-authorized READ-ONLY acceptance)",
+  "report_path": "docs/engineering/tasks/V140-PRODUCTION-RUNTIME-ACCEPTANCE.md",
+  "checks": [
+    {"name": "runtime_identity", "result": "PASS", "detail": "/health 200 {ok,1.4.0,41278f07…,production}; 三容器 v1.4.0 RestartCount=0; Deployment 6369778394=success"},
+    {"name": "widget_delivery", "result": "PASS", "detail": "真实站点 camthink.ai 加载生产 widget 资源; Origin fail-closed (未授权→403); launcher 首帧即最终形态"},
+    {"name": "real_llm_streaming", "result": "PASS", "detail": "✦ Preparing an answer… → 首真实 token 原位替换 → 19 渐进增长点(len→2022, 内联 refs 0→7) → 完成; 追问同链; SSE sources→token×234→done, 证据链接 200"},
+    {"name": "iux001_production_behavior", "result": "PASS", "detail": "#33/#38/#39 PASS; 移动端 B-nudge 无 mini; TA published=0≤2; #36/#37(Admin 预览视觉)/#40(reduced-motion) UNPROVEN——需 Admin 登录/自动化不可达"},
+    {"name": "core_business_smoke", "result": "PASS", "detail": "两次真实 widget 问答 + 一次 API 探针成功; wiki.camthink.ai 证据链接 ×2 均 200"},
+    {"name": "observability", "result": "PASS", "detail": "backend ERROR/Traceback=0; 无 UndefinedColumn/ModuleNotFound/TEST_DATABASE_URL 错; sync-cron embed 413 属 ingest 内容类(#45), 非发布回归"}
+  ]
+}
