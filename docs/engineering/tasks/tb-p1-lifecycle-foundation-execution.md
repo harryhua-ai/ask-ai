@@ -94,11 +94,17 @@ failed + 失败证据 + **GC 即时资格**(`gc_eligible_at=now`);已写对象�
 
 ### 2.4 检索在服投影(P1-D 消费面)
 
-- `HybridSearcher(generation_filter_provider=...)`:search / search_symbols /
-  search_bucket 三路径 filters_list 首位注入 INT 过滤(单代 equal、多代
-  contains_any);provider 缺省 → 不过滤(未迁移部署零回归);空集合 →
-  不过滤(空库语义等价);provider 异常 → fail-open(记 warning,与未迁移
-  行为一致)。
+- `HybridSearcher(generation_filter_provider=...)`:三路径(search /
+  search_symbols / search_bucket)统一 **fail-closed 契约**(Role A
+  REVIEW FIX `551b14c` 冻结;权威先于 embed/检索裁决):
+  - provider 缺省 → legacy 兼容:不加生成过滤(未迁移部署零回归);
+  - provider 返回非空 ordinals → 严格过滤:filters_list 首位注入 INT 过滤
+    (单代 equal、多代 contains_any);
+  - provider 返回 `[]` → 权威服务集为空 → **零检索结果**:先于 embed/检索
+    直接返回,绝不发检索请求(无过滤 = 无限制检索,会复活 GC 前物理残留的
+    已撤代/墓碑对象);
+  - provider 抛错 → **FAIL CLOSED**:异常向上传播,连 embed 都不发生
+    (绝不无限制检索;与 Weaviate 失败同类,交调用方既有错误路径)。
 - wiring:`backend/main.py` lifespan 以 sync 会话工厂构造 provider 注入;
   `vector_consistency` 与 admin analytics 同口径仅计 SERVING 文档
   (withdrawn 文档对象即时退出期望/实际/补灌/孤儿口径,`VectorGapReport
@@ -171,9 +177,11 @@ failed + 失败证据 + **GC 即时资格**(`gc_eligible_at=now`);已写对象�
 词表/权威面守卫:`tests/services/test_document_lifecycle.py` 12 用例
 (P 轴无 ACTIVE、§8a 常量冻结(7 天/≤1 天/无 30 天回用)、SERVING/WITHDRAWN
 划分、active 集随 lifecycle/指针即时演进、FC-6 判定、metadata_hash 序无关、
-legacy 代确定性单例、初始版本幂等);检索过滤接缝:
-`tests/retrieval/test_search_generation_filter.py` 6 用例(缺省零回归/单代
-equal/多代 contains_any/空集不加过滤/异常 fail-open/在服代注入链路)。
+legacy 代确定性单例、初始版本幂等);检索过滤接缝(fail-closed 契约,§11):
+`tests/retrieval/test_search_generation_filter.py` 12 用例(provider None
+三路径 legacy 兼容/非空 ordinals 三路径严格过滤/权威空集 `[]` 三路径零结果
+且 embed·检索零调用/provider 抛错三路径 FAIL CLOSED 异常传播且 embed·检索
+零调用/双代 contains_any/注入-结果透传正交)。
 
 ## 6. 测试结果
 
@@ -236,14 +244,12 @@ P0-A/vector consistency/corpus repair)保持;唯一语义演进 = 契约显式�
    legacy 初始版本,但其 chunk 副本暂缺(迁移缺口)——后续 repair/refill
    演进补齐;已由 G005 回归锁定(零 embedding 修复,不删除)。
 2. corpus_repair(既有物理修复工具)未纳入 P1 语义(授权范围外,原样保留)。
-3. HybridSearcher provider 异常 fail-open:与"未迁移部署"行为一致;生产
-   wiring 后 provider 失败会记 warning,可观测(后续可在 P2 收紧为 fail-closed)。
-4. 墓碑专项窗(`lifecycle_gc_tombstone_days`)未设默认,运营化归 P5——在
+3. 墓碑专项窗(`lifecycle_gc_tombstone_days`)未设默认,运营化归 P5——在
    显式配置前,deleted 文档仅逻辑删除,永不自动物理清除(符合冻结语义)。
-5. 本报告的迁移演练针对**一次性空库 + 合成 legacy 数据**;生产部署时应按
+4. 本报告的迁移演练针对**一次性空库 + 合成 legacy 数据**;生产部署时应按
    运行手册先在生产库快照/维护窗内执行 `--verify-only`,再执行迁移
    (脚本本身幂等,重跑收敛)。
-6. metadata-only 对象侧更新失败时降级为"账本已真、下轮自愈"(设计行为);
+5. metadata-only 对象侧更新失败时降级为"账本已真、下轮自愈"(设计行为);
    在 Weaviate 异常持续场景,对象 props 可能落后账本,以 PG 为权威不受影响。
 
 ## 9. Runtime Acceptance Plan(部署前置,独立任务)
