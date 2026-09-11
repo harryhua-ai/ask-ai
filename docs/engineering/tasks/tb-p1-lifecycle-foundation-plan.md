@@ -21,6 +21,7 @@
 - **本契约分支基线(Trace B 文档谱系)**:`97cac3f3319b4e5b5c381ed3a6533822de7de012`(= product/knowledge-integrity-freeze-20260911 tip),分支 `trace-b/p1-lifecycle-foundation-contract-20260911`。遵守 Freeze §4 隔离纪律:Trace B 文档/实现未经显式集成闸不得并入 main。
 - **基线漂移声明**:bb80c38 与 97cac3f 两树间,本文引用的生命周期证据文件全部零漂移,唯一例外 = `backend/pipeline/ingest.py:215-217`(`_evidence_props` 增加 `product=doc.product` 实参,Trace A INC-2a 谱系;与生命周期语义无关)。
 - **若 main 因 Trace A Release 1 收口而前移**:执行代理开工时须重新记录新基线;本文冻结的产品语义不因基线移动而改写。
+- **基线移动记录(2026-09-11,本契约生成期间)**:main 已由 `bb80c38` 前移至 **`39723c2e35034e38ee6bb8a0eeca2954c862e1f0`**(本地 = origin),增量恰一提交且为 docs-only:Trace A Release 1 / v1.5.0 生产验收报告(readiness + 部署 run 34564587117 success + 生产 runtime 实证)。已复核 bb80c38→39723c2 对本文全部生命周期证据文件(backend/db/models.py、backend/pipeline/ingest.py、scripts/sync.py、backend/services/*、backend/retrieval/search.py、backend/db/session.py、backend/config.py 及 tests/pipeline|db|services)**零漂移**;全部 E1-E19 证据在新基线同样成立。Trace A Release 1 据此视为已收口(v1.5.0 已部署)——Freeze §4 的 Trace B 集成闸时机相应解锁,但不改变本文任何冻结语义;生产部署事实归 Trace A 报告所有,本文不转述不重写。执行代理开工时以 39723c2(或更新基线)复核本附录。
 
 ## Objective(目标)
 
