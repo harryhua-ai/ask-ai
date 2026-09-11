@@ -17,7 +17,7 @@ from .iteration_txn import IterationTuple, create_iteration_transaction
 from .labels import parse_control_labels
 from .mapping import PRIORITY_MAP, STATUS_MAP, RESERVED_STATUS_NOTE, resolve_desired
 from .model import (FieldConfig, ItemState, IssueAuthority, IterationDef, OptionDef,
-                    iteration_slug, sprint_title_slug)
+                    iteration_slug, sprint_title_slug)  # noqa: F401 (re-exported for ensure_labels)
 from .planner import Finding, SyncPlan, plan_sync
 from .reconcile import detect_drift
 from .transport import GhCliTransport
@@ -386,12 +386,16 @@ def bootstrap(t: GhCliTransport, s: Settings, dry_run: bool) -> dict:
     return report
 
 
+def canonical_labels(config: FieldConfig) -> list[str]:
+    return [f"priority:{v}" for v in sorted(PRIORITY_MAP)] + \
+           [f"status:{v}" for v in sorted(STATUS_MAP)] + \
+           [f"iteration:{i.slug}" for i in config.iterations] + \
+           [f"sprint:{sprint_title_slug(sp.title)}" for sp in config.sprints]
+
+
 def ensure_labels(t: GhCliTransport, s: Settings) -> dict:
     ctx = fetch_context(t, s)
-    canonical = [f"priority:{v}" for v in sorted(PRIORITY_MAP)] + \
-                [f"status:{v}" for v in sorted(STATUS_MAP)] + \
-                [f"iteration:{i.slug}" for i in ctx.config.iterations] + \
-                [f"sprint:{sp.slug}" for sp in ctx.config.sprints]
+    canonical = canonical_labels(ctx.config)
     existing = {l["name"] for l in gh_cli_json(
         ["label", "list", "--repo", f"{s.owner}/{s.repo}", "--json", "name"], s.token)}
     created = []

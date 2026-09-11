@@ -174,3 +174,15 @@ class TestSprintBootstrapDerivation:
                          priority="P0", status="Backlog", sprint_slug=None)
         labels, review = derive_labels_for_item(bare, "OPEN")
         assert not any(l.startswith("sprint:") for l in labels)
+
+
+class TestSprintEnsureLabels:
+    def test_canonical_labels_use_sprint_title_slug(self):
+        from project_automation.service import canonical_labels
+        canonical = canonical_labels(CONFIG)
+        assert "sprint:bug-fix-2026-09" in canonical
+        assert "sprint:bug-fix-sprint" not in canonical  # iteration-slug bug regression
+
+    def test_sprint_title_slug_rule(self):
+        from project_automation.model import sprint_title_slug
+        assert sprint_title_slug("Bug Fix Sprint — 2026-09") == "bug-fix-2026-09"
