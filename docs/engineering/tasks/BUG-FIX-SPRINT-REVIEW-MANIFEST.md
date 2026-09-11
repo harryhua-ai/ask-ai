@@ -17,6 +17,10 @@
 
 ## 2. #45 — 同步灌入文档级失败诊断 + 字符契约对齐
 
+> **状态更新(2026-09-11)**:Role A FINAL PASS(consolidated review Gate 2)→ 已集成
+> main(`03e6c57` ff→ `ebc45c2`),后随 #34 以 ISC-1 组合为 `d0230f9`(已推送);
+> issue #45 closed + 板 Done。
+
 | 项 | 值 |
 | --- | --- |
 | 分支 / Candidate | `fix/45-ingest-char-contract` @ `ebc45c2` |
@@ -30,6 +34,10 @@
 
 ## 3. #34 — GitHub 源传输失败证据化 + 有界恢复
 
+> **状态更新(2026-09-11)**:Role A FINAL PASS(Gate 3)→ 已集成 main(合并入
+> `d0230f9`;`scripts/sync.py` except 块按 ISC-1 双语义保留,双向 diff 零丢失);
+> issue #34 closed + 板 Done。
+
 | 项 | 值 |
 | --- | --- |
 | 分支 / Candidate | `fix/34-git-transport-recovery` @ `8d0350b` |
@@ -42,6 +50,14 @@
 | 残留风险 | 与 #45 候选在 `scripts/sync.py::_sync_one` except 块相邻(语义正交:IngestFailures counters vs 传输返回值/前缀),后合并方需一次小 rebase |
 
 ## 4. #26–#31 — 答案智能共享矫正(一个候选,五 issue 可独立追溯)
+
+> **状态更新(2026-09-11,Follow-up 矫正)**:Role A PARTIAL 裁决后的矫正线已追加至
+> `9557ce4` 之上(不重写历史):`c1ec496`(#32 治理:cleaned freeze_v1 入库 + 治理测试)
+> → `b057afe`(#28 知识案例可引用化 + 商务帧口径指令;#31 deixis 整词边界)
+> → `f77cb76`(契约修订落测;全量 2212 绿)。执行报告:
+> `docs/engineering/tasks/issue28-31-followup-corrective-execution.md`。
+> #26/#27 = VERIFIED ALREADY FIXED(Role A);#29 = 代码 FINAL PASS、激活冻结至发布门;
+> #28/#31 待本轮基准判分后的独立 Role A 复审。
 
 | 项 | 值 |
 | --- | --- |
