@@ -6,7 +6,7 @@ from project_automation.iteration_txn import create_iteration_transaction
 
 EXISTING = [
     ("it-old-1", "I-001 — Answer Intelligence Foundation", "2026-09-07", 14),
-    ("it-old-2", "v1.5.0 — Answer Intelligence Release 1", "2026-09-10", 14),
+    ("it-old-2", "I-002 — Evidence Intelligence Foundation", "2026-09-10", 14),
     ("it-old-3", "I-UX-001 — Widget Experience Corrective", "2026-09-21", 14),
     ("it-old-4", "v1.6.0 — Knowledge Integrity & Source Truth", "2026-10-05", 14),
 ]
@@ -15,11 +15,11 @@ NEW = ("it-new-x", "v1.7.0 — New Theme", "2026-10-19", 14)
 ASSIGNMENTS = {
     "PVTI_30": "it-old-4",  # v1.6.0
     "PVTI_25": "it-old-4",  # v1.6.0
-    "PVTI_4": "it-old-2",   # v1.5.0
+    "PVTI_4": "it-old-2",   # i-002
     "PVTI_32": "it-old-1",  # i-001
 }
 # semantic expectation: same slugs must hold after id regeneration
-EXPECTED_SLUGS = {"PVTI_30": "v1.6.0", "PVTI_25": "v1.6.0", "PVTI_4": "v1.5.0", "PVTI_32": "i-001"}
+EXPECTED_SLUGS = {"PVTI_30": "v1.6.0", "PVTI_25": "v1.6.0", "PVTI_4": "i-002", "PVTI_32": "i-001"}
 
 
 class FakeGitHub:
@@ -109,6 +109,6 @@ class TestFailClosed:
             create_iteration_transaction(gh, existing=EXISTING, new=NEW, item_ids=list(ASSIGNMENTS))
 
     def test_dropped_iteration_detected_as_verification_failure(self):
-        gh = FakeGitHub(drop_iteration="v1.5.0")
+        gh = FakeGitHub(drop_iteration="i-002")
         with pytest.raises((RestorationFailure, VerificationFailure)):
             create_iteration_transaction(gh, existing=EXISTING, new=NEW, item_ids=list(ASSIGNMENTS))

@@ -13,7 +13,11 @@ STATUS_PREFIX = "status:"
 ITERATION_PREFIX = "iteration:"
 
 PRIORITY_VALUES = ("p0", "p1", "p2")
-STATUS_VALUES = ("backlog", "ready", "in-progress", "in-review")
+STATUS_VALUES = ("backlog", "in-progress", "in-review")
+# RESERVED/UNSUPPORTED: recognized as explicit control intent, but the Project has no
+# 'Ready' Status option. Using it yields a visible finding and NO Status mutation
+# until the option is authorized (never add it via singleSelectOptions full-replace).
+STATUS_RESERVED = ("ready",)
 
 # iteration keys are slugs: short, lowercase, no shell metacharacters, no whitespace
 ITERATION_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -33,6 +37,7 @@ class ControlLabels:
     has_iteration_label: bool = False
     has_priority_label: bool = False
     has_status_label: bool = False
+    status_reserved: bool = False
     conflicts: list[MetadataConflict] = field(default_factory=list)
     unknown: list[str] = field(default_factory=list)
 
@@ -61,7 +66,10 @@ def parse_control_labels(labels: list[str]) -> ControlLabels:
                 elif key == "priority" and value not in PRIORITY_VALUES:
                     cl.unknown.append(label)
                 elif key == "status" and value not in STATUS_VALUES:
-                    cl.unknown.append(label)
+                    if value in STATUS_RESERVED:
+                        cl.status_reserved = True
+                    else:
+                        cl.unknown.append(label)
 
     single = {k: next(iter(v)) if len(v) == 1 else None for k, v in found.items()}
     if len(found["iteration"]) == 1 and ITERATION_KEY_RE.match(single["iteration"]):

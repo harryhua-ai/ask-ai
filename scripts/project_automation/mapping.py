@@ -14,12 +14,13 @@ from .model import IssueAuthority, iteration_slug
 PRIORITY_MAP = {"p0": "P0", "p1": "P1", "p2": "P2"}
 STATUS_MAP = {
     "backlog": "Backlog",
-    "ready": "Ready",
     "in-progress": "In progress",
     "in-review": "In review",
 }
 DONE = "Done"
 DEFAULT_OPEN_STATUS = "Backlog"
+RESERVED_STATUS_NOTE = ("status:ready is RESERVED/UNSUPPORTED: the Project has no 'Ready' Status option; "
+                        "no Status mutation until the option is authorized")
 
 
 def resolve_iteration(config_iterations, key: str | None):
@@ -47,6 +48,8 @@ class DesiredProjection:
         for c in self.control.conflicts:
             out.append(f"conflicting {'/'.join(c.values)} for control field '{c.field}'")
         out.extend(f"unrecognized control label '{u}'" for u in self.control.unknown)
+        if self.control.status_reserved:
+            out.append(RESERVED_STATUS_NOTE)
         return out
 
 

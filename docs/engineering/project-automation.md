@@ -16,12 +16,16 @@ Routine planning = edit the Issue only. Add/remove canonical labels; the Project
 | You want | Do this (labels on the Issue) |
 |---|---|
 | Put in v1.6.0 | `iteration:v1.6.0` |
-| Put in any existing iteration | `iteration:v1.5.0` / `iteration:i-001` / `iteration:i-ux-001` (key = iteration title's code token, lowercased) |
+| Put in any existing iteration | `iteration:i-001` / `iteration:i-ux-001` (key = iteration title's code token, lowercased) |
 | Take out of any iteration | remove the `iteration:*` label |
 | Set priority | `priority:p0` · `priority:p1` · `priority:p2` (remove to clear) |
-| Backlog / Ready / In Progress / In Review | `status:backlog` · `status:ready` · `status:in-progress` · `status:in-review` |
+| Backlog / In Progress / In Review | `status:backlog` · `status:in-progress` · `status:in-review` |
 | Done | close the Issue (closure always wins; stale status labels are ignored) |
 | Reopen | reopen + keep/adjust a `status:*` label; a reopened Issue never stays Done (no label → Backlog) |
+
+Governance boundary: **Iteration = development timebox; Release = shipped version.** GitHub Releases/tags are never
+mapped to Project Iterations and `release:*`/tag metadata is not control input. Iterations are created only via
+Workflow B; v1.5.0 is a Release, not an Iteration.
 
 Rules of the road:
 
@@ -48,15 +52,21 @@ mutation can never race reconciliation or sync.
 
 ### Label vocabulary (canonical)
 
-`iteration:<key>` (key = slug of iteration title code token) · `priority:p0|p1|p2` · `status:backlog|ready|in-progress|in-review`
+`iteration:<key>` (key = slug of iteration title code token) · `priority:p0|p1|p2` · `status:backlog|in-progress|in-review`
+
+**Reserved / unsupported:** `status:ready` — the Project has no `Ready` Status option. The label is recognized as
+explicit control intent and yields a visible `UNSUPPORTED_STATUS_RESERVED` finding with **no Status mutation** until
+the option is authorized by a separate decision (adding it via `singleSelectOptions` is a full-replace hazard and is
+forbidden without a snapshot/restore plan).
 
 ### Project mapping (derived, resolved live every run)
 
 | Label / state | Project value |
 |---|---|
-| `iteration:<key>` | Iteration whose title code token slug-equals `<key>` |
+| `iteration:<key>` | Iteration whose title code token slug-equals `<key>` (live Iteration field only: I-001 / I-UX-001 / v1.6.0) |
 | `priority:p0/p1/p2` | Priority option P0/P1/P2 |
-| `status:backlog/ready/in-progress/in-review` | Status option Backlog/Ready/In progress/In review |
+| `status:backlog/in-progress/in-review` | Status option Backlog/In progress/In review |
+| `status:ready` | **RESERVED** — visible finding, no mutation |
 | Issue CLOSED | Status = Done (overrides any status label) |
 | Issue OPEN without `status:*` | Status = Backlog |
 
@@ -119,3 +129,15 @@ GH_TOKEN="$(gh auth token)" python3 scripts/project_automation/cli.py <sync|reco
 # every command accepts --dry-run (default) / --apply; full test suite:
 .venv/bin/python -m pytest tests/project_automation -q
 ```
+
+### Activation boundary (IMPLEMENTATION ACCEPTED ≠ AUTOMATION ACTIVE)
+
+Merging this automation does NOT activate it. The activation gate sequence is:
+
+```
+candidate accepted → merge to main → PROJECT_SYNC_TOKEN configured/verified
+→ bootstrap --apply → first real Issue event → GitHub Action succeeds
+→ Project convergence independently verified → AUTOMATION ACTIVE
+```
+
+Until that chain completes, the Project remains manually governed and this document describes the target model only.

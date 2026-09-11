@@ -46,7 +46,7 @@ class TestClearSemantics:
         assert kinds == ["clear_priority"]
 
     def test_absent_iteration_label_clears_existing_iteration(self):
-        member = ItemState(item_id="item-1", issue_number=30, is_draft=False, iteration_slug="v1.5.0", priority=None, status="Backlog")
+        member = ItemState(item_id="item-1", issue_number=30, is_draft=False, iteration_slug="i-002", priority=None, status="Backlog")
         d = plan_sync(item=member, desired_priority=None, desired_priority_clear=True,
                       desired_status="Backlog", desired_iteration_key=None, desired_iteration_clear=True, config=STATUS)
         assert [m.kind for m in d.mutations] == ["clear_iteration"]

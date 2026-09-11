@@ -1,7 +1,8 @@
 # PROJECT-AUTOMATION-FOUNDATION — Execution Report
 
-Status: **CANDIDATE READY** (pending independent Role A review)
+Status: **CANDIDATE READY** (Role A Review Fix applied; pending independent re-review)
 Branch: `project-automation/foundation-20260911` · Base: `origin/main` = `39723c2`
+Reviewed candidate: `8874bf0` → verdict CHANGES REQUIRED → **Role A Review Fix section at the end of this document is the authoritative delta.** The original baseline below (four Iterations incl. v1.5.0) is retained verbatim as history but is **SUPERSEDED** — v1.5.0 is a Release, not an Iteration.
 
 ---
 
@@ -187,7 +188,117 @@ Release/Iteration boundary respected: no Release field or overlapping iteration 
 ## 12. Commits
 
 - Code commit: `6ed5253` — all scripts, tests, fixtures, workflows (24 files, +2405 lines).
-- Docs commit: the branch tip (this report + operating contract; `/docs/` is gitignored in this repo and was added
-  with `add -f`, matching the established evidence-only convention).
+- Docs commit: `8874bf0` — operating contract + original report (`/docs/` gitignored; `add -f` per evidence convention).
+- Review-fix commit: the branch tip (see Role A Review Fix section).
+
+---
+
+# ROLE A REVIEW FIX (supersedes the baseline above where they conflict)
+
+## Previous reviewed candidate
+
+`8874bf0` — verdict CHANGES REQUIRED: the candidate's authorization gate passed against a superseded Project model in
+which `v1.5.0 — Answer Intelligence Release 1` existed as an Iteration. An intermediate attempt to apply this review
+fix was correctly returned **BLOCKED** because at that moment the live Project still carried v1.5.0 as an Iteration
+(8 items) and the review forbids repairing the model inside the automation task.
+
+## Why the previous gate was invalid
+
+The first candidate's gate validated against the state produced by the earlier "Iteration / Release Model Correction"
+task, which itself had directed creating a v1.5.0 historical iteration. Role A's frozen governance supersedes that:
+**Iteration = development timebox; Release = shipped version.** Therefore v1.5.0 = Release ≠ Iteration, and the
+authoritative baseline is the corrected Project created by the (second) model-correction run — not the four-iteration
+model the candidate was built and tested against.
+
+## Corrected repository baseline
+
+`origin/main` = `39723c2` (unchanged throughout; the correction was Project-only).
+
+## Corrected Project baseline (fresh live read at review-fix start)
+
+- Iterations exactly: **I-001 — Answer Intelligence Foundation** `659fde78` (2026-09-07 +14d, 17 items incl. #26/#27 by
+  INC-3 lineage) · **I-UX-001 — Widget Experience Corrective** `ccecdb22` (2026-09-21 +14d, 8 items) ·
+  **v1.6.0 — Knowledge Integrity & Source Truth** `89b82cdb` (2026-10-05 +14d, 5 items). **No v1.5.0 Iteration.**
+- v1.6.0 membership intact: #25/#28/#30/#31/#48. Unassigned: #4/#21/#29/#34/#45/#47 (sprint-developed; delivery history
+  lives in Issue comments/Release notes), #5/#19/#20/#41/#44 (NEEDS REVIEW), open backlog #7/#23/#46.
+- 44 items; Status options (no "Ready"); Priority P0/P1/P2; Sprint field untouched.
+
+## Files changed (review fix)
+
+```
+tests/project_automation/fixtures/project_snapshot_20260911.json  rebaselined from corrected live state (3 iterations; counts 17/8/5/14; governance marker added)
+tests/project_automation/test_iteration_resolution.py             neutral timebox replaces v1.5.0 entry
+tests/project_automation/test_iteration_txn.py                    neutral timebox replaces v1.5.0 entry (mechanics unchanged)
+tests/project_automation/test_planner.py                          neutral slug replaces v1.5.0
+tests/project_automation/test_mapping.py                          v1.5.0 conflict fixture → i-002; status:ready tests flipped to reserved semantics
+tests/project_automation/test_release_iteration_boundary.py       NEW — Release ≠ Iteration regression boundary
+scripts/project_automation/labels.py                              status:ready moved to RESERVED set (recognized intent, not active vocabulary)
+scripts/project_automation/mapping.py                             STATUS_MAP drops ready; RESERVED_STATUS_NOTE surfaced in errors()
+scripts/project_automation/service.py                             sync emits UNSUPPORTED_STATUS_RESERVED finding (field-isolated)
+scripts/project_automation/reconcile.py                           RESERVED_STATUS_LABEL report-only drift class
+docs/engineering/project-automation.md                            corrected iteration examples; Release≠Iteration boundary; reserved status; activation boundary
+docs/engineering/tasks/project-automation-foundation-execution.md this section
+```
+
+## Fixture correction
+
+`project_snapshot_20260911.json` regenerated from the corrected live Project: 3 iterations (`i-001`/`i-ux-001`/
+`v1.6.0`), 44 items with assignment counts {i-001: 17, i-ux-001: 8, v1.6.0: 5, none: 14}, plus a `model` field
+recording the corrected governance. A repository-wide grep confirms **zero remaining v1.5.0-as-Iteration assumptions**
+in `scripts/` and `tests/`.
+
+## Ready-status correction
+
+`status:ready` is **RESERVED / UNSUPPORTED**: the Project has no `Ready` Status option, and adding one via
+`updateProjectV2Field(singleSelectOptions)` is an option-ID full-replace hazard (same family as iteration IDs), so it
+was not attempted. Behavior: the label is recognized as explicit control intent (not "unknown"), produces a visible
+`UNSUPPORTED_STATUS_RESERVED` finding / `RESERVED_STATUS_LABEL` reconcile entry, never defaults silently to Backlog,
+and causes **no Status mutation** until a future authorization adds the option.
+
+## Test result
+
+**77 passed** (baseline 69 + 8 new) — `.venv/bin/python -m pytest tests/project_automation -q`. New coverage:
+release version does not resolve as an Iteration even though v1.5.0 exists as a GitHub Release; `release:`/`tag:`
+are not control prefixes; source-scan guard proving no automation module touches Release/tag APIs;
+`status:ready` reserved semantics (visible finding, no mutation, no Backlog fallback); corrected-fixture drift tests.
+Explicitly re-verified GREEN: ID-regeneration protection, idempotency, conflicts fail-safe, unknown iteration
+fail-safe, closed→Done, reopen behavior. No tests were deleted.
+
+## Bootstrap dry-run result (live, corrected model, read-only)
+
+26 issues planned: **16 `iteration:*` + 24 `priority:*` + 8 `status:*`**. **Hard acceptance: `iteration:v1.5.0` count
+= 0**; distinct iteration labels = {`iteration:i-001`, `iteration:i-ux-001`, `iteration:v1.6.0`}; needs_review = [];
+contradicting existing labels = []. (Iteration adds dropped 22→16 because six former v1.5.0 issues are now correctly
+unassigned.) `bootstrap --apply` remains NOT executed — gated behind Role A acceptance.
+
+## Live read-only reconciliation result
+
+`reconcile --dry-run` over the live Project: **zero drift**, zero fixable findings; 30 member issues skipped
+(NO_CONTROL_METADATA — pre-bootstrap), 14 draft items (no Issue authority). Exit 0.
+
+## Project / Issue / production mutations during this review fix
+
+NONE. Live access was limited to read-only GraphQL/CLI reads plus the two `--dry-run` commands. No test Issues or
+labels were created; no configuration was touched.
+
+## Activation status
+
+**AUTOMATION NOT ACTIVE.** IMPLEMENTATION ACCEPTED ≠ AUTOMATION ACTIVE. Activation remains the later gate:
+candidate accepted → merge to main → `PROJECT_SYNC_TOKEN` configured/verified → `bootstrap --apply` → first real
+Issue event → Action succeeds → convergence independently verified. No secret was created; nothing merged.
+
+## Residual risks (updated)
+
+1. `status:ready` remains reserved until the `Ready` option is authorized (option-ID full-replace hazard documented).
+2. Actions-runner wiring still provable only post-merge (workflow files absent from default branch; `gh workflow run`
+   returns 404 for non-default refs) + `PROJECT_SYNC_TOKEN` prerequisite — unchanged from `8874bf0`.
+3. Coexistence with the Project's built-in closed→Done automation remains observed-idempotent; re-verify at activation.
+4. The six unassigned sprint-era issues (#4/#21/#29/#34/#45/#47) carry their delivery history in Issue comments and
+   the v1.5.0 Release notes only — by design under the corrected governance; a future dev-timebox iteration may claim
+   them by explicit Product decision, not by this automation.
+
+## New candidate SHA
+
+See final response (branch tip of `project-automation/foundation-20260911`).
 
 Final status: **PROJECT-AUTOMATION-FOUNDATION = CANDIDATE READY**

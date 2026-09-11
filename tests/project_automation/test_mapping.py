@@ -36,8 +36,17 @@ class TestStatusMapping:
     def test_backlog(self):
         assert desired_for(1, OPEN, ["status:backlog"]).status_option == "Backlog"
 
-    def test_ready(self):
-        assert desired_for(1, OPEN, ["status:ready"]).status_option == "Ready"
+    def test_ready_is_reserved_and_produces_no_status_mutation(self):
+        # Project has no 'Ready' option: status:ready is reserved/unsupported —
+        # it must surface as a visible finding and never cause a Status change.
+        d = desired_for(1, OPEN, ["status:ready"])
+        assert d.status_option is None
+        assert any("RESERVED" in e for e in d.errors())
+
+    def test_ready_is_not_defaulted_to_backlog(self):
+        # explicit reserved intent must not silently fall back to the open default
+        d = desired_for(1, OPEN, ["status:ready", "priority:p1"])
+        assert d.status_option is None
 
     def test_in_progress(self):
         assert desired_for(1, OPEN, ["status:in-progress"]).status_option == "In progress"
@@ -80,7 +89,7 @@ class TestIterationDesired:
         assert d.iteration_clear is True
 
     def test_conflicting_iteration_labels(self):
-        d = desired_for(1, OPEN, ["iteration:v1.5.0", "iteration:v1.6.0"])
+        d = desired_for(1, OPEN, ["iteration:i-002", "iteration:v1.6.0"])
         assert d.iteration_key is None
         assert d.iteration_clear is False
         assert d.errors()

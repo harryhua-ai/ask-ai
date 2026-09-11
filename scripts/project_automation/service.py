@@ -15,7 +15,7 @@ from . import queries as q
 from .errors import (AuthenticationError, ConfigError, ProjectMutationFailure, VerificationFailure)
 from .iteration_txn import IterationTuple, create_iteration_transaction
 from .labels import parse_control_labels
-from .mapping import PRIORITY_MAP, STATUS_MAP, resolve_desired
+from .mapping import PRIORITY_MAP, STATUS_MAP, RESERVED_STATUS_NOTE, resolve_desired
 from .model import FieldConfig, ItemState, IssueAuthority, IterationDef, OptionDef, iteration_slug
 from .planner import Finding, SyncPlan, plan_sync
 from .reconcile import detect_drift
@@ -177,6 +177,9 @@ def sync_issue(t: GhCliTransport, s: Settings, number: int, dry_run: bool) -> di
             "METADATA_CONFLICT",
             f"conflicting {'/'.join(c.values)} for control field '{c.field}'; that field left unchanged",
             field=c.field))
+    if control.status_reserved:
+        plan.findings.append(Finding(
+            "UNSUPPORTED_STATUS_RESERVED", RESERVED_STATUS_NOTE, field="status"))
 
     report = {
         "issue": number,

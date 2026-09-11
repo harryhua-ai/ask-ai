@@ -11,7 +11,7 @@ def iteration(id_, title, start="2026-01-05", duration=14):
 
 CONFIG = [
     iteration("id-a", "I-001 — Answer Intelligence Foundation"),
-    iteration("id-b", "v1.5.0 — Answer Intelligence Release 1"),
+    iteration("id-b", "I-002 — Evidence Intelligence Foundation", "2026-09-10"),
     iteration("id-c", "I-UX-001 — Widget Experience Corrective"),
     iteration("id-d", "v1.6.0 — Knowledge Integrity & Source Truth"),
 ]

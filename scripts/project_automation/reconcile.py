@@ -33,6 +33,7 @@ _FINDING_TO_DRIFT = {
     "UNKNOWN_ITERATION": "UNKNOWN_ITERATION_LABEL",
     "UNKNOWN_OPTION": "UNKNOWN_PROJECT_OPTION",
     "METADATA_CONFLICT": "CONFLICTING_LABELS",
+    "UNSUPPORTED_STATUS_RESERVED": "RESERVED_STATUS_LABEL",
 }
 
 _MUTATION_TO_DRIFT = {
@@ -98,6 +99,10 @@ def detect_drift(
         for label in control.unknown:
             drifts.append(Drift(issue.number, "UNKNOWN_CONTROL_LABEL",
                                 f"unrecognized control label '{label}'", fixable=False))
+        if control.status_reserved:
+            drifts.append(Drift(issue.number, "RESERVED_STATUS_LABEL",
+                                "status:ready is reserved/unsupported (Project has no 'Ready' option)",
+                                fixable=False))
 
         desired = resolve_desired(issue, control)
         plan = plan_sync(item=item, desired_status=desired.status_option,
