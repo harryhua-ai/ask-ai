@@ -5,7 +5,7 @@
 - 性质:**Initiative Freeze** —— 冻结 WHAT / WHY / 不变量 / 阶段所有权 / 验收边界。本文**不实现**任何 Phase,不含 Phase 1 工程 HOW(后者由独立任务《Phase 1 — Lifecycle Foundation Engineering Contract》派生)。
 - 事实源(全部已接受,本文不得回退):
   - Discovery:`docs/engineering/discovery/KNOWLEDGE-FRESHNESS-RETRIEVAL-INTEGRITY-DISCOVERY.md`(e94a673 + b8969ca/f73092b 修正)= **FINAL PASS**
-  - UX 定义:`docs/product/initiatives/ADMIN-KNOWLEDGE-OPS-UX-DEFINITION.md`(7ce0111 + b8969ca)= **FINAL PASS**
+  - UX 定义:`docs/product/initiatives/ADMIN-KNOWLEDGE-OPS-UX-DEFINITION.md`(7ce0111 + b8969ca)= FINAL PASS;**其 Admin IA/工作流已被 2026-09-11 最新 Product Review 取代(§8b),仅未被取代的产品语义(如正交状态概念)继续可用**
   - Product Review CORRECTION:D-1 / D-4 / D-6 修正 = **ACCEPTED**;U-1 / U-2 = **DECIDED**
   - Role A 复审:NARROW FIX(f73092b,§4C/§5 D-6 残余清除)= **ACCEPTED**
 - Trace 状态:Trace A(Release 1 / Bug Fix 生产收口)候选 = main `bb80c389`;Trace B 实现自 Release 2 起独立成列。
@@ -25,7 +25,7 @@ ASK-AI 对用户与运营者提供**可持续保鲜、可审计、可运营的�
 6. **引用有效性**:引用链接是显式生命周期对象(VALID→…→INVALID),独立可观测、可复验;
 7. **时态/权威正确**:现势真相与历史真相显式区分,历史不得冒充现势,过期现势不得冒充有效现势;
 8. **检索资格**:仅合格知识到达检索;资格由物理主门 + 逻辑副门确定性决定,可解释;
-9. **运营可观测/可控**:Admin 能按已接受 UX 定义观察、配置、处置全部知识运营状态,无需理解内部 RAG 机制。
+9. **运营可观测/可控**:Admin 能按最新 Admin 产品方向(§8b;原 UX 定义 IA 已被取代)观察、配置、处置全部知识运营状态,无需理解内部 RAG 机制。
 
 **非目标(显式排除)**:全量 GraphRAG 改造;替换既有检索/重排机制;Trace A 的 Bug Fix 范畴;重开已接受 UX。
 
@@ -56,8 +56,9 @@ ASK-AI 对用户与运营者提供**可持续保鲜、可审计、可运营的�
 - 其余 CURRENT 证据 OVERDUE 时降级/标记,不自动硬拒;
 - 新鲜度锚 = source_verified_at(完整清单验证成功时间),非文档内容时间。
 
-**I-5 索引生成(D-2 冻结)**
-- 双代共存 + `active_generation` 指针原子翻转;失败的新代**不得**破坏在服旧代;RETIRED 旧代按保留窗 GC(D-3:默认 30 天,可配)。
+**I-5 索引生成(D-2 冻结;接替时序按 2026-09-11 最新 Product 裁决,取代原 D-3 默认 30 天——见 §8a)**
+- 双代共存 + `active_generation` 指针原子翻转(**P 轴处理态 = PENDING/PROCESSING/READY,FAILED 为失败终态/分支,无 ACTIVE 处理态;激活 = 指针选择一个合格 READY 代,不新增 P 轴状态**);失败的新代**不得**破坏在服旧代;
+- 接替时序:替代代成为权威的瞬间,被接替知识**立即**失去现势(Current Truth)地位;旧服务表示**最迟 1 天内**撤出服务(撤出窗内旧表示**绝非**与新代并行的现势真相);撤出完成后转 **RETIRED**;RETIRED 保留 **7 天**,期满后**可自动物理 GC**。
 
 **I-6 删除安全**
 - 删除必须证据确认:完整源清单 + 连续缺席宽限 + 源可达探针,任一不满足 → UNREACHABLE/MISSING_CANDIDATE 保留服务;
@@ -82,7 +83,7 @@ ASK-AI 对用户与运营者提供**可持续保鲜、可审计、可运营的�
 | **P2 — Freshness + Reconciliation + Citation Validity** | 源清单/对账(slim 完整枚举,含 woo 分页正确性);freshness 策略与 source_verified_at;coverage/overdue 语义;引用校验/探活(D-7 独立低频作业);源消失确认(缺席宽限+探针);三方对账与不变量报告;上述所需连接器正确性修复 | 时态角色检索执行(P3);变体结构(P3);GC 策略变更(P1 已定基) |
 | **P3 — Retrieval Integrity** | 检索资格(逻辑副门);authority/temporal 执行(I-8 硬规则);历史框定;证据角色有界预留扩展(solution/case 桶);content_hash 引用 collapse;**Store 变体摄取与内容结构**;UNCLASSIFIED 激活语义契约(回 Product) | 新排序公式(无证据不预设);Claim/Graph(P4) |
 | **P4 — Claim / Graph** | 仅条件触发:Phase 2/3 后仍有多源事实冲突/变体断言缺口时,轻量 claim 表评估。**GraphRAG 不是本 initiative 依赖** | — |
-| **P5 — Admin Knowledge Operations Implementation + Operational Rollout** | 按**已冻结** UX 定义实现端点集+Admin SPA+运营落地(GC 默认运营化;基准回归) | **不得重开已接受 UX 定义** |
+| **P5 — Admin Knowledge Operations Implementation + Operational Rollout** | 按 2026-09-11 最新 Admin 产品方向(§8b:无独立知识 UI;配置>数据源为主工作面)实现知识运营端点+Admin 落地(GC 默认运营化;基准回归);原 UX 定义仅未被取代语义可用 | **不得重开已接受产品语义** |
 
 ---
 
@@ -112,7 +113,7 @@ ASK-AI 对用户与运营者提供**可持续保鲜、可审计、可运营的�
 7. 历史证据不得静默覆盖现势真相(I-8);
 8. 失效引用不得静默保持健康/有效外观或处于无治理状态;其服务/证据处置遵循显式已接受引用策略(默认标记,排除须策略/Admin 授权)且可观测、可审计(I-7);
 9. inventory / ledger / serving-index 完整性可对账并可机读证明(Discovery §6 不变量);
-10. Admin 可观察已定义的全部运营状态(已接受 UX 定义验收十问);
+10. Admin 可观察已定义的全部运营状态(原 UX 验收十问;其页面映射已随 §8b IA 取代,验收以 §8b 现行方向的能力级作答为准);
 11. 全程留有审计 AUTO+AUDIT 行为的证据链(UX §5)。
 
 **Per-phase gates**:
@@ -128,7 +129,7 @@ ASK-AI 对用户与运营者提供**可持续保鲜、可审计、可运营的�
 
 ## 6. OPEN DECISIONS AUDIT(不制造新问题)
 
-**ALREADY DECIDED(不得重开)**:D-1(内容留存,修正版)/ D-2(双代+原子激活)/ D-3(GC 30 天)/ D-4(硬门范围,修正版)/ D-5(别名自动接链可撤销)/ D-6(时态角色=源策略,修正版)/ D-7(探活独立作业)/ U-1(总览分离)/ U-2(影响预览)/ A-1(正交四轴)。
+**ALREADY DECIDED(不得重开)**:D-1(内容留存,修正版)/ D-2(双代+原子激活)/ D-3(**已被 2026-09-11 最新裁决取代为接替时序**:立即失去现势/服务撤出≤1 天/RETIRED 7 天——见 §8a;30 天默认废除)/ D-4(硬门范围,修正版)/ D-5(别名自动接链可撤销)/ D-6(时态角色=源策略,修正版)/ D-7(探活独立作业)/ U-1(其对象 Knowledge Overview 已被 §8b 取代,以 §8b 为准)/ U-2(影响预览)/ A-1(正交四轴)。
 
 **SAFE TO DEFER(属 Phase 契约的常规工程选择,非产品开放问题)**:
 - 持久内容的具体载体(PG 表 vs content-addressed 对象存储位置、压缩/去重策略)→ P1 契约;
@@ -147,14 +148,53 @@ ASK-AI 对用户与运营者提供**可持续保鲜、可审计、可运营的�
 ## 7. PHASE 1 HANDOFF(权威交接;供独立 P1 工程契约任务消费)
 
 - **P1 Goal**:建立知识生命周期地基——canonical identity + 版本模型 + 持久内容契约 + 生成原子性,使"投影可重建、失败不回退、接替可追溯"首次成立。
-- **P1 Included**:canonical identity 地基(含 alias 地基);DocumentVersion 版本模型;content-hash / metadata-hash 变更语义;持久归一化内容契约(按 I-1,载体选择=工程决策);lifecycle 地基(L 轴 + 墓碑 + 接替);生成模型 + 原子激活(I-5);RETIRED 代处理 / GC 地基(D-3)。
+- **P1 Included**:canonical identity 地基(含 alias 地基);DocumentVersion 版本模型;content-hash / metadata-hash 变更语义;持久归一化内容契约(按 I-1,载体选择=工程决策);lifecycle 地基(L 轴 + 墓碑 + 接替);生成模型 + 原子激活(I-5);RETIRED 代处理 / GC 地基(接替时序按 §8a:撤出≤1 天 / RETIRED 7 天)。
 - **P1 Forbidden**:新鲜度策略/SLA(P2);引用探活(P2);全源清单与对账循环(P2);检索逻辑资格门与时态执行(P3);UNCLASSIFIED 激活语义(P3 契约);Store 变体摄取(P3);Claim/Graph(P4);Admin Ops 端点/面板实现(P5);吸收任何后期行为。
 - **Dependencies**:既有 #13 身份冻结契约(source_id 路径 PK + 确定性 UUID 家族);ingest/sync 管道与 Weaviate 集合(工程层);Trace A Release 1 隔离纪律(§4 —— P1 实现分支不得并入 `bb80c38` 主线直至收口或 Role A 变更基线);PG 迁移由 P1 契约定义(Freeze 不创建)。
-- **Product Invariants**:I-1、I-2、I-5、I-6(及状态模型 L/P 轴定义);D-1/D-2/D-3/D-5 冻结语义;接替→SUPERSEDED、缺席→墓碑需 P2 确认机制配合(P1 只落地状态与转换原语)。
+- **Product Invariants**:I-1、I-2、I-5、I-6(及状态模型 L/P 轴定义);D-1/D-2/D-5 冻结语义 + §8a 接替时序(取代原 D-3);接替→SUPERSEDED、缺席→墓碑需 P2 确认机制配合(P1 只落地状态与转换原语)。
 - **Acceptance Anchors**:§5 P1 Gate 四条 + 运行时证据要求;验收语料锚:发现 §0 案例映射中属生命周期族者(#48 ghost 半径、KNOWLEDGE-STALE-LEDGER 类死账)。
 - **Open Decisions**:无阻断项(§6:MUST DECIDE BEFORE P1 CONTRACT = 无)。
 
 ---
 
-## 附:与事实源的映射
-D-1→I-1;A-1→I-2;D-6→I-3;D-4→I-4;D-2/D-3→I-5;§4B/§6(Discovery)→I-5/I-6;D-7→P2 所有权;UX §2→I-2/I-3 状态与 Badge 词汇;UX §4D→I-7 处置语义;UX §5→验收 11(审计链);Discovery §13→§3 阶段表与 §5 gates;Trace 转移→§4。
+## 8. LATEST PRODUCT REVIEW SUPERSESSION RECORD(2026-09-11;权威链更新,先于 P1 契约权威声明)
+
+本节记录 2026-09-11 最新 Product Review 两项裁决;与前文冲突之处**以本节为准**。Discovery/KOps 原文作为历史留档不改。
+
+### (a) 接替/GC 时序(取代原 D-3 默认 30 天;同步进 I-5)
+
+- 被接替(superseded)知识在替代版本成为权威的**瞬间**失去现势(Current Truth)地位;
+- 旧服务表示**最迟 1 天内**撤出服务;
+- 服务撤出完成后转 **RETIRED**;
+- RETIRED 知识保留 **7 天**;期满后**可自动物理 GC**;
+- **边界澄清:1 天服务撤出窗 ≠ 新旧并行同为现势一天**——旧表示在撤出窗内只是待撤出的残差,任何时刻不得作为现势真相被引用或授权;
+- 原 D-3「默认 30 天」全面废除;墓碑(DELETED)专项保留窗不在本裁决范围内:物理清除仍仅经 GC 接口(可配置保留窗),**禁止回用已废除的 30 天默认,亦不得设任何未冻结的隐式默认**(墓碑窗的默认运营化归 P5,Freeze §3)。
+
+### (b) Admin Knowledge UX IA 取代
+
+`ADMIN-KNOWLEDGE-OPS-UX-DEFINITION.md` 的以下 IA/工作流**不再是权威**,被最新 Product Review 取代:
+
+1. 独立 Knowledge 顶层导航模块(/knowledge);
+2. Knowledge Overview(知识总览);
+3. Knowledge Issues(知识问题中心);
+4. Knowledge Settings(知识策略页);
+5. 独立 Knowledge Document Inspector 作为主 Admin 工作流。
+
+现行 Admin 产品方向:
+
+- **无独立知识 UI**;
+- **配置 > 数据源** 承载知识源/内容运营操作;
+- **单一数据源详情工作面**(非 Overview/Knowledge 多标签);
+- **技术洞察 > 技术性能 / 回答缺口**;
+- **Admin chat 是自然语言知识验证面**。
+
+保留权威(未被本次取代):正交状态概念(A-1 四轴模型与状态词汇,UX §2;即 I-2/I-3 所引)及其他未被上述清单取代的产品语义(含 I-7 引用处置默认=标记)。P1 仍不实现任何 Admin UI。
+
+### (c) 落点
+
+I-5(时序 + P 轴澄清)、§1 目标 9、§3 P5 行、§5 出口 10、§6 决策审计(D-3/U-1 注)、§7 P1 Included / Product Invariants 已随本节同步修订;P1 工程契约(独立文档)由其 REVIEW FIX 修订同步。
+
+---
+
+## 附:与事实源的映射(历史映射;D-3 时序已被 §8a 取代)
+D-1→I-1;A-1→I-2;D-6→I-3;D-4→I-4;D-2→I-5(D-3 原 30 天语义已废除,时序以 §8a 为准);§4B/§6(Discovery)→I-5/I-6;D-7→P2 所有权;UX §2→I-2/I-3 状态与 Badge 词汇;UX §4D→I-7 处置语义;UX §5→验收 11(审计链);Discovery §13→§3 阶段表与 §5 gates;Trace 转移→§4。
