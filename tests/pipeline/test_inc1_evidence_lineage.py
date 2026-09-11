@@ -96,6 +96,10 @@ class _Reranker:
     def rerank(self, query, results, top_k=10):
         return sorted(results, key=lambda r: -r.score)[:top_k]
 
+    def rerank_scored(self, query, results, top_k=10):
+        ordered = sorted(results, key=lambda r: -r.score)
+        return ordered[:top_k], [(r, r.score) for r in ordered]
+
 
 class _Pruner:
     """可控剪枝:丢弃指定身份(默认 s2#0),其余原样保留。"""

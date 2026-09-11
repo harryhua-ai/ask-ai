@@ -81,6 +81,7 @@ def _build_orchestrator(
 
     reranker = MagicMock()
     reranker.rerank.return_value = reranked_results if reranked_results is not None else [sr]
+    reranker.rerank_scored.return_value = (reranked_results if reranked_results is not None else [sr], [])
 
     llm = AsyncMock()
     llm.generate.return_value = llm_response if llm_response is not None else _make_llm_response()
@@ -109,6 +110,7 @@ async def test_rag_rejects_when_no_results():
     searcher.search.return_value = []
     reranker = MagicMock()
     reranker.rerank.return_value = []
+    reranker.rerank_scored.return_value = ([], [])
     llm = AsyncMock()
 
     rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="You are helpful.")
@@ -144,6 +146,8 @@ async def test_rag_generates_answer():
     searcher.search.return_value = [sr]
     reranker = MagicMock()
     reranker.rerank.return_value = [sr]  # SearchResult 列表(非 float)
+    # SearchResult 列表(非 float)
+    reranker.rerank_scored.return_value = ([sr], [])
     llm = AsyncMock()
     llm.generate.return_value = LLMResponse(
         content="NE503 的功耗为 2.5W [GitHub]",
@@ -216,8 +220,8 @@ async def test_rag_uses_reranker_top_k():
 
     await rag.answer("query", "widget")
 
-    reranker.rerank.assert_called_once()
-    _, kwargs = reranker.rerank.call_args
+    reranker.rerank_scored.assert_called_once()
+    _, kwargs = reranker.rerank_scored.call_args
     assert kwargs.get("top_k") == 7
 
 
@@ -262,7 +266,8 @@ async def test_rag_deduplicates_sources_by_url():
 
 @pytest.mark.unit
 async def test_rag_filters_internal_sources_from_public_list():
-    """filesystem(内部 support 案例)不进对外 sources 列表,但其他公开源保留。"""
+    """#28 修订:第一方知识案例(filesystem+knowledge)以标题展示、路径置空
+    进入对外 sources(可引用);非 knowledge 的 filesystem 仍被过滤。"""
     public_sr = _make_sr(
         text="public doc",
         source_id="s1",
@@ -271,26 +276,37 @@ async def test_rag_filters_internal_sources_from_public_list():
         source_type="github",
         product="ne101",  # 产品边界(契约 §5):语料标签须与查询目标一致
     )
-    internal_sr = _make_sr(
-        text="internal case",
+    case_sr = _make_sr(
+        text="first party case",
         source_id="s2",
         title="NE101-电源适配器电压咨询",
-        url="file:///home/ubuntu/knowledge-support/2026-04/NE101-电源.md",
+        url="",
         source_type="filesystem",
         product="knowledge",
     )
+    plain_internal_sr = _make_sr(
+        text="plain internal attachment",
+        source_id="s3",
+        title="内部附件",
+        url="file:///home/ubuntu/internal/attachment.md",
+        source_type="filesystem",
+        product="ne101",
+    )
 
     rag, _, _, _ = _build_orchestrator(
-        searcher_results=[public_sr, internal_sr],
-        reranked_results=[public_sr, internal_sr],
+        searcher_results=[public_sr, case_sr, plain_internal_sr],
+        reranked_results=[public_sr, case_sr, plain_internal_sr],
     )
 
     result = await rag.answer("NE101 power supply", "widget")
 
-    # filesystem 被过滤,只留 github 公开源
-    assert len(result.sources) == 1
-    assert result.sources[0]["type"] == "github"
-    assert all(s["type"] != "filesystem" for s in result.sources)
+    # 知识案例:标题展示、路径不外泄;非 knowledge 的 filesystem 仍被过滤
+    assert len(result.sources) == 2
+    by_type = {s["type"]: s for s in result.sources}
+    assert by_type["github"]["url"] == public_sr.url
+    assert by_type["filesystem"]["url"] == ""
+    assert by_type["filesystem"]["title"] == case_sr.title
+    assert all("file:///" not in (s.get("url") or "") for s in result.sources)
 
 
 @pytest.mark.unit
@@ -377,6 +393,7 @@ async def test_rag_stream_answer_rejects_when_empty():
     searcher.search.return_value = []
     reranker = MagicMock()
     reranker.rerank.return_value = []
+    reranker.rerank_scored.return_value = ([], [])
     llm = AsyncMock()
 
     rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="You are helpful.")
@@ -405,6 +422,7 @@ async def test_answer_passes_channel_to_searcher():
     mock_searcher.search.return_value = []
     mock_reranker = MagicMock()
     mock_reranker.rerank.return_value = []
+    mock_reranker.rerank_scored.return_value = ([], [])
     mock_llm = AsyncMock()
 
     orchestrator = RAGOrchestrator(
@@ -596,6 +614,7 @@ async def test_rag_off_topic_rejects_without_search():
     searcher.search.return_value = [sr]
     reranker = MagicMock()
     reranker.rerank.return_value = [sr]
+    reranker.rerank_scored.return_value = ([sr], [])
     llm = AsyncMock()
     llm.generate.return_value = _intent_response("off_topic")
 
@@ -622,6 +641,7 @@ async def test_rag_commercial_enters_search_after_woocommerce_enabled():
     searcher.search.return_value = [sr]
     reranker = MagicMock()
     reranker.rerank.return_value = [sr]
+    reranker.rerank_scored.return_value = ([sr], [])
     llm = AsyncMock()
     llm.generate.return_value = _intent_response("commercial")
     llm.stream = AsyncMock(return_value=iter(["价格", "信息"]))
@@ -645,6 +665,8 @@ async def test_rag_product_question_answers_with_few_results():
     searcher.search_bucket.return_value = []
     reranker = MagicMock()
     reranker.rerank.return_value = [sr]  # 仅 1 条结果
+    # 仅 1 条结果
+    reranker.rerank_scored.return_value = ([sr], [])
     llm = AsyncMock()
     # classify_intent → extract_query → generation
     llm.generate.side_effect = [
@@ -676,6 +698,7 @@ async def test_rag_intent_fail_open_proceeds():
     searcher.search_bucket.return_value = []
     reranker = MagicMock()
     reranker.rerank.return_value = [sr]
+    reranker.rerank_scored.return_value = ([sr], [])
     llm = AsyncMock()
     # classify_intent (fail-open) → extract_query → rewrite_query → generation
     bad_resp = MagicMock()
@@ -710,6 +733,8 @@ async def test_rag_uses_symbol_recall_and_rrf():
     searcher.search_bucket.return_value = []  # product 桶空(不干扰断言)
     reranker = MagicMock()
     reranker.rerank.return_value = [a, b]  # 透传,便于断言输入
+    # 透传,便于断言输入
+    reranker.rerank_scored.return_value = ([a, b], [])
     llm = AsyncMock()
     # 合并任务理解(单次,输出 extracted/rewritten)→ generation
     llm.generate.side_effect = [
@@ -724,7 +749,7 @@ async def test_rag_uses_symbol_recall_and_rrf():
     searcher.search_symbols.assert_called_once()
     assert searcher.search_symbols.call_args.kwargs["query"] == "i2c battery"
     # rerank 收到 RRF 融合结果(两路:hybrid [a] + symbol [b])
-    assert len(reranker.rerank.call_args.args[1]) == 2
+    assert len(reranker.rerank_scored.call_args.args[1]) == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -905,6 +930,8 @@ async def test_rag_falls_back_when_rerank_filters_all():
     searcher.search_bucket.return_value = []
     reranker = MagicMock()
     reranker.rerank.return_value = []  # threshold 把候选全滤光
+    # threshold 把候选全滤光
+    reranker.rerank_scored.return_value = ([], [])
     llm = AsyncMock()
     llm.generate.side_effect = [
         _intent_response("product"),
@@ -931,6 +958,7 @@ async def test_rag_still_rejects_when_both_fused_and_reranked_empty():
     searcher.search_bucket.return_value = []
     reranker = MagicMock()
     reranker.rerank.return_value = []
+    reranker.rerank_scored.return_value = ([], [])
     llm = AsyncMock()
     llm.generate.side_effect = [
         _intent_response("product"),

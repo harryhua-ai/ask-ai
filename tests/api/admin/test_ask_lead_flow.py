@@ -117,6 +117,12 @@ def _build_rag(llm: _ScriptedLLM) -> tuple[RAGOrchestrator, list[str]]:
             return []
 
     class _Reranker:
+        threshold = 0.3
+
+        def rerank_scored(self, query, results, top_k=10):
+            ordered = list(results)
+            return ordered[:top_k], [(r, getattr(r, "score", 0) or 0) for r in ordered]
+
         def rerank(self, query, results, top_k=10):
             return results[:top_k]
 

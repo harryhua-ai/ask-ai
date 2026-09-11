@@ -78,6 +78,7 @@ def test_rerank_type_weights_change_ordering():
     """相同 reranker 分数下,heading 应排在 paragraph 前面。"""
     mock_reranker = MagicMock()
     mock_reranker.rerank.return_value = [0.5, 0.5]
+    mock_reranker.rerank_scored.return_value = ([0.5, 0.5], [])
 
     r_heading = SearchResult(
         text="# Setup Guide\n\nInstall steps.", source_id="s1", source_type="t",

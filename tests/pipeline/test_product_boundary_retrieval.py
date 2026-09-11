@@ -143,6 +143,7 @@ def _build(corpus, *, llm=None, searcher=None):
     searcher = searcher if searcher is not None else FaithfulSearcher(corpus)
     reranker = MagicMock()
     reranker.rerank.side_effect = lambda query, results, top_k=None: list(results)
+    reranker.rerank_scored.side_effect = lambda query, results, top_k=None: (list(results), [])
     llm = llm if llm is not None else ScriptedLLM()
     rag = RAGOrchestrator(
         searcher=searcher,
@@ -248,6 +249,7 @@ async def test_rerank_wipe_fallback_stays_eligible():
     corpus = [NE503_DOC, NE301_DOC]
     rag, _, llm = _build(corpus)
     rag._reranker.rerank.side_effect = lambda query, results, top_k=None: []  # 全滤光
+    rag._reranker.rerank_scored.side_effect = lambda query, results, top_k=None: ([], [])
     events = await _collect(rag, "NE503 怎么升级固件?")
     complete = _complete(events)
     assert complete["is_answered"] is True

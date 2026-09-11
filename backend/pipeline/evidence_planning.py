@@ -194,7 +194,9 @@ def derive_evidence_plan(understanding, resolution) -> EvidencePlan:
 
     if category == "product":
         if evidence_intent == EVIDENCE_INTENT_RECOMMENDATION:
-            # B:方案/选型指南为目标证据,规格证据支撑
+            # B:方案/选型指南为目标证据,规格证据支撑;#31:案例证据
+            # (第一方落地案例)作为可选背景槽参与覆盖 —— 方案推荐应综合
+            # Product/Solution/Case/Wiki 证据类,案例缺失由 coverage 诚实呈现
             return _plan(
                 [
                     EvidenceSlot(
@@ -203,6 +205,11 @@ def derive_evidence_plan(understanding, resolution) -> EvidencePlan:
                         citation_requirement=CITATION_CITABLE_REQUIRED,
                     ),
                     _support,
+                    EvidenceSlot(
+                        role=ROLE_CASE_EVIDENCE,
+                        required=False,
+                        citation_requirement=CITATION_BACKGROUND_ALLOWED,
+                    ),
                 ]
             )
         # A:普通产品事实查询

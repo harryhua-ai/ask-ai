@@ -67,6 +67,7 @@ def _build(searcher_results, *, guard=None) -> tuple[RAGOrchestrator, MagicMock,
 
     reranker = MagicMock()
     reranker.rerank.side_effect = lambda query, results, top_k: list(results)
+    reranker.rerank_scored.side_effect = lambda query, results, top_k: (list(results), [])
 
     llm = AsyncMock()
     llm.generate.return_value = _make_llm_response(content="answer")
@@ -90,7 +91,7 @@ async def test_restricted_candidate_never_reaches_rerank_or_context():
 
     await rag.answer(query="我的 NE101 传不上云怎么办", channel="widget")
 
-    reranked_inputs = [r for call in reranker.rerank.call_args_list for r in call.args[1]]
+    reranked_inputs = [r for call in reranker.rerank_scored.call_args_list for r in call.args[1]]
     assert RESTRICTED_SR.source_id not in {r.source_id for r in reranked_inputs}
     assert PUBLIC_SR.source_id in {r.source_id for r in reranked_inputs}
 
@@ -107,7 +108,7 @@ async def test_unknown_prefix_candidate_denied():
 
     await rag.answer(query="随便看看", channel="widget")
 
-    reranked_inputs = [r for call in reranker.rerank.call_args_list for r in call.args[1]]
+    reranked_inputs = [r for call in reranker.rerank_scored.call_args_list for r in call.args[1]]
     assert UNKNOWN_SR.source_id not in {r.source_id for r in reranked_inputs}
     user_msg = llm.generate.call_args.args[0][-1]["content"]
     assert "内部跟进记录" not in user_msg
@@ -121,7 +122,7 @@ async def test_stream_answer_also_enforces_boundary():
 
     chunks = [c async for c in rag.stream_answer(query="SIM 注册被拒", channel="widget")]
 
-    reranked_inputs = [r for call in reranker.rerank.call_args_list for r in call.args[1]]
+    reranked_inputs = [r for call in reranker.rerank_scored.call_args_list for r in call.args[1]]
     assert RESTRICTED_SR.source_id not in {r.source_id for r in reranked_inputs}
     # 全部候选被拦 → 无候选可依据 → 拒答而非凭空作答
     assert not any(
@@ -157,7 +158,7 @@ async def test_guard_failure_fails_closed_drops_all_candidates():
     assert result.reranked_results == []
     # 意图分类会调用 llm(task="intent"),但绝不能发生 generation 调用
     assert all(call.kwargs.get("task") != "generation" for call in llm.generate.call_args_list)
-    reranked_inputs = [r for call in reranker.rerank.call_args_list for r in call.args[1]]
+    reranked_inputs = [r for call in reranker.rerank_scored.call_args_list for r in call.args[1]]
     assert reranked_inputs == []
 
 

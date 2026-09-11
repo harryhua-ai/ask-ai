@@ -83,6 +83,7 @@ def _build(searcher_results, *, mapping, stream_chunks):
     searcher.search_bucket.return_value = []
     reranker = MagicMock()
     reranker.rerank.side_effect = lambda query, results, top_k: list(results)
+    reranker.rerank_scored.side_effect = lambda query, results, top_k: (list(results), [])
     llm = FakeLLM(stream_chunks)
     rag = RAGOrchestrator(
         searcher=searcher,

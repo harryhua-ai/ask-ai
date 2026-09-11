@@ -113,6 +113,7 @@ def _make_rag(llm, results):
     searcher.search_bucket.return_value = []
     reranker = MagicMock()
     reranker.rerank.return_value = results
+    reranker.rerank_scored.return_value = (results, [])
     return RAGOrchestrator(searcher, reranker, llm, system_prompt="sys", min_results_to_answer=1)
 
 

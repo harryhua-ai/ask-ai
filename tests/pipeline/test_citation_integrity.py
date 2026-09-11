@@ -44,6 +44,7 @@ def _make_sr(
     url: str = "https://example.com",
     score: float = 0.5,
     chunk_index: int = 0,
+    channel_visibility=None,
 ) -> SearchResult:
     return SearchResult(
         text=text,
@@ -54,6 +55,7 @@ def _make_sr(
         url=url,
         score=score,
         chunk_index=chunk_index,
+        **({"channel_visibility": channel_visibility} if channel_visibility else {}),
     )
 
 
@@ -81,6 +83,9 @@ def _build_orchestrator(
 
     reranker = MagicMock()
     reranker.rerank.return_value = list(reranked_results)
+    reranker.rerank_scored.return_value = (list(reranked_results), [])
+    reranker.rerank_scored.return_value = (list(reranked_results), [])
+    reranker.rerank_scored.return_value = (list(reranked_results), [])
 
     llm = AsyncMock()
     llm.generate.return_value = _make_llm_response(llm_content)
@@ -232,6 +237,123 @@ class TestBuildCitationContext:
 
 
 @pytest.mark.unit
+class TestFirstPartyKnowledgeCaseCitation:
+    """#28:第一方知识案例(filesystem+knowledge)= 有编号可引用、路径不外泄。"""
+
+    def test_extract_sources_includes_knowledge_case_pathless(self):
+        store = _make_sr(
+            source_type="woocommerce",
+            product="ne101",
+            title="NE101 Store",
+            url="https://www.camthink.ai/store/neoeyes-ne101/",
+            source_id="woocommerce-mall/319",
+        )
+        case_a = _make_sr(
+            source_type="filesystem",
+            product="knowledge",
+            title="NE101 询价与认证案例",
+            url="",
+            source_id="knowledge-support-cases/main/2026-05/case-a.md",
+        )
+        internal = _make_sr(
+            source_type="filesystem",
+            product="knowledge",
+            title="内部未发布案例",
+            url="",
+            source_id="knowledge-support-cases/main/2026-05/internal.md",
+            channel_visibility=("widget", "internal"),
+        )
+        rag, _, _, _ = _build_orchestrator(reranked_results=[store, case_a, internal])
+        sources = rag._extract_sources([store, case_a, internal])
+        assert len(sources) == 2
+        assert sources[0]["url"] == store.url
+        case_entry = sources[1]
+        assert case_entry["url"] == "" , "知识案例不得外泄文件系统路径"
+        assert case_entry["title"] == "NE101 询价与认证案例"
+        assert case_entry["source_id"] == case_a.source_id
+
+    def test_knowledge_case_chunks_share_citation_number_and_internal_stays_background(self):
+        store = _make_sr(
+            source_type="woocommerce",
+            product="ne101",
+            title="NE101 Store",
+            url="https://www.camthink.ai/store/neoeyes-ne101/",
+            source_id="woocommerce-mall/319",
+        )
+        case_c1 = _make_sr(
+            text="案例正文 A:记录日期 2026-05,认证状态未获得",
+            source_type="filesystem",
+            product="knowledge",
+            title="NE101 询价与认证案例",
+            url="",
+            source_id="knowledge-support-cases/main/2026-05/case-a.md",
+            chunk_index=0,
+        )
+        case_c2 = _make_sr(
+            text="案例正文 B:结论段落",
+            source_type="filesystem",
+            product="knowledge",
+            title="NE101 询价与认证案例",
+            url="",
+            source_id="knowledge-support-cases/main/2026-05/case-a.md",
+            chunk_index=1,
+        )
+        internal = _make_sr(
+            text="内部未发布正文",
+            source_type="filesystem",
+            product="knowledge",
+            title="内部未发布案例",
+            url="",
+            source_id="knowledge-support-cases/main/2026-05/internal.md",
+            channel_visibility=("widget", "internal"),
+        )
+        sources = [
+            {
+                "url": store.url,
+                "title": store.title,
+                "type": store.source_type,
+                "product": store.product,
+            },
+            {
+                "url": "",
+                "title": case_c1.title,
+                "type": case_c1.source_type,
+                "product": case_c1.product,
+                "source_id": case_c1.source_id,
+            },
+        ]
+        ctx = build_citation_context([store, case_c1, case_c2, internal], sources)
+        # 两个案例 chunk 同源同号([2]),且都进入可引用段
+        assert ctx.context.count("[2] ") >= 1
+        assert "案例正文 A" in ctx.context
+        assert "案例正文 B" in ctx.context
+        assert ctx.stats["background_chunks"] == 1  # 仅 internal chunk
+        assert "内部未发布正文" in ctx.context
+
+    def test_non_knowledge_filesystem_stays_background(self):
+        f = _make_sr(
+            text="普通内部文件",
+            source_type="filesystem",
+            product="ne503",
+            title="Int",
+            url="file:///f",
+            source_id="other-fs/f.md",
+        )
+        sources = [
+            {"url": "https://example.com", "title": "P", "type": "github", "product": "ne503"}
+        ]
+        pub = _make_sr(
+            text="公开内容",
+            source_type="github",
+            product="ne503",
+            title="P",
+            url="https://example.com",
+            source_id="gh/1",
+        )
+        ctx = build_citation_context([pub, f], sources)
+        assert ctx.stats["background_chunks"] == 1
+
+
 class TestCitationStreamFilter:
     def _filter(self, n=2, texts=None):
         from backend.pipeline.citation import CitationStreamFilter
@@ -480,6 +602,9 @@ class TestStreamCitationGolden:
 
         # 第二轮:只剩一个可见源,同样的回答文本 [2] 变悬空
         reranker.rerank.return_value = [a]
+        reranker.rerank_scored.return_value = ([a], [])
+        reranker.rerank_scored.return_value = ([a], [])
+        reranker.rerank_scored.return_value = ([a], [])
 
         def _fake_stream2(messages, task=None, **kwargs):
             async def _gen():

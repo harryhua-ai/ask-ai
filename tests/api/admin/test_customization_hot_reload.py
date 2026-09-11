@@ -55,6 +55,12 @@ def _make_rag(llm_capture: dict) -> RAGOrchestrator:
             return []
 
     class _Reranker:
+        threshold = 0.3
+
+        def rerank_scored(self, q, c, top_k=5, **kw):
+            ordered = sorted(c, key=lambda r: -(getattr(r, "score", 0) or 0))
+            return ordered[:top_k], [(r, getattr(r, "score", 0) or 0) for r in ordered]
+
         def rerank(self, q, c, top_k=5, **kw):
             return c
 

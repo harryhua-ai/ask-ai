@@ -41,8 +41,12 @@ KIND_STORE = "store"
 
 #: 可作为问答目标解析结果的 kind(§2 Target Product Resolution)
 TARGETABLE_KINDS = frozenset({KIND_PRODUCT, KIND_PLATFORM})
-#: 可作为共享证据入资格集合的 kind(§5 Retrieval Boundary)
-SHARABLE_KINDS = frozenset({KIND_PLATFORM, KIND_SHARED, KIND_SUPPORT})
+#: 可作为共享证据入资格集合的 kind(§5 Retrieval Boundary)。
+# #28:store 入围 —— 商城官方商业证据(价格/SKU/配置组合)与具体目标解耦,
+# 是 INC-4 STORE_OFFICIAL 的结构权威;原「store 永不入围」设计针对产品事实
+# 类被 store 冒充,不是禁止第一方商城证据本身(生产 38 个 commercial chunk
+# 被资格闸整体拦截 = 价格答案假性缺失的直接根因)。applies_to 见 taxonomy。
+SHARABLE_KINDS = frozenset({KIND_PLATFORM, KIND_SHARED, KIND_SUPPORT, KIND_STORE})
 
 UNKNOWN_SLUG = "unknown"
 
@@ -145,8 +149,21 @@ class Taxonomy:
             groups.append((str(group.get("label", "")).strip().lower(), rules))
         self._derivation = tuple(groups)
 
-        self._deixis = tuple(
+        deixis_raw = tuple(
             str(p).lower() for p in ((config.get("ambiguity") or {}).get("deixis_patterns") or [])
+        )
+        # 指代词匹配分两族(#31 矫正):
+        # - 含 ASCII 字母的模式按整词边界匹配 —— 否则「the camera」子串命中
+        #   「the cameras」这类对客户自有设备的客观描述,把场景充分的方案请求
+        #   在 understanding LLM 之前误短路成 PRODUCT_AMBIGUOUS(cg-r07 实证);
+        # - CJK 模式无词边界概念,维持子串匹配。
+        self._deixis_substring = tuple(
+            p for p in deixis_raw if not re.search(r"[a-z]", p)
+        )
+        self._deixis_word = tuple(
+            re.compile(r"(?<!\w)" + re.escape(p) + r"(?!\w)")
+            for p in deixis_raw
+            if re.search(r"[a-z]", p)
         )
 
     # -- canonicalize(标签 → slug)----------------------------------------- #
@@ -183,11 +200,17 @@ class Taxonomy:
         return tuple(ordered)
 
     def has_device_deixis(self, text: str) -> bool:
-        """查询是否含设备指代词(「这个设备/this camera」等;歧义检测输入)。"""
+        """查询是否含设备指代词(「这个设备/this camera」等;歧义检测输入)。
+
+        ASCII 模式按整词边界匹配(CJK 模式子串)—— 复数/派生形式
+        (「the cameras」)不构成对 CamThink 设备的指代,不得触发歧义短路。
+        """
         if not text:
             return False
         lowered = text.lower()
-        return any(pattern in lowered for pattern in self._deixis)
+        if any(pattern in lowered for pattern in self._deixis_substring):
+            return True
+        return any(pattern.search(lowered) for pattern in self._deixis_word)
 
     # -- 实体查询 ----------------------------------------------------------- #
 
@@ -232,10 +255,11 @@ class Taxonomy:
     # -- 检索资格集合(§5 Retrieval Boundary)-------------------------------- #
 
     def eligible_slugs(self, targets: tuple[str, ...] | list[str]) -> frozenset[str]:
-        """目标产品的 canonical 资格集合(sibling / 混合标签 / store 永不入围)。
+        """目标产品的 canonical 资格集合(sibling / 混合标签 / store 证据类)。
 
-        展开规则:目标自身 + applies_to 与任一目标相交的平台/共享/支持桶
-        (any-target 语义:比较模式下任一侧适用的平台均可用)。
+        展开规则:目标自身 + applies_to 与任一目标相交的平台/共享/支持/
+        商城(store,#28)桶(any-target 语义:比较模式下任一侧适用的平台
+        均可用)。
         """
         target_list = [t for t in targets if self.is_targetable(t)]
         if not target_list:

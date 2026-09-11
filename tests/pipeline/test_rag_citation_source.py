@@ -33,6 +33,8 @@ def _build_orchestrator(reranked: list[SearchResult]):
     searcher.search.return_value = reranked
     reranker = MagicMock()
     reranker.rerank.return_value = reranked
+    reranker.rerank_scored.return_value = (reranked, [])
+    reranker.rerank_scored.return_value = (reranked, [])
     llm = AsyncMock()
     llm.generate.return_value = _make_llm_response()
 

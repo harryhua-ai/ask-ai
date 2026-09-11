@@ -133,7 +133,7 @@ class TestClosureThroughMigrationDryRun:
         """ingest 与 migration 共用同一 taxonomy 实例(配置单源,零漂移)。"""
         tax = get_taxonomy()
         assert tax.derive_product("wiki", "x/i18n/en/docusaurus-plugin-content-docs/current/5-neoeyes-ne301-series/a.md", "").slug == "ne301"
-        assert tax.derive_product("website", "y", "https://www.camthink.ai/tools/battery-calculator/").slug == "unknown"
+        assert tax.derive_product("website", "y", "https://www.camthink.ai/tools/battery-calculator/").slug == "tools"  # #29
 
 
 # --------------------------------------------------------------------------- #

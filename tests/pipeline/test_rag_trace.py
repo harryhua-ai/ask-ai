@@ -57,18 +57,18 @@ def _build_test_orchestrator(*, intent_category="commercial") -> RAGOrchestrator
     searcher.search_bucket = MagicMock(return_value=[])
 
     reranker = MagicMock()
-    reranker.rerank = MagicMock(
-        return_value=[
-            MagicMock(
-                url="http://x",
-                title="t",
-                text="ctx",
-                source_type="github",
-                product="NE503",
-                score=0.9,
-            )
-        ]
-    )
+    _surv = [
+        MagicMock(
+            url="http://x",
+            title="t",
+            text="ctx",
+            source_type="github",
+            product="NE503",
+            score=0.9,
+        )
+    ]
+    reranker.rerank = MagicMock(return_value=_surv)
+    reranker.rerank_scored = MagicMock(return_value=(_surv, [(r, 0.9) for r in _surv]))
 
     return RAGOrchestrator(
         searcher=searcher,

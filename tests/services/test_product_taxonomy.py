@@ -131,6 +131,30 @@ class TestDeixis:
     def test_no_deixis(self, taxonomy, text):
         assert taxonomy.has_device_deixis(text) is False
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # #31:复数/客观描述不是对 CamThink 设备的指代 —— 不得触发歧义短路
+            "So we have 6 warehouses in India where the cameras are advanced and we are looking for AI box.",
+            "The cameras in our factory already support ONVIF.",
+            "These cameras stream over RTSP.",
+        ],
+    )
+    def test_plural_or_objective_phrases_not_deictic(self, taxonomy, text):
+        assert taxonomy.has_device_deixis(text) is False
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "How do I reset this camera?",
+            "What can this device do?",
+            "Which model should I choose for solar deployment?",
+            "这个设备支持什么?",
+        ],
+    )
+    def test_genuine_deixis_still_detected(self, taxonomy, text):
+        assert taxonomy.has_device_deixis(text) is True
+
 
 # --------------------------------------------------------------------------- #
 # derive_product:文档级产品推导(ingest 与迁移共用同一条代码路径)
@@ -231,23 +255,27 @@ class TestDeriveProduct:
         """Unknown Closure(#5):/tools/ai-tool-stack 官方页 = aitoolstack 平台身份。
 
         与既有 ``/product/neomind`` 规则同类:URL 显式路径 + 平台别名身份,
-        确定性规则,非兄弟页推断。工具族其它页面(battery-calculator、
-        tools 索引)不因同前缀被过匹配,保持 unknown(非产品事实来源)。
+        确定性规则,非兄弟页推断。
+
+        #29 修订:工具族页面(battery-calculator、tools 索引)映射共享桶
+        ``tools``(官方工具是跨机型第一方证据),不再是 unknown —— unknown
+        会被产品资格闸拦截,造成电池/功耗答案假性缺失(#29 根因)。
         """
         hit = taxonomy.derive_product(
             "website", "website-camthink/tools/ai-tool-stack",
             "https://www.camthink.ai/tools/ai-tool-stack/",
         )
         assert hit == DerivedProduct(slug="aitoolstack", reason="rule")
-        # 防过匹配:同前缀工具页不受该规则影响
+        # #29:工具族页面 = tools 共享桶(特异性规则保证 ai-tool-stack 仍
+        # 是 aitoolstack,不被通用 /tools/ 规则遮蔽)
         assert taxonomy.derive_product(
             "website", "website-camthink/tools/battery-calculator",
             "https://www.camthink.ai/tools/battery-calculator/",
-        ).slug == "unknown"
+        ).slug == "tools"
         assert taxonomy.derive_product(
             "website", "website-camthink/tools",
             "https://www.camthink.ai/tools/",
-        ).slug == "unknown"
+        ).slug == "tools"
 
     def test_woocommerce_labels_pass_through_canonical(self, taxonomy):
         assert taxonomy.derive_product("ne503", "woocommerce-mall/0", "").slug == "ne503"
@@ -284,7 +312,8 @@ class TestEligibility:
         assert "ne101" not in slugs
         assert "wiki" not in slugs
         assert "website" not in slugs
-        assert "commercial" not in slugs
+        # #28:store 商业证据类入围(第一方价格/SKU 证据,INC-4 STORE_OFFICIAL)
+        assert "commercial" in slugs
 
     def test_exact_target_includes_legacy_labels_for_retrieval(self, taxonomy):
         labels = set(taxonomy.eligible_labels(("ne503",)))

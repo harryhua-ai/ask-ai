@@ -1,0 +1,59 @@
+{
+ "benchmark_name": "ASK-AI Answer Intelligence Benchmark",
+ "benchmark_version": "v1",
+ "benchmark_as_of": "2026-09-07",
+ "case_count": 121,
+ "case_set_hash": "sha256:8685e198cb6b41abbd3b3edef667c090435a8090323307f5a320df943f73283a",
+ "contract_hash": "sha256:5a436f053804f9cd1ac1252f9815fd6cdb655e3d938138e1fc2e56dfc28e9946",
+ "executable_corpus_hash": "sha256:a1f920c0972d74cf8a6bbd4c46fc36e2b1bfaed0a5b3600f80e2a8ada4680f50",
+ "evidence_manifest_hash": "sha256:d638685fc621b4d9be7811e193dbbb76e9cab8c6c1e8c578f833b673b1fa8a5b",
+ "schema_version": "UNIFIED_BENCHMARK_CONTRACT_V1",
+ "evaluator_contract_version": "EVAL_V1",
+ "privacy_policy_version": "PRIV_V1（数据最小化+角色匿名化；映射在执行语料外）",
+ "security_policy_version": "SEC_V1（ALLOWED_WITH_SECURITY_CONTEXT + DEFAULT_CREDENTIAL_FIXTURE）",
+ "scoring_spec_version": "SCORE_V1",
+ "source_artifacts": {
+  "historical_corpus": "standard_questions.json v2.1（117，Knowledge 仓，immutable）",
+  "migration_inventory": "migration_inventory_117.json（REV1）",
+  "ground_truth_revalidation": "ground_truth_revalidation_41.json @54f9c9de1d55e0d7d22ea5d465491eed85c9c8d5",
+  "c30_marking_contracts": "marking_contracts_c30.json @573da687a3b103c5e0772b60d79d2ea463980842",
+  "coverage_gap_additions": "coverage_gap_additions_2026-09-07.json @8ce2e682adacde7d4e1a9673a1be97dc0621170b",
+  "admission_ground_truth": "admission_ground_truth_24_2026-09-07.json @72bc4c71aeae9a4580b7ef28bac7b33e1ada2cf4",
+  "unified_normalization": "unified_benchmark_contracts_121_2026-09-07.json @bcae44dbec39232b1a0b4c6333a3f3b262f1c4bc"
+ },
+ "accepted_planner_amendments": [
+  "sq-108 LPR/ALPR 真值修正（能力文档化✓/预装形态 NOT_DOCUMENTED/并发有界）",
+  "#013 默认凭据 = ALLOWED_WITH_SECURITY_CONTEXT + fixture 语义",
+  "第三方快照=静态版本化工件即可，不建管线",
+  "历史语料不因净化重写；执行语料数据最小化",
+  "EN 出处正交枚举（ORIGINAL_USER/PRODUCTION_USER/ADAPTED/TRANSLATED/BEHAVIORAL_SEED/SYNTHETIC/UNVERIFIED）",
+  "冻结修正案：sq-085 代码级标识符不作为真值（TRUTH_AMENDMENT_REQUIRED_APPLIED）"
+ ],
+ "known_limitations": [
+  "OFF_TOPIC 覆盖依赖行为种子（真实生产 off-topic 留痕缺失）",
+  "CASE_BOUNDARY_ISOLATION 受控污染测试未入 v1（剩余缺口，需专项设计授权）",
+  "多轮有状态链仅单级前序依赖（cg-r23/sq-038）",
+  "EN 知识载案 13 案中 11 案为 ADAPTED（真实 EN 往来、问句重构）",
+  "cg-r11 第三方比较事实以不虚构+有界评分（未做外部核验）",
+  "部分动态事实绑 2026-09-05/07 已接受快照，下次 Freeze 重验"
+ ],
+ "remaining_coverage_gaps": [
+  "真实 OFF_TOPIC trace",
+  "case-boundary 污染测试",
+  "更丰富多轮语料",
+  "更多 ORIGINAL_USER 英文案"
+ ],
+ "baseline_policy": "BASELINE_EXECUTED = NO；Freeze 先于测量；基线执行后语义变更需新版本",
+ "planner_ratification": {
+  "ratification": "Freeze Ratification REV1",
+  "date": "2026-09-07",
+  "amendment_id": "BENCHMARK-V1-SQ085-TRUTH-REV1",
+  "authorized_by": "Planner（正式授权）",
+  "scope": "sq-085 权威真值排除不可复现的代码级细节（N6M1 magic / stedgeai.mk 专属细节）；真值限于 stedgeai 构建工作流、.bin 工件/打包语义、可由所选 Wiki/案例证据支撑的诊断/工作流事实；不可复现细节仅存 provenance，不作评分要求；其余契约面不变。",
+  "applied_in": "contracts_frozen_v1.json → sq-085.required_truth_claims + sq-085.truth_amendment",
+  "substance_check": "PASS（claims 零 N6M1/stedgeai.mk/MODEL_STEDGEAI/MODEL_PACKAGE_MAGIC；工作流/打包/诊断事实在位；OLD 细节仅存 truth_amendment.OLD 作 provenance）",
+  "hash_impact": "仅本 manifest 与 Freeze Report 更新；可执行语料/冻结契约/证据清单/评测契约/评分规范/匿名化映射哈希不变",
+  "ratification_finding": "sq-086（B32）claims 含 stedgeai.mk 属其自身 GT 证据锚（ne301 @5611dbe1，STEDGEAI_VARIANT ?= 4.0 默认、2.2 分支——本地克隆逐字复现），与 sq-085 修正案无冲突，不构成矛盾，未改动"
+ },
+ "ratified": true
+}

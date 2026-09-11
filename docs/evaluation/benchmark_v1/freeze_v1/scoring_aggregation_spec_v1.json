@@ -1,0 +1,49 @@
+{
+ "artifact": "ASK-AI Answer Intelligence Benchmark v1 — FROZEN SCORING & AGGREGATION SPEC",
+ "version": "SCORE_V1",
+ "as_of": "2026-09-07",
+ "dimensions": {
+  "HARD_CORRECTNESS": [
+   "factuality",
+   "uncertainty_non_fabrication",
+   "interaction_correctness",
+   "product_scope_safety"
+  ],
+  "EVIDENCE": [
+   "evidence_coverage",
+   "citation_quality",
+   "faithfulness_grounding"
+  ],
+  "EXPERIENCE": [
+   "completeness_usefulness",
+   "clarity_structure",
+   "conversational_appropriateness"
+  ],
+  "OPERATIONAL": [
+   "ttft_e2e",
+   "llm_calls_token_cost"
+  ]
+ },
+ "encoding": {
+  "A/B/C": "A=2, B=1, C=0",
+  "PASS/FAIL": "PASS=1, FAIL=0",
+  "NOT_APPLICABLE": "不入该案均值",
+  "NOT_EVALUABLE": "不入均值但单列计数"
+ },
+ "case_level": "逐维原始档位必须全量保留（权威）；组内均值为派生展示",
+ "group_scores": {
+  "HARD_CORRECTNESS": "适用维均值",
+  "EVIDENCE": "适用维均值",
+  "EXPERIENCE": "适用维均值",
+  "OPERATIONAL": "ttft/e2e 中位数+p95、LLM calls/tokens 均值（无阈值）"
+ },
+ "benchmark_level": {
+  "reporting": "四组独立分 + 逐维分布 + CRITICAL_FAIL 单列计数；禁止以单一 opaque『accuracy』作为权威结果",
+  "optional_composite": {
+   "formula": "COMPOSITE = 0.5*HARD + 0.3*EVIDENCE + 0.2*EXPERIENCE（OPERATIONAL 不入合成）",
+   "visibility": "分量必须同屏呈现；合成仅为便利指标"
+  },
+  "critical_fail_reporting": "CRITICAL_FAIL 案单列清单；不计入普通维度均值掩盖"
+ },
+ "threshold_policy": "本 Gate 未冻结任何性能阈值；#23 历史计时（29,747ms/TTFT 18,111ms）仅 provenance"
+}
