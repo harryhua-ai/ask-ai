@@ -97,4 +97,38 @@ touch, no architecture broadening. All live operations were read-only dry-runs t
 - `docs/engineering/tasks/project-automation-sprint-sync-execution.md` — SUPERSEDED banner
 - `docs/engineering/tasks/project-automation-sprint-authority-hardening.md` — this report
 
+## Role A review fix — last-control-label Sprint clear (REVIEW FIX REQUIRED → fixed)
+
+**Defect (Role A identified, confirmed):** the authoritative contract "absence of `sprint:*` → clear Sprint" was
+blocked when `sprint:*` was the Issue's LAST control label — both `sync_issue()` and `detect_drift()` return
+`SKIPPED_NO_CONTROL_METADATA` / skip on `not control.has_any` before any Sprint evaluation, stranding a stale
+Sprint on a governed member.
+
+**Root cause:** the global opt-in guard predates Sprint hardening and evaluated only "any control label present",
+not "previously governed Sprint state present".
+
+**Fix (narrow — opt-in model preserved):** a sprint-only authority path in both guards. When the Issue is already
+a Project member, has NO `sprint:*` label, and the item's Sprint is populated → plan/apply exactly `clear_sprint`
+(`DesiredProjection` synthesized with all other fields None/False; reconcile emits `WRONG_SPRINT` with the clear
+fix). Zero control labels + empty Sprint → unchanged (`NO_CONTROL_METADATA` / silent for non-members). Absence of
+all control labels NEVER clears Priority/Iteration/Status. Implemented in `service.sync_issue` (items fetch
+hoisted above the guard; report gains `sprint_only_clear`) and `reconcile.detect_drift`.
+
+**RED evidence (review-fix round):** 4 defect-sensitive tests failed pre-fix — sync dry-run plans (was
+SKIPPED_NO_CONTROL_METADATA), sync apply→CONVERGED via a live-shape `_FakeProjectTransport` (context/issue/items/
+clear dispatch, post-clear state), reconcile `WRONG_SPRINT` for zero-label populated-Sprint, and
+other-fields-preservation (`codes == ["WRONG_SPRINT"]` only). 3 boundary tests passed pre-fix (empty-Sprint
+silence, `NO_CONTROL_METADATA` retention, 11-holder stability) — pinning the fix boundary.
+
+**GREEN:** full suite **128 passed** (121 prior all green + 7 new last-control-label tests: the 6 required cases
+plus the full apply/converge case). Focused transaction/DraftIssue/completedIterations green. Lint: only
+line-number shifts of the same pre-existing findings — zero new issues.
+
+**Live dry-runs (read-only, post-fix):** reconcile `DRY_RUN` — **Sprint drift = 0**, drift set byte-identical to
+the accepted state (13 I-000 items; #44 remains `NO_CONTROL_METADATA`, its Sprint empty); bootstrap `DRY_RUN` —
+zero planned additions, same 4 I-000 contradictions. No live mutation, no apply.
+
+Candidate lineage: review fix committed on top of `3955ab2` (previous candidate) — see git history for the new
+candidate SHA.
+
 PROJECT-AUTOMATION-SPRINT-AUTHORITY-HARDENING = CANDIDATE READY

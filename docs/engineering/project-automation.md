@@ -72,12 +72,15 @@ forbidden without a snapshot/restore plan).
 
 **Sprint authority (final):** `sprint:<key>` behaves as a normal authoritative dimension, mirroring Iteration —
 one valid label sets Sprint, no label clears it, multiple or unknown labels fail closed with the existing Sprint
-value preserved. This became safe only after, in order: (1) the historical Sprint assignments were bootstrapped
-into Issue `sprint:*` labels; (2) bidirectional Issue⇄Project equivalence was proven (11=11, missing/extra/
-conflicts/unknown all zero); (3) Sprint drift reached zero under both the transitional and the authoritative
-reconcile. The earlier transitional rule (absence → preserve Sprint) protected pre-bootstrap manual values and is
-RETIRED — removing a `sprint:*` label now clears Sprint on the next sync/reconcile. Sprint and Iteration remain
-independent dimensions: a Sprint label never mutates Iteration and vice versa.
+value preserved. **Removing the final `sprint:*` label still clears Sprint** for an already-governed Project
+member (Issue-event sync and reconcile both plan exactly `clear_sprint` in that case); this sprint-only authority
+never touches Priority/Iteration/Status, and a member with no control labels and an already-empty Sprint remains
+`NO_CONTROL_METADATA` (unmanaged). This became safe only after, in order: (1) the historical Sprint assignments
+were bootstrapped into Issue `sprint:*` labels; (2) bidirectional Issue⇄Project equivalence was proven (11=11,
+missing/extra/conflicts/unknown all zero); (3) Sprint drift reached zero under both the transitional and the
+authoritative reconcile. The earlier transitional rule (absence → preserve Sprint) protected pre-bootstrap manual
+values and is RETIRED. Sprint and Iteration remain independent dimensions: a Sprint label never mutates Iteration
+and vice versa.
 | `status:ready` | **RESERVED** — visible finding, no mutation |
 | Issue CLOSED | Status = Done (overrides any status label) |
 | Issue OPEN without `status:*` | Status = Backlog |

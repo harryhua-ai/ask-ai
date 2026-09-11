@@ -73,7 +73,24 @@ def detect_drift(
         item = items.get(issue.number)
 
         if not control.has_any:
-            if item is not None:
+            # Sprint-authority exception: a governed member's populated Sprint
+            # stays governed by label ABSENCE — the final sprint:* label's
+            # removal must still surface as deterministic WRONG_SPRINT drift
+            # with a clear fix, even with zero other control labels. Other
+            # fields are never flagged (opt-in model preserved); a member with
+            # no labels and an already-empty Sprint stays NO_CONTROL_METADATA.
+            if item is not None and item.sprint_slug is not None:
+                plan = plan_sync(item=item, desired_status=None, desired_priority=None,
+                                 desired_priority_clear=False, desired_iteration_key=None,
+                                 desired_iteration_clear=False, config=config,
+                                 desired_sprint_key=None, desired_sprint_clear=True)
+                for m in plan.mutations:
+                    code = (_MUTATION_TO_DRIFT.get(m.kind)
+                            or _classify_status_mutation(m.kind, m.payload, issue, item))
+                    drifts.append(Drift(issue.number, code, f"{m.kind} → {m.payload}", fixable=True,
+                                        fix=SyncPlan(mutations=[m])))
+                _append_findings(drifts, issue.number, plan)
+            elif item is not None:
                 skipped.append(Skipped(issue.number, "NO_CONTROL_METADATA",
                                        "Project member without control labels — not opted into projection"))
             continue

@@ -15,7 +15,8 @@ from . import queries as q
 from .errors import (AuthenticationError, ConfigError, ProjectMutationFailure, VerificationFailure)
 from .iteration_txn import IterationTuple, create_iteration_transaction
 from .labels import parse_control_labels
-from .mapping import PRIORITY_MAP, STATUS_MAP, RESERVED_STATUS_NOTE, resolve_desired
+from .mapping import (PRIORITY_MAP, STATUS_MAP, RESERVED_STATUS_NOTE, DesiredProjection,
+                      resolve_desired)
 from .model import (FieldConfig, ItemState, IssueAuthority, IterationDef, OptionDef,
                     iteration_slug, sprint_title_slug)  # noqa: F401 (re-exported for ensure_labels)
 from .planner import Finding, SyncPlan, plan_sync
@@ -190,15 +191,27 @@ def sync_issue(t: GhCliTransport, s: Settings, number: int, dry_run: bool) -> di
     member_item_id = next((m["id"] for m in memberships if m["project"]["id"] == ctx.project_id), None)
 
     control = parse_control_labels(authority.labels)
-    if not control.has_any:
-        return {"issue": number, "result": "SKIPPED_NO_CONTROL_METADATA", "mutations": [], "findings": []}
-
     items = fetch_items(t, s)
     item = next((i for i in items if i.issue_number == number), None)
     if member_item_id and item is None:
         raise VerificationFailure(f"issue #{number} is a Project member but its item could not be resolved")
 
-    desired = resolve_desired(authority, control)
+    sprint_only_clear = False
+    if not control.has_any:
+        # Sprint-authority exception: a governed member's populated Sprint stays
+        # governed by label ABSENCE — removing the final sprint:* label must still
+        # clear it. Exactly clear_sprint is planned; the global opt-in (other
+        # fields are never mutated without their own labels) is preserved.
+        if item is not None and item.sprint_slug is not None:
+            sprint_only_clear = True
+            desired = DesiredProjection(status_option=None, priority_option=None,
+                                        priority_clear=False, iteration_key=None,
+                                        iteration_clear=False, sprint_key=None,
+                                        sprint_clear=True, control=control)
+        else:
+            return {"issue": number, "result": "SKIPPED_NO_CONTROL_METADATA", "mutations": [], "findings": []}
+    else:
+        desired = resolve_desired(authority, control)
     plan = plan_sync(item=item, desired_status=desired.status_option,
                      desired_priority=desired.priority_option, desired_priority_clear=desired.priority_clear,
                      desired_iteration_key=desired.iteration_key, desired_iteration_clear=desired.iteration_clear,
@@ -225,6 +238,7 @@ def sync_issue(t: GhCliTransport, s: Settings, number: int, dry_run: bool) -> di
         "mutations": [{"kind": m.kind, **m.payload} for m in plan.mutations],
         "findings": [{"code": f.code, "message": f.message} for f in plan.findings],
         "dry_run": dry_run,
+        "sprint_only_clear": sprint_only_clear,
     }
     if dry_run:
         report["result"] = "DRY_RUN"

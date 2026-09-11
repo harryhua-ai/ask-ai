@@ -150,3 +150,141 @@ class TestAuthoritativeTransitionStability:
         p = plan(draft, CONVERGED_LABELS)
         assert p.mutations == []
         assert any(f.code == "DRAFT_SKIPPED" for f in p.findings)
+
+
+class TestLastControlLabelSprintClear:
+    """Role A REVIEW FIX: the final sprint:* label's removal must still clear Sprint.
+
+    The has_any opt-in guard must not strand a governed member's populated
+    Sprint when sprint:* was the Issue's last control label. Sprint-only
+    authority: exactly clear_sprint, never Priority/Iteration/Status.
+    """
+
+    def test_sync_clears_sprint_when_last_control_label_removed(self):
+        from project_automation.service import Settings, sync_issue
+        s = Settings(owner="harryhua-ai", repo="ask-ai", project_number=2, token="x")
+        # issue #28: zero control labels (sprint label removed), still a member,
+        # Sprint populated, other dimensions populated too
+        ft = FakeProjectTransport(labels=[], sprint="bug-fix-2026-09")
+        report = sync_issue(ft, s, 28, dry_run=True)
+        assert report["result"] == "DRY_RUN"
+        assert [m["kind"] for m in report["mutations"]] == ["clear_sprint"]
+
+    def test_sync_applies_exactly_clear_sprint_and_converges(self):
+        from project_automation.service import Settings, sync_issue
+        s = Settings(owner="harryhua-ai", repo="ask-ai", project_number=2, token="x")
+        ft = FakeProjectTransport(labels=[], sprint="bug-fix-2026-09")
+        report = sync_issue(ft, s, 28, dry_run=False)
+        assert report["result"] == "CONVERGED"
+        assert report["applied"] == ["clear_sprint"]
+        assert report["after"]["sprint"] is None
+        # other dimensions untouched by the fake's post-apply state
+        assert report["after"]["priority"] == "P1"
+        assert report["after"]["iteration"] == "v1.6.0"
+        assert report["after"]["status"] == "Backlog"
+
+    def test_reconcile_zero_labels_populated_sprint_is_wrong_sprint(self):
+        authority = [(IssueAuthority(28, "OPEN", []),
+                      parse_control_labels([]))]
+        items = {28: member(sprint_slug="bug-fix-2026-09")}
+        drifts, skipped = detect_drift(authority, items, CONFIG)
+        wrong = [d for d in drifts if d.code == "WRONG_SPRINT"]
+        assert wrong and wrong[0].fixable
+        assert [m.kind for m in wrong[0].fix.mutations] == ["clear_sprint"]
+        assert [d.code for d in drifts if d.code != "WRONG_SPRINT"] == []
+
+    def test_zero_labels_empty_sprint_no_mutation_anywhere(self):
+        authority = [(IssueAuthority(28, "OPEN", []),
+                      parse_control_labels([]))]
+        items = {28: member(sprint_slug=None)}
+        drifts, skipped = detect_drift(authority, items, CONFIG)
+        assert drifts == []
+        assert [sk.code for sk in skipped if sk.issue_number == 28] == ["NO_CONTROL_METADATA"]
+
+    def test_zero_labels_never_clears_priority_iteration_status(self):
+        # other dimensions populated; only Sprint may be cleared
+        authority = [(IssueAuthority(28, "OPEN", []),
+                      parse_control_labels([]))]
+        items = {28: member(sprint_slug="bug-fix-2026-09")}  # P1/v1.6.0/Backlog populated
+        drifts, _ = detect_drift(authority, items, CONFIG)
+        codes = [d.code for d in drifts]
+        assert codes == ["WRONG_SPRINT"]  # no WRONG_PRIORITY / WRONG_ITERATION / WRONG_STATUS
+        assert [m.kind for d in drifts for m in (d.fix.mutations if d.fix else [])] == ["clear_sprint"]
+
+    def test_zero_labels_empty_sprint_non_member_stays_silent(self):
+        authority = [(IssueAuthority(28, "OPEN", []),
+                      parse_control_labels([]))]
+        drifts, skipped = detect_drift(authority, {}, CONFIG)
+        assert drifts == []
+        assert [sk for sk in skipped if sk.issue_number == 28] == []
+
+    def test_eleven_holder_shapes_remain_zero_mutation(self):
+        # every live holder's converged shape (sprint+iteration+priority+status
+        # labels, matching item incl. Sprint) still plans nothing
+        for num in (4, 21, 26, 27, 28, 29, 31, 32, 34, 45, 47):
+            it = member(sprint_slug="bug-fix-2026-09")
+            it.issue_number = num
+            labels = ["sprint:bug-fix-2026-09", "iteration:v1.6.0", "priority:p1", "status:backlog"]
+            p = plan(it, labels)
+            assert p.mutations == [] and p.findings == []
+            authority = [(IssueAuthority(num, "OPEN", labels), parse_control_labels(labels))]
+            drifts, _ = detect_drift(authority, {num: it}, CONFIG)
+            assert [d for d in drifts if "SPRINT" in d.code] == []
+
+
+class _FakeProjectTransport:
+    """Minimal live-shape transport for sync_issue: context/issue/items/clear.
+
+    Dispatches on the built GraphQL documents' stable markers; a Sprint clear
+    mutation flips the fake item state so the verify tail observes convergence.
+    """
+
+    def __init__(self, labels, sprint="bug-fix-2026-09"):
+        self.labels = list(labels)
+        self.item = {"id": "ITEM_1", "number": 28, "sprint": sprint,
+                     "priority": "P1", "iteration": "v1.6.0", "status": "Backlog"}
+
+    def graphql(self, query, **variables):
+        if "clearProjectV2ItemFieldValue" in query:
+            self.item["sprint"] = None  # the only mutation this fake admits
+            return {"clearProjectV2ItemFieldValue": {"projectV2Item": {"id": self.item["id"]}}}
+        if 'status: field(name: "Status")' in query:
+            return {"user": {"projectV2": {
+                "id": "PVT_1",
+                "status": {"id": "F_S", "options": [{"id": o, "name": n} for o, n in
+                                                      (("s1", "Backlog"), ("s2", "In progress"),
+                                                       ("s4", "In review"), ("s3", "Done"))]},
+                "priority": {"id": "F_P", "options": [{"id": p, "name": n} for p, n in
+                                                       (("p1", "P0"), ("p2", "P1"), ("p3", "P2"))]},
+                "iteration": {"id": "F_I", "configuration": {"duration": 14, "iterations": [
+                    {"id": "i1", "title": "I-001 — Answer Intelligence Foundation", "startDate": "2026-09-07", "duration": 14},
+                    {"id": "i2", "title": "v1.6.0 — Knowledge Integrity & Source Truth", "startDate": "2026-10-05", "duration": 14}],
+                    "completedIterations": []}},
+                "sprint": {"id": "F_SP", "configuration": {"iterations": [
+                    {"id": "sp1", "title": "Bug Fix Sprint — 2026-09", "startDate": "2026-09-14", "duration": 14}],
+                    "completedIterations": []}},
+            }, "repository": {"id": "R_1"}}}
+        if "issue(number:" in query:
+            return {"repository": {"issue": {
+                "id": "I_28", "number": 28, "state": "OPEN",
+                "labels": {"nodes": [{"name": l} for l in self.labels]},
+                "projectItems": {"nodes": [{"id": "ITEM_1", "project": {"id": "PVT_1", "number": 2}}]},
+            }}}
+        if "items(first: 100" in query:
+            sprint_block = ({"iterationId": "sp1", "title": "Bug Fix Sprint — 2026-09"}
+                            if self.item["sprint"] else None)
+            return {"user": {"projectV2": {"items": {
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                "nodes": [{
+                    "id": self.item["id"],
+                    "content": {"__typename": "Issue", "number": self.item["number"], "state": "OPEN"},
+                    "iteration": {"iterationId": "i2", "title": "v1.6.0 — Knowledge Integrity & Source Truth"},
+                    "sprint": sprint_block,
+                    "priority": {"name": self.item["priority"]},
+                    "status": {"name": self.item["status"]},
+                }],
+            }}}}
+        raise AssertionError(f"unexpected query: {query[:80]}")
+
+
+FakeProjectTransport = _FakeProjectTransport
