@@ -69,9 +69,15 @@ class FakeProjectTransport:
 
     def __init__(self, fail_item_ids=()):
         self.iterations = [list(i) for i in EXISTING]  # [id, title, start, duration]
+        self.completed_titles = set()  # titles GitHub has moved to completedIterations
         self.items = _issue_items() + _draft_items(14)
         self.update_calls = 0
         self.fail_item_ids = set(fail_item_ids)
+
+    def mark_completed(self, iteration_tuple):
+        self.completed_titles.add(iteration_tuple[1])
+        if all(i[1] != iteration_tuple[1] for i in self.iterations):
+            self.iterations.append(list(iteration_tuple))
 
     # -- transport surface -------------------------------------------------
     def graphql(self, query: str) -> dict:
@@ -146,11 +152,15 @@ class FakeProjectTransport:
             "pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}}}}
 
     def _context_response(self):
+        active = [i for i in self.iterations if i[1] not in self.completed_titles]
+        completed = [i for i in self.iterations if i[1] in self.completed_titles]
         return {"user": {"projectV2": {"id": "PROJ", "status": {"id": "fS", "options": []},
                 "priority": {"id": "fP", "options": []}, "iteration": {"id": "fI", "configuration": {
                     "duration": 14, "startDay": 1,
                     "iterations": [{"id": i[0], "title": i[1], "startDate": i[2], "duration": i[3]}
-                                   for i in self.iterations]}}},
+                                   for i in active],
+                    "completedIterations": [{"id": i[0], "title": i[1], "startDate": i[2], "duration": i[3]}
+                                            for i in completed]}}},
                 "repository": {"id": "REPO"}}}
 
     # -- truth inspection (independent of the adapter under test) ------------
@@ -214,3 +224,36 @@ class TestEndToEndDraftRestoration:
         post = ops_assignments = LiveIterationOps(t, _context(), _settings()).get_item_assignments()
         for item_id, slug in pre_slugs.items():
             assert post.get(item_id) == slug, f"post-verify mismatch for {item_id}"
+
+
+class TestCompletedIterationsAreFirstClass:
+    """GitHub moves past iterations into completedIterations; resolution, duplicate
+    refusal and transaction restore must all see them (live-verified via I-000)."""
+
+    def test_fetch_context_includes_completed_iterations(self):
+        from project_automation.service import fetch_context
+        t = FakeProjectTransport()
+        t.mark_completed(("c-000", "I-000 — Pre-Iteration Foundation", "2026-08-24", 14))
+        ctx = fetch_context(t, _settings())
+        slugs = [i.slug for i in ctx.config.iterations]
+        assert "i-000" in slugs and "i-001" in slugs and "v1.6.0" in slugs
+
+    def test_get_iterations_includes_completed(self):
+        t = FakeProjectTransport()
+        t.mark_completed(("c-000", "I-000 — Pre-Iteration Foundation", "2026-08-24", 14))
+        ops = LiveIterationOps(t, _context(), _settings())
+        titles = [i.title for i in ops.get_iterations()]
+        assert any(x.startswith("I-000") for x in titles)
+
+    def test_duplicate_refusal_covers_completed_iterations(self):
+        import pytest
+        from project_automation.errors import ConfigError
+        from project_automation.iteration_txn import create_iteration_transaction
+        t = FakeProjectTransport()
+        t.mark_completed(("c-000", "I-000 — Pre-Iteration Foundation", "2026-08-24", 14))
+        ops = LiveIterationOps(t, _context(), _settings())
+        fresh = ops.get_iterations()
+        with pytest.raises(ConfigError):
+            create_iteration_transaction(ops, existing=fresh,
+                                         new=("x", "I-000 — Duplicate Attempt", "2026-08-24", 14),
+                                         item_ids=[])

@@ -44,7 +44,9 @@ query {
       status: field(name: "Status") { ... on ProjectV2SingleSelectField { id options { id name } } }
       priority: field(name: "Priority") { ... on ProjectV2SingleSelectField { id options { id name } } }
       iteration: field(name: "Iteration") {
-        ... on ProjectV2IterationField { id configuration { duration startDay iterations { id title startDate duration } } }
+        ... on ProjectV2IterationField { id configuration { duration startDay
+          iterations { id title startDate duration }
+          completedIterations { id title startDate duration } } }
       }
     }
     repository(name: $repo) { id }
