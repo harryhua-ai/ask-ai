@@ -68,6 +68,13 @@ forbidden without a snapshot/restore plan).
 | `priority:p0/p1/p2` | Priority option P0/P1/P2 |
 | `status:backlog/in-progress/in-review` | Status option Backlog/In progress/In review |
 | `sprint:<key>` | Sprint value whose normalized full title equals `<key>` (additive: absent label = untouched) |
+
+**Transitional Sprint authority:** additive semantics are a MIGRATION-COMPATIBLE bridge, not the final model — the
+live Project holds historical Sprint assignments whose Issues have no sprint metadata yet, and absent→clear before
+bootstrap would destroy that history. Post-merge governance sequence: (1) bootstrap live Sprint assignments into
+Issue `sprint:*` labels; (2) verify Issue metadata and Project Sprint are semantically equivalent; (3) only then
+authorize a separate tightening to absent→clear. Do not tighten earlier. Sprint and Iteration remain independent
+dimensions: a Sprint label never mutates Iteration and vice versa.
 | `status:ready` | **RESERVED** — visible finding, no mutation |
 | Issue CLOSED | Status = Done (overrides any status label) |
 | Issue OPEN without `status:*` | Status = Backlog |

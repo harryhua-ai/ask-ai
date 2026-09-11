@@ -63,4 +63,13 @@ created, no full-replace executed. Historical corrective Issues untouched. Docs 
 table). Actions-level validation of the sprint path requires merge (workflows run from main) — STOP at CANDIDATE
 READY per the increment contract.
 
+## Transitional authority (explicit)
+
+The additive Sprint semantics in this candidate are **TRANSITIONAL**, not the final authority model. Reason: the live
+Project already contains 11 historical Sprint assignments while Issue-side `sprint:*` metadata has not been
+bootstrapped; absent→clear before bootstrap would destroy authoritative historical information. Post-merge governance
+sequence: (1) bootstrap existing live Sprint assignments into Issue `sprint:*` labels; (2) verify Issue metadata and
+Project Sprint are semantically equivalent; (3) only then authorize a separate tightening to absent→clear. Recorded
+also in docs/engineering/project-automation.md (Role A review amendment).
+
 PROJECT-AUTOMATION-SPRINT-SYNC = CANDIDATE READY
