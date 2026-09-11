@@ -387,11 +387,11 @@ class LiveIterationOps:
         return [IterationTuple(i.id, i.title, i.start_date, i.duration) for i in fresh.config.iterations]
 
     def get_item_assignments(self) -> dict[str, str]:
+        # Cover EVERY Project item with an Iteration value - Issue AND DraftIssue.
+        # The full-replace id regeneration orphans both; skipping drafts here would
+        # silently orphan them (14 I-001 draft items exist on the live Project).
         out: dict[str, str] = {}
         for n in _iter_item_pages(self.t, self.s):
-            content = n.get("content") or {}
-            if content.get("__typename") == "DraftIssue":
-                continue
             it = n.get("iteration")
             if it:
                 out[n["id"]] = iteration_slug(it["title"])
