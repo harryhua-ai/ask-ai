@@ -127,6 +127,7 @@ def _rag(payload: dict, candidates: list[SearchResult]) -> RAGOrchestrator:
     searcher.search_bucket.return_value = []
     reranker = MagicMock()
     reranker.rerank.side_effect = lambda q, results, top_k=None: list(results)[: top_k or 10]
+    reranker.rerank_scored.side_effect = lambda q, results, top_k=None: (list(results)[: top_k or 10], [])
     return RAGOrchestrator(
         searcher, reranker, _make_llm(payload), system_prompt="s", min_results_to_answer=1
     )

@@ -354,6 +354,9 @@ def _orchestrator(payload: dict, *, with_result: bool = False):
     searcher.search_bucket.return_value = []
     reranker = MagicMock()
     reranker.rerank.return_value = [sr] if with_result else []
+    reranker.rerank_scored.return_value = ([sr] if with_result else [], [])
+    reranker.rerank_scored.return_value = ([sr] if with_result else [], [])
+    reranker.rerank_scored.return_value = ([sr] if with_result else [], [])
     rag = RAGOrchestrator(
         searcher, reranker, _make_llm(payload), system_prompt="s", min_results_to_answer=1
     )

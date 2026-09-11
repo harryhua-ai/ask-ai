@@ -88,6 +88,8 @@ def _make_rag(llm, *, results=None):
     searcher.search_bucket.return_value = []
     reranker = MagicMock()
     reranker.rerank.return_value = results if results is not None else [sr]
+    reranker.rerank_scored.return_value = (results if results is not None else [sr], [])
+    reranker.rerank_scored.return_value = (results if results is not None else [sr], [])
     return RAGOrchestrator(searcher, reranker, llm, system_prompt="sys")
 
 

@@ -94,6 +94,8 @@ def _make_rag(llm, *, pruner=True, results=None):
     searcher.search_bucket.return_value = []
     reranker = MagicMock()
     reranker.rerank.return_value = sr
+    reranker.rerank_scored.return_value = (sr, [])
+    reranker.rerank_scored.return_value = (sr, [])
 
     class _P:
         async def prune(self, query, chunks):

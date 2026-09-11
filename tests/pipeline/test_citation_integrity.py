@@ -83,6 +83,9 @@ def _build_orchestrator(
 
     reranker = MagicMock()
     reranker.rerank.return_value = list(reranked_results)
+    reranker.rerank_scored.return_value = (list(reranked_results), [])
+    reranker.rerank_scored.return_value = (list(reranked_results), [])
+    reranker.rerank_scored.return_value = (list(reranked_results), [])
 
     llm = AsyncMock()
     llm.generate.return_value = _make_llm_response(llm_content)
@@ -599,6 +602,9 @@ class TestStreamCitationGolden:
 
         # 第二轮:只剩一个可见源,同样的回答文本 [2] 变悬空
         reranker.rerank.return_value = [a]
+        reranker.rerank_scored.return_value = ([a], [])
+        reranker.rerank_scored.return_value = ([a], [])
+        reranker.rerank_scored.return_value = ([a], [])
 
         def _fake_stream2(messages, task=None, **kwargs):
             async def _gen():

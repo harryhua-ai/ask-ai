@@ -38,6 +38,7 @@ from backend.pipeline.citation import (
 )
 from backend.pipeline.claim_validation import build_claim_validation
 from backend.pipeline.evidence_planning import derive_evidence_plan
+from backend.pipeline.evidence_reservation import reserve_plan_evidence
 from backend.pipeline.evidence_selection import (
     build_coverage_report,
     build_evidence_stage,
@@ -1527,6 +1528,7 @@ class RAGOrchestrator:
         # 统一检索 + 三路 RRF 融合(hybrid + symbol + intent boost 桶)
         t_ret = time.monotonic()
         cmp_stage_info: dict[str, Any] | None = None
+        pool_scores: list[tuple[Any, float]] = []
         pre_prune_count = 0
         pruned_count = 0
         if resolution.mode == MODE_COMPARISON and scope_labels:
@@ -1585,7 +1587,9 @@ class RAGOrchestrator:
             }
 
             t_rr = time.monotonic()
-            reranked = self._reranker.rerank(search_query, fused, top_k=self._top_k)
+            reranked, pool_scores = self._reranker.rerank_scored(
+                search_query, fused, top_k=self._top_k
+            )
             pre_prune_count = len(reranked)
             stages["rerank"] = {
                 "ms": int((time.monotonic() - t_rr) * 1000),
@@ -1755,6 +1759,32 @@ class RAGOrchestrator:
             hint = page_product_hint(page_context)
             reranked = apply_page_context_boost(reranked, page_context)
             stages["retrieve"]["page_boost"] = {"applied": hint is not None, "hint": hint}
+
+        # F-1':证据角色预留 —— 计划驱动补位(required 槽 × 目标保位 / 锚定页
+        # 补全 / 规格救援)。零 LLM;晋升候选同阈值门控、总量有界、追加于
+        # 幸存者之后(定序仍归 INC-5);比较管线自有逐目标聚焦重排,不参与。
+        if plan.slots and cmp_stage_info is None and pool_scores:
+            _reserved, res_info = await reserve_plan_evidence(
+                plan,
+                reranked,
+                pool_scores,
+                taxonomy=taxonomy,
+                threshold=getattr(self._reranker, "threshold", 0.3),
+                is_eligible=(
+                    lambda r: (taxonomy.canonicalize(r.product) or UNKNOWN_SLUG)
+                    in eligible_slugs
+                )
+                if eligible_slugs is not None
+                else None,
+                searcher=self._searcher,
+                guard_fn=lambda rs: self._apply_visibility_guard(rs, channel),
+                reranker=self._reranker,
+                channel=channel,
+            )
+            if _reserved:
+                reranked = reranked + _reserved
+            if res_info.get("promotions"):
+                stages["evidence_reservation"] = res_info
 
         # INC-5:确定性证据选择/组合——required 槽命中证据稳定前置
         # (纯函数,零 LLM;不增删证据只定序,既有排名/剪枝/上下文安全约束保持;
@@ -2257,6 +2287,7 @@ class RAGOrchestrator:
         # 统一检索 + 三路 RRF 融合(与 answer 共用 _retrieve_and_fuse,保证 parity)
         t1 = time.monotonic()
         cmp_stage_info: dict[str, Any] | None = None
+        pool_scores: list[tuple[Any, float]] = []
         # INC-1 血统修订:融合候选有序身份表(仅元数据);比较路径保持 None,
         # 其候选身份由 per-target diag(rerank.candidates)承载
         fuse_candidates: list[dict[str, Any]] | None = None
@@ -2292,7 +2323,9 @@ class RAGOrchestrator:
             search_ms = int((time.monotonic() - t1) * 1000)
 
             t2 = time.monotonic()
-            reranked = self._reranker.rerank(search_query, fused, top_k=self._top_k)
+            reranked, pool_scores = self._reranker.rerank_scored(
+                search_query, fused, top_k=self._top_k
+            )
             rerank_ms = int((time.monotonic() - t2) * 1000)
             pre_prune_count = len(reranked)
             pruned_count = 0
@@ -2590,6 +2623,32 @@ class RAGOrchestrator:
             hint = page_product_hint(page_context)
             reranked = apply_page_context_boost(reranked, page_context)
             page_boost_stage = {"applied": hint is not None, "hint": hint}
+
+        # F-1':证据角色预留(与 answer 同位同语义,parity)—— required 槽
+        # × 目标保位 / 锚定页补全 / 规格救援。零 LLM;晋升候选同阈值门控、
+        # 总量有界、追加于幸存者之后(定序仍归 INC-5);比较管线不参与。
+        if plan.slots and cmp_stage_info is None and pool_scores:
+            _reserved, res_info = await reserve_plan_evidence(
+                plan,
+                reranked,
+                pool_scores,
+                taxonomy=taxonomy,
+                threshold=getattr(self._reranker, "threshold", 0.3),
+                is_eligible=(
+                    lambda r: (taxonomy.canonicalize(r.product) or UNKNOWN_SLUG)
+                    in eligible_slugs
+                )
+                if eligible_slugs is not None
+                else None,
+                searcher=self._searcher,
+                guard_fn=lambda rs: self._apply_visibility_guard(rs, channel),
+                reranker=self._reranker,
+                channel=channel,
+            )
+            if _reserved:
+                reranked = reranked + _reserved
+            if res_info.get("promotions"):
+                stages["evidence_reservation"] = res_info
 
         # 附件日志文本(Phase 1a:直接拼接,截断在 extract_log_text 入库时已做)
         log_text = ""

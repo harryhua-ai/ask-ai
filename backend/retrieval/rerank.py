@@ -91,37 +91,50 @@ class RerankPipeline:
             重排后的 ``SearchResult`` 列表(score 字段被更新为加权后分数)。
 
         Raises:
-            RuntimeError: reranker 返回 scores 长度与 ``results`` 不匹配。
+            RuntimeError: reranker 返回 scores 长度与 results 不匹配。
         """
-        # 防御:空候选直接返回,避免不必要的 reranker 调用
+        return self.rerank_scored(query, results, top_k=top_k)[0]
+
+    def rerank_scored(
+        self,
+        query: str,
+        results: list[SearchResult],
+        top_k: int | None = None,
+    ) -> tuple[list[SearchResult], list[tuple[SearchResult, float]]]:
+        """与 :meth:`rerank` 完全同语义,另返回全体候选的加权分数表。
+
+        F-1'(证据角色预留)取数口:截断线以下、阈值以上的候选分数在
+        ``rerank`` 返回时已丢失,预留机制需要这张表做计划驱动的补位;
+        排序、阈值、top_k 语义与 ``rerank`` 逐字节一致(本方法是超集视图,
+        ``rerank`` 委托至此,既有调用方零行为变更)。
+
+        Returns:
+            (幸存者列表 —— 与 ``rerank`` 返回完全一致,
+             分数表 —— 全体候选按加权分降序的 ``(result, weighted_score)``
+             元组列表,score 为加权后原始值、未经 ``replace(score=...)``)。
+        """
         if not results:
             logger.info("空候选列表,跳过重排")
-            return []
+            return [], []
 
         # 注意:用 `is not None` 而非 `or`,避免 top_k=0 时 falsy 误 fallback
         k = top_k if top_k is not None else self._default_top_k
 
         documents = [r.text for r in results]
         raw_scores = self._reranker.rerank(query, documents)
-
-        # 长度一致性校验,防止下游模型契约违规被静默掩盖
         if len(raw_scores) != len(results):
             raise RuntimeError(
                 f"reranker 返回 scores 长度({len(raw_scores)})与 results"
                 f"({len(results)})不匹配"
             )
 
-        # 应用 chunk_type 乘性加权
         weighted = []
         for r, raw_score in zip(results, raw_scores):
             weight = self._type_weights.get(r.chunk_type, 1.0)
-            weighted_score = raw_score * weight
-            weighted.append((r, weighted_score))
-
-        # 降序排序 → 阈值过滤 → 截断 top_k
+            weighted.append((r, raw_score * weight))
         weighted.sort(key=lambda x: x[1], reverse=True)
-        filtered = [replace(r, score=s) for r, s in weighted if s >= self._threshold]
-        return filtered[:k]
+        survivors = [replace(r, score=s) for r, s in weighted if s >= self._threshold]
+        return survivors[:k], list(weighted)
 
     @property
     def threshold(self) -> float:
