@@ -1,5 +1,11 @@
 # PROJECT-AUTOMATION-SPRINT-SYNC — Execution Report
 
+> **SUPERSEDED (semantics):** the transitional additive Sprint rule documented below (absence → preserve) was
+> retired by `PROJECT-AUTOMATION-SPRINT-AUTHORITY-HARDENING` after its three prerequisites completed; Sprint is now
+> an authoritative dimension (absence → clear). See
+> `docs/engineering/tasks/project-automation-sprint-authority-hardening.md`. The body below is preserved as the
+> historical record of the Sprint Sync execution.
+
 Status: **MERGED / BOOTSTRAPPED / ACTIVE**
 Branch: `project-automation/sprint-sync-20260911` · Candidate `12fefbd` · Pre-merge `origin/main` = `7f5acf6` · Final `origin/main` = `859eea7`
 

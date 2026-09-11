@@ -1,13 +1,14 @@
-"""sprint:* label authority — Sprint field convergence (narrow increment).
+"""sprint:* label authority — Sprint field convergence.
 
 Frozen semantics preserved: iteration:*→Iteration, priority:*→Priority,
 status:*→Status mappings are untouched; Sprint is an independent dimension and
 a Sprint label never mutates Iteration (nor vice versa).
 
-Additive authority (v1): an ABSENT sprint label leaves the Sprint field
-untouched — bootstrap cannot run inside the increment that introduces sprint
-labels, so absent→clear would erase existing manual Sprint values before
-labels could be derived. Clearing Sprint is not expressible in v1.
+Authoritative semantics (hardened): an ABSENT sprint label CLEARS the Sprint
+field. The earlier transitional additive rule (absence → preserve) protected
+pre-bootstrap manual Sprint values; bootstrap has since run and bidirectional
+equivalence was proven, so absence now carries clear authority — mirroring
+Iteration. Unknown/conflicting sprint metadata still fails closed.
 """
 from project_automation.labels import parse_control_labels
 from project_automation.mapping import resolve_desired
@@ -37,7 +38,7 @@ def plan(item, labels):
     return plan_sync(item=item, desired_status=d.status_option,
                      desired_priority=d.priority_option, desired_priority_clear=d.priority_clear,
                      desired_iteration_key=d.iteration_key, desired_iteration_clear=d.iteration_clear,
-                     desired_sprint_key=d.sprint_key, desired_sprint_touch=d.sprint_touch,
+                     desired_sprint_key=d.sprint_key, desired_sprint_clear=d.sprint_clear,
                      config=CONFIG)
 
 
@@ -60,18 +61,18 @@ class TestSprintMapping:
     def test_canonical_label_resolves_desired_sprint(self):
         d = desired(["sprint:bug-fix-2026-09"])
         assert d.sprint_key == "bug-fix-2026-09"
-        assert d.sprint_touch is True
+        assert d.sprint_clear is False
 
-    def test_absent_sprint_label_is_additive_no_touch(self):
-        # bootstrap cannot run inside this increment: absent label must NOT clear
-        # existing manual Sprint values (11 issues carry them today)
+    def test_absent_sprint_label_is_clear_authority(self):
+        # authoritative: absent label clears Sprint (mirrors Iteration semantics;
+        # safe because bootstrap derived labels + equivalence was proven)
         d = desired(["status:backlog", "priority:p1", "iteration:i-001"])
-        assert d.sprint_touch is False
         assert d.sprint_key is None
+        assert d.sprint_clear is True
 
     def test_conflicting_sprint_labels_fail_closed(self):
         d = desired(["sprint:bug-fix-2026-09", "sprint:other-sprint"])
-        assert d.sprint_touch is False
+        assert d.sprint_clear is False
         assert d.errors()
 
     def test_sprint_and_iteration_are_independent_dimensions(self):
@@ -117,9 +118,11 @@ class TestSprintPlanning:
         assert [m.kind for m in p.mutations] == ["set_sprint"]
 
     def test_iteration_label_never_mutates_sprint(self):
+        # authoritative: an Iteration change must not set/alter Sprint; clearing
+        # Sprint is owned solely by sprint-label absence (covered in authority tests)
         item = ItemState(item_id="it1", issue_number=28, is_draft=False, iteration_slug=None,
                          priority="P1", status="Backlog", sprint_slug="bug-fix-2026-09")
-        p = plan(item, ["iteration:i-001"])
+        p = plan(item, ["iteration:i-001", "sprint:bug-fix-2026-09"])
         assert [m.kind for m in p.mutations if "sprint" in m.kind] == []
 
 
@@ -142,13 +145,15 @@ class TestSprintReconcile:
         fix = next(d for d in drifts if d.code == "WRONG_SPRINT").fix
         assert any(m.kind == "set_sprint" for m in fix.mutations)
 
-    def test_reconcile_additive_sprint_no_false_drift(self):
-        # project has a Sprint value, issue has no sprint label yet → untouched, no drift
+    def test_reconcile_populated_sprint_without_label_is_drift(self):
+        # authoritative: Sprint populated + no sprint label = deterministic drift (clear)
         authority = [(IssueAuthority(28, "OPEN", ["status:backlog", "priority:p1"]),
                       parse_control_labels(["status:backlog", "priority:p1"]))]
         items = {28: MEMBER}
         drifts, _ = detect_drift(authority, items, CONFIG)
-        assert [d for d in drifts if "sprint" in d.code] == []
+        wrong = [d for d in drifts if d.code == "WRONG_SPRINT"]
+        assert wrong and wrong[0].fixable
+        assert any(m.kind == "clear_sprint" for m in wrong[0].fix.mutations)
 
     def test_reconcile_unknown_sprint_label_reported_not_fixed(self):
         authority = [(IssueAuthority(28, "OPEN", ["sprint:future-sprint"]),

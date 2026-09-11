@@ -169,6 +169,9 @@ def apply_plan(t: GhCliTransport, ctx: Context, item_id: str, plan: SyncPlan) ->
         elif m.kind == "set_sprint":
             t.graphql(q.build_query(q.SET_ITERATION, projectId=ctx.project_id, itemId=item_id,
                                     fieldId=ctx.field_ids["sprint"], iterationId=m.payload["sprint_id"]))
+        elif m.kind == "clear_sprint":
+            t.graphql(q.build_query(q.CLEAR_FIELD, projectId=ctx.project_id, itemId=item_id,
+                                    fieldId=ctx.field_ids["sprint"]))
         elif m.kind == "set_iteration":
             t.graphql(q.build_query(q.SET_ITERATION, projectId=ctx.project_id, itemId=item_id,
                                     fieldId=ctx.field_ids["iteration"], iterationId=m.payload["iteration_id"]))
@@ -200,7 +203,7 @@ def sync_issue(t: GhCliTransport, s: Settings, number: int, dry_run: bool) -> di
                      desired_priority=desired.priority_option, desired_priority_clear=desired.priority_clear,
                      desired_iteration_key=desired.iteration_key, desired_iteration_clear=desired.iteration_clear,
                      config=ctx.config,
-                     desired_sprint_key=desired.sprint_key, desired_sprint_touch=desired.sprint_touch)
+                     desired_sprint_key=desired.sprint_key, desired_sprint_clear=desired.sprint_clear)
     for c in control.conflicts:
         plan.findings.append(Finding(
             "METADATA_CONFLICT",
@@ -214,9 +217,11 @@ def sync_issue(t: GhCliTransport, s: Settings, number: int, dry_run: bool) -> di
         "issue": number,
         "requested": {"status": desired.status_option, "priority": desired.priority_option,
                       "priority_clear": desired.priority_clear, "iteration": desired.iteration_key,
-                      "iteration_clear": desired.iteration_clear},
+                      "iteration_clear": desired.iteration_clear, "sprint": desired.sprint_key,
+                      "sprint_clear": desired.sprint_clear},
         "before": {"status": item.status if item else None, "priority": item.priority if item else None,
-                   "iteration": item.iteration_slug if item else None},
+                   "iteration": item.iteration_slug if item else None,
+                   "sprint": item.sprint_slug if item else None},
         "mutations": [{"kind": m.kind, **m.payload} for m in plan.mutations],
         "findings": [{"code": f.code, "message": f.message} for f in plan.findings],
         "dry_run": dry_run,
@@ -252,14 +257,19 @@ def sync_issue(t: GhCliTransport, s: Settings, number: int, dry_run: bool) -> di
         expected_slug = iteration_slug(desired.iteration_key)
         if after.iteration_slug != expected_slug:
             problems.append(f"iteration: expected {expected_slug!r}, got {after.iteration_slug!r}")
-    if desired.sprint_touch and "sprint" not in blocked:
-        expected_sprint = iteration_slug(desired.sprint_key)
-        if after.sprint_slug != expected_sprint:
-            problems.append(f"sprint: expected {expected_sprint!r}, got {after.sprint_slug!r}")
+    if "sprint" not in blocked:
+        if desired.sprint_clear:
+            if after.sprint_slug is not None:
+                problems.append(f"sprint: expected cleared, got {after.sprint_slug!r}")
+        elif desired.sprint_key is not None:
+            expected_sprint = sprint_title_slug(desired.sprint_key)
+            if after.sprint_slug != expected_sprint:
+                problems.append(f"sprint: expected {expected_sprint!r}, got {after.sprint_slug!r}")
     if problems:
         raise VerificationFailure(f"issue #{number} did not converge: " + "; ".join(problems))
 
-    report["after"] = {"status": after.status, "priority": after.priority, "iteration": after.iteration_slug}
+    report["after"] = {"status": after.status, "priority": after.priority,
+                       "iteration": after.iteration_slug, "sprint": after.sprint_slug}
     report["applied"] = applied
     report["result"] = "CONVERGED" if applied else "NO_CHANGE"
     return report

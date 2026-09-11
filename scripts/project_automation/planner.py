@@ -13,7 +13,7 @@ from .model import FieldConfig, ItemState, sprint_title_slug
 
 @dataclass
 class Mutation:
-    kind: str  # add_membership | set_status | set_priority | clear_priority | set_iteration | clear_iteration
+    kind: str  # add_membership | set_status | set_priority | clear_priority | set_iteration | clear_iteration | set_sprint | clear_sprint
     payload: dict = field(default_factory=dict)
 
 
@@ -44,7 +44,7 @@ def plan_sync(
     desired_iteration_clear: bool,
     config: FieldConfig,
     desired_sprint_key: str | None = None,
-    desired_sprint_touch: bool = False,
+    desired_sprint_clear: bool = False,
 ) -> SyncPlan:
     plan = SyncPlan()
 
@@ -93,8 +93,12 @@ def plan_sync(
         elif item is None or item.iteration_slug != it.slug:
             plan.mutations.append(Mutation("set_iteration", {"iteration_id": it.id, "iteration_title": it.title}))
 
-    # Sprint: independent dimension; additive authority; never touches Iteration.
-    if desired_sprint_touch and desired_sprint_key is not None:
+    # Sprint: independent authoritative dimension; never touches Iteration.
+    # absent label → clear; unknown key → fail closed (existing value preserved).
+    if desired_sprint_clear:
+        if item is not None and item.sprint_slug is not None:
+            plan.mutations.append(Mutation("clear_sprint"))
+    elif desired_sprint_key is not None:
         sp = config.sprint_by_slug(sprint_title_slug(desired_sprint_key))
         if sp is None:
             plan.findings.append(

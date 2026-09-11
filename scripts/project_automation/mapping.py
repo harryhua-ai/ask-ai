@@ -41,11 +41,11 @@ class DesiredProjection:
     priority_clear: bool  # True = absence of authority clears the field
     iteration_key: str | None
     iteration_clear: bool
-    # Sprint is ADDITIVE in v1: an absent sprint label leaves Sprint untouched
-    # (bootstrap could not derive sprint labels before this capability existed;
-    # absent->clear would erase existing manual Sprint values un-label-ably).
+    # Sprint authority (hardened): absent sprint label = clear, mirroring Iteration.
+    # Safe only because bootstrap derived the historical labels and bidirectional
+    # equivalence was proven before this rule replaced the transitional additive one.
     sprint_key: str | None = None
-    sprint_touch: bool = False
+    sprint_clear: bool = False
     control: ControlLabels = None
 
     def errors(self) -> list[str]:
@@ -88,11 +88,13 @@ def resolve_desired(issue: IssueAuthority, control: ControlLabels | None = None)
     else:
         iteration_key, iteration_clear = None, False
 
-    # Sprint (additive): converge only when a valid sprint label is present.
-    if control.sprint_key is not None and not any(c.field == "sprint" for c in control.conflicts):
-        sprint_key, sprint_touch = control.sprint_key, True
+    # Sprint (authoritative): absent label = clear; unmappable/conflicting = fail safe.
+    if control.sprint_key is not None:
+        sprint_key, sprint_clear = control.sprint_key, False
+    elif control.has_sprint_label:
+        sprint_key, sprint_clear = None, False  # conflicting/unknown sprint labels → fail safe
     else:
-        sprint_key, sprint_touch = None, False
+        sprint_key, sprint_clear = None, True
 
     return DesiredProjection(
         status_option=status_option,
@@ -101,6 +103,6 @@ def resolve_desired(issue: IssueAuthority, control: ControlLabels | None = None)
         iteration_key=iteration_key,
         iteration_clear=iteration_clear,
         sprint_key=sprint_key,
-        sprint_touch=sprint_touch,
+        sprint_clear=sprint_clear,
         control=control,
     )

@@ -17,8 +17,9 @@ Routine planning = edit the Issue only. Add/remove canonical labels; the Project
 |---|---|
 | Put in v1.6.0 | `iteration:v1.6.0` |
 | Put in any existing iteration | `iteration:i-001` / `iteration:i-ux-001` (key = iteration title's code token, lowercased) |
-| Put in a Sprint | `sprint:bug-fix-2026-09` (key = Sprint title normalized, minus the redundant word "sprint"; **additive**: removing the label leaves Sprint unchanged) |
+| Put in a Sprint | `sprint:bug-fix-2026-09` (key = Sprint title normalized, minus the redundant word "sprint"; **authoritative**: removing the label clears Sprint) |
 | Take out of any iteration | remove the `iteration:*` label |
+| Take out of the Sprint | remove the `sprint:*` label (Sprint is cleared, same authority as Iteration) |
 | Set priority | `priority:p0` · `priority:p1` · `priority:p2` (remove to clear) |
 | Backlog / In Progress / In Review | `status:backlog` · `status:in-progress` · `status:in-review` |
 | Done | close the Issue (closure always wins; stale status labels are ignored) |
@@ -67,14 +68,16 @@ forbidden without a snapshot/restore plan).
 | `iteration:<key>` | Iteration whose title code token slug-equals `<key>` (live Iteration field only: I-001 / I-UX-001 / v1.6.0) |
 | `priority:p0/p1/p2` | Priority option P0/P1/P2 |
 | `status:backlog/in-progress/in-review` | Status option Backlog/In progress/In review |
-| `sprint:<key>` | Sprint value whose normalized full title equals `<key>` (additive: absent label = untouched) |
+| `sprint:<key>` | Sprint value whose normalized full title equals `<key>` (authoritative: absent label = Sprint cleared; multiple/unknown = fail closed, value preserved) |
 
-**Transitional Sprint authority:** additive semantics are a MIGRATION-COMPATIBLE bridge, not the final model — the
-live Project holds historical Sprint assignments whose Issues have no sprint metadata yet, and absent→clear before
-bootstrap would destroy that history. Post-merge governance sequence: (1) bootstrap live Sprint assignments into
-Issue `sprint:*` labels; (2) verify Issue metadata and Project Sprint are semantically equivalent; (3) only then
-authorize a separate tightening to absent→clear. Do not tighten earlier. Sprint and Iteration remain independent
-dimensions: a Sprint label never mutates Iteration and vice versa.
+**Sprint authority (final):** `sprint:<key>` behaves as a normal authoritative dimension, mirroring Iteration —
+one valid label sets Sprint, no label clears it, multiple or unknown labels fail closed with the existing Sprint
+value preserved. This became safe only after, in order: (1) the historical Sprint assignments were bootstrapped
+into Issue `sprint:*` labels; (2) bidirectional Issue⇄Project equivalence was proven (11=11, missing/extra/
+conflicts/unknown all zero); (3) Sprint drift reached zero under both the transitional and the authoritative
+reconcile. The earlier transitional rule (absence → preserve Sprint) protected pre-bootstrap manual values and is
+RETIRED — removing a `sprint:*` label now clears Sprint on the next sync/reconcile. Sprint and Iteration remain
+independent dimensions: a Sprint label never mutates Iteration and vice versa.
 | `status:ready` | **RESERVED** — visible finding, no mutation |
 | Issue CLOSED | Status = Done (overrides any status label) |
 | Issue OPEN without `status:*` | Status = Backlog |

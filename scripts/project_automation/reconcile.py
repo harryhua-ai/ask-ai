@@ -43,6 +43,7 @@ _MUTATION_TO_DRIFT = {
     "set_iteration": "WRONG_ITERATION",
     "clear_iteration": "WRONG_ITERATION",
     "set_sprint": "WRONG_SPRINT",
+    "clear_sprint": "WRONG_SPRINT",
 }
 
 
@@ -84,7 +85,7 @@ def detect_drift(
                              desired_priority=desired.priority_option, desired_priority_clear=desired.priority_clear,
                              desired_iteration_key=desired.iteration_key, desired_iteration_clear=desired.iteration_clear,
                              config=config,
-                             desired_sprint_key=desired.sprint_key, desired_sprint_touch=desired.sprint_touch)
+                             desired_sprint_key=desired.sprint_key, desired_sprint_clear=desired.sprint_clear)
             drifts.append(Drift(issue.number, "MISSING_FROM_PROJECT",
                                 "issue carries control labels but is not a Project member",
                                 fixable=True, fix=full))
@@ -106,7 +107,7 @@ def detect_drift(
                          desired_priority=desired0.priority_option, desired_priority_clear=desired0.priority_clear,
                          desired_iteration_key=desired0.iteration_key, desired_iteration_clear=desired0.iteration_clear,
                          config=config,
-                         desired_sprint_key=desired0.sprint_key, desired_sprint_touch=desired0.sprint_touch)
+                         desired_sprint_key=desired0.sprint_key, desired_sprint_clear=desired0.sprint_clear)
         for m in plan.mutations:
             if m.kind == "add_membership":
                 continue
