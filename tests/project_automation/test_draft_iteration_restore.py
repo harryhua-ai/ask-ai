@@ -107,6 +107,7 @@ class FakeProjectTransport:
 
     @staticmethod
     def _extract_iterations_array(query: str):
+        # build_query inlines GraphQL object literals (bare keys); convert to JSON
         key = "iterations: "
         start = query.index(key) + len(key)
         assert query[start] == "["
@@ -117,7 +118,8 @@ class FakeProjectTransport:
             elif ch == "]":
                 depth -= 1
                 if depth == 0:
-                    return json.loads(query[start:j + 1])
+                    raw = query[start:j + 1]
+                    return json.loads(re.sub(r"([,{]\s*)([A-Za-z_][A-Za-z0-9_]*):", r'\1"\2":', raw))
         raise AssertionError("unterminated iterations array in fake query")
 
     def _set_item(self, query: str):
