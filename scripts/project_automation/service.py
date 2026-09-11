@@ -77,9 +77,12 @@ def fetch_context(t: GhCliTransport, s: Settings) -> Context:
     if not (status_f and prio_f and iter_f):
         raise ConfigError("Project is missing required fields Status/Priority/Iteration")
     cfg = (iter_f or {}).get("configuration") or {}
+    # Completed iterations are first-class: this project assigns to historical
+    # timeboxes, and once an iteration's end date passes, GitHub moves it out of
+    # `iterations` into `completedIterations`. Resolution/restore must see both.
     iterations = [
         IterationDef(id=i["id"], title=i["title"], start_date=i["startDate"], duration=i["duration"])
-        for i in cfg.get("iterations", [])
+        for i in [*cfg.get("iterations", []), *cfg.get("completedIterations", [])]
     ]
     anchors = sorted(i["startDate"] for i in cfg.get("iterations", []))
     return Context(

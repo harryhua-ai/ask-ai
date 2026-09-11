@@ -34,3 +34,17 @@ class TestVariableInlining:
     def test_dollar_sign_in_value_not_treated_as_variable(self):
         q = build_query("query { q(v: $v) }", v="cost $100 and ${brace}")
         assert "$100" in q  # value text preserved inside the literal
+
+
+class TestGraphQLObjectLiterals:
+    def test_dict_inlines_with_bare_keys(self):
+        from project_automation.queries import build_query
+        q = build_query("mutation { m(v: $v) }",
+                        v=[{"title": "I-000 — Pre-Iteration Foundation", "startDate": "2026-08-24", "duration": 14}])
+        assert "{ title: " in q and 'startDate: "2026-08-24"' in q and "duration: 14" in q
+        assert '"title"' not in q and '"startDate"' not in q  # JSON quoted keys are invalid GraphQL input objects
+
+    def test_nested_dicts_and_scalars(self):
+        from project_automation.queries import build_query
+        q = build_query("mutation { m(a: $a, b: $b) }", a={"x": {"y": 1}}, b="s")
+        assert "a: { x: { y: 1 } }" in q and 'b: "s"' in q

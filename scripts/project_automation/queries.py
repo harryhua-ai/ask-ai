@@ -1,8 +1,11 @@
 """GraphQL document construction with injection-safe variable inlining.
 
 Templates are static code WITHOUT GraphQL variable declarations: build_query()
-substitutes $name tokens with json.dumps() literals in a single pass over the
+substitutes $name tokens with GraphQL literals in a single pass over the
 template, so value content is never re-scanned and cannot alter the document.
+Scalar values serialize as JSON strings/numbers; dicts/lists serialize as
+GraphQL object/array literals (BARE keys — JSON's quoted keys are invalid
+GraphQL input-object syntax).
 """
 from __future__ import annotations
 
@@ -14,12 +17,21 @@ from .errors import ConfigError
 _VAR = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)")
 
 
+def to_graphql_literal(value) -> str:
+    if isinstance(value, dict):
+        inner = ", ".join(f"{k}: {to_graphql_literal(v)}" for k, v in value.items())
+        return "{ " + inner + " }"
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(to_graphql_literal(v) for v in value) + "]"
+    return json.dumps(value)  # str / int / bool / None
+
+
 def build_query(template: str, **variables) -> str:
     def substitute(match: re.Match) -> str:
         name = match.group(1)
         if name not in variables:
             raise ConfigError(f"no value provided for GraphQL variable ${name}")
-        return json.dumps(variables[name])
+        return to_graphql_literal(variables[name])
 
     return _VAR.sub(substitute, template)
 
@@ -32,7 +44,9 @@ query {
       status: field(name: "Status") { ... on ProjectV2SingleSelectField { id options { id name } } }
       priority: field(name: "Priority") { ... on ProjectV2SingleSelectField { id options { id name } } }
       iteration: field(name: "Iteration") {
-        ... on ProjectV2IterationField { id configuration { duration startDay iterations { id title startDate duration } } }
+        ... on ProjectV2IterationField { id configuration { duration startDay
+          iterations { id title startDate duration }
+          completedIterations { id title startDate duration } } }
       }
     }
     repository(name: $repo) { id }
