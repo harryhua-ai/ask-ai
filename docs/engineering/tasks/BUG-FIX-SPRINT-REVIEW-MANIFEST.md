@@ -57,7 +57,12 @@
 > → `f77cb76`(契约修订落测;全量 2212 绿)。执行报告:
 > `docs/engineering/tasks/issue28-31-followup-corrective-execution.md`。
 > #26/#27 = VERIFIED ALREADY FIXED(Role A);#29 = 代码 FINAL PASS、激活冻结至发布门;
-> #28/#31 待本轮基准判分后的独立 Role A 复审。
+> **#28/#31 跟进复审基准已跑完(26/26,2026-09-11)**:sq-080 FAIL→**PASS**、
+> cg-r07 canned→**真实作答(live 修复)**、sq-034 组合语义**零 critical fail**
+> (引用逐条对语料核实);cg-r05/sq-026/sq-045 仍 FAIL——归因实证为**检索/rerank
+> 排序层**(NE101 商品格 `woocommerce-mall/319` 与电池 wiki 矩阵均已在库,
+> top-k 未入选),超窄口径授权范围 → **#28=PARTIAL、#31=PARTIAL**,排序层
+> 列为 F-1' 独立后续。详见执行报告 §4。
 
 | 项 | 值 |
 | --- | --- |

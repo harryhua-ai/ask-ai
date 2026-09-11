@@ -97,15 +97,53 @@ RED-4 原契约「案例证据一律背景、永无公开引用权威」由本�
   推导=tools(rule)、tools ∈ eligible_labels(ne301)、检索同时命中 tools+wiki、
   evidence_authority_class=unknown(不得越权)、含 Caveat chunk 可检索 → **PASS**
   (探针脚本 + 输出存 acceptance 目录)。生产激活(re-ingest)按裁决继续冻结至发布门。
-- 基准强制种子子集(13 cases × 2 runs,run id BF-SPRINT-V1-FU-20260911,
-  endpoint=本地组合树后端,语料=入库 cleaned freeze):
-  结果与 LLM-assisted 判分 + 原始 trace 三层证据见 acceptance 目录
-  `final_seed_subset.jsonl` 与判分记录;**以冻结契约为准的逐 run 判分**是
-  #28/#31 是否 FINAL PASS 的唯一裁决层。
+- 基准强制种子子集(13 cases × 2 runs = 26 runs,全部成功 0 error,run id
+  BF-SPRINT-V1-FU-20260911,endpoint=本地组合树后端,语料=生产只读隧道,
+  runner 用入库 cleaned freeze DEFAULT_CORPUS):
+  `final_seed_subset.jsonl`(acceptance 目录)。
+
+### 判分结果(LLM-assisted EVAL_V1 为一层;原始 trace 复核为独立一层)
+
+| case | 基线(第一轮评审) | 本次 2 runs | 裁决 |
+| --- | --- | --- | --- |
+| sq-080(#28 旗舰) | 0 sources(案例不可达) | GPIO3 机制+版本对+症状归一全对,历史框架显式 | **PASS/PASS** |
+| sq-034(#31B) | 0/2 FAIL | 组合语义全对(逐产品角色、proven/推荐/不确定区分、可引证逐条对语料核实、零 critical fail);T2 SHA 绑定未做(见残留) | **PARTIAL** |
+| cg-r05(#28) | 0/2 FAIL | NE301 半边达标;NE101 变体区间($69–$112/5×4)仍未进上下文 | **FAIL/FAIL** |
+| sq-026(#28) | 0/2 FAIL | run1 TELEC 缺定答、区间缺;run2 历史 $59/$109 当现行报出 | **FAIL(PARTIAL+FAIL)** |
+| sq-045(#28) | FAIL | 基线值引用了案例文件而非 wiki 矩阵(授权层级错配) | **FAIL/FAIL** |
+| cg-r07(#31A) | 14–21ms canned clarify | **37–38s 真实作答**(1000 路规模分析+NG4500 架构推荐),双 run 稳定 | **FIXED(live)** |
+| 红线 cg-r03/r04/cg-s01 | PASS | clarify/拒绝文本逐字节稳定,0 sources | **PASS** |
+| cg-r06/cg-r09/sq-040/sq-073 | — | 变体/模组全枚举+续航矩阵全值;历史案例有界+缺失资料显式声明 | 正常 |
+
+### 失败种子全链归因(管线级实证,只读探针存 acceptance 目录)
+
+- **语料在库证据**:NE101 Store 页 `woocommerce-mall/319`(4 chunks,含
+  $69/$112)在生产语料**在库**(GraphQL 实证);电池 wiki 矩阵
+  `github/5-ne301-battery-life`(wiki.camthink.ai)在库(cg-r06 双 run 引用即证)。
+- 因此 cg-r05/sq-026/sq-045 的剩余失败全部落在**检索/rerank 排序层**
+  (top-k=10 竞争下 NE101 商品格与 wiki 规格页未进上下文),不是资格闸、
+  不是语料缺失——与第一轮评审 F-1 的预判一致。
+- sq-045 判分勘误(原始 trace 复核):答案中 2.1 年/1.1 年与现行 wiki 矩阵
+  2.09/1.08 数值一致,**不构成"过期事实当现行"的实质性现势错误**;真实缺口
+  是授权层级错配(案例文件背书规格事实而非 wiki 权威)+ 舍入口径。判分层
+  "critical fail" 标签属过度引申,以原始 trace 复核为准。
+
+### #28/#31 裁决(按 dispatch 标准:强制种子须过冻结契约,而非仅改进)
+
+- **#28 = PARTIAL**:sq-080 FAIL→**PASS**(资格闸矫正的直接实证),sq-026/
+  cg-r05 商业事实语义与可引性已通,但 3/4 强制种子仍在排序层未达标——
+  不满足 FINAL PASS 条件。
+- **#31 = PARTIAL**:A 侧(cg-r07 deixis)**已修复并 live 验证**(F-2 关闭);
+  B 侧组合语义判分零 critical fail 且引用逐条对语料核实通过;T2 快照绑定
+  属系统级缺口(INC-2b),不在本窄口径矫正内。
 
 ## 5. 残留与边界
 
+- **排序层(首要后续)**:NE101 商品格/wiki 规格页在混合查询下进不了
+  top-k —— 需检索深度/配额或 rerank 混合策略的独立矫正(非窄语义改动,
+  超出本授权,列为 F-1' 跟进);矫正后重判 cg-r05/sq-026/sq-045。
 - T2(SHA/快照绑定的机器可验物化)未实现 —— 依赖 INC-2b 权威类物化,不伪造。
-- sq-045/sq-080 的 TROUBLESHOOT 循环完整性缺口(纠正/验证步骤)不在本矫正范围
-  (Role A 判分已列为独立质量缺口)。
-- 生产端到端(#29 激活、website-camthink re-ingest)等待发布门授权;本候选未合并、未部署。
+- sq-026 run2 显示历史商业条款有被当作现行报出的模型方差(指令已含口径
+  要求,run1 合规)——发布门回归需多 run 观察该方差。
+- 生产端到端(#29 激活、website-camthink re-ingest)等待发布门授权;本候选
+  未合并、未部署。
