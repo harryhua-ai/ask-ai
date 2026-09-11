@@ -159,10 +159,13 @@ class HybridSearcher:
             embedder: 嵌入模型(实现 Embedder Protocol)。
             class_name: Weaviate collection 名称。
             generation_filter_provider: 可选的在服代序集合供给函数(P1 服务
-                选择;返回当前 active generation ordinal 列表)。None → 不加
-                生成过滤(兼容未迁移部署/既有测试);生产 wiring 由 main.py
-                lifespan 注入 Postgres 权威查询(lifecycle.active_generation_
-                ordinals_async_session)。
+                选择;返回当前 active generation ordinal 列表)。冻结契约
+                (Role A REVIEW FIX,fail-closed):None → 不加生成过滤
+                (兼容未迁移部署/既有测试);返回非空 → 严格过滤至这些在服代;
+                返回 [] → 权威服务集为空 → 三路径均零结果(不发检索请求);
+                抛错 → 异常向上传播(FAIL CLOSED,绝不无限制检索——GC 前
+                已撤代对象物理残留,无限制检索会复活非现役知识)。生产 wiring
+                由 main.py lifespan 注入 Postgres 权威查询。
         """
         self._client = weaviate_client
         self._embedder = embedder
@@ -211,6 +214,13 @@ class HybridSearcher:
             logger.info("空 query,跳过 hybrid 检索")
             return []
 
+        # P1 服务选择(fail-closed,先于 embed):provider 失败 → 异常传播
+        # (绝不无限制检索);权威空集 → 零结果(不发检索请求)。
+        ordinals = self._active_generation_ordinals()
+        if ordinals is not None and not ordinals:
+            logger.info("在服代集合为空(权威:无现役知识),跳过 hybrid 检索")
+            return []
+
         # embed → query_vector;若 embedder 异常返回空列表,主动抛错(与 ingestion 一致)
         vectors = self._embedder.embed([query])
         if not vectors:
@@ -232,9 +242,8 @@ class HybridSearcher:
 
         # 组合 filter:product + product_labels + channel + generation(AND 语义)
         filters_list: list = []
-        gen_filter = self._active_generation_filter()
-        if gen_filter is not None:
-            filters_list.append(gen_filter)
+        if ordinals:
+            filters_list.append(_generation_ordinal_filter(ordinals))
         if product_filter:
             filters_list.append(Filter.by_property("product").equal(product_filter))
         labels_filter = _product_labels_filter(product_labels)
@@ -282,6 +291,13 @@ class HybridSearcher:
             logger.info("空 query,跳过符号 BM25 检索")
             return []
 
+        # P1 服务选择(fail-closed,先于检索):空权威集 → 零结果;provider
+        # 失败 → 异常传播(绝不无限制检索)。
+        ordinals = self._active_generation_ordinals()
+        if ordinals is not None and not ordinals:
+            logger.info("在服代集合为空(权威:无现役知识),跳过符号 BM25 检索")
+            return []
+
         collection = self._client.collections.get(self._class_name)
         from weaviate.classes.query import Filter
 
@@ -290,9 +306,8 @@ class HybridSearcher:
                 [_visibility_probe_channel(channel)]
             )
         ]
-        gen_filter = self._active_generation_filter()
-        if gen_filter is not None:
-            filters_list.append(gen_filter)
+        if ordinals:
+            filters_list.append(_generation_ordinal_filter(ordinals))
         if product_filter:
             filters_list.append(Filter.by_property("product").equal(product_filter))
         labels_filter = _product_labels_filter(product_labels)
@@ -363,13 +378,19 @@ class HybridSearcher:
             logger.info("boost 桶无 source_types/chunk_types 过滤,跳过(无意义)")
             return []
 
+        # P1 服务选择(fail-closed,先于检索):空权威集 → 零结果;provider
+        # 失败 → 异常传播(绝不无限制检索)。
+        ordinals = self._active_generation_ordinals()
+        if ordinals is not None and not ordinals:
+            logger.info("在服代集合为空(权威:无现役知识),跳过 boost 桶 BM25 检索")
+            return []
+
         collection = self._client.collections.get(self._class_name)
         from weaviate.classes.query import Filter
 
         filters_list: list = []
-        gen_filter = self._active_generation_filter()
-        if gen_filter is not None:
-            filters_list.append(gen_filter)
+        if ordinals:
+            filters_list.append(_generation_ordinal_filter(ordinals))
         if source_types:
             # TEXT 标量属性:equal + any_of 合并(OR 语义)
             filters_list.append(
@@ -415,23 +436,22 @@ class HybridSearcher:
         )
         return [self._to_search_result(o) for o in resp.objects]
 
-    def _active_generation_filter(self):
-        """在服代过滤(P1):provider 缺省/返回空 → None(不加过滤)。
+    def _active_generation_ordinals(self) -> list[int] | None:
+        """在服代序集合(P1 服务选择;fail-closed 契约,Role A REVIEW FIX)。
 
-        空列表不加过滤是刻意的兼容语义:provider 已 wiring 而权威集合为空
-        意味着"无 active 知识"(空库/全墓碑)——此时无对象可命中,加过滤与
-        不加过滤都返回空,不改变结果;但避免空 contains_any 构造错误。
+        Returns:
+            None:provider 未 wiring(legacy/未迁移部署)→ 调用方不加生成过滤;
+            list[int]:权威在服代序集合(**可为空** = 权威裁决「无现役知识」
+            → 调用方零结果返回,不发检索请求)。
+
+        Raises:
+            Exception:provider 失败原样向上传播 —— 权威不可得时**绝不执行
+            无限制检索**(已撤代/墓碑对象在 GC 前物理残留,无限制检索会复活
+            非现役知识);与 Weaviate 调用失败同类,由调用方既有错误路径处置。
         """
         if self._generation_filter_provider is None:
             return None
-        try:
-            ordinals = list(self._generation_filter_provider())
-        except Exception as exc:  # noqa: BLE001 - 权威集合不可得:fail-open 与未迁移行为一致
-            logger.warning("active generation 集合查询失败(本次不加生成过滤): %s", str(exc)[:160])
-            return None
-        if not ordinals:
-            return None
-        return _generation_ordinal_filter(ordinals)
+        return list(self._generation_filter_provider())
 
     def _to_search_result(self, obj: Any) -> SearchResult:
         """Weaviate 对象 → SearchResult(含 symbol 字段,search_symbols 复用)。

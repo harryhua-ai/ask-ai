@@ -365,8 +365,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # P1 服务选择:在服代集合供给(Postgres 权威:current_version 关系 →
         # generation_ordinal;激活/墓碑事务提交即时生效)。检索调用栈为同步
         # (请求路径内阻塞式调用,与既有检索一致)→ 用同步会话直查,不触碰
-        # 事件循环;查询失败由 HybridSearcher 降级为不加生成过滤(fail-open,
-        # 与未迁移部署行为一致)。
+        # 事件循环;fail-closed 契约(Role A REVIEW FIX):查询失败 → 异常
+        # 向上传播(绝不无限制检索,防 GC 前已撤代对象复活);权威空集 →
+        # 检索零结果。仅 provider 未 wiring 时为 legacy 无过滤行为。
         from backend.services.document_lifecycle import active_generation_ordinals_sync
 
         _gen_sync_session_factory = get_sync_session_factory(settings.postgres_dsn)

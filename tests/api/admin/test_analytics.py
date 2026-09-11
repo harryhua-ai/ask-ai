@@ -842,11 +842,41 @@ class TestSourceHealthHistoricalSignal:
         assert item["health"] == "critical"
 
     async def test_signal_present_on_all_items(self, auth_headers):
-        """全部返回条目统一携带历史可靠性信号(含零历史与禁用源)。"""
-        await self._seed_and_get(auth_headers, ["success"])
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/admin/analytics/source-health", headers=auth_headers)
-        items = resp.json()["items"]
-        assert items, "至少应有种子源"
-        assert all(i.get("signal") == "historical_reliability" for i in items)
+        """全部返回条目统一携带历史可靠性信号(含零历史与禁用源)。
+
+        自持种子(用后即清):不依赖其它用例残留的 data_sources 行——
+        全新空库上本用例也必须成立(既有实现依赖污染残留,属测试隔离缺陷)。
+        """
+        prefix = f"t21-src-{uuid.uuid4().hex[:8]}"
+        factory = app.state.session_factory
+        async with factory() as session:
+            session.add(
+                DataSource(
+                    id=prefix,
+                    type="web_crawl",
+                    product="t21-product",
+                    enabled=True,
+                    config={"base_url": f"https://{prefix}.example.com"},
+                )
+            )
+            session.add(SyncLog(source_id=prefix, source_type="web_crawl", status="success"))
+            await session.commit()
+        try:
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(
+                    "/api/admin/analytics/source-health", headers=auth_headers
+                )
+            assert resp.status_code == 200
+            items = resp.json()["items"]
+            assert items, "至少应有种子源"
+            assert all(i.get("signal") == "historical_reliability" for i in items)
+        finally:
+            async with factory() as session:
+                await session.execute(
+                    SyncLog.__table__.delete().where(SyncLog.source_id == prefix)
+                )
+                await session.execute(
+                    DataSource.__table__.delete().where(DataSource.id == prefix)
+                )
+                await session.commit()
