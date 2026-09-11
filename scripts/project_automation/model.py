@@ -18,6 +18,17 @@ def iteration_slug(title: str) -> str:
     return re.sub(r"[^a-z0-9._-]", "", slug)
 
 
+def sprint_title_slug(title: str) -> str:
+    """Semantic Sprint identity: the full title normalized, with the redundant word
+    "sprint" dropped ("Bug Fix Sprint — 2026-09" -> "bug-fix-2026-09") — the label
+    prefix already names the dimension. Unlike iterations, Sprint's distinguishing
+    date sits AFTER the em-dash, so the code-prefix token is not unique enough."""
+    s = title.strip().lower().replace(" — ", "-").replace("—", "-").replace(" ", "-")
+    s = re.sub(r"[^a-z0-9._-]", "", s)
+    tokens = [tk for tk in s.split("-") if tk and tk != "sprint"]
+    return "-".join(tokens)
+
+
 @dataclass
 class OptionDef:
     id: str
@@ -41,6 +52,13 @@ class FieldConfig:
     status_options: list[OptionDef] = field(default_factory=list)
     priority_options: list[OptionDef] = field(default_factory=list)
     iterations: list[IterationDef] = field(default_factory=list)
+    sprints: list[IterationDef] = field(default_factory=list)
+
+    def sprint_by_slug(self, slug: str) -> IterationDef | None:
+        for sp in self.sprints:
+            if sprint_title_slug(sp.title) == slug:
+                return sp
+        return None
 
     def status_option(self, name: str) -> OptionDef | None:
         return self._opt(self.status_options, name)
@@ -77,3 +95,4 @@ class ItemState:
     iteration_slug: str | None
     priority: str | None
     status: str | None
+    sprint_slug: str | None = None

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 PRIORITY_PREFIX = "priority:"
 STATUS_PREFIX = "status:"
 ITERATION_PREFIX = "iteration:"
+SPRINT_PREFIX = "sprint:"
 
 PRIORITY_VALUES = ("p0", "p1", "p2")
 STATUS_VALUES = ("backlog", "in-progress", "in-review")
@@ -34,16 +35,19 @@ class ControlLabels:
     iteration_key: str | None = None
     priority: str | None = None
     status: str | None = None
+    sprint_key: str | None = None
     has_iteration_label: bool = False
     has_priority_label: bool = False
     has_status_label: bool = False
+    has_sprint_label: bool = False
     status_reserved: bool = False
     conflicts: list[MetadataConflict] = field(default_factory=list)
     unknown: list[str] = field(default_factory=list)
 
     @property
     def has_any(self) -> bool:
-        return self.has_iteration_label or self.has_priority_label or self.has_status_label
+        return self.has_iteration_label or self.has_priority_label or self.has_status_label \
+            or self.has_sprint_label
 
 
 def normalize_control_value(raw: str) -> str:
@@ -52,13 +56,15 @@ def normalize_control_value(raw: str) -> str:
 
 def parse_control_labels(labels: list[str]) -> ControlLabels:
     cl = ControlLabels()
-    found: dict[str, set[str]] = {"iteration": set(), "priority": set(), "status": set()}
+    found: dict[str, set[str]] = {"iteration": set(), "priority": set(), "status": set(), "sprint": set()}
     for label in labels:
-        for prefix, key in ((ITERATION_PREFIX, "iteration"), (PRIORITY_PREFIX, "priority"), (STATUS_PREFIX, "status")):
+        for prefix, key in ((ITERATION_PREFIX, "iteration"), (PRIORITY_PREFIX, "priority"),
+                            (STATUS_PREFIX, "status"), (SPRINT_PREFIX, "sprint")):
             if label.lower().startswith(prefix):
                 cl.has_iteration_label |= key == "iteration"
                 cl.has_priority_label |= key == "priority"
                 cl.has_status_label |= key == "status"
+                cl.has_sprint_label |= key == "sprint"
                 value = normalize_control_value(label[len(prefix):])
                 found[key].add(value)
                 if key == "iteration" and not ITERATION_KEY_RE.match(value):
@@ -70,6 +76,8 @@ def parse_control_labels(labels: list[str]) -> ControlLabels:
                         cl.status_reserved = True
                     else:
                         cl.unknown.append(label)
+                elif key == "sprint" and not ITERATION_KEY_RE.match(value):
+                    cl.unknown.append(label)
 
     single = {k: next(iter(v)) if len(v) == 1 else None for k, v in found.items()}
     if len(found["iteration"]) == 1 and ITERATION_KEY_RE.match(single["iteration"]):
@@ -78,6 +86,8 @@ def parse_control_labels(labels: list[str]) -> ControlLabels:
         cl.priority = single["priority"]
     if len(found["status"]) == 1 and single["status"] in STATUS_VALUES:
         cl.status = single["status"]
+    if len(found["sprint"]) == 1 and ITERATION_KEY_RE.match(single["sprint"]):
+        cl.sprint_key = single["sprint"]
 
     for key, values in found.items():
         if len(values) > 1:

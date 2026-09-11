@@ -17,6 +17,7 @@ Routine planning = edit the Issue only. Add/remove canonical labels; the Project
 |---|---|
 | Put in v1.6.0 | `iteration:v1.6.0` |
 | Put in any existing iteration | `iteration:i-001` / `iteration:i-ux-001` (key = iteration title's code token, lowercased) |
+| Put in a Sprint | `sprint:bug-fix-2026-09` (key = Sprint title normalized, minus the redundant word "sprint"; **additive**: removing the label leaves Sprint unchanged) |
 | Take out of any iteration | remove the `iteration:*` label |
 | Set priority | `priority:p0` · `priority:p1` · `priority:p2` (remove to clear) |
 | Backlog / In Progress / In Review | `status:backlog` · `status:in-progress` · `status:in-review` |
@@ -52,7 +53,7 @@ mutation can never race reconciliation or sync.
 
 ### Label vocabulary (canonical)
 
-`iteration:<key>` (key = slug of iteration title code token) · `priority:p0|p1|p2` · `status:backlog|in-progress|in-review`
+`iteration:<key>` (key = slug of iteration title code token) · `priority:p0|p1|p2` · `status:backlog|in-progress|in-review` · `sprint:<key>` (key = full Sprint title normalized, redundant "sprint" word dropped; Sprint and Iteration are independent dimensions)
 
 **Reserved / unsupported:** `status:ready` — the Project has no `Ready` Status option. The label is recognized as
 explicit control intent and yields a visible `UNSUPPORTED_STATUS_RESERVED` finding with **no Status mutation** until
@@ -66,6 +67,14 @@ forbidden without a snapshot/restore plan).
 | `iteration:<key>` | Iteration whose title code token slug-equals `<key>` (live Iteration field only: I-001 / I-UX-001 / v1.6.0) |
 | `priority:p0/p1/p2` | Priority option P0/P1/P2 |
 | `status:backlog/in-progress/in-review` | Status option Backlog/In progress/In review |
+| `sprint:<key>` | Sprint value whose normalized full title equals `<key>` (additive: absent label = untouched) |
+
+**Transitional Sprint authority:** additive semantics are a MIGRATION-COMPATIBLE bridge, not the final model — the
+live Project holds historical Sprint assignments whose Issues have no sprint metadata yet, and absent→clear before
+bootstrap would destroy that history. Post-merge governance sequence: (1) bootstrap live Sprint assignments into
+Issue `sprint:*` labels; (2) verify Issue metadata and Project Sprint are semantically equivalent; (3) only then
+authorize a separate tightening to absent→clear. Do not tighten earlier. Sprint and Iteration remain independent
+dimensions: a Sprint label never mutates Iteration and vice versa.
 | `status:ready` | **RESERVED** — visible finding, no mutation |
 | Issue CLOSED | Status = Done (overrides any status label) |
 | Issue OPEN without `status:*` | Status = Backlog |
