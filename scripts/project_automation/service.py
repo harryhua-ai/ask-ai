@@ -231,7 +231,12 @@ def sync_issue(t: GhCliTransport, s: Settings, number: int, dry_run: bool) -> di
     else:
         item_id = item.item_id
 
-    applied = apply_plan(t, ctx, item_id, plan)
+    # Membership is applied above via ADD_ITEM; the planning-level add_membership
+    # marker is not an executable mutation (live incident 34599644360: passing it
+    # to apply_plan crashed AFTER the item was added, leaving fields unset).
+    field_plan = SyncPlan(mutations=[m for m in plan.mutations if m.kind != "add_membership"],
+                          findings=plan.findings)
+    applied = apply_plan(t, ctx, item_id, field_plan)
 
     # VERIFY: re-read and compare against the requested semantic state,
     # excluding fields whose resolution already produced a visible finding
