@@ -50,6 +50,7 @@ def _rag() -> RAGOrchestrator:
     searcher.search_bucket.return_value = []
     reranker = MagicMock()
     reranker.rerank.side_effect = lambda q, results, top_k=None: list(results)[: top_k or 10]
+    reranker.rerank_scored.side_effect = lambda q, results, top_k=None: (list(results)[: top_k or 10], [])
     llm = AsyncMock()
 
     async def _generate(messages, **kwargs):

@@ -61,6 +61,11 @@ shared_buckets:
     display_name: "AI 应用文档(共享)"
     aliases: []
     applies_to: [ne101, ne301, ne302, ne503, ng4500]
+  - slug: tools
+    kind: shared
+    display_name: "官方工具(共享:电池计算器等)"
+    aliases: []
+    applies_to: [ne101, ne301, ne302, ne503, ng4500]
   - slug: release-notes
     kind: shared
     display_name: "发布说明(共享)"
@@ -75,6 +80,11 @@ shared_buckets:
     kind: store
     display_name: "商城"
     aliases: ["online-store", "store"]
+    # #28:Store 官方商业证据与具体目标解耦 —— INC-4 STORE_OFFICIAL 是跨目标
+    # 第一方商业证据权威(价格/SKU/配置组合),applies_to 全产品线使 store
+    # 类证据进入资格展开(代码侧 SHARABLE_KINDS 同步纳入 store kind);
+    # 原「store 永不入围」设计针对产品事实类冒充,不是禁止商城证据本身。
+    applies_to: [ne101, ne301, ne302, ne503, ng4500, neomind, neoruntime, aitoolstack]
 
 # 历史标签/大小写漂移 canonicalize(chunk 与 data_sources现存原始标签 → canonical slug)。
 # 生产实证(Discovery §5);migration 与检索资格展开共用。
@@ -118,6 +128,10 @@ document_derivation:
       # Unknown Closure(#5,2026-09-03):AI ToolStack 官方工具页 = 平台身份
       # (URL 显式路径 + taxonomy 别名身份,非兄弟页推断;工具族其余页面不命中)
       - {url_any: ["/tools/ai-tool-stack"], product: aitoolstack}
+      # #29:官方工具页(如 /tools/battery-calculator/)是跨机型第一方
+      # 证据(计算器同时覆盖 NE101/NE301),共享桶身份;不命中 = unknown
+      # 会被产品资格闸拦截 —— 电池/功耗答案假性缺失的直接根因。
+      - {url_any: ["/tools/"], product: tools}
 
 # 设备指代词(歧义检测):出现指代且无法解析出目标产品 → PRODUCT_AMBIGUOUS(文本澄清)
 ambiguity:

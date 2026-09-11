@@ -237,6 +237,8 @@ def _orchestrator(llm):
     searcher.search_bucket.return_value = []
     reranker = MagicMock()
     reranker.rerank.return_value = []
+    reranker.rerank_scored.return_value = ([], [])
+    reranker.rerank_scored.return_value = ([], [])
     return RAGOrchestrator(searcher, reranker, llm, system_prompt="s", min_results_to_answer=1)
 
 

@@ -74,7 +74,11 @@ def plan_object(record: dict[str, Any]) -> dict[str, str]:
     :func:`backend.evidence_meta.derive_evidence_meta`,输入同为对象自身
     持久化的 source_type/channel_visibility——两条写路径构造上零漂移。
     """
-    meta = derive_evidence_meta(record.get("source_type", ""), record.get("channel_visibility"))
+    meta = derive_evidence_meta(
+        record.get("source_type", ""),
+        record.get("channel_visibility"),
+        product=record.get("product"),
+    )
     return {
         PROP_AUTHORITY: meta.authority_class,
         PROP_TEMPORALITY: meta.temporality,

@@ -99,15 +99,20 @@ def test_a_factual_lookup_product_spec_required():
 
 @pytest.mark.unit
 def test_b_recommendation_solution_guide_plus_support():
-    """B:recommendation → SOLUTION_GUIDE required + PRODUCT_SPEC 支撑槽。"""
+    """B:recommendation → SOLUTION_GUIDE required + PRODUCT_SPEC 支撑槽。
+
+    #31:案例证据(CASE_EVIDENCE)作为可选背景槽参与方案推荐的覆盖组合
+    (Product/Solution/Case 多类证据综合;缺失由 coverage 诚实呈现)。
+    """
     plan = _plan(
         _u("product", intent="recommendation"),
         ProductResolution(MODE_EXACT, ("ne503",), "query"),
     )
-    assert _roles(plan) == [ROLE_SOLUTION_GUIDE, ROLE_PRODUCT_SPEC]
+    assert _roles(plan) == [ROLE_SOLUTION_GUIDE, ROLE_PRODUCT_SPEC, ROLE_CASE_EVIDENCE]
     assert plan.slots[0].required is True
     assert plan.slots[0].citation_requirement == CITATION_CITABLE_REQUIRED
     assert plan.slots[1].required is False
+    assert plan.slots[2].required is False
 
 
 @pytest.mark.unit
@@ -349,6 +354,9 @@ def _orchestrator(payload: dict, *, with_result: bool = False):
     searcher.search_bucket.return_value = []
     reranker = MagicMock()
     reranker.rerank.return_value = [sr] if with_result else []
+    reranker.rerank_scored.return_value = ([sr] if with_result else [], [])
+    reranker.rerank_scored.return_value = ([sr] if with_result else [], [])
+    reranker.rerank_scored.return_value = ([sr] if with_result else [], [])
     rag = RAGOrchestrator(
         searcher, reranker, _make_llm(payload), system_prompt="s", min_results_to_answer=1
     )
@@ -401,7 +409,8 @@ async def test_recommendation_plan_visible_in_answer():
     result = await rag.answer(RECO_QUERY, "widget", page_context={"product": "NE503"})
     plan_stage = result.trace_payload["stages"]["plan"]
     assert plan_stage["evidence_intent"] == "recommendation"
-    assert [s["role"] for s in plan_stage["slots"]] == [ROLE_SOLUTION_GUIDE, ROLE_PRODUCT_SPEC]
+    # #31:推荐计划含可选案例槽
+    assert [s["role"] for s in plan_stage["slots"]] == [ROLE_SOLUTION_GUIDE, ROLE_PRODUCT_SPEC, ROLE_CASE_EVIDENCE]
     assert plan_stage["slots"][0]["required"] is True
 
 

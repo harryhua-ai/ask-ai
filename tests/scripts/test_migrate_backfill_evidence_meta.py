@@ -143,6 +143,7 @@ def test_plan_zero_drift_with_ingestion_path():
             "doc_section": "",
             "chunk_type": "",
             "channel_visibility": ("widget", "api"),
+            "product": "knowledge",
             "symbol_name": "",
             "symbol_signature": "",
             "symbol_node_type": "",
@@ -154,6 +155,7 @@ def test_plan_zero_drift_with_ingestion_path():
         {
             "source_id": doc.source_id,
             "source_type": doc.source_type,
+            "product": doc.product,
             "channel_visibility": list(doc.channel_visibility),
         }
     )

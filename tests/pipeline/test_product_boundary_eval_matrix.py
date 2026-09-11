@@ -128,6 +128,7 @@ def _rag(corpus, llm=None):
     searcher = FaithfulSearcher(corpus)
     reranker = MagicMock()
     reranker.rerank.side_effect = lambda q, results, top_k=None: list(results)
+    reranker.rerank_scored.side_effect = lambda q, results, top_k=None: (list(results), [])
     llm = llm or ScriptedLLM()
     return (
         RAGOrchestrator(searcher, reranker, llm, system_prompt="base", min_results_to_answer=1),

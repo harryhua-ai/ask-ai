@@ -294,3 +294,40 @@ def test_rerank_default_type_weights():
     results = pipeline.rerank("query", [r])
     # 默认 paragraph weight = 1.0,分数不变
     assert results[0].score == 0.7
+
+
+# --------------------------------------------------------------------------- #
+# rerank_scored(F-1' 证据角色预留取数口)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_rerank_scored_returns_survivors_plus_full_table():
+    """rerank_scored 的幸存者与 rerank 逐字节一致,且分数表覆盖全体候选。"""
+    from backend.retrieval.rerank import RerankPipeline
+
+    class _FakeModel:
+        def rerank(self, query, documents):
+            return [0.9, 0.1, 0.5]
+
+    def _mk(source_id):
+        return _make_sr(source_id=source_id, score=0.0)
+
+    a, b, c = _mk("a"), _mk("b"), _mk("c")
+    pipe = RerankPipeline(_FakeModel(), threshold=0.3, top_k=2)
+    survivors, table = pipe.rerank_scored("q", [a, b, c])
+    assert [s.source_id for s in survivors] == ["a", "c"]
+    assert pipe.rerank("q", [a, b, c]) == survivors
+    assert [(r.source_id, round(s, 4)) for r, s in table] == [("a", 0.9), ("c", 0.5), ("b", 0.1)]
+
+
+@pytest.mark.unit
+def test_rerank_scored_empty_results():
+    from backend.retrieval.rerank import RerankPipeline
+
+    class _FakeModel:
+        def rerank(self, query, documents):
+            return []
+
+    pipe = RerankPipeline(_FakeModel())
+    assert pipe.rerank_scored("q", []) == ([], [])

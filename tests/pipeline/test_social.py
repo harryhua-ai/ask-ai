@@ -141,6 +141,7 @@ def _intent_llm(category: str) -> tuple[MagicMock, MagicMock, AsyncMock]:
     ]
     reranker = MagicMock()
     reranker.rerank.return_value = searcher.search.return_value
+    reranker.rerank_scored.return_value = (searcher.search.return_value, [])
     llm = AsyncMock()
     llm.generate.side_effect = _generate
     return searcher, reranker, llm
