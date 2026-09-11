@@ -19,6 +19,10 @@ Status: **CANDIDATE READY**(待独立 Role A 评审;未并 main;未部署;零生
   再基线合并(`b6100cf`,merge 提交,零冲突);`git diff 39723c2..b6100cf -- backend/ scripts/`
   为空 = 代码面与授权基线逐字节一致,仅文档谱系并入。契约语义未被重释。
 - 实现前基线测试地板(b6100cf):`2208 passed / 8 skipped`。
+- **推送时终核(候选发布刻)**:main 已前移至 `2bc9e02`(39723c2..2bc9e02
+  = project-automation 治理线:3 workflow + scripts/project_automation +
+  docs)。与本候选改动集**文件级零交集**(comm 校验 = 0),属正交治理谱系;
+  本候选保持授权基线谱系不动,集成裁决归 Role A(本实现未并 main)。
 
 ## 2. 实现架构
 
