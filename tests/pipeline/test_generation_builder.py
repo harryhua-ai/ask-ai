@@ -102,8 +102,10 @@ def _fetch_count(collection, uuids: list[str]) -> int:
 
 @pytest.fixture()
 def stack():
-    client = weaviate.connect_to_local("localhost", WEAVIATE_PORT)
-    if client is None:
+    # v4 client 连接失败是 raise 而非返回 None;CI/本地无 Weaviate → 跳过集成门
+    try:
+        client = weaviate.connect_to_local("localhost", WEAVIATE_PORT)
+    except Exception:  # noqa: BLE001 - 不可达即跳过(与其他真 Weaviate 集成套件同模式)
         pytest.skip(f"local Weaviate 不可达(port={WEAVIATE_PORT})")
     sync_engine = create_engine(TEST_DSN.replace("+asyncpg", "+psycopg2"))
     Base.metadata.create_all(sync_engine)
