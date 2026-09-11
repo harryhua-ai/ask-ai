@@ -76,7 +76,9 @@ class _FakeTransport:
             )
         base = sum(len(p) for p in self.payloads)
         self.payloads.append(texts)
-        vectors = [[float(base + i), 0.0, 1.0, 2.0] for i in range(len(texts))]
+        vectors = [
+            [float(base + i)] + [0.0] * (self.dimension - 1) for i in range(len(texts))
+        ]
         return _FakeResponse(
             {
                 "vectors": vectors,
@@ -229,11 +231,12 @@ def test_build_wires_canonical_batch_size(monkeypatch):
 
     captured: dict = {}
 
-    def fake_init(self, client, **kwargs):
-        captured["client"] = client
-        return RemoteSyncEmbedder.__new__(RemoteSyncEmbedder)
+    class _SpyRemoteSyncEmbedder(RemoteSyncEmbedder):
+        def __init__(self, client):
+            captured["client"] = client
+            super().__init__(client)
 
-    monkeypatch.setattr("backend.embedder.remote.RemoteSyncEmbedder.__init__", fake_init)
+    monkeypatch.setattr("backend.embedder.remote.RemoteSyncEmbedder", _SpyRemoteSyncEmbedder)
     from backend.embedder.remote import build_remote_sync_embedder
 
     build_remote_sync_embedder(_Settings())

@@ -6,8 +6,8 @@
 - GPU→CPU 单向回退在服务端完成(同模型、语义不变);本句柄把服务端设备
   真相镜像进既有 SyncEmbedderHandle 遥测面(W2:gpu/cpu/gpu_to_cpu +
   cpu_batches/cpu_docs),不产生第二回退权威;
-- 有界:每批 ≤ EMBEDDER_BATCH_SIZE(服务端 422 强制),无无界队列/重试
-  (run 级上限沿用 sync_requests)。
+- 有界:客户端按 ``EMBEDDER_BATCH_SIZE`` 把逻辑请求切成 ≤B 传输批(服务端
+  422 仍为兜底强制),无无界队列/重试(run 级上限沿用 sync_requests)。
 """
 
 from __future__ import annotations
@@ -32,17 +32,40 @@ _REQUEST_TIMEOUT_SECONDS = 600
 
 
 class _RemoteEmbedderClient:
-    """内部嵌入端点的最小 HTTP 客户端(同步阻塞;由调用方线程池驱动)。"""
+    """内部嵌入端点的最小 HTTP 客户端(同步阻塞;由调用方线程池驱动)。
 
-    def __init__(self, base_url: str, token: str, dimension: int = 1024) -> None:
+    有界传输:调用方允许提交任意长度的逻辑文本列表;本客户端按
+    ``batch_size``(唯一权威配置 = ``settings.embedder_batch_size``,与服务端
+    422 强制同一来源)把它切成 ≤B 的传输批,串行发送、按序拼接。任一批
+    失败即抛出既有嵌入失败(fail-closed),绝不以部分聚合冒充完整成功;
+    空输入保持既有单请求语义(不切批,原样到达传输层)。
+    """
+
+    def __init__(
+        self, base_url: str, token: str, dimension: int = 1024, batch_size: int | None = None
+    ) -> None:
+        if batch_size is not None:
+            batch_size = int(batch_size)
+            if batch_size <= 0:
+                raise ValueError(f"batch_size must be positive, got {batch_size}")
         self.base_url = base_url.rstrip("/")
         self._token = token
         self.dimension = dimension
+        self.batch_size = batch_size
         self.execution_device = "gpu"
         self.fallback_reason: str | None = None
         self.fallback_detail: str | None = None
 
     def embed(self, texts: list[str]) -> list[np.ndarray]:
+        texts = list(texts)
+        if self.batch_size is None or len(texts) <= self.batch_size:
+            return self._embed_once(texts)
+        vectors: list[np.ndarray] = []
+        for start in range(0, len(texts), self.batch_size):
+            vectors.extend(self._embed_once(texts[start : start + self.batch_size]))
+        return vectors
+
+    def _embed_once(self, texts: list[str]) -> list[np.ndarray]:
         payload = json.dumps({"texts": list(texts)}).encode("utf-8")
         req = urllib.request.Request(
             f"{self.base_url}/api/internal/embeddings",
@@ -130,5 +153,6 @@ def build_remote_sync_embedder(settings) -> RemoteSyncEmbedder:
     client = _RemoteEmbedderClient(
         base_url=base_url,
         token=internal_token(settings.jwt_secret),
+        batch_size=int(settings.embedder_batch_size),
     )
     return RemoteSyncEmbedder(client)
