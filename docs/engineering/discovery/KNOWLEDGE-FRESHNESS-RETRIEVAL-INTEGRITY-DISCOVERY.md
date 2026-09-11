@@ -155,7 +155,7 @@ DELETED:逻辑墓碑(保留元数据+历史 N 天)──GC──►物理清除(
   - Website:SLA 72h(全量爬取节奏);覆盖失败(OVERDUE+coverage<阈值)→ 源级 DEGRADED 告警;
   - Filesystem/历史档案:**ARCHIVE 语义,freshness=N/A(永不 STALE)**,历史型内容天然免疫新鲜度。
 - UNKNOWN:从未成功验证/探针失败——检索侧不因 UNKNOWN 拒答,Admin 侧必须显形。
-- OVERDUE 的检索语义是**标记+降权候选**,不是硬删除(硬门仅在价格类现势断言,见 E)。
+- OVERDUE 的检索语义是**标记+降权候选**,不是硬删除(硬门仅覆盖显式现势/时效敏感断言——现价现货/当前 SDK 版本/兼容性/规格/政策状态,见 E 与 §14 D-4 修正)。
 
 ### D. CITATION VALIDITY(引用有效性)
 
@@ -172,7 +172,7 @@ DELETED:逻辑墓碑(保留元数据+历史 N 天)──GC──►物理清除(
 - 赋值=源角色 × 内容类型的策略表(不加 LLM):
   - woocommerce → CURRENT(且价格断言必须带 price-basis/record-date——把现有 prompt 纪律升为结构化字段);
   - github/website/wiki 产品与文档页 → CURRENT;
-  - filesystem 案例/内部材料 → **HISTORICAL(默认)**;safety.py 已有 historical_artifact_verdict,直接复用为初始赋值器;
+  - filesystem 案例/内部材料 → **由源策略决定**(D-6 修正:连接器类型不隐含 HISTORICAL;既有/未分类源=UNCLASSIFIED/ARCHIVE_CANDIDATE,待 Admin 分类,绝不静默按 HISTORICAL);safety.py 的 historical_artifact_verdict 降级为策略建议值;
   - 被 SUPERSEDED 版本链接替的旧版本 → SUPERSEDED;
   - 校验失败 → INVALID。
 - 检索行为:证据谓词已按角色分桶(evidence_planning 四角色),补一条硬规则:**现势类问题(commercial/现价/现规格)的 truth-bearing 断言只允许引 CURRENT**;历史型问题可引 HISTORICAL(强制日期框定:"截至 case 记录时点")。SUPERSEDED 仅回答"变化/历史"类问题。
@@ -262,7 +262,7 @@ INVENTORY(每源 slim 完整枚举,新连接器能力)
 | **Postgres** | 生命周期真相:documents+DocumentVersion+lifecycle 状态+freshness 簿记(source_verified_at/SLA)+citation canonical URL 真相+全部 sync 账本 | 不可从 Weaviate 反推任何上述字段 |
 | **Weaviate** | 服务投影:向量+文本+检索元数据。**可丢弃可重建**(对账+重建管线) | 永不作为生命周期/删除/计数/引用有效性的真相 |
 
-**关键开放点(D-1)**:当前 PG **不存文档内容**(documents 只有元数据),Weaviate 的 text 属性是唯一内容驻留 → Weaviate 并非"纯可重建投影"(重建必须重新 fetch 外部源)。建议(Phase 1 评审决断):文档提取内容(或压缩归档)入 PG(content-addressed),使"PG+源=完全可重建"成立;代价是存储与写入放大,收益是投影真正可丢弃、审计可回放。
+**关键开放点(D-1)**:当前 PG **不存文档内容**(documents 只有元数据),Weaviate 的 text 属性是唯一内容驻留 → Weaviate 并非"纯可重建投影"(重建必须重新 fetch 外部源)。建议(Phase 1 评审决断):文档提取内容(或压缩归档)入 PG(content-addressed),使"PG+源=完全可重建"成立;代价是存储与写入放大,收益是投影真正可丢弃、审计可回放。**(已裁决,修正冻结见 §14 D-1:归一化内容可入 PG 或关联的持久 content-addressed 存储,版本绑定且足以重建服务投影;Weaviate 永不为唯一持久副本;元数据权威=PG。)**
 
 ---
 
@@ -364,8 +364,8 @@ PG:DocumentVersion/lifecycle 字段/别名表;ingest:content-hash 短路+generat
 
 **Phase 4 — Claim/Graph(证据门控)** 仅当 Phase 2/3 后仍有多源事实冲突/变体断言缺口 → 轻量 claim 表;不引 GraphRAG。
 
-**Phase 5 — Admin Knowledge Operations UX + 运营 rollout**
-§10 端点集+Admin SPA 面板(该任务独立做 UX/原型);GC 默认值运营化;基准回归(benchmark_v1 冻结语料+新增 freshness/integrity 用例)。
+**Phase 5 — Admin Knowledge Operations Implementation + Operational Rollout**
+(产品/UX 定义已先行完成并冻结:`docs/product/initiatives/ADMIN-KNOWLEDGE-OPS-UX-DEFINITION.md`;本相为按该定义的工程实现与运营落地。)§10 端点集+Admin SPA 面板;GC 默认值运营化;基准回归(benchmark_v1 冻结语料+新增 freshness/integrity 用例)。
 
 每相入工程施工前须过 Planner 契约冻结(本提案不拆工程契约)。
 
@@ -374,13 +374,14 @@ PG:DocumentVersion/lifecycle 字段/别名表;ingest:content-hash 短路+generat
 ## 14. PRODUCT DECISIONS(2026-09-11 Product Review 裁决,已回填为 DECIDED)
 
 > 来源:Product Review 2026-09-11 接受本 Discovery(仓库内无独立评审记录;依后续任务指令回填推荐值为裁决,D-6 为评审修正、A-1 为评审指示)。
+> 修订:同日 Product Review CORRECTION 修正 D-1/D-4/D-6 的冻结表述(以本节各条修正后文本为准;正文 §4/§9 的早期建议性叙述已加指针,不构成冻结)。
 
-- **D-1 内容入库 = DECIDED:是。** 文档提取内容入 PG(content-addressed),"PG+外部源 = 完全可重建",Weaviate 成为纯可丢弃投影。
+- **D-1 内容留存 = DECIDED(修正冻结):** 持久化的归一化文档真相必须留存;**durable normalized content 可存于 Postgres 或关联的持久 content-addressed 存储**(不冻结"全部归一化内容必须入 PG");内容必须**版本绑定**且**足以重建服务投影**;**Weaviate 永远不得成为唯一持久副本**。lifecycle/version/identity 元数据的权威 = Postgres。
 - **D-2 生成激活机制 = DECIDED:双代共存 + `active_generation` 属性过滤。** 激活 = 单事务翻转指针;RETIRED 旧代到期 GC。
 - **D-3 GC 保留窗 = DECIDED:默认 30 天**(墓碑/被接替旧版本/RETIRED 代,与 sync_runs 保留一致;策略可配)。
-- **D-4 OVERDUE 硬门边界 = DECIDED:仅价格与明确"现势"类断言**(现价/现货规格)。其余 OVERDUE 降级为标记+候选降权,不硬拒答。
+- **D-4 OVERDUE 硬门边界 = DECIDED(修正):硬新鲜度门适用于显式现势/时效敏感类断言**,含:现价/现货 availability、当前 SDK/发布/版本、当前兼容性、当前产品规格、当前政策/状态。其余 CURRENT 类断言在 OVERDUE 下降级/标记,不硬拒答。
 - **D-5 别名裁决模式 = DECIDED:自动接链 + Admin 可见可撤销**,不阻塞摄取。
-- **D-6 filesystem 时态 = DECIDED(修正):filesystem 不自动等于 HISTORICAL;temporal role 由 source policy 决定。** safety `historical_artifact_verdict` 降级为策略建议值,不作为默认赋值器;每源在 Policy Engine 显式配置 temporal role。
+- **D-6 filesystem 时态 = DECIDED(修正):** filesystem 连接器类型**不得隐含 HISTORICAL**;temporal role 恒为 source policy。**不冻结"无默认、强制选择"**:既有/未分类源使用 `UNCLASSIFIED` / `ARCHIVE_CANDIDATE`,要求 Admin 完成分类,**绝不静默按 HISTORICAL 处理**;UNCLASSIFIED 的安全兼容/检索行为属 Initiative Freeze 的工程/产品契约细节。
 - **D-7 引用探活基础设施 = DECIDED:独立低频周期作业**,不与灌入执行器争 GPU/CPU。
 
 **A-1(评审指示,取代 §4A 单一状态枚举):lifecycle / reachability / processing(index generation)/ freshness 建模为四条正交状态轴**,不设计成组合枚举;混合态(如 ACTIVE×UNREACHABLE×FRESH、SUPERSEDED×READY 旧代保留)为合法且有信息量的状态。**正交状态模型的权威定义落在 `docs/product/initiatives/ADMIN-KNOWLEDGE-OPS-UX-DEFINITION.md` §2**(Admin 语义与呈现词汇以其为准);§4A 的 6 态视图降级为 lifecycle 轴的参考叙述。

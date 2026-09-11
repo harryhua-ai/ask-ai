@@ -2,7 +2,8 @@
 
 - 日期:2026-09-11
 - 性质:**产品/UX 定义**(本文只定义语义、信息架构、旅程与线框规格;零实现,零运行时行为变更,零生产触碰)
-- 事实源:`discovery/knowledge-freshness-20260911 @ e94a673`(KNOWLEDGE-FRESHNESS-RETRIEVAL-INTEGRITY-DISCOVERY.md)+ Product Review 裁决 D-1..D-7(已回填为 DECIDED,含 D-6 修正)+ 评审指示 A-1(正交状态建模)
+- 事实源:`discovery/knowledge-freshness-20260911 @ e94a673`(KNOWLEDGE-FRESHNESS-RETRIEVAL-INTEGRITY-DISCOVERY.md)+ Product Review 裁决 D-1..D-7(已回填为 DECIDED)+ 评审指示 A-1(正交状态建模)
+- 修订:2026-09-11 Product Review CORRECTION 落地——D-1/D-4/D-6 冻结表述修正、U-1/U-2 裁决回填(见 §2/§4/§7E/§9)
 - 落点说明:仓库产品文档根为 `docs/product/`(VISION/ROADMAP/STATE;`architecture/`=目标架构;`iterations/`=迭代级规格)。跨迭代的 initiative 级产品定义按任务建议入 `docs/product/initiatives/`,与既有分层互补;工程侧 discovery 仍在 `docs/engineering/discovery/`。
 
 ---
@@ -34,7 +35,7 @@
 
 **派生规则(不存储,呈现时计算)**
 - 检索资格 `eligible` = (L=ACTIVE) ∧ (源 enabled) ∧ (active generation P=READY)。UNREACHABLE 不取消资格(保上一代),只降 F;
-- D-4 硬门:价格/明确现势断言在 F=OVERDUE 的 CURRENT 证据上被拒——这是唯一把 F 变成门的场景,其余 F 只标记/降权;
+- D-4 硬门:显式**现势/时效敏感类断言**在 F=OVERDUE 的 CURRENT 证据上被拒——范围:现价/现货 availability、当前 SDK/发布/版本、当前兼容性、当前产品规格、当前政策/状态(D-4 修正);其余 CURRENT 类断言降级/标记不硬拒。这是唯一把 F 变成门的场景,其余 F 只标记/降权;
 - 呈现态徽章 = 四轴各自渲染一行小徽章(不合并);健康总评 = 派生(§4A 规则)。
 - 合法混合态示例(正交建模的价值):`ACTIVE × UNREACHABLE × FRESH`(源暂时挂但内容刚验证过,正常服务)、`SUPERSEDED × READY`(旧版本向量保留供回滚)、`MISSING_CANDIDATE × OVERDUE`(连续缺席+过期,临近墓碑)。
 
@@ -47,7 +48,7 @@
 | P PENDING / PROCESSING / READY / FAILED / RETIRED | 待处理 / 处理中 / 就绪 / 失败 / 已退役 | secondary / warning / success / destructive / outline |
 | F FRESH / STALE / OVERDUE / UNKNOWN / ARCHIVE | 新鲜 / 过期 / 严重过期 / 未知 / 归档 | success / warning / destructive / outline / secondary |
 
-authority/temporal role(CURRENT/HISTORICAL/SUPERSEDED/INVALID)= 每源策略属性(D-6:policy 决定,filesystem 无默认),呈现为普通 Badge(current→success、historical→outline+日期框定提示、superseded→secondary、invalid→destructive),不进四轴(它是分类不是状态)。
+authority/temporal role(CURRENT/HISTORICAL/SUPERSEDED/INVALID + UNCLASSIFIED/ARCHIVE_CANDIDATE)= 每源策略属性(D-6 修正:恒由 source policy 决定,**连接器类型不隐含时态**;既有/未分类源=UNCLASSIFIED/ARCHIVE_CANDIDATE,待 Admin 完成分类,绝不静默按 HISTORICAL;UNCLASSIFIED 的安全兼容/检索行为归 Initiative Freeze),呈现为普通 Badge(current→success、historical→outline+日期框定提示、unclassified/archive_candidate→outline「待分类」、superseded→secondary、invalid→destructive),不进四轴(它是分类不是状态)。
 
 ---
 
@@ -137,7 +138,7 @@ authority/temporal role(CURRENT/HISTORICAL/SUPERSEDED/INVALID)= 每源策略属�
 
 | # | 类别 | 发生了什么 | 严重度 | 系统自动行为 | 需人? | 允许的管理动作 | 破坏/人工动作前必呈证据 |
 |---|---|---|---|---|---|---|---|
-| 1 | 过期/陈旧 | 源或文档超过 SLA(F=STALE/OVERDUE)或从未验证(UNKNOWN) | OVERDUE=S1(价格类)/S2;STALE=S2;UNKNOWN=S2 | 按节奏自动重同步;OVERDUE 触发探针;价格类现势断言被硬门(D-4) | 节奏内不需;持续 OVERDUE 需查源 | 编辑节奏/SLA;立即对账;查看文档 | 源最近成功验证时间、连续失败次数、探针结果 |
+| 1 | 过期/陈旧 | 源或文档超过 SLA(F=STALE/OVERDUE)或从未验证(UNKNOWN) | OVERDUE=S1(现势/时效敏感类)/S2;STALE=S2;UNKNOWN=S2 | 按节奏自动重同步;OVERDUE 触发探针;现势类断言被硬门(D-4:现价现货/当前 SDK·发布·版本/兼容性/规格/政策状态) | 节奏内不需;持续 OVERDUE 需查源 | 编辑节奏/SLA;立即对账;查看文档 | 源最近成功验证时间、连续失败次数、探针结果 |
 | 2 | 灌入失败 | 文档级 DocFailure(#45 契约:stage/分类/可重试) | S1(可重试耗尽后)/S2 | 分类内自动重试(413 类永久失败不重试) | 是(永久失败或重试耗尽) | 重试此文档;查看 Inspector;编辑源配置 | 失败 stage+分类+原始错误、历史尝试计数、上一代状态 |
 | 3 | 缺失候选 | 完整清单中文档缺席(连续 N 轮) | S2 | 计缺席轮数;宽限期内保上一代服务;满足条件自动墓碑(AUTO+AUDIT) | 仅当对自动墓碑有异议 | 保留(撤销候选);立即墓碑;查看对账证据 | 缺席轮数、清单完整性证据、探针结果、当前是否仍在服务 |
 | 4 | 已删除/已接替 | 墓碑生效或版本被新版本接替 | S3(信息) | 墓碑保留 30 天(D-3)后 AUTO GC;接替链自动建 | 否(默认) | GC 前撤销墓碑/恢复版本(admin);立即 GC | 版本链、接替者、GC 倒计时、影响 chunk 数 |
@@ -156,7 +157,7 @@ authority/temporal role(CURRENT/HISTORICAL/SUPERSEDED/INVALID)= 每源策略属�
 |---|---|---|---|
 | 同步节奏 cadence | 源 | select(1h/6h/12h/24h/72h/手动) | 沿用源现状(24h) |
 | 新鲜度 SLA | 源 | select + "≈2×节奏"快捷 | 2×cadence |
-| 时态角色 temporal role | 源 | select(CURRENT/HISTORICAL/ARCHIVE 源级)| **无默认,必选(D-6)**;fs 源同样手配 |
+| 时态角色 temporal role | 源 | select(CURRENT/HISTORICAL/ARCHIVE;既有/未分类源=UNCLASSIFIED/ARCHIVE_CANDIDATE)| 恒为源策略(D-6 修正):连接器类型不隐含时态、不静默按 HISTORICAL;UNCLASSIFIED 检索行为归 Initiative Freeze;**保存前强制轻量影响预览(U-2,见 §7E)** |
 | 对账宽限 | 源 | 数字(缺席轮数 N,1-7) | 2 |
 | 引用校验 | 全局+源 | 开关 + 失效策略(标记/排除)| 开;标记 |
 | 保留/GC | 全局 | 天数(墓碑/旧版本/RETIRED 代,分列)| 30/30/30 |
@@ -231,10 +232,14 @@ Inspector 引用区 ──► 对话审查(/conversations?q=)近 30 天引用使
 ┌ 策略:<source-name> ────────────────────────────[×] ┐
 │ 同步节奏   [24h ▾]      新鲜度 SLA  [48h ▾](≈2×节奏)│
 │ 时态角色   [CURRENT ▾]  ※改动影响引用形态,需 admin  │
+│ ┌ 保存前影响预览(U-2,改动时态角色时强制)────────┐ │
+│ │ 受影响文档 132 · 当前可检索 132                  │ │
+│ │ 现势资格将变化 87 · 历史框定资格将变化 45        │ │
+│ └──────────────────────────────────────────────┘ │
 │ 对账宽限   [2 轮 ▾]     引用校验  [✓] 失效策略[标记▾] │
 │ ──────────────────────────────────────────────── │
 │ ▸ 高级(保留/GC 覆盖、探针退避——admin)              │
-│                    [取消]  [保存](受理 toast)      │
+│          [取消]  [保存](预览未加载前禁用;受理 toast)│
 └─────────────────────────────────────────────────┘
 ```
 
@@ -265,10 +270,10 @@ Overview/A/Issues/D/Inspector/C 的线框已在 §4 各区给出(ASCII 即实现
 
 ---
 
-## 9. 未决实质问题(仅列真需 Product 定夺的)
+## 9. DECIDED(原未决实质问题,2026-09-11 Product Review 裁决回填)
 
-- **U-1 知识总览是否并入业务 KPI**(回答量/满意度)还是严格知识健康?本文默认后者(与业务概览分工);若 Product 要合并需重排 IA。
-- **U-2 时态角色改动的影响范围提示强度**:改 CURRENT↔HISTORICAL 会改变答案引用形态(D-6 后每源可配);本文给 admin 级+行内警示,是否需要"改动前预览受影响文档数"由工程契约评估成本后定。
+- **U-1 = DECIDED:知识运营总览与业务 KPI 总览保持分离。** 允许交叉链接(如 Overview → 业务概览深链),**不做混合仪表盘**;本文 §3 IA 与 §4A 即按此设计。
+- **U-2 = DECIDED:时态角色变更保存前必须给轻量影响预览。** 最少含四项:受影响文档数、当前可检索文档数、现势资格(current-truth eligibility)将变化的文档数、历史框定资格(historical framing eligibility)将变化的文档数;**不要求完整答案模拟**。实现规格见 §4E 策略表与 §7E 抽屉线框(预览未加载前保存禁用)。
 
 (非实质、已按默认处理的取舍:不建 HTML 原型 §7G;RBAC 分级 §3;SLA 默认=2×节奏 §4E。)
 
