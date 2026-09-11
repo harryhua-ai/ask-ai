@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .mapping import resolve_iteration
-from .model import FieldConfig, ItemState
+from .model import FieldConfig, ItemState, sprint_title_slug
 
 
 @dataclass
@@ -43,6 +43,8 @@ def plan_sync(
     desired_iteration_key: str | None,
     desired_iteration_clear: bool,
     config: FieldConfig,
+    desired_sprint_key: str | None = None,
+    desired_sprint_touch: bool = False,
 ) -> SyncPlan:
     plan = SyncPlan()
 
@@ -90,5 +92,18 @@ def plan_sync(
             )
         elif item is None or item.iteration_slug != it.slug:
             plan.mutations.append(Mutation("set_iteration", {"iteration_id": it.id, "iteration_title": it.title}))
+
+    # Sprint: independent dimension; additive authority; never touches Iteration.
+    if desired_sprint_touch and desired_sprint_key is not None:
+        sp = config.sprint_by_slug(sprint_title_slug(desired_sprint_key))
+        if sp is None:
+            plan.findings.append(
+                Finding("UNKNOWN_SPRINT",
+                        f"sprint '{desired_sprint_key}' does not exist in the Project Sprint field; "
+                        f"no Sprint mutation — create the Sprint value first",
+                        field="sprint")
+            )
+        elif item is None or item.sprint_slug != sprint_title_slug(sp.title):
+            plan.mutations.append(Mutation("set_sprint", {"sprint_id": sp.id, "sprint_title": sp.title}))
 
     return plan

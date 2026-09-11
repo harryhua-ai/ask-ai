@@ -48,6 +48,11 @@ query {
           iterations { id title startDate duration }
           completedIterations { id title startDate duration } } }
       }
+      sprint: field(name: "Sprint") {
+        ... on ProjectV2IterationField { id configuration {
+          iterations { id title startDate duration }
+          completedIterations { id title startDate } } }
+      }
     }
     repository(name: $repo) { id }
   }
@@ -67,6 +72,9 @@ query {
             ... on DraftIssue { title }
           }
           iteration: fieldValueByName(name: "Iteration") {
+            ... on ProjectV2ItemFieldIterationValue { iterationId title }
+          }
+          sprint: fieldValueByName(name: "Sprint") {
             ... on ProjectV2ItemFieldIterationValue { iterationId title }
           }
           priority: fieldValueByName(name: "Priority") {

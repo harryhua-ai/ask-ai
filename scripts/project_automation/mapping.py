@@ -41,7 +41,12 @@ class DesiredProjection:
     priority_clear: bool  # True = absence of authority clears the field
     iteration_key: str | None
     iteration_clear: bool
-    control: ControlLabels
+    # Sprint is ADDITIVE in v1: an absent sprint label leaves Sprint untouched
+    # (bootstrap could not derive sprint labels before this capability existed;
+    # absent->clear would erase existing manual Sprint values un-label-ably).
+    sprint_key: str | None = None
+    sprint_touch: bool = False
+    control: ControlLabels = None
 
     def errors(self) -> list[str]:
         out: list[str] = []
@@ -83,11 +88,19 @@ def resolve_desired(issue: IssueAuthority, control: ControlLabels | None = None)
     else:
         iteration_key, iteration_clear = None, False
 
+    # Sprint (additive): converge only when a valid sprint label is present.
+    if control.sprint_key is not None and not any(c.field == "sprint" for c in control.conflicts):
+        sprint_key, sprint_touch = control.sprint_key, True
+    else:
+        sprint_key, sprint_touch = None, False
+
     return DesiredProjection(
         status_option=status_option,
         priority_option=priority_option,
         priority_clear=priority_clear,
         iteration_key=iteration_key,
         iteration_clear=iteration_clear,
+        sprint_key=sprint_key,
+        sprint_touch=sprint_touch,
         control=control,
     )
