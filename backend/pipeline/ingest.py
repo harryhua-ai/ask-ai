@@ -133,7 +133,9 @@ def _evidence_props(doc: RawDocument) -> dict:
         derive_evidence_meta,
     )
 
-    meta = derive_evidence_meta(doc.source_type, getattr(doc, "channel_visibility", None))
+    meta = derive_evidence_meta(
+        doc.source_type, getattr(doc, "channel_visibility", None), product=doc.product
+    )
     return {
         PROP_AUTHORITY: meta.authority_class,
         PROP_TEMPORALITY: meta.temporality,

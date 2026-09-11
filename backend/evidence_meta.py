@@ -104,6 +104,7 @@ def _origin_code(a: str, t: str, s: str, c: str) -> str:
 def derive_evidence_meta(
     source_type: str,
     channel_visibility: "tuple[str, ...] | list[str] | None" = None,
+    product: str | None = None,
 ) -> EvidenceMeta:
     """从 chunk 自身持久化结构事实确定性推导证据语义。
 
@@ -141,10 +142,15 @@ def derive_evidence_meta(
     visibility = tuple(channel_visibility) if isinstance(channel_visibility, (list, tuple)) else ()
     internal_marker = _INTERNAL_MARKER in visibility
 
-    # 展示白名单是组合期既有语义的唯一权威定义点(citation.py)
-    from backend.pipeline.citation import PUBLIC_SOURCE_TYPES
+    # 展示/引用白名单是组合期语义的权威定义点(citation.py)
+    from backend.pipeline.citation import (
+        PUBLIC_SOURCE_TYPES,
+        is_first_party_case_source,
+    )
 
-    is_public_type = source_type in PUBLIC_SOURCE_TYPES
+    is_public_type = source_type in PUBLIC_SOURCE_TYPES or is_first_party_case_source(
+        source_type, product, visibility
+    )
 
     # authority:无正面结构不变量 → 全量 unknown(修订令 Gap 2;
     # woocommerce 同撤——价格字段存在于部分 payload ≠ 每个 chunk 都是定价证据)
@@ -157,9 +163,9 @@ def derive_evidence_meta(
     else:
         sensitivity, sens_origin = SENSITIVITY_UNKNOWN, ORIGIN_UNKNOWN
 
-    # citation eligibility:严格镜像组合语义(source_type ∈ PUBLIC 白名单 →
-    # citable-numbered;否则 background-declared——build_citation_context 的
-    # 既有行为),独立于 sensitivity,不改任何现行行为
+    # citation eligibility:严格镜像组合语义(source_type ∈ PUBLIC 白名单,
+    # 或第一方知识案例 #28 → citable-numbered;否则 background-declared——
+    # build_citation_context 的既有行为),独立于 sensitivity,不改任何现行行为
     if is_public_type:
         citation, cite_origin = "citable-numbered", ORIGIN_DERIVED
     else:

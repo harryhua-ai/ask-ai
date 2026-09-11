@@ -55,6 +55,29 @@ PUBLIC_SOURCE_TYPES: frozenset[str] = frozenset(
     {"local_git", "github", "woocommerce", "website", "web_crawl"}
 )
 
+# 第一方知识案例(#28):knowledge-support-cases 管道产出的官方案例记录
+# (source_type=filesystem 且 product=knowledge)是第一方权威事实来源,
+# 可作为**有编号的可引用来源**参与组合;展示以标题呈现、不外泄文件系统
+# 路径(url 置空),来源身份按 source_id 匹配。显式 ``internal`` 可见性
+# 标记的 chunk 仍排除(降级背景段)——隐私豁免是显式配置,不做类型推断。
+CASE_SOURCE_TYPE = "filesystem"
+CASE_PRODUCT = "knowledge"
+_INTERNAL_VISIBILITY_MARKER = "internal"
+
+
+def is_first_party_case_source(
+    source_type: str | None,
+    product: str | None,
+    channel_visibility: object = (),
+) -> bool:
+    """chunk 是否属于第一方知识案例(可按标题引用、路径不外泄)。"""
+    if source_type != CASE_SOURCE_TYPE or (product or "") != CASE_PRODUCT:
+        return False
+    visibility = (
+        tuple(channel_visibility) if isinstance(channel_visibility, (list, tuple)) else ()
+    )
+    return _INTERNAL_VISIBILITY_MARKER not in visibility
+
 _I18N_PREFIXES = (
     "/i18n/en/docusaurus-plugin-content-docs/current/",
     "/i18n/zh-CN/docusaurus-plugin-content-docs/current/",
@@ -123,8 +146,15 @@ def build_citation_context(
 
         taxonomy = get_taxonomy()
     url_to_idx: dict[str, int] = {}
+    case_idx_by_source: dict[str, int] = {}
     for i, s in enumerate(sources):
-        url_to_idx[normalize_source_path(s["url"])] = i + 1
+        # path-less 案例(url='')不注册 URL 键:空串键会让所有无 URL chunk
+        # 误配到同一编号;案例身份只走 case_idx_by_source(source_id 匹配)。
+        if s.get("url"):
+            url_to_idx[normalize_source_path(s["url"])] = i + 1
+        # 第一方知识案例:path-less 来源(url 置空),身份按 source_id 匹配。
+        if s.get("source_id"):
+            case_idx_by_source[s["source_id"]] = i + 1
         # CIT-URL 集成桥:sources[].url 呈现 canonical 时,原 GitHub blob URL
         # 保留在 provenance_url;rerank 候选仍带原始 URL,须映射到同一编号,
         # 否则 wiki chunk 全部落入 dropped_public_chunks、编号权威断裂。
@@ -143,6 +173,12 @@ def build_citation_context(
 
     for r in reranked:
         idx = url_to_idx.get(normalize_source_path(r.url))
+        if (
+            idx is None
+            and is_first_party_case_source(r.source_type, r.product, r.channel_visibility)
+        ):
+            # #28:第一方知识案例按 source_id 匹配 path-less 编号来源
+            idx = case_idx_by_source.get(r.source_id)
         if idx is not None:
             source_texts[idx].append(r.text or "")
             source_products.setdefault(idx, r.product or "")
@@ -150,7 +186,9 @@ def build_citation_context(
             citable_ids.append(
                 {"source_id": r.source_id, "chunk_index": r.chunk_index, "citation_no": idx}
             )
-        elif r.source_type in PUBLIC_SOURCE_TYPES:
+        elif r.source_type in PUBLIC_SOURCE_TYPES or is_first_party_case_source(
+            r.source_type, r.product, r.channel_visibility
+        ):
             # 公开但排在可见集合之外:保留即可被引用 → 不可见引用,丢弃
             dropped_public_chunks += 1
             dropped_public_ids.append({"source_id": r.source_id, "chunk_index": r.chunk_index})

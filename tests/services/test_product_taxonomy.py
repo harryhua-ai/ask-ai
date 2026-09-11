@@ -131,6 +131,30 @@ class TestDeixis:
     def test_no_deixis(self, taxonomy, text):
         assert taxonomy.has_device_deixis(text) is False
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # #31:复数/客观描述不是对 CamThink 设备的指代 —— 不得触发歧义短路
+            "So we have 6 warehouses in India where the cameras are advanced and we are looking for AI box.",
+            "The cameras in our factory already support ONVIF.",
+            "These cameras stream over RTSP.",
+        ],
+    )
+    def test_plural_or_objective_phrases_not_deictic(self, taxonomy, text):
+        assert taxonomy.has_device_deixis(text) is False
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "How do I reset this camera?",
+            "What can this device do?",
+            "Which model should I choose for solar deployment?",
+            "这个设备支持什么?",
+        ],
+    )
+    def test_genuine_deixis_still_detected(self, taxonomy, text):
+        assert taxonomy.has_device_deixis(text) is True
+
 
 # --------------------------------------------------------------------------- #
 # derive_product:文档级产品推导(ingest 与迁移共用同一条代码路径)

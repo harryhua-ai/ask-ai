@@ -149,8 +149,21 @@ class Taxonomy:
             groups.append((str(group.get("label", "")).strip().lower(), rules))
         self._derivation = tuple(groups)
 
-        self._deixis = tuple(
+        deixis_raw = tuple(
             str(p).lower() for p in ((config.get("ambiguity") or {}).get("deixis_patterns") or [])
+        )
+        # 指代词匹配分两族(#31 矫正):
+        # - 含 ASCII 字母的模式按整词边界匹配 —— 否则「the camera」子串命中
+        #   「the cameras」这类对客户自有设备的客观描述,把场景充分的方案请求
+        #   在 understanding LLM 之前误短路成 PRODUCT_AMBIGUOUS(cg-r07 实证);
+        # - CJK 模式无词边界概念,维持子串匹配。
+        self._deixis_substring = tuple(
+            p for p in deixis_raw if not re.search(r"[a-z]", p)
+        )
+        self._deixis_word = tuple(
+            re.compile(r"(?<!\w)" + re.escape(p) + r"(?!\w)")
+            for p in deixis_raw
+            if re.search(r"[a-z]", p)
         )
 
     # -- canonicalize(标签 → slug)----------------------------------------- #
@@ -187,11 +200,17 @@ class Taxonomy:
         return tuple(ordered)
 
     def has_device_deixis(self, text: str) -> bool:
-        """查询是否含设备指代词(「这个设备/this camera」等;歧义检测输入)。"""
+        """查询是否含设备指代词(「这个设备/this camera」等;歧义检测输入)。
+
+        ASCII 模式按整词边界匹配(CJK 模式子串)—— 复数/派生形式
+        (「the cameras」)不构成对 CamThink 设备的指代,不得触发歧义短路。
+        """
         if not text:
             return False
         lowered = text.lower()
-        return any(pattern in lowered for pattern in self._deixis)
+        if any(pattern in lowered for pattern in self._deixis_substring):
+            return True
+        return any(pattern.search(lowered) for pattern in self._deixis_word)
 
     # -- 实体查询 ----------------------------------------------------------- #
 

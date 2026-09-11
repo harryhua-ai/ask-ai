@@ -32,6 +32,7 @@ from backend.pipeline.citation import (
     PUBLIC_SOURCE_TYPES,
     CitationStreamFilter,
     build_citation_context,
+    is_first_party_case_source,
     normalize_source_path,
     validate_citations,
 )
@@ -1192,24 +1193,40 @@ class RAGOrchestrator:
         seen: set[str] = set()
         sources: list[dict] = []
         for r in results:
-            if r.source_type not in PUBLIC_SOURCE_TYPES:
-                continue
-            # CIT-URL Contract:wiki GitHub blob URL → canonical 页面 URL;
-            # canonical 后再走 citation 层归一化去重(翻译版折叠语义不变)。
-            citation_url = wiki_canonical_url(r.url)
-            norm = normalize_source_path(citation_url)
-            if norm in seen:
-                continue
-            seen.add(norm)
-            source = {
-                "url": citation_url,
-                "title": r.title,
-                "type": r.source_type,
-                "product": r.product,
-            }
-            if citation_url != r.url:
-                source["provenance_url"] = r.url
-            sources.append(source)
+            if r.source_type in PUBLIC_SOURCE_TYPES:
+                # CIT-URL Contract:wiki GitHub blob URL → canonical 页面 URL;
+                # canonical 后再走 citation 层归一化去重(翻译版折叠语义不变)。
+                citation_url = wiki_canonical_url(r.url)
+                norm = normalize_source_path(citation_url)
+                if norm in seen:
+                    continue
+                seen.add(norm)
+                source = {
+                    "url": citation_url,
+                    "title": r.title,
+                    "type": r.source_type,
+                    "product": r.product,
+                }
+                if citation_url != r.url:
+                    source["provenance_url"] = r.url
+                sources.append(source)
+            elif is_first_party_case_source(r.source_type, r.product, r.channel_visibility):
+                # #28:第一方知识案例 → 有编号可引用来源。展示以标题呈现,
+                # url 置空(不外泄文件系统路径);身份按 source_id 在
+                # build_citation_context 匹配。显式 internal 标记不进入。
+                if r.source_id in seen:
+                    continue
+                seen.add(r.source_id)
+                sources.append(
+                    {
+                        "url": "",
+                        "title": r.title or r.source_id.rsplit("/", 1)[-1],
+                        "type": r.source_type,
+                        "product": r.product,
+                        "source_id": r.source_id,
+                    }
+                )
+            # 其余类型维持既有语义:不进入可见 sources(citation 层归背景段)
         return sources[:5]
 
     async def answer(
