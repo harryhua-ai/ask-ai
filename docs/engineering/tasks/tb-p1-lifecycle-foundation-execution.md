@@ -1,10 +1,13 @@
 # TB-P1-LIFECYCLE-FOUNDATION — Phase 1 Implementation 执行报告
 
-Status: **CANDIDATE READY**(待独立 Role A 评审;未并 main;未部署;零生产触碰)
+Status: **CANDIDATE READY**(REVIEW FIX 后第二候选;待 Role A 复审;未并 main;未部署;零生产触碰)
 
 - 分支:`trace-b/p1-lifecycle-implementation-20260911`
 - 实现基线:`b6100cf`(契约谱系 6aa5a9c + main 39723c2 的再基线合并,代码面 = v1.5.0 已接受代码)
-- 实现 commit:`e071f45`(代码+测试);报告 commit = 本文件所在提交(其父即实现提交)
+- 首候选实现 commit:`e071f45`(Role A REVIEW FIX REQUIRED 对其检索语义);
+- REVIEW FIX commit:`551b14c`(fail-closed 检索契约,见 §11);
+- 组合树基线:origin/main `faa9bf2`(merge 提交 `bce2298`,零冲突);
+- 报告 commit = 本文件所在提交。
 - 契约:`docs/engineering/tasks/tb-p1-lifecycle-foundation-plan.md` @ 6aa5a9c(Role A FINAL PASS)
 - Freeze 权威:`docs/product/initiatives/KNOWLEDGE-INTEGRITY-INITIATIVE-FREEZE.md` @ 915b5f7
 
@@ -19,10 +22,12 @@ Status: **CANDIDATE READY**(待独立 Role A 评审;未并 main;未部署;零生
   再基线合并(`b6100cf`,merge 提交,零冲突);`git diff 39723c2..b6100cf -- backend/ scripts/`
   为空 = 代码面与授权基线逐字节一致,仅文档谱系并入。契约语义未被重释。
 - 实现前基线测试地板(b6100cf):`2208 passed / 8 skipped`。
-- **推送时终核(候选发布刻)**:main 已前移至 `2bc9e02`(39723c2..2bc9e02
-  = project-automation 治理线:3 workflow + scripts/project_automation +
-  docs)。与本候选改动集**文件级零交集**(comm 校验 = 0),属正交治理谱系;
-  本候选保持授权基线谱系不动,集成裁决归 Role A(本实现未并 main)。
+- **授权后 main 漂移终态(REVIEW FIX 集成刻复核)**:main 已前移至
+  `faa9bf2`(39723c2..faa9bf2 = project-automation 治理线:workflow ×3 +
+  scripts/project_automation + tests/project_automation + docs;中途曾为
+  2bc9e02)。与候选改动集**文件级零交集**(comm 校验 = 0),属正交治理谱系。
+  按指令已将 origin/main faa9bf2 **集成入候选分支**(merge `bce2298`,
+  自动合并零冲突;候选仍未并 main)。
 
 ## 2. 实现架构
 
@@ -254,12 +259,69 @@ P0-A/vector consistency/corpus repair)保持;唯一语义演进 = 契约显式�
 
 ## 10. 零生产触碰确认
 
-- 本轮全部变更限于实现分支工作树;`main` 未动(仍 39723c2);
+- 本轮全部变更限于实现分支工作树;`main` 未动(授权基线 39723c2;其上的
+  project-automation 前进系其它轨道工作,本候选仅在自身分支集成之);
 - 未执行任何部署(workflow 零 dispatch);生产 deployments 无新增;
 - 生产 Postgres / 生产 Weaviate / 生产配置零触碰;
 - 测试全部指向隔离测试库(`ask_ai_test`)、一次性演练库
   (`ask_ai_p1mig_test`,用后即删)与本机开发容器上的专用探针 collection
   (P1GenProbe/P1ProjProbe/P1MigProbe,用后即删)。
+
+---
+
+## 11. Role A REVIEW FIX(第二候选;551b14c)
+
+**裁决**:首候选 e071f45 → REVIEW FIX REQUIRED——在服代检索语义不得 fail-open。
+
+### 11.1 冻结契约(已实现)
+
+| provider 行为 | 语义 | 实现 |
+| --- | --- | --- |
+| None | legacy 兼容 | 三路径不加生成过滤(不变) |
+| 非空 ordinals | 严格过滤 | `_generation_ordinal_filter`(单代 equal/多代 contains_any)注入 filters_list 首位(不变) |
+| 返回 `[]` | 权威服务集为空 | **先于 embed/检索裁决,直接返回 `[]`**,绝不发检索请求(旧:不加过滤=无限制检索) |
+| 抛错 | 权威不可得 | **FAIL CLOSED:异常向上传播**(旧:吞错降级为不加过滤);连 embed 都不发生 |
+
+fail-closed 手段选择 = **显式异常**(与 Weaviate 失败同类,交由调用方既有
+错误路径;空结果路径用于权威空集这一"合法零答案")。理由:已撤代/墓碑对象
+在 GC 前物理残留,无限制检索会复活非现役知识。
+
+实现:`HybridSearcher._active_generation_filter` →
+`_active_generation_ordinals`(返回权威集合,None=legacy/[]=空权威集/异常
+传播);`search` / `search_symbols` / `search_bucket` 三路径统一"先取权威
+再决策"——空集与异常路径均发生在 embedder 与 Weaviate 调用之前;main.py
+lifespan wiring 注释同步。
+
+### 11.2 RED→GREEN 实证
+
+- RED(修复前跑新契约测试):`12 用例中 10 RED`——3× 空权威集返回了检索
+  结果、3× provider 失败未抛且继续检索(6 违约)+ 3× 非空过滤用例先因测试
+  脚手架笔误(NameError)失败、修正脚手架后转 GREEN(实证既有非空过滤
+  语义未回归);None 兼容与注入透传 2 用例即 GREEN。
+- GREEN(551b14c):`tests/retrieval/test_search_generation_filter.py`
+  **12/12 passed**——None 兼容(三路径)、非空过滤(search/symbols/bucket)、
+  空权威集零结果且 embed/检索零调用(三路径)、provider 失败三路径异常
+  传播且 embed/检索零调用、双代 contains_any、注入/结果透传正交。
+
+### 11.3 REVIEW FIX 改动文件
+
+| 文件 | 变更 |
+| --- | --- |
+| backend/retrieval/search.py | fail-closed 契约(§11.1);三路径权威先决 |
+| backend/main.py | wiring 注释同步(fail-open 描述废除) |
+| tests/retrieval/test_search_generation_filter.py | 冻结契约 12 用例(重写) |
+| tests/api/admin/test_analytics.py | 测试隔离缺陷修复(自持种子):test_signal_present_on_all_items 原依赖其它用例残留的 data_sources 行,空库必假红;与本 FIX 语义无关,属全套件确定性必要项 |
+
+**未触碰**(按要求):lifecycle schema / 迁移模型 / 生成架构 / 墓碑 GC
+默认与策略 / 排序与 reranker / 引用行为 / P2+ 语义(墓碑专项保留仍归 P5)。
+
+### 11.4 组合树验证(与 main 集成)
+
+- origin/main 集成刻 = `faa9bf2`(project-automation ACTIVE 线);merge
+  `bce2298` 自动合并**零冲突**(文件级零交集,comm=0);
+- 组合树全量回归:**`2380 passed / 8 skipped / 0 failed`**
+  (= P1 线 2303 + project-automation 线 77,双侧零回归);
+- 候选**未并 main**;main 停留 faa9bf2 未动。
 
 ---
 
