@@ -153,7 +153,7 @@ DELETED:逻辑墓碑(保留元数据+历史 N 天)──GC──►物理清除(
   - GitHub:SLA 24h(非 push 驱动,轮询语义);
   - Wiki:SLA 48h;
   - Website:SLA 72h(全量爬取节奏);覆盖失败(OVERDUE+coverage<阈值)→ 源级 DEGRADED 告警;
-  - Filesystem/历史档案:**ARCHIVE 语义,freshness=N/A(永不 STALE)**,历史型内容天然免疫新鲜度。
+  - Filesystem:新鲜度与时态行为**由源策略决定**(D-6:连接器类型不隐含 ARCHIVE 或 HISTORICAL);被策略**显式归类为 ARCHIVE** 的源可采用归档型新鲜度语义(如 freshness=N/A、永不 STALE);`UNCLASSIFIED` / `ARCHIVE_CANDIDATE` 源的行为按 D-6 留待 Initiative Freeze。
 - UNKNOWN:从未成功验证/探针失败——检索侧不因 UNKNOWN 拒答,Admin 侧必须显形。
 - OVERDUE 的检索语义是**标记+降权候选**,不是硬删除(硬门仅覆盖显式现势/时效敏感断言——现价现货/当前 SDK 版本/兼容性/规格/政策状态,见 E 与 §14 D-4 修正)。
 
@@ -189,7 +189,7 @@ CanonicalDocumentIdentity = (source_id, source_native_key)
     website   : canonical_url(已有归一化)     (3xx 跟随 → alias)
     wiki      : 规范公开 URL(canonical_url.py 已有映射)
     woocommerce: product_id(variation 属内容结构,不拆身份)
-    filesystem: path(ARCHIVE 语义,无移动概念)
+    filesystem: path(身份即路径,无移动概念;时态/归档角色由源策略控制——D-6)
 
 DocumentVersion(新表,提议):
   identity_ref, version_seq, content_hash, source_version(git sha/lastmod/date_modified/mtime),
