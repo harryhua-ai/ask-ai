@@ -1,7 +1,7 @@
 # TB-P1-LIFECYCLE-FOUNDATION Engineering Contract(Trace B Phase 1 —— 知识生命周期地基)
 
 - **Task ID**:`tb-p1-lifecycle-foundation`(Initiative 级文档谱系别名:INGESTION-LIFECYCLE-P1,见 Discovery §15)
-- **Status**:**CANDIDATE READY**(待 Role A 评审;本任务为契约定义,零实现、零迁移、零生产触碰)
+- **Status**:**CANDIDATE READY —— REVIEW FIX APPLIED**(初版 2693461+c219f8b → Role A REVIEW FIX REQUIRED 四项修正已落:Freeze 修订 915b5f7 + 本契约修订;待 Role A 复审;实现 NOT AUTHORIZED;零实现、零迁移、零生产触碰)
 - **性质**:PHASE 1 ENGINEERING CONTRACT DEFINITION——把已接受的 Initiative Freeze P1 交接转化为可执行工程契约;实现设计权(工程 HOW)归后续执行代理,本契约只冻结 WHAT / 边界 / 可观测验收语义。
 - **父 Initiative**:Knowledge Integrity(Trace B / Release 2);Freeze = `docs/product/initiatives/KNOWLEDGE-INTEGRITY-INITIATIVE-FREEZE.md`(97cac3f,FINAL PASS)
 
@@ -10,8 +10,8 @@
 | # | 来源 | 状态 |
 |---|---|---|
 | S1 | `docs/engineering/discovery/KNOWLEDGE-FRESHNESS-RETRIEVAL-INTEGRITY-DISCOVERY.md`(e94a673 + b8969ca/f73092b 修正) | FINAL PASS |
-| S2 | `docs/product/initiatives/ADMIN-KNOWLEDGE-OPS-UX-DEFINITION.md`(7ce0111 + b8969ca;§2 四轴状态模型 = A-1 权威定义) | FINAL PASS |
-| S3 | `docs/product/initiatives/KNOWLEDGE-INTEGRITY-INITIATIVE-FREEZE.md`(97cac3f;§2 不变量 / §3 阶段所有权 / §5 验收模型 / §7 P1 交接) | FINAL PASS |
+| S2 | `docs/product/initiatives/ADMIN-KNOWLEDGE-OPS-UX-DEFINITION.md`(7ce0111 + b8969ca)——**仅未被取代语义可用**:其 Admin IA/工作流(独立 Knowledge 模块 / Overview / Issues / Settings / 独立 Inspector 主工作流)已被 2026-09-11 最新 Product Review 取代(Freeze §8b;现行方向 = 无独立知识 UI,配置>数据源为主工作面,单一详情工作面,技术洞察>技术性能/回答缺口,Admin chat 为验证面);正交状态概念(§2 四轴)仍权威 | FINAL PASS(IA 部分已取代) |
+| S3 | `docs/product/initiatives/KNOWLEDGE-INTEGRITY-INITIATIVE-FREEZE.md`(97cac3f + 本分支 REVIEW FIX 修订 **915b5f7**:§2 不变量(I-5 时序修正版)/ §3 阶段所有权 / §5 验收模型 / §7 P1 交接 / **§8 最新裁决取代记录**) | FINAL PASS(经 §8 取代记录更新) |
 | S4 | Issue #13 身份冻结契约链:`docs/implementation/CAMTHINK_V1_DATA_INTEGRITY_RECONCILIATION_DISCOVERY_2026-09-03.md`(D1/D2/D3 + §10 正确语料契约)+ `…_IMPLEMENTATION_2026-09-03.md` + `…_INTEGRATION_GATE_2026-09-03.md` | 已冻结已集成 |
 | S5 | 关联既有冻结纪律:#18 源删除生命周期(S0)、P0-A/PA-0F 删除局部性禁令、#45 DocFailure 契约、生产部署编排(#10,迁移桥先于 rollout 先例) | 已接受 |
 
@@ -22,6 +22,7 @@
 - **基线漂移声明**:bb80c38 与 97cac3f 两树间,本文引用的生命周期证据文件全部零漂移,唯一例外 = `backend/pipeline/ingest.py:215-217`(`_evidence_props` 增加 `product=doc.product` 实参,Trace A INC-2a 谱系;与生命周期语义无关)。
 - **若 main 因 Trace A Release 1 收口而前移**:执行代理开工时须重新记录新基线;本文冻结的产品语义不因基线移动而改写。
 - **基线移动记录(2026-09-11,本契约生成期间)**:main 已由 `bb80c38` 前移至 **`39723c2e35034e38ee6bb8a0eeca2954c862e1f0`**(本地 = origin),增量恰一提交且为 docs-only:Trace A Release 1 / v1.5.0 生产验收报告(readiness + 部署 run 34564587117 success + 生产 runtime 实证)。已复核 bb80c38→39723c2 对本文全部生命周期证据文件(backend/db/models.py、backend/pipeline/ingest.py、scripts/sync.py、backend/services/*、backend/retrieval/search.py、backend/db/session.py、backend/config.py 及 tests/pipeline|db|services)**零漂移**;全部 E1-E19 证据在新基线同样成立。Trace A Release 1 据此视为已收口(v1.5.0 已部署)——Freeze §4 的 Trace B 集成闸时机相应解锁,但不改变本文任何冻结语义;生产部署事实归 Trace A 报告所有,本文不转述不重写。执行代理开工时以 39723c2(或更新基线)复核本附录。
+- **复审修订记录(2026-09-11)**:Role A 裁定 **REVIEW FIX REQUIRED**(FIX-1 接替时序取代 D-3 / FIX-2 Admin UX IA 取代 / FIX-3 P 轴状态模型一致化 / FIX-4 权威链先行)。本分支已落修订:Freeze 修订 = **915b5f7**(新增 §8 取代记录 + I-5/§1/§3/§5/§6/§7/附同步);本契约修订 = 下一提交(Status/S2/S3/FC-2/FC-3/Gate P1-D/E/F/Forbidden/工程选择/交接提示词)。main 维持 39723c2 未动;生产未触碰;实现 NOT AUTHORIZED。
 
 ## Objective(目标)
 
@@ -31,7 +32,7 @@
 
 目标产品结果:**新文档版本或重建索引生成可以在不摧毁当前在服生成的前提下被准备与验证**;持久真相足以重建服务投影;文档身份/版本/生命周期事实的权威在向量索引之外(Postgres)。
 
-对应 Freeze §5 P1 Gate(冻结验收锚):全量重建零服务中断;同文档两现役版本不可共存;FAILED 新代不破坏 ACTIVE 代;墓碑/接替语义符合冻结状态机;投影可重建性首次可证明;真实部署冒烟证据(后者属部署后 Runtime Acceptance,本契约定义要求,本任务不部署)。
+对应 Freeze §5 P1 Gate(冻结验收锚):全量重建零服务中断;同文档两现役版本不可共存;FAILED 新代不破坏 ACTIVE 代(在服代 = active_generation 指针所选,P 轴无 ACTIVE 态——见 FC-3);墓碑/接替语义符合冻结状态机;投影可重建性首次可证明;真实部署冒烟证据(后者属部署后 Runtime Acceptance,本契约定义要求,本任务不部署)。
 
 ---
 
@@ -115,14 +116,15 @@
 **FC-2(I-2 正交状态模型,A-1;P1 只落地 L 轴 + P 轴地基)**
 - lifecycle(L)/ reachability(R)/ processing·index-generation(P)/ freshness(F)为四条独立状态轴,禁止合并为组合枚举;混合态必须可表达(如 ACTIVE×UNREACHABLE×FRESH、SUPERSEDED×READY);
 - L 轴词汇(权威定义 = S2 §2):DISCOVERED / ACTIVE / SUPERSEDED / MISSING_CANDIDATE / DELETED(DELETED = 墓碑,保留元数据+版本链至 GC);
-- P 轴词汇:PENDING / PROCESSING / READY / FAILED / RETIRED;
+- P 轴词汇:PENDING / PROCESSING / READY / FAILED / RETIRED(**无 ACTIVE 处理态**;激活 = active_generation 权威指针/关系对一个合格 READY 代的选择,属服务选择事实,不是 P 轴状态、也不建模 READY→ACTIVE 转移);
 - **P1 不实现** R 轴与 F 轴策略(P2),不实现任何 freshness 语义;
 - 检索资格派生式(L=ACTIVE ∧ 源 enabled ∧ active generation READY)作为 P1 的可观测定义落地,但**逻辑资格门/时态执行属 P3**——P1 只需该派生为真且可检测。
 
-**FC-3(I-5 生成模型,D-2/D-3 冻结)**
-- 双代共存 + 显式 active generation;激活 = 从服务视角**原子**的指针翻转(PG 权威;服务选择按 D-2 = active_generation 过滤方向);失败候选代不得破坏在服代;激活成功后旧代转 RETIRED;RETIRED 代按保留窗 GC(默认 30 天,可配,D-3);
-- 生成生命周期冻结为:`PENDING → PROCESSING → READY → ACTIVE(在服) → RETIRED`,FAILED 为 READY 前终态旁路;
-- **可观测验收语义冻结;物理实现细节(UUID 命名空间、属性落点、回填机制)保留为工程决策**(Freeze §6 SAFE TO DEFER 明示归属 P1 契约,由执行代理在 FC-3 框架内定)。
+**FC-3(I-5 生成模型;D-2 冻结 + 2026-09-11 最新接替时序裁决,取代原 D-3 默认 30 天——Freeze §8a)**
+- 双代共存 + 显式 active generation;激活 = 从服务视角**原子**的指针翻转(PG 权威;服务选择按 D-2 = active_generation 过滤方向);失败候选代不得破坏在服代;
+- **P 轴处理态冻结为:`PENDING → PROCESSING → READY`,FAILED 为失败终态/分支,RETIRED 出现在撤出之后;不建模 READY → ACTIVE 转移**——激活是 active_generation 指针对一个合格 READY 代的选择(权威关系),不是新增 P 轴状态;
+- **接替时序(冻结)**:替代代成为权威的瞬间,被接替代**立即失去现势(Current Truth)地位**;旧服务表示**最迟 1 天**内完成服务撤出(撤出窗内旧表示只是待撤出的残差,**绝非**与新代并行的现势真相);撤出完成后转 **RETIRED**;RETIRED 保留 **7 天**,期满后**可自动物理 GC**;
+- **可观测验收语义冻结;物理实现细节(UUID 命名空间、属性落点、回填机制、撤出机制)保留为工程决策**(Freeze §6 SAFE TO DEFER 明示归属 P1 契约,由执行代理在 FC-3 框架内定)。
 
 **FC-4(I-6 删除/生命周期安全——P1 只提供状态与转换原语)**
 - 原语必须就绪:ACTIVE / SUPERSEDED / 墓碑(DELETED,逻辑删除,非立即物理销毁)/ RETIRED 代 / successor·alias 关系;
@@ -192,20 +194,20 @@
 **语义**:N 代在服 → N+1 代开始构建 → N+1 代失败 ⇒ N 代持续原样服务;无部分替换、无破坏性清理、无服务中断。
 **PASS 要求**:故障注入测试(嵌入失败/写库失败/验证不过三类至少各一)后断言:在服代对象集与激活指针均未变化、检索结果未变化、失败代状态可观测(FAILED + 失败证据)。
 
-### Gate P1-D — 原子激活
+### Gate P1-D — 原子激活与接替时序
 
-**语义**:N 代在服、N+1 代 READY → 激活 ⇒ 服务切换为 N+1 是**单一有效状态转移**;外部观察不到混合/半切换代;N 仅在激活成功后转 RETIRED。
-**PASS 要求**:激活过程中的并发读测试(或等价的转移原子性证明)——任一读取时刻,观察到的服务代要么全 N 要么全 N+1;激活指针翻转失败时服务保持 N(fail-closed);N 转 RETIRED 严格后于 N+1 生效。
+**语义**:N 代在服(= 指针所选)、N+1 代 READY → 激活 ⇒ 指针选择 N+1 是**单一有效状态转移**(非新增 P 轴状态);激活瞬间 N+1 成为唯一现势权威,N **立即失去现势地位**(绝非与新代并行现势);N 的服务表示**最迟 1 天**内完成撤出,撤出完成后 N 转 RETIRED;任一读取时刻服务选择不出现混合/半切换代。
+**PASS 要求**:激活过程中的并发读测试(或等价的转移原子性证明)——任一读取时刻,观察到的服务代要么全 N 要么全 N+1;激活指针翻转失败时服务保持 N(fail-closed);服务撤出 deadline(激活时刻 T + 1 天)可观测且被断言;N 转 RETIRED 严格后于撤出完成;RETIRED + 7 天方可进入物理 GC 资格。
 
 ### Gate P1-E — 全量重建零服务损失
 
 **语义**:全量重建期间,零"因先删上一代导致"的服务中断;破坏性 `--reindex` 不再是权威重建路径。
-**PASS 要求**:全量重建走生成路径(新代构建 → 验证 → 原子激活);重建全程检索可用且结果逐步收敛;兼容边界 §显式取代 ②落实(测试替换 + `--reindex` 先删后灌不再可达,或仅存于显式废弃标记下不可为权威路径)。
+**PASS 要求**:全量重建走生成路径(新代构建 → 验证 → 原子激活;重建完成 = 指针切换至新 READY 代,旧代沿 FC-3 冻结时序撤出/退役);重建全程检索可用且结果逐步收敛;兼容边界 §显式取代 ②落实(测试替换 + `--reindex` 先删后灌不再可达,或仅存于显式废弃标记下不可为权威路径)。
 
 ### Gate P1-F — 接替/墓碑地基
 
 **语义**:版本接替关系有表示;墓碑化不要求立即物理删除;P2 未来可直接调用生命周期转换原语。
-**PASS 要求**:(a) 接替链查询 API/服务存在且被测试覆盖;(b) 墓碑化后:元数据+版本链保留、对象退出服务资格、物理清除仅发生在 GC 窗口(D-3 默认 30 天,可配);(c) 提供 P2 将消费的显式转换原语(带前置条件校验),P2 无需新存储语义即可驱动;**不得**实现 P2 消失确认策略本身。
+**PASS 要求**:(a) 接替链查询 API/服务存在且被测试覆盖;(b) 被接替版本沿 FC-3 冻结时序演进(立即失去现势 → ≤1 天撤出 → RETIRED → 7 天后可自动物理 GC);墓碑化后:元数据+版本链保留、对象退出服务资格、物理清除仅经 GC 接口(可配置保留窗;墓碑专项窗不在 2026-09-11 裁决范围内,**禁止回用已废除的 30 天默认**,亦不得设任何未冻结的隐式默认;窗默认运营化归 P5);(c) 提供 P2 将消费的显式转换原语(带前置条件校验),P2 无需新存储语义即可驱动;**不得**实现 P2 消失确认策略本身。
 
 ### Gate P1-G — 遗留迁移
 
@@ -243,7 +245,7 @@
 
 ## Forbidden Scope(显式禁止吸收;违反即违约)
 
-P1 **不得**吸收:freshness SLA;source_verified_at 操作语义;源可达性策略;slim/完整清单对账循环;消失确认逻辑;引用探活/citation validity 作业;INVALID 引用策略实现;检索逻辑资格门与时态执行;CURRENT/HISTORICAL 执行;UNCLASSIFIED 激活语义(P3 契约前必须回 Product);WooCommerce 变体摄取;#28 变体收口;证据预留扩展;新排序算法;Claim/Graph/GraphRAG;Admin Knowledge Operations 端点/面板/知识 UI 实现;广泛连接器重设计;Trace A Bug Fix 残余(F-1' 残余两 Scope Expansion 提案与本文无关);GC 策略变更(D-3 已定基,仅落地接口)。共享文件触碰不构成导入后期行为的授权。
+P1 **不得**吸收:freshness SLA;source_verified_at 操作语义;源可达性策略;slim/完整清单对账循环;消失确认逻辑;引用探活/citation validity 作业;INVALID 引用策略实现;检索逻辑资格门与时态执行;CURRENT/HISTORICAL 执行;UNCLASSIFIED 激活语义(P3 契约前必须回 Product);WooCommerce 变体摄取;#28 变体收口;证据预留扩展;新排序算法;Claim/Graph/GraphRAG;Admin Knowledge Operations 端点/面板/知识 UI 实现;广泛连接器重设计;Trace A Bug Fix 残余(F-1' 残余两 Scope Expansion 提案与本文无关);GC 策略变更(接替/GC 时序已由 2026-09-11 最新裁决定基:服务撤出≤1 天 / RETIRED 7 天,Freeze §8a;P1 仅落地接口)。共享文件触碰不构成导入后期行为的授权。
 
 ## Deliverables(交付物——实现任务)
 
@@ -279,7 +281,7 @@ P1 **不得**吸收:freshness SLA;source_verified_at 操作语义;源可达性�
 以下均为 ENGINEERING DESIGN CHOICE(非产品开放问题,不得借"开放"之名重开产品语义):
 
 1. **持久内容载体**:PG 表 vs 关联 content-addressed 存储 vs 混合(D-1 显式保留;含压缩/去重/引用计数策略);
-2. **生成的物理表示**:在 D-2 冻结方向(active generation 权威在 PG + 原子翻转 + 服务按 active 代过滤)框架内,generation 标识落点(对象属性/集合组织)、UUID 命名空间扩展方案(discovery §4B `source_id#generation#chunk_index` 或等价)、回填机制自定;
+2. **生成的物理表示**:在 D-2 冻结方向(active generation 权威在 PG + 原子翻转 + 服务按 active 代过滤)框架内,generation 标识落点(对象属性/集合组织)、UUID 命名空间扩展方案(discovery §4B `source_id#generation#chunk_index` 或等价)、回填机制自定;服务撤出(≤1 天冻结 deadline)的实现机制(过滤即时失效 / 物理标记清理 / 等价手段)亦属此项;
 3. **版本模型的 schema 细节**:DocumentVersion 表形态、version_seq/valid_from/superseded_by 的具体列设计(产品语义要求的最小字段集见 FC-2/FC-5/FC-6;精确 schema = HOW);
 4. **迁移工具形态**:继续幂等脚本族 vs 引入 Alembic(E16 现状两可;满足 Migration Boundary 即可);
 5. **连接器 source-native 版本字段的落地顺序与承载方式**(git commit_sha / web lastmod / woo date_modified / fs mtime+size;字段支持为契约要求,逐连接器填充可渐进,不得为此重设计连接器行为);
@@ -300,7 +302,7 @@ P1 **不得**吸收:freshness SLA;source_verified_at 操作语义;源可达性�
 
 Source of Truth:仓库现状证据 + 上述冻结文档;调查基线 main bb80c38;分支基线 97cac3f。
 Objective:使"投影可重建、失败不回退、接替可追溯"首次成立(契约 Objective 节八项性质)。
-Frozen Product Contract:FC-1..FC-6(I-1/I-2/I-5/I-6 + D-1/D-2/D-3/D-5 + #13 兼容 + 变更类别)——逐条不可违反。
+Frozen Product Contract:FC-1..FC-6(I-1/I-2/I-5/I-6 + D-1/D-2/D-5 + 2026-09-11 接替时序裁决[立即失去现势/服务撤出≤1 天/RETIRED 7 天,取代 D-3;Freeze §8a] + #13 兼容 + 变更类别)——逐条不可违反。
 Hard Boundaries:Engineering/Migration/Compatibility/Forbidden 四节;零 P2+ 行为吸收;
   Trace B 分支隔离(不并 main);不部署;不碰生产;显式取代仅限两测试件(Compatibility 节)。
 Acceptance:Gate P1-A..P1-H 全绿 + 全量回归绿(显式取代件按契约替换)+
