@@ -371,15 +371,21 @@ PG:DocumentVersion/lifecycle 字段/别名表;ingest:content-hash 短路+generat
 
 ---
 
-## 14. OPEN PRODUCT / ARCHITECTURE DECISIONS(需 Product/Planner 裁决)
+## 14. PRODUCT DECISIONS(2026-09-11 Product Review 裁决,已回填为 DECIDED)
 
-- **D-1 内容入库**:文档提取内容是否入 PG(可重建投影 vs 存储成本)?(§9,建议:是)
-- **D-2 生成激活机制**:active_generation 属性翻转+双代共存(查询过滤)vs 仅 active 代物理在索引(激活=换索引内容)?影响 UUID 方案与存储峰值。(§4B,倾向:双代共存+属性过滤,检索过滤成本极低)
-- **D-3 GC 保留窗**:墓碑/旧版本/RETIRED 代默认保留期(建议 30 天,与 sync_runs 一致)。
-- **D-4 OVERDUE 硬门边界**:仅"价格/现势规格"硬门,还是全部 CURRENT 类断言?(建议:仅价格+明确"现价"类)
-- **D-5 别名裁决模式**:git R/URL 3xx 自动接链 vs Admin 审批后生效?(建议:自动接链+Admin 可见可撤销,不阻塞)
-- **D-6 filesystem 桶默认 HISTORICAL**:会改变现有 CASE_EVIDENCE 答案的引用形态(需日期框定)——产品确认接受。
-- **D-7 引用探活基础设施**:挂在 sync executor 循环 vs 独立周期作业?(建议:独立低频作业,避免与灌入争 GPU/CPU)
+> 来源:Product Review 2026-09-11 接受本 Discovery(仓库内无独立评审记录;依后续任务指令回填推荐值为裁决,D-6 为评审修正、A-1 为评审指示)。
+
+- **D-1 内容入库 = DECIDED:是。** 文档提取内容入 PG(content-addressed),"PG+外部源 = 完全可重建",Weaviate 成为纯可丢弃投影。
+- **D-2 生成激活机制 = DECIDED:双代共存 + `active_generation` 属性过滤。** 激活 = 单事务翻转指针;RETIRED 旧代到期 GC。
+- **D-3 GC 保留窗 = DECIDED:默认 30 天**(墓碑/被接替旧版本/RETIRED 代,与 sync_runs 保留一致;策略可配)。
+- **D-4 OVERDUE 硬门边界 = DECIDED:仅价格与明确"现势"类断言**(现价/现货规格)。其余 OVERDUE 降级为标记+候选降权,不硬拒答。
+- **D-5 别名裁决模式 = DECIDED:自动接链 + Admin 可见可撤销**,不阻塞摄取。
+- **D-6 filesystem 时态 = DECIDED(修正):filesystem 不自动等于 HISTORICAL;temporal role 由 source policy 决定。** safety `historical_artifact_verdict` 降级为策略建议值,不作为默认赋值器;每源在 Policy Engine 显式配置 temporal role。
+- **D-7 引用探活基础设施 = DECIDED:独立低频周期作业**,不与灌入执行器争 GPU/CPU。
+
+**A-1(评审指示,取代 §4A 单一状态枚举):lifecycle / reachability / processing(index generation)/ freshness 建模为四条正交状态轴**,不设计成组合枚举;混合态(如 ACTIVE×UNREACHABLE×FRESH、SUPERSEDED×READY 旧代保留)为合法且有信息量的状态。**正交状态模型的权威定义落在 `docs/product/initiatives/ADMIN-KNOWLEDGE-OPS-UX-DEFINITION.md` §2**(Admin 语义与呈现词汇以其为准);§4A 的 6 态视图降级为 lifecycle 轴的参考叙述。
+
+运营产品化(Admin Knowledge Operations)的完整定义见 `docs/product/initiatives/ADMIN-KNOWLEDGE-OPS-UX-DEFINITION.md`。
 
 ## 15. RECOMMENDED NEXT GATE
 
