@@ -376,7 +376,9 @@ def test_migration_module_has_no_embedder_dependency():
     source = pathlib.Path(m.__file__).read_text(encoding="utf-8")
     assert "embed(" not in source
     assert "BGEEmbedder" not in source
-    assert "vector=" not in source.replace("vector=", "vector=", 1) or "data.update" in source
-    # 明确红线:回填只经 data.update 补属性(不传 vector、不 replace 对象)
+    assert "vector=" not in source
+    # 明确红线:回填只经 data.update 补属性(不传 vector、不 replace 对象)。
+    # 注意:str.replace(Python 字符串方法)不属红线——NUL 矫正(FIX-1)合法
+    # 使用它;红线针对 Weaviate 对象替换写(data.replace)。
     assert "data.update" in source
-    assert ".replace(" not in source
+    assert "data.replace" not in source

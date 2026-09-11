@@ -1,6 +1,7 @@
 {
   "$contract": "发布自有迁移清单(deploy/prod/migrations.json)。部署编排在 rollout 前读取【冻结发布树】内的本文件,按序在冻结发布镜像内逐条执行(compose 一次性服务 sync 承载)。契约:清单机制存在后的每个发布树必须携带本文件——无迁移也要写空列表 [];条目仅允许 scripts/ 下的 .py 相对路径;每条必须幂等(存量库可重复执行、加性优先、禁止破坏性 ALTER/DROP);schema 变更必须先在本清单登记迁移脚本再合入依赖它的应用代码。本文件随发布 tag 冻结,不受 mutable main 影响。解析器:scripts/release_migration_plan.py(fail-closed)。",
   "migrations": [
-    "scripts/migrate_add_site_launcher_presentation.py"
+    "scripts/migrate_add_site_launcher_presentation.py",
+    "scripts/migrate_p1_lifecycle_foundation.py"
   ]
 }

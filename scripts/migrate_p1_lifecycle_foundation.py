@@ -157,16 +157,52 @@ def backfill_versions(sync_session_factory) -> int:
 # --------------------------------------------------------------------------- #
 
 
+def _strip_nul_value(value):
+    """递归剥离字符串值中的 NUL(0x00)——**仅 NUL,零其他归一化**(矫正冻结口径)。
+
+    Returns:
+        ``(clean_value, removed_count)``:list/dict 递归;其他类型原样返回。
+    """
+    if isinstance(value, str):
+        n = value.count("\x00")
+        return (value.replace("\x00", ""), n) if n else (value, 0)
+    if isinstance(value, list):
+        out, total = [], 0
+        for v in value:
+            v, n = _strip_nul_value(v)
+            out.append(v)
+            total += n
+        return out, total
+    if isinstance(value, dict):
+        out, total = {}, 0
+        for k, v in value.items():
+            v, n = _strip_nul_value(v)
+            out[k] = v
+            total += n
+        return out, total
+    return value, 0
+
+
 def backfill_content_from_weaviate(client, class_name: str, sync_session_factory) -> dict:
     """单趟迭代:对象 text/props → document_version_chunks;对象补 generation 属性。
 
-    仅写新行/新列;绝不改 text、绝不传 vector、绝不删对象(与
+    仅写新行/新列;绝不改 Weaviate 侧 text、绝不传 vector、绝不删对象(与
     migrate_backfill_evidence_meta 同红线)。幽灵对象(无账本行)只上报不写。
+
+    NUL 矫正(Role A 冻结口径):PG TEXT 物理不可存 0x00 —— 写入 PG 真值
+    (chunk text 与 props JSONB 的全部字符串值,含嵌套)时**仅剥离 NUL**;
+    结构 1:1 保全(source_id/chunk_index/chunk_count 不变,不跳过、不删
+    Weaviate 对象、零重嵌);清理统计入返回值(nul_objects / nul_chunks /
+    nul_chars_removed)。
     """
+    nul_stats = {"nul_objects": 0, "nul_chunks": 0, "nul_chars_removed": 0}
+    seen_nul_sids: set[str] = set()  # nul_objects 按对象去重(多 chunk 同对象计 1)
     if not client.collections.exists(class_name):
-        return {"scanned": 0, "props_backfilled": 0, "chunks_inserted": 0, "ghost_objects": 0}
+        return {"scanned": 0, "props_backfilled": 0, "chunks_inserted": 0,
+                "ghost_objects": 0, **nul_stats}
     col = client.collections.get(class_name)
-    stats = {"scanned": 0, "props_backfilled": 0, "chunks_inserted": 0, "ghost_objects": 0}
+    stats = {"scanned": 0, "props_backfilled": 0, "chunks_inserted": 0,
+             "ghost_objects": 0, **nul_stats}
 
     pending_objects: list[tuple[str, dict]] = []
     pending_chunks: list[tuple[str, int, str, dict]] = []
@@ -179,7 +215,7 @@ def backfill_content_from_weaviate(client, class_name: str, sync_session_factory
             pending_objects.clear()
         if pending_chunks:
             with sync_session_factory() as session:
-                for sid, idx, text_, props in pending_chunks:
+                for sid, idx, text_, props, n_stripped in pending_chunks:
                     version_id = _version_id_map(session).get(sid)
                     if version_id is None:
                         stats["ghost_objects"] += 1
@@ -200,6 +236,13 @@ def backfill_content_from_weaviate(client, class_name: str, sync_session_factory
                         )
                     )
                     stats["chunks_inserted"] += 1
+                    if n_stripped:
+                        # 统计 = 真实持久化的清理量(exists-skip 不重复计入)
+                        stats["nul_chunks"] += 1
+                        if sid not in seen_nul_sids:
+                            seen_nul_sids.add(sid)
+                            stats["nul_objects"] += 1
+                        stats["nul_chars_removed"] += n_stripped
                 session.commit()
         pending_chunks.clear()
 
@@ -229,20 +272,115 @@ def backfill_content_from_weaviate(client, class_name: str, sync_session_factory
             pending_objects.append((str(item.uuid), update))
             props.update(update)
         if sid is not None and idx is not None and props.get("text") is not None:
+            # NUL 矫正:仅对写入 PG 真值的值剥 NUL(props 一遍递归,text 含于
+            # props,自然去重);Weaviate 侧原对象零改动。统计在真实持久化时
+            # 计入(重跑 exists-skip 不产生虚假清理量)。
+            clean_props, n_total = _strip_nul_value(props)
+            clean_text = str(clean_props.get("text"))
             pending_chunks.append(
-                (str(sid), int(idx), str(props["text"]), props)
+                (str(sid), int(idx), clean_text, clean_props, n_total)
             )
         if len(pending_objects) >= _FLUSH_BATCH or len(pending_chunks) >= _FLUSH_BATCH:
             _flush()
     _flush()
     logger.info(
-        "内容回填完成: 扫描 %d,补属性 %d,chunk 副本 %d,幽灵 %d",
+        "内容回填完成: 扫描 %d,补属性 %d,chunk 副本 %d,幽灵 %d;"
+        "NUL 矫正: 含NUL对象 %d, 含NUL chunk %d, 移除NUL %d 个",
         stats["scanned"],
         stats["props_backfilled"],
         stats["chunks_inserted"],
         stats["ghost_objects"],
+        stats["nul_objects"],
+        stats["nul_chunks"],
+        stats["nul_chars_removed"],
     )
     return stats
+
+
+# --------------------------------------------------------------------------- #
+# verify-only 状态机(FIX-2:legacy-safe;只读;fail-closed)
+# --------------------------------------------------------------------------- #
+
+# P1 期望结构:documents 5 列 + 3 表(八结构)
+P1_COLUMN_NAMES = (
+    "lifecycle",
+    "current_version_id",
+    "superseded_by",
+    "superseded_at",
+    "deleted_at",
+)
+P1_TABLE_NAMES = ("document_versions", "document_version_chunks", "index_generations")
+
+
+def inspect_pg_migration_state(sync_session_factory) -> dict:
+    """只读判定 PG 迁移状态(零变更;information_schema 探测)。
+
+    Returns:
+        ``{"state": legacy|partial|migrated, "columns_present": [...],
+        "columns_missing": [...], "tables_present": [...],
+        "tables_missing": [...]}``
+
+        - legacy:八结构**全缺**(纯净 pre-P1 形态);
+        - migrated:八结构**全在**;
+        - partial:介于其间(部分迁移/损坏)——上层必须 fail-closed。
+    """
+    with sync_session_factory() as session:
+        cols = {
+            row[0]
+            for row in session.execute(text(
+                "SELECT column_name FROM information_schema.columns"
+                " WHERE table_name = 'documents'"
+            )).all()
+        }
+        tables = {
+            row[0]
+            for row in session.execute(text(
+                "SELECT table_name FROM information_schema.tables"
+                " WHERE table_schema = 'public'"
+            )).all()
+        }
+    cols_present = sorted(c for c in P1_COLUMN_NAMES if c in cols)
+    tables_present = sorted(t for t in P1_TABLE_NAMES if t in tables)
+    cols_missing = sorted(c for c in P1_COLUMN_NAMES if c not in cols)
+    tables_missing = sorted(t for t in P1_TABLE_NAMES if t not in tables)
+    if not cols_present and not tables_present:
+        state = "legacy"
+    elif not cols_missing and not tables_missing:
+        state = "migrated"
+    else:
+        state = "partial"
+    return {
+        "state": state,
+        "columns_present": cols_present,
+        "columns_missing": cols_missing,
+        "tables_present": tables_present,
+        "tables_missing": tables_missing,
+    }
+
+
+def migration_gate(state: dict) -> tuple[str, bool]:
+    """状态 → (门标签, 是否放行)。partial/invalid 一律 FAIL CLOSED。"""
+    s = state.get("state")
+    if s == "legacy":
+        return ("LEGACY / MIGRATION REQUIRED / ELIGIBLE", True)
+    if s == "migrated":
+        return ("MIGRATED / RUN FULL VERIFICATION", True)
+    return ("PARTIAL / INVALID MIGRATION STATE - FAIL CLOSED", False)
+
+
+def run_verify_only_gate(sync_session_factory, client, class_name: str) -> dict:
+    """--verify-only 顶层门(只读;永不变更 schema/数据):
+    legacy → 显式 ELIGIBLE;migrated → 既有全量验证;partial → raise。
+    """
+    state = inspect_pg_migration_state(sync_session_factory)
+    label, ok = migration_gate(state)
+    logger.info("verify-only 迁移门: %s | %s", label, state)
+    if not ok:
+        raise RuntimeError(f"verify-only fail-closed: {label}: {state}")
+    if state["state"] == "legacy":
+        return {"state": "legacy", "label": label, "eligible": True}
+    facts = verify(sync_session_factory, client, class_name)
+    return {"state": "migrated", "label": label, "eligible": True, **facts}
 
 
 # --------------------------------------------------------------------------- #
@@ -315,7 +453,7 @@ async def run(verify_only: bool = False) -> None:
     client = weaviate.connect_to_local(host=host, port=port)
     try:
         if verify_only:
-            verify(sync_session_factory, client, settings.weaviate_class_name)
+            run_verify_only_gate(sync_session_factory, client, settings.weaviate_class_name)
             return
         await ensure_pg_schema(engine)
         ensure_weaviate_schema(client, settings.weaviate_class_name)
