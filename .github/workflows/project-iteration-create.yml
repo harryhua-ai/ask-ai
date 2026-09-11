@@ -1,0 +1,59 @@
+# Workflow B — Iteration Creation (privileged, fail-closed)
+#
+# Separated from routine sync BY DESIGN (contract §6/§8): Issue events must never
+# create iterations. This dispatch-only workflow runs the full-replace-safe
+# transaction: PRE-SNAPSHOT → MUTATE ONCE → RE-RESOLVE → RESTORE → VERIFY,
+# failing closed if any prior assignment cannot be proven restored.
+name: Project Iteration Create
+
+on:
+  workflow_dispatch:
+    inputs:
+      key:
+        description: "Iteration key (code token), e.g. v1.7.0 or i-002"
+        required: true
+        type: string
+      theme:
+        description: "Theme text after the ' — ' separator (existing convention)"
+        required: true
+        type: string
+      start_date:
+        description: "Start date YYYY-MM-DD (Monday matches field startDay=1)"
+        required: true
+        type: string
+      duration:
+        description: "Duration in days (field convention: 14)"
+        required: false
+        default: "14"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-automation
+  cancel-in-progress: false
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create iteration (transaction, fail-closed)
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_SYNC_TOKEN }}
+          ASKAI_PROJECT_OWNER: harryhua-ai
+          ASKAI_PROJECT_NUMBER: "2"
+          ASKAI_REPO: harryhua-ai/ask-ai
+        run: |
+          python3 scripts/project_automation/cli.py iteration-create \
+            --key "${{ github.event.inputs.key }}" \
+            --theme "${{ github.event.inputs.theme }}" \
+            --start-date "${{ github.event.inputs.start_date }}" \
+            --duration "${{ github.event.inputs.duration }}" \
+            --apply

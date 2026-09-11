@@ -1,0 +1,50 @@
+# Workflow A — Routine Project Sync (Issue authority → Project projection)
+#
+# Deterministic synchronizer: reads canonical control labels on an Issue and
+# converges its ASK-AI Project item (Iteration / Priority / Status).
+# Idempotent; per-field isolated failures; never touches iteration configuration.
+#
+# Authentication: user-owned Projects v2 require PROJECT_SYNC_TOKEN
+# (classic PAT with 'repo' + 'project' scopes). GITHUB_TOKEN cannot access it.
+name: Project Sync
+
+on:
+  issues:
+    types: [opened, edited, labeled, unlabeled, closed, reopened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number to synchronize"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: project-automation
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve issue number
+        id: issue
+        run: echo "number=${{ github.event.issue.number || github.event.inputs.issue_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Synchronize Project item
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_SYNC_TOKEN }}
+          ASKAI_PROJECT_OWNER: harryhua-ai
+          ASKAI_PROJECT_NUMBER: "2"
+          ASKAI_REPO: harryhua-ai/ask-ai
+        run: |
+          python3 scripts/project_automation/cli.py sync --issue "${{ steps.issue.outputs.number }}" --apply
