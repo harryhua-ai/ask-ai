@@ -1,88 +1,96 @@
 # PROJECT AUTOMATION MERGE + ACTIVATION — Report
 
-Result: **PROJECT AUTOMATION = PARTIAL** — merge COMPLETE; activation **BLOCKED** at the token gate.
-Activation blocker: **ACTIVATION BLOCKED — PROJECT_SYNC_TOKEN REQUIRED**
+Result: **PROJECT AUTOMATION = ACTIVE**
+Merge: `39723c2..3dffa3b` (fast-forward, three-way verified) · Activation completed 2026-09-11 after
+`PROJECT_SYNC_TOKEN` was configured by the operator.
 
 ---
 
-## Starting main SHA
+## Part 1 — Merge (completed in the prior activation attempt)
 
-`39723c2` (Trace A Release 1 acceptance report; unchanged when the task started — zero drift to classify).
+- Starting main SHA: `39723c2`; pre-merge gate PASS (no drift, ff-integrable, accepted tree intact at `3dffa3b`).
+- **Final main SHA after merge: `3dffa3b6539659167aab031974c8b69d0b0b4097`** — verified three ways (local fetch,
+  `git ls-remote`, GitHub API). Workflows `project-sync.yml` / `project-iteration-create.yml` /
+  `project-reconcile.yml` visible and active on the default branch.
+- First activation attempt stopped at the token gate (repo had zero Actions secrets); fail-closed behavior proven by
+  run `34592047785` (`AUTHENTICATION ERROR`, zero mutation). The superseded PARTIAL report commit was `2bc9e02`.
 
-## Pre-merge gate
+## Part 2 — Token gate (now PASS)
 
-- Candidate `3dffa3b` (branch `project-automation/foundation-20260911`) verified: accepted tree intact (all workflows,
-  automation package, tests, docs present), working tree clean.
-- `main` is a direct ancestor of the candidate → fast-forward-integrable; main would gain exactly 3 commits
-  (`6ed5253`, `8874bf0`, `3dffa3b`; 27 files, +2940/−0). No conflicts possible; no force-push used.
+`gh secret list --repo harryhua-ai/ask-ai` shows **`PROJECT_SYNC_TOKEN`** (configured 2026-09-11T11:18:14Z; value
+never read/exposed). Verified credential contract (least privilege, docs-verified): classic PAT, scopes
+`project` (user Projects v2 read/write) + `public_repo` (public-repo issues/labels); fine-grained PATs cannot access
+user-owned Projects and were ruled out.
 
-## Merge result
+## Part 3 — Step 1: safe auth probe
 
-- **Fast-forward push `39723c2..3dffa3b` → main** (the repository's normal safe integration method).
-- **Final main SHA: `3dffa3b6539659167aab031974c8b69d0b0b4097`** — verified three ways (local fetch, `git ls-remote`,
-  GitHub API branch object — all identical).
-- Workflows on default branch: `project-sync.yml`, `project-iteration-create.yml`, `project-reconcile.yml` all
-  visible with `state=active` (GitHub Actions API).
+- Dispatch `project-sync.yml` issue_number=7 (no control labels).
+- Run **34593490990** — **success**, `"result": "SKIPPED_NO_CONTROL_METADATA"`, zero Issue mutation, zero Project
+  mutation.
 
-## Token gate result
+## Step 2 — bootstrap --apply
 
-**FAILED — PROJECT_SYNC_TOKEN is not configured.**
+- First run fail-fast: canonical labels did not exist yet (`priority:p0 not found`) — the accepted `ensure-labels`
+  step had not been run first. No partial state (0 labels applied).
+- `ensure-labels`: created the 9 canonical labels (`priority:p0/p1/p2`, `status:backlog/in-progress/in-review`,
+  `iteration:i-001/i-ux-001/v1.6.0`).
+- **`bootstrap --apply`**: **48 labels applied** across 26 issues (16 `iteration:*` + 24 `priority:*` + 8
+  `status:*`; +1 `priority:p0` on #4 from the pre-fix run = full plan).
+- Hard acceptance: **`iteration:v1.5.0` = 0**; iteration labels limited to {i-001, i-ux-001, v1.6.0};
+  needs_review = []; contradicting metadata = []; no Issue body/state changes.
+- Semantic equivalence: post-apply `bootstrap --dry-run` plans **zero additions**; `reconcile --dry-run` zero drift.
+- Narrow fix required and committed: `gh_cli_json` tolerated non-JSON success output of `gh issue edit`
+  (label application worked; response parsing crashed after the mutation).
 
-- `gh secret list --repo harryhua-ai/ask-ai` returns an empty list (exit 0): the repository has **zero repo-level
-  Actions secrets**; `PROJECT_SYNC_TOKEN` is absent. (Token value never printed; no fallback attempted.)
-- Minimum sufficient token, documented for the operator:
-  - classic PAT with **`repo`** (read Issues for checkout/event context) + **`project`** (read/write the user-owned
-    Project #2) scopes; or
-  - fine-grained PAT with **Projects: Read and write** (user permission) + **Issues: Read** + **Contents: Read**.
-  The repository `GITHUB_TOKEN` cannot access user-owned Projects v2 and is not a fallback.
+## Step 3 — real event acceptance (Issue #48: P0, Backlog, v1.6.0)
 
-**Empirical fail-closed proof (run on main):** diagnostic dispatch `project-sync.yml` (issue #7 — no control labels,
-so a token-bearing run would no-op): run **34592047785**, event `workflow_dispatch`, branch `main`, conclusion
-**failure** with clean `AUTHENTICATION ERROR` and **zero Project mutation**. Wiring works end-to-end; only the
-secret is missing.
+Selected v1.6.0 Backlog issue #48; before-state: Status=Backlog, Priority=P0, Iteration=v1.6.0; labels
+{priority:p0, status:backlog, iteration:v1.6.0}.
 
-## Bootstrap apply
+| Action | Event | Run | Result | Live effect |
+|---|---|---|---|---|
+| swap `status:backlog` → `status:in-progress` | issues.unlabeled + issues.labeled | `34594038100` (+ `34594038458`) | **CONVERGED** (set_status) + NO_CHANGE (idempotent double-run), both success | Status: Backlog → **In progress**; Priority/Iteration unchanged |
+| restore original labels | issues.unlabeled + issues.labeled | `34594244725` (+ `34594245914`) | **CONVERGED** + NO_CHANGE, both success | Status: In progress → **Backlog**; Priority/Iteration unchanged |
 
-**NOT EXECUTED** — gated on the token gate per the activation contract. No labels were created or applied;
-Issue/Project state is byte-identical to the pre-task snapshot (verified below). The accepted dry-run plan stands
-ready (26 issues; 16/24/8 labels; zero `iteration:v1.5.0`).
+Restored state verified: labels exactly {priority:p0, status:backlog, iteration:v1.6.0}; Project
+{Backlog, P0, v1.6.0} — identical to accepted state. Product scope untouched.
 
-## First real action acceptance
+Concurrency note: the bootstrap label storm showed GitHub replacing PENDING runs in a concurrency group (several
+`cancelled` runs) even with `cancel-in-progress: false` — harmless by design (runs are idempotent re-verifications;
+final state was independently verified by reconcile).
 
-NOT PERFORMED (token gate). The diagnostic dispatch above is the only workflow execution; it proves the
-fail-closed authentication boundary, not convergence.
+## Step 4 — reconcile
 
-## Reconcile
+Dispatched `project-reconcile.yml` (apply mode): run **34594359495** — **success**, `"drifts": []`,
+`"result": "NO_DRIFT"`, `needs_attention: []`. No wrong Iteration/Priority/Status, no closed/open mismatch, no
+unknown/conflicting metadata.
 
-Actions-path reconcile not dispatchable to success without the token. The accepted read-only path was run locally:
-`reconcile --dry-run` → **zero drift** (30 member issues skipped NO_CONTROL_METADATA — pre-bootstrap; 14 draft items
-DRAFT_NO_AUTHORITY; no stale Done/open mismatch; no wrong iteration/priority; no unknown/conflicting control
-metadata).
+## Step 5 — final audit (independent live re-read)
+
+- Iteration set exactly {I-001 2026-09-07, I-UX-001 2026-09-21, v1.6.0 2026-10-05}; **no Release-as-Iteration
+  regression** (no v1.5.x iteration).
+- Assignments: I-001 = 17 (issues #32/#26/#27 + 14 drafts — 14/14 drafts verified), I-UX-001 = 8
+  (#6/#33/#36–#40/#43), v1.6.0 = #25/#28/#30/#31/#48 exactly, unassigned = 14 (6 sprint-era + 5 NEEDS REVIEW +
+  #7/#23/#46 outside v1.6.0 as required).
+- 44 items total, unchanged. Production ASK-AI untouched (deploy-production.yml not dispatched; no application code
+  changed).
 
 ## Side-effect audit
 
-- Project untouched through this task: Iteration field still exactly {I-001, I-UX-001, v1.6.0}; 44 items; v1.6.0
-  membership #25/#28/#30/#31/#48 intact; historical assignments intact.
-- No Issue body/state/label changes; no Project field/iteration changes; no secret created; no production ASK-AI
-  deployment or code change.
-- Residual note: while the secret is missing, any real Issue label event will trigger `project-sync.yml` runs that
-  fail visibly with AUTHENTICATION ERROR (by design, fail-closed, no mutation). This is the documented behavior until
-  the operator completes the step below.
+Issue bodies/states unchanged (label-only operations on #4/#48 + bootstrap label additions); Project fields changed
+only via automation runs above; #4's `priority:p0` matches its accepted Project state; all other Issues received
+labels reproducing their accepted Project state exactly.
 
-## Operator completion steps (to resume activation)
+## Automation fix committed with this report
 
-1. Create repo Actions secret **`PROJECT_SYNC_TOKEN`** (classic PAT `repo`+`project`, or fine-grained
-   Projects RW + Issues Read + Contents Read).
-2. Re-run activation from step 4 of the contract: `bootstrap --apply` → first real labeled event →
-   `project-sync.yml` success → convergence → restore → `project-reconcile.yml` zero drift → AUTOMATION ACTIVE.
+`gh_cli_json` non-JSON success-output tolerance (scripts/project_automation/service.py) — required for
+`bootstrap --apply`/`ensure-labels`; suite re-run: 77 passed.
 
-## Final automation status
+## Final activation verdict
 
-- candidate merged to main: ✅ (`3dffa3b`)
-- workflows visible/active on default branch: ✅
-- PROJECT_SYNC_TOKEN usable: ❌ (absent)
-- bootstrap apply / first Issue-triggered success / convergence proof: ⬜ not reached
-- Project/Issue/production mutation: NONE
+- candidate merged to main ✅ · workflows active on default branch ✅ · PROJECT_SYNC_TOKEN usable ✅ ·
+- bootstrap apply successful ✅ · first real Issue-triggered workflow succeeded ✅ · Project converged correctly ✅ ·
+- restore/reconcile zero drift ✅ · historical assignments intact ✅ · v1.6.0 membership intact ✅ ·
+- no production mutation ✅
 
-**PROJECT AUTOMATION = PARTIAL**
-ACTIVATION BLOCKED — PROJECT_SYNC_TOKEN REQUIRED
+**PROJECT AUTOMATION = ACTIVE**

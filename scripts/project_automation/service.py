@@ -49,6 +49,8 @@ class Context:
 
 
 def gh_cli_json(args: list[str], token: str, timeout: float = 60.0):
+    """Run a gh command and parse its JSON output. Commands with human-readable
+    success output (e.g. `gh issue edit`) are tolerated: the exit code decides success."""
     env = dict(os.environ)
     env["GH_TOKEN"] = token
     proc = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=timeout, env=env)
@@ -58,7 +60,12 @@ def gh_cli_json(args: list[str], token: str, timeout: float = 60.0):
             raise AuthenticationError(f"GitHub rejected the token: {stderr[:300]}")
         raise ProjectMutationFailure(f"gh {' '.join(args[:3])} failed: {stderr[:400]}")
     out = proc.stdout.strip()
-    return json.loads(out) if out else None
+    if not out:
+        return None
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError:
+        return out[:200]
 
 
 def fetch_context(t: GhCliTransport, s: Settings) -> Context:
