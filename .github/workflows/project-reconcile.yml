@@ -1,0 +1,48 @@
+# Workflow C — Reconciliation (drift detection and safe repair)
+#
+# Dispatch-only (+ low-frequency weekly audit). Deterministic drift between Issue
+# authority and Project projection is repaired automatically; ambiguous or
+# conflicting authority is reported and left untouched (contract §9).
+name: Project Reconcile
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report drift without repairing"
+        required: false
+        default: "false"
+        type: string
+  schedule:
+    - cron: "0 6 * * 1" # weekly audit, Monday 06:00 UTC
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: project-automation
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Reconcile Project
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_SYNC_TOKEN }}
+          ASKAI_PROJECT_OWNER: harryhua-ai
+          ASKAI_PROJECT_NUMBER: "2"
+          ASKAI_REPO: harryhua-ai/ask-ai
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            python3 scripts/project_automation/cli.py reconcile --dry-run
+          else
+            python3 scripts/project_automation/cli.py reconcile --apply
+          fi

@@ -1,0 +1,340 @@
+{
+ "snapshot_date": "2026-09-11",
+ "source": "origin/main=39723c2",
+ "iterations": {
+  "i-001": {
+   "id": "0b032198",
+   "title": "I-001 — Answer Intelligence Foundation",
+   "start_date": "2026-09-07",
+   "duration": 14
+  },
+  "v1.5.0": {
+   "id": "8376a678",
+   "title": "v1.5.0 — Answer Intelligence Release 1",
+   "start_date": "2026-09-10",
+   "duration": 14
+  },
+  "i-ux-001": {
+   "id": "8a6c9634",
+   "title": "I-UX-001 — Widget Experience Corrective",
+   "start_date": "2026-09-21",
+   "duration": 14
+  },
+  "v1.6.0": {
+   "id": "cb63f30f",
+   "title": "v1.6.0 — Knowledge Integrity & Source Truth",
+   "start_date": "2026-10-05",
+   "duration": 14
+  }
+ },
+ "items": [
+  {
+   "issue_number": 4,
+   "is_draft": false,
+   "iteration": "v1.5.0",
+   "priority": "P0",
+   "status": "Done"
+  },
+  {
+   "issue_number": 6,
+   "is_draft": false,
+   "iteration": "i-ux-001",
+   "priority": "P1",
+   "status": "Done"
+  },
+  {
+   "issue_number": 7,
+   "is_draft": false,
+   "iteration": null,
+   "priority": "P2",
+   "status": "Backlog"
+  },
+  {
+   "issue_number": 20,
+   "is_draft": false,
+   "iteration": null,
+   "priority": "P2",
+   "status": "Done"
+  },
+  {
+   "issue_number": 21,
+   "is_draft": false,
+   "iteration": "v1.5.0",
+   "priority": "P0",
+   "status": "Done"
+  },
+  {
+   "issue_number": 23,
+   "is_draft": false,
+   "iteration": null,
+   "priority": "P2",
+   "status": "Backlog"
+  },
+  {
+   "issue_number": 25,
+   "is_draft": false,
+   "iteration": "v1.6.0",
+   "priority": "P1",
+   "status": "Backlog"
+  },
+  {
+   "issue_number": 26,
+   "is_draft": false,
+   "iteration": "v1.5.0",
+   "priority": "P2",
+   "status": "Done"
+  },
+  {
+   "issue_number": 27,
+   "is_draft": false,
+   "iteration": "v1.5.0",
+   "priority": "P2",
+   "status": "Done"
+  },
+  {
+   "issue_number": 28,
+   "is_draft": false,
+   "iteration": "v1.6.0",
+   "priority": "P1",
+   "status": "Backlog"
+  },
+  {
+   "issue_number": 29,
+   "is_draft": false,
+   "iteration": "v1.5.0",
+   "priority": "P2",
+   "status": "Done"
+  },
+  {
+   "issue_number": 30,
+   "is_draft": false,
+   "iteration": "v1.6.0",
+   "priority": "P0",
+   "status": "Backlog"
+  },
+  {
+   "issue_number": 31,
+   "is_draft": false,
+   "iteration": "v1.6.0",
+   "priority": "P1",
+   "status": "Backlog"
+  },
+  {
+   "issue_number": 32,
+   "is_draft": false,
+   "iteration": "i-001",
+   "priority": "P0",
+   "status": "Done"
+  },
+  {
+   "issue_number": 33,
+   "is_draft": false,
+   "iteration": "i-ux-001",
+   "priority": "P1",
+   "status": "Done"
+  },
+  {
+   "issue_number": 34,
+   "is_draft": false,
+   "iteration": "v1.5.0",
+   "priority": "P1",
+   "status": "Done"
+  },
+  {
+   "issue_number": 5,
+   "is_draft": false,
+   "iteration": null,
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": 19,
+   "is_draft": false,
+   "iteration": null,
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": null,
+   "is_draft": true,
+   "iteration": "i-001",
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": null,
+   "is_draft": true,
+   "iteration": "i-001",
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": null,
+   "is_draft": true,
+   "iteration": "i-001",
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": null,
+   "is_draft": true,
+   "iteration": "i-001",
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": null,
+   "is_draft": true,
+   "iteration": "i-001",
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": null,
+   "is_draft": true,
+   "iteration": "i-001",
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": null,
+   "is_draft": true,
+   "iteration": "i-001",
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": null,
+   "is_draft": true,
+   "iteration": "i-001",
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": null,
+   "is_draft": true,
+   "iteration": "i-001",
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": null,
+   "is_draft": true,
+   "iteration": "i-001",
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": null,
+   "is_draft": true,
+   "iteration": "i-001",
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": null,
+   "is_draft": true,
+   "iteration": "i-001",
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": null,
+   "is_draft": true,
+   "iteration": "i-001",
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": null,
+   "is_draft": true,
+   "iteration": "i-001",
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": 36,
+   "is_draft": false,
+   "iteration": "i-ux-001",
+   "priority": "P1",
+   "status": "Done"
+  },
+  {
+   "issue_number": 37,
+   "is_draft": false,
+   "iteration": "i-ux-001",
+   "priority": "P1",
+   "status": "Done"
+  },
+  {
+   "issue_number": 38,
+   "is_draft": false,
+   "iteration": "i-ux-001",
+   "priority": "P1",
+   "status": "Done"
+  },
+  {
+   "issue_number": 39,
+   "is_draft": false,
+   "iteration": "i-ux-001",
+   "priority": "P1",
+   "status": "Done"
+  },
+  {
+   "issue_number": 40,
+   "is_draft": false,
+   "iteration": "i-ux-001",
+   "priority": "P1",
+   "status": "Done"
+  },
+  {
+   "issue_number": 41,
+   "is_draft": false,
+   "iteration": null,
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": 43,
+   "is_draft": false,
+   "iteration": "i-ux-001",
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": 44,
+   "is_draft": false,
+   "iteration": null,
+   "priority": null,
+   "status": "Done"
+  },
+  {
+   "issue_number": 45,
+   "is_draft": false,
+   "iteration": "v1.5.0",
+   "priority": "P1",
+   "status": "Done"
+  },
+  {
+   "issue_number": 46,
+   "is_draft": false,
+   "iteration": null,
+   "priority": null,
+   "status": "Backlog"
+  },
+  {
+   "issue_number": 47,
+   "is_draft": false,
+   "iteration": "v1.5.0",
+   "priority": "P0",
+   "status": "Done"
+  },
+  {
+   "issue_number": 48,
+   "is_draft": false,
+   "iteration": "v1.6.0",
+   "priority": "P0",
+   "status": "Backlog"
+  }
+ ]
+}
