@@ -249,26 +249,44 @@ async def test_red3_comparison_partial_evidence_cannot_be_complete():
 
 
 # --------------------------------------------------------------------------- #
-# RED-4:CASE_EVIDENCE 背景可用 ≠ 公开引用权威
+# RED-4(2026-09-11 #28 修订):CASE_EVIDENCE 与引用权威的关系
+# 旧契约「案例证据一律背景、永无公开引用权威」已被 #28 收窄为:
+# 第一方知识案例(filesystem+knowledge,无 internal 标记)= 有编号可引用、
+# 路径置空;其余 filesystem(非 knowledge 或显式 internal)维持背景语义。
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.unit
 async def test_red4_case_evidence_background_without_citation_authority():
-    """案例证据可覆盖 BACKGROUND_ALLOWED 槽,但绝不进入公开编号引用权威。"""
-    rag = _rag(_payload("support", "factual"), [CASE_TICKET, SPEC_NE503])
+    """#28 修订:知识案例证据覆盖 CASE_EVIDENCE 槽且进入公开编号引用权威
+    (标题展示、路径置空);非 knowledge 的 filesystem 仍无引用权威。"""
+    plain_internal = _sr(
+        "kb/attachment-9", "filesystem", "ne503", "内部附件", "非知识库内部文件正文。"
+    )
+    rag = _rag(_payload("support", "factual"), [CASE_TICKET, SPEC_NE503, plain_internal])
     result = await rag.answer(SUPPORT_Q, "widget")
     cov = _coverage(result)
     slots = _slots(cov)
     assert slots[_ROLE_CASE_EVIDENCE]["covered"] is True
-    assert _ids(slots[_ROLE_CASE_EVIDENCE]["matched"]) == {(CASE_TICKET.source_id, 0)}
-    # 引用权威真值:案例不在可编号集合;规格证据在
+    # CASE 槽按来源类型(filesystem)匹配:知识案例与普通内部附件都在槽覆盖内;
+    # 引用权威的差异在下方 citable 集合断言(#28 只豁免 knowledge 案例)
+    assert _ids(slots[_ROLE_CASE_EVIDENCE]["matched"]) == {
+        (CASE_TICKET.source_id, 0),
+        (plain_internal.source_id, 0),
+    }
+    # 引用权威真值(#28):第一方知识案例进入可编号集合;规格证据在;
+    # 非 knowledge 的 filesystem 仍被排除在编号权威之外
     cite = result.trace_payload["stages"]["citation_integrity"]
     citable_ids = {(c["source_id"], c["chunk_index"]) for c in cite["citable"]}
-    assert (CASE_TICKET.source_id, CASE_TICKET.chunk_index) not in citable_ids
+    assert (CASE_TICKET.source_id, CASE_TICKET.chunk_index) in citable_ids
     assert (SPEC_NE503.source_id, SPEC_NE503.chunk_index) in citable_ids
-    # 访客可见 sources 不含内部案例(filesystem)
-    assert all(s["type"] != "filesystem" for s in result.sources)
+    assert (plain_internal.source_id, plain_internal.chunk_index) not in citable_ids
+    # 访客可见 sources:知识案例以 path-less 条目呈现,内部附件不出现
+    case_sources = [s for s in result.sources if s["type"] == "filesystem"]
+    assert len(case_sources) == 1
+    assert case_sources[0]["url"] == ""
+    assert case_sources[0]["title"] == CASE_TICKET.title
+    assert all(s["type"] != "filesystem" or s["url"] == "" for s in result.sources)
     assert result.is_answered is True
 
 

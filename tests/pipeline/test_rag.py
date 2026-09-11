@@ -262,7 +262,8 @@ async def test_rag_deduplicates_sources_by_url():
 
 @pytest.mark.unit
 async def test_rag_filters_internal_sources_from_public_list():
-    """filesystem(内部 support 案例)不进对外 sources 列表,但其他公开源保留。"""
+    """#28 修订:第一方知识案例(filesystem+knowledge)以标题展示、路径置空
+    进入对外 sources(可引用);非 knowledge 的 filesystem 仍被过滤。"""
     public_sr = _make_sr(
         text="public doc",
         source_id="s1",
@@ -271,26 +272,37 @@ async def test_rag_filters_internal_sources_from_public_list():
         source_type="github",
         product="ne101",  # 产品边界(契约 §5):语料标签须与查询目标一致
     )
-    internal_sr = _make_sr(
-        text="internal case",
+    case_sr = _make_sr(
+        text="first party case",
         source_id="s2",
         title="NE101-电源适配器电压咨询",
-        url="file:///home/ubuntu/knowledge-support/2026-04/NE101-电源.md",
+        url="",
         source_type="filesystem",
         product="knowledge",
     )
+    plain_internal_sr = _make_sr(
+        text="plain internal attachment",
+        source_id="s3",
+        title="内部附件",
+        url="file:///home/ubuntu/internal/attachment.md",
+        source_type="filesystem",
+        product="ne101",
+    )
 
     rag, _, _, _ = _build_orchestrator(
-        searcher_results=[public_sr, internal_sr],
-        reranked_results=[public_sr, internal_sr],
+        searcher_results=[public_sr, case_sr, plain_internal_sr],
+        reranked_results=[public_sr, case_sr, plain_internal_sr],
     )
 
     result = await rag.answer("NE101 power supply", "widget")
 
-    # filesystem 被过滤,只留 github 公开源
-    assert len(result.sources) == 1
-    assert result.sources[0]["type"] == "github"
-    assert all(s["type"] != "filesystem" for s in result.sources)
+    # 知识案例:标题展示、路径不外泄;非 knowledge 的 filesystem 仍被过滤
+    assert len(result.sources) == 2
+    by_type = {s["type"]: s for s in result.sources}
+    assert by_type["github"]["url"] == public_sr.url
+    assert by_type["filesystem"]["url"] == ""
+    assert by_type["filesystem"]["title"] == case_sr.title
+    assert all("file:///" not in (s.get("url") or "") for s in result.sources)
 
 
 @pytest.mark.unit

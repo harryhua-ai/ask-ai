@@ -158,7 +158,8 @@ async def test_stream_trace_records_llm_calls_usage_split_timings():
 
 @pytest.mark.unit
 async def test_stream_internal_only_evidence_generation_runs_with_real_usage():
-    """仅内部证据命中:可见 sources=0 但生成照常 —— llm_calls 必须如实记录。"""
+    """知识案例(filesystem+knowledge)命中:流式 sources 与非流式同构
+    (#28:标题展示、路径置空),生成照常 —— llm_calls 必须如实记录。"""
     internal = SearchResult(
         text="内部案例",
         source_id="case-1",
@@ -173,7 +174,9 @@ async def test_stream_internal_only_evidence_generation_runs_with_real_usage():
     events = await _collect_stream(rag, QUESTION)
     complete = [e for e in events if e["type"] == "complete"][0]
     trace = complete["trace_payload"]
-    assert complete["sources"] == []  # 访客不可见
+    assert len(complete["sources"]) == 1
+    assert complete["sources"][0]["url"] == ""  # #28:案例路径不外泄
+    assert complete["sources"][0]["title"] == "内部案例"
     gen = [c for c in trace["llm_calls"] if c["task"] == "generation" and c.get("success")]
     assert gen, "内部证据参与生成时,generation 调用必须留痕"
     assert trace["stages"]["generate"]["tokens_output"] == 22
