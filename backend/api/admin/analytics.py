@@ -36,6 +36,7 @@ from backend.db.models import (
     SyncLog,
     Trace,
 )
+from backend.services.document_lifecycle import DocLifecycle
 
 router = APIRouter(prefix="/analytics", tags=["分析仪表盘"])
 ViewerDep = Annotated[CurrentUser, Depends(require_role("admin", "editor", "viewer"))]
@@ -447,12 +448,18 @@ async def source_health(
 
         # documents.source_id 为复合键 "{数据源id}/{路径}"(五个 connector 一致),
         # 而 sync_log.source_id 是纯数据源 id → 按首段聚合对齐口径(无斜杠时整串即 id)。
+        # P1:仅统计 SERVING 生命期(active + missing_candidate 宽限)——墓碑/
+        # 被接替文档退出知识计数(与旧"物理删除即从计数消失"语义对齐;对象待 GC)。
         source_prefix = func.split_part(Document.source_id, "/", 1)
-        doc_q = select(
-            source_prefix.label("source_prefix"),
-            func.count().label("doc_count"),
-            func.coalesce(func.sum(Document.chunk_count), 0).label("chunk_count"),
-        ).group_by(source_prefix)
+        doc_q = (
+            select(
+                source_prefix.label("source_prefix"),
+                func.count().label("doc_count"),
+                func.coalesce(func.sum(Document.chunk_count), 0).label("chunk_count"),
+            )
+            .where(Document.lifecycle.in_(DocLifecycle.SERVING))
+            .group_by(source_prefix)
+        )
         doc_rows = (await session.execute(doc_q)).all()
         doc_map = {row.source_prefix: (row.doc_count, row.chunk_count) for row in doc_rows}
 

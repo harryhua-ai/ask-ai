@@ -14,7 +14,7 @@
 """
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,6 +22,21 @@ from backend.embedder.base import Embedder
 from backend.evidence_meta import EVIDENCE_PROPERTIES
 
 logger = logging.getLogger(__name__)
+
+
+def _generation_ordinal_filter(ordinals: list[int]):
+    """在服代过滤(P1 I-5/D-2):只检索 active generation 集合内的对象。
+
+    ``generation_ordinal`` 为 INT 属性——INT 过滤是精确语义,不存在 TEXT
+    分词误命中(PA-0F 教训推广;uuid 全文仅作审计展示属性)。
+    empty 列表由调用方保证不进入本函数(provider None → 不过滤,兼容
+    未迁移部署)。
+    """
+    from weaviate.classes.query import Filter
+
+    if len(ordinals) == 1:
+        return Filter.by_property("generation_ordinal").equal(ordinals[0])
+    return Filter.by_property("generation_ordinal").contains_any(sorted(ordinals))
 
 # admin 为管理后台测试环境,数据边界独立落库,但检索可见性按访客视角:
 # 管理员所见 = 访客(widget)所见。其余渠道原样透传(零回归)。
@@ -135,6 +150,7 @@ class HybridSearcher:
         weaviate_client: Any,
         embedder: Embedder,
         class_name: str = "Document",
+        generation_filter_provider: Callable[[], list[int]] | None = None,
     ) -> None:
         """初始化检索器。
 
@@ -142,10 +158,16 @@ class HybridSearcher:
             weaviate_client: 已连接的 Weaviate v4 client实例。
             embedder: 嵌入模型(实现 Embedder Protocol)。
             class_name: Weaviate collection 名称。
+            generation_filter_provider: 可选的在服代序集合供给函数(P1 服务
+                选择;返回当前 active generation ordinal 列表)。None → 不加
+                生成过滤(兼容未迁移部署/既有测试);生产 wiring 由 main.py
+                lifespan 注入 Postgres 权威查询(lifecycle.active_generation_
+                ordinals_async_session)。
         """
         self._client = weaviate_client
         self._embedder = embedder
         self._class_name = class_name
+        self._generation_filter_provider = generation_filter_provider
 
     def search(
         self,
@@ -208,8 +230,11 @@ class HybridSearcher:
             "return_metadata": MetadataQuery(distance=True),
         }
 
-        # 组合 filter:product + product_labels + channel(AND 语义)
+        # 组合 filter:product + product_labels + channel + generation(AND 语义)
         filters_list: list = []
+        gen_filter = self._active_generation_filter()
+        if gen_filter is not None:
+            filters_list.append(gen_filter)
         if product_filter:
             filters_list.append(Filter.by_property("product").equal(product_filter))
         labels_filter = _product_labels_filter(product_labels)
@@ -265,6 +290,9 @@ class HybridSearcher:
                 [_visibility_probe_channel(channel)]
             )
         ]
+        gen_filter = self._active_generation_filter()
+        if gen_filter is not None:
+            filters_list.append(gen_filter)
         if product_filter:
             filters_list.append(Filter.by_property("product").equal(product_filter))
         labels_filter = _product_labels_filter(product_labels)
@@ -339,6 +367,9 @@ class HybridSearcher:
         from weaviate.classes.query import Filter
 
         filters_list: list = []
+        gen_filter = self._active_generation_filter()
+        if gen_filter is not None:
+            filters_list.append(gen_filter)
         if source_types:
             # TEXT 标量属性:equal + any_of 合并(OR 语义)
             filters_list.append(
@@ -383,6 +414,24 @@ class HybridSearcher:
             ],
         )
         return [self._to_search_result(o) for o in resp.objects]
+
+    def _active_generation_filter(self):
+        """在服代过滤(P1):provider 缺省/返回空 → None(不加过滤)。
+
+        空列表不加过滤是刻意的兼容语义:provider 已 wiring 而权威集合为空
+        意味着"无 active 知识"(空库/全墓碑)——此时无对象可命中,加过滤与
+        不加过滤都返回空,不改变结果;但避免空 contains_any 构造错误。
+        """
+        if self._generation_filter_provider is None:
+            return None
+        try:
+            ordinals = list(self._generation_filter_provider())
+        except Exception as exc:  # noqa: BLE001 - 权威集合不可得:fail-open 与未迁移行为一致
+            logger.warning("active generation 集合查询失败(本次不加生成过滤): %s", str(exc)[:160])
+            return None
+        if not ordinals:
+            return None
+        return _generation_ordinal_filter(ordinals)
 
     def _to_search_result(self, obj: Any) -> SearchResult:
         """Weaviate 对象 → SearchResult(含 symbol 字段,search_symbols 复用)。

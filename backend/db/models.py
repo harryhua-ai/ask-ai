@@ -48,6 +48,19 @@ class Document(Base):
     不再承担唯一性身份。chunk 级数据落在 Weaviate(uuid5(source_id#i),
     与本表同为路径寻址),本表承担"哪些文档已灌入 / 何时被灌入 / 灌了
     多少 chunk"的对账权威,供同步 reconciliation 与管理界面使用。
+
+    P1 生命周期地基(Trace B TB-P1,Freeze 97cac3f+915b5f7):
+    本行仍是"路径身份恰一行"的现役摘要;版本历史在 ``document_versions``
+    (含内容 chunk 持久副本,Weaviate 不再是唯一内容驻留,I-1)。新增列
+    全部加性、零回填即合法(lifecycle server_default='active'):
+
+    - lifecycle(L 轴,词表见 backend.services.document_lifecycle.DocLifecycle):
+      active / superseded / missing_candidate / deleted(墓碑=逻辑删除,
+      物理清除仅经 GC 窗口)/ discovered。NULL 语义由迁移回填为 active;
+    - current_version_id:权威当前版本关系(激活 = 单事务翻转本指针,
+      I-5/D-2;服务投影按 document_versions.generation 的 active 集过滤);
+    - superseded_by / superseded_at:身份接替(alias/successor 地基,D-5);
+    - deleted_at:墓碑时间(GC 计时锚)。
     """
 
     __tablename__ = "documents"
@@ -62,6 +75,129 @@ class Document(Base):
     branch: Mapped[str] = mapped_column(String(100), default="", nullable=False, index=True)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    # ---- P1 lifecycle foundation(加性演进;词表/原语见 document_lifecycle)----
+    lifecycle: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active", server_default="active", index=True
+    )
+    current_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, index=True
+    )
+    superseded_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DocumentVersion(Base):
+    """文档版本(P1 版本模型;身份 = source_id 路径,版本链按 version_seq 演进)。
+
+    - 同一 source_id 多版本按 ``version_seq`` 单调演进(1 起);恰一条
+      status='active' 且被 ``documents.current_version_id`` 指向(激活 =
+      单事务翻转,I-5/D-2);旧版本 status→superseded(valid_to/superseded_by
+      留痕),保留至 GC,绝非双现役;
+    - ``generation_id``/``generation_ordinal``:承载本版本 chunk 的索引生成
+      (P 轴,词表见 document_lifecycle.GenerationStatus;无 ACTIVE 处理态,
+      激活是关系不是状态);ordinal=0 为迁移初始代(legacy 对象寻址不变);
+    - ``content_hash``/``metadata_hash``:变更类别判定锚(FC-6);
+      ``source_version``:源原生版本元数据(git sha/lastmod/date_modified/
+      mtime,渐进填充,不重设计连接器);
+    - ``chunk_count`` 与 ``document_version_chunks`` = 持久归一化内容
+      (I-1:足以重建服务投影;Weaviate 永不是唯一副本)。
+    """
+
+    __tablename__ = "document_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    version_seq: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    metadata_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_version: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    generation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    generation_ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active", index=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    url: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    valid_from: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    superseded_by_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("uq_document_versions_source_seq", "source_id", "version_seq", unique=True),
+        Index("idx_document_versions_source_status", "source_id", "status"),
+        Index("idx_document_versions_generation", "generation_id"),
+    )
+
+
+class DocumentVersionChunk(Base):
+    """版本 chunk 持久副本(P1 持久真相,I-1)。
+
+    每行 = 该版本的一个归一化 chunk:``text`` 为分块正文,``props`` 为灌入
+    Weaviate 时的完整 properties 快照(不含向量——向量可由同嵌入模型从
+    text 再生,重建判据 = 结构等价而非位相等,契约 Gate P1-A)。持久真相
+    + 本表 → 可在不读任何 Weaviate 对象的前提下重建服务投影。
+    """
+
+    __tablename__ = "document_version_chunks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    props: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("uq_version_chunks_version_index", "version_id", "chunk_index", unique=True),
+    )
+
+
+class IndexGeneration(Base):
+    """索引生成(P 轴处理状态机;Freeze I-5/FC-3)。
+
+    一行 = 一次构建单元(通常一个源的一轮同步构建 / 全量重建)。
+
+    P 轴(冻结,无 ACTIVE 处理态):
+        pending → processing → ready(验证通过)
+        ready 代被激活 = ``documents.current_version_id`` 关系翻转指向
+        本代版本(单事务;激活是权威关系,不是 P 轴状态);
+        前任代在其版本全部失去 current 关系(服务撤出完成)后转
+        ``retired``(withdrawn_at=撤出时刻);构建/验证失败 → failed
+        (失败证据入 ``failure``,绝不破坏在服代);
+    接替时序(Freeze §8a):被接替知识在激活瞬间失去现势地位;服务表示
+    撤出 ≤1 天(本模型为即时撤出:激活提交后 active 集不再含前任代);
+    retired 保留 7 天(gc_eligible_at = retired_at + 7 天)后可自动物理 GC。
+    ``ordinal``:服务过滤用的整数代序(0 = 迁移初始代;Weaviate INT 属性
+    精确过滤,杜绝 TEXT 分词语义,PA-0F 教训推广);``generation_id``
+    为审计用 UUID。``purged_at``:物理 GC 完成时刻。
+    """
+
+    __tablename__ = "index_generations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)
+    source_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
+    doc_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    gc_eligible_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

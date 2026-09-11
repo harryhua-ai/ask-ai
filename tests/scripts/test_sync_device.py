@@ -77,6 +77,28 @@ async def _noop(*args, **kwargs):
     return None
 
 
+class _StubBuilder:
+    """P1 接缝桩:build_generation 委托 fake pipeline.ingest_all,保留各测试
+    在 ingest_all 内编排的嵌入活动/失败语义;repair_documents 默认全修复。"""
+
+    def __init__(self, pipeline, session_factory=None):
+        self._pipeline = pipeline
+
+    def build_generation(self, docs, *, source_id=None, force_rebuild=False, progress=None):
+        self._pipeline.ingest_all(docs, progress=progress)
+        return SimpleNamespace(
+            source_id=source_id or "",
+            new_docs=[d.source_id for d in docs],
+            updated_docs=[],
+            unchanged_docs=[],
+            metadata_docs=[],
+            chunks_written=1,
+        )
+
+    def repair_documents(self, source_ids, *, source_id_scope=None):
+        return (list(source_ids), [], len(source_ids))
+
+
 @pytest.mark.asyncio
 async def test_run_telemetry_calls_frozen_w2_record_device_contract(monkeypatch):
     calls = []
@@ -116,6 +138,7 @@ async def test_sync_one_records_gpu_to_cpu_reason_after_real_embedding_activity(
 
     class Pipeline:
         _embedder = handle
+        _session_factory = None  # P1:_sync_one 默认自构 builder 时读取;桩不使用
 
         def ingest_all(self, docs, *, progress=None):
             handle.embed(["chunk"])
@@ -138,6 +161,7 @@ async def test_sync_one_records_gpu_to_cpu_reason_after_real_embedding_activity(
     monkeypatch.setattr(sync_mod.ConnectorRegistry, "create", lambda cfg: _Connector(["doc"]))
     monkeypatch.setattr(sync_mod, "_last_success_at", _noop)
     monkeypatch.setattr(sync_mod, "verify_source_vectors", lambda *a, **k: _report())
+    monkeypatch.setattr(sync_mod, "GenerationBuilder", _StubBuilder)
 
     await sync_mod._sync_one(_cfg(), Pipeline(), _session_factory, triggered_by="manual")
 
@@ -156,6 +180,7 @@ async def test_short_circuit_does_not_claim_healthy_gpu_without_encode(monkeypat
 
     class Pipeline:
         _embedder = handle
+        _session_factory = None  # P1:_sync_one 默认自构 builder 时读取;桩不使用
 
         def ingest_all(self, docs, *, progress=None):
             raise AssertionError("short-circuit must not ingest")
@@ -173,6 +198,7 @@ async def test_short_circuit_does_not_claim_healthy_gpu_without_encode(monkeypat
     monkeypatch.setattr(sync_mod._RunTelemetry, "consistency", _noop)
     monkeypatch.setattr(sync_mod._RunTelemetry, "finish", _noop)
     monkeypatch.setattr(sync_mod.ConnectorRegistry, "create", lambda cfg: _Connector([]))
+    monkeypatch.setattr(sync_mod, "GenerationBuilder", _StubBuilder)
     monkeypatch.setattr(sync_mod, "_last_success_at", _noop)
     monkeypatch.setattr(sync_mod, "_count_documents", _noop)
     monkeypatch.setattr(sync_mod, "verify_source_vectors", lambda *a, **k: _report())
@@ -204,6 +230,7 @@ async def test_terminal_cpu_fallback_keeps_failed_run_accounting(monkeypatch):
 
     class Pipeline:
         _embedder = handle
+        _session_factory = None  # P1:_sync_one 默认自构 builder 时读取;桩不使用
 
         def ingest_all(self, docs, *, progress=None):
             handle.embed(["chunk"])
@@ -231,6 +258,7 @@ async def test_terminal_cpu_fallback_keeps_failed_run_accounting(monkeypatch):
     monkeypatch.setattr(sync_mod._RunTelemetry, "finish", _noop)
     monkeypatch.setattr(sync_mod.ConnectorRegistry, "create", lambda cfg: _Connector(["doc"]))
     monkeypatch.setattr(sync_mod, "_last_success_at", _noop)
+    monkeypatch.setattr(sync_mod, "GenerationBuilder", _StubBuilder)
 
     await sync_mod._sync_one(_cfg("terminal"), Pipeline(), session_factory)
 

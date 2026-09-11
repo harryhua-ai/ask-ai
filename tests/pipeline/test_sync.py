@@ -13,6 +13,7 @@
     - SyncLog 字段填充正确
 """
 
+import contextlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from backend.connectors.registry import SourceConfig
+from backend.pipeline.generation_builder import BuildAccounting
 from scripts.sync import _parse_weaviate_endpoint, run_sync
 
 # --------------------------------------------------------------------------- #
@@ -106,11 +108,14 @@ def _patch_sync_deps(
     engine=None,
     weaviate_client=None,
 ):
-    """返回一个组合 patch context manager,模拟所有外部依赖。
+    """打桩全部外部依赖,返回 ``(patches, handles)``。
 
-    用法::
+    用法(P1:patches 含 GenerationBuilder 接缝,统一 ExitStack 进入)::
 
-        with _patch_sync_deps(configs=[...], connector=mock) as patches:
+        patches, handles = _patch_sync_deps(configs=[...], connector=mock)
+        with contextlib.ExitStack() as _stack:
+            for _p in patches:
+                _stack.enter_context(_p)
             await run_sync(settings)
     """
     if configs is None:
@@ -122,11 +127,20 @@ def _patch_sync_deps(
         weaviate_client = MagicMock()
     if pipeline is None:
         pipeline = MagicMock()
-        pipeline.ingest_all.return_value = {"doc1": 3}
     if session_factory is None:
         session_factory, _ = _make_async_session_factory()
 
-    return (
+    builder_instance = MagicMock()
+    builder_instance.build_generation.return_value = BuildAccounting(
+        source_id="sync-test",
+        new_docs=["doc1"],
+        chunks_written=3,
+    )
+    builder_instance.repair_documents.return_value = (["doc1"], [], 3)
+    builder_cls_mock = patch(
+        "scripts.sync.GenerationBuilder", return_value=builder_instance
+    )
+    patches_list = (
         patch(
             "scripts.sync._load_configs_from_db",
             new_callable=AsyncMock,
@@ -136,14 +150,18 @@ def _patch_sync_deps(
         patch("scripts.sync.get_engine", return_value=engine),
         patch("scripts.sync.init_db", new_callable=AsyncMock),
         patch("scripts.sync.get_session_factory", return_value=session_factory),
+        patch("scripts.sync.get_sync_session_factory", return_value=MagicMock()),
         patch("scripts.sync.weaviate.connect_to_local", return_value=weaviate_client),
         patch("scripts.sync.BGEEmbedder", return_value=MagicMock()),
         patch("scripts.sync.IngestionPipeline", return_value=pipeline),
-    ), {
+        builder_cls_mock,
+    )
+    return patches_list, {
         "engine": engine,
         "weaviate_client": weaviate_client,
         "pipeline": pipeline,
         "session_factory": session_factory,
+        "builder": builder_instance,
     }
 
 
@@ -206,20 +224,14 @@ async def test_run_sync_processes_enabled_sources():
         pipeline=pipeline,
         session_factory=session_factory,
     )
-    with (
-        patches[0],
-        patches[1],
-        patches[2],
-        patches[3],
-        patches[4],
-        patches[5],
-        patches[6],
-        patches[7],
-    ):
+    _builder = handles["builder"]
+    with contextlib.ExitStack() as _stack:
+        for _p in patches:
+            _stack.enter_context(_p)
         await run_sync(settings)
 
-    # enabled source 应被同步:调用了 ingest_all
-    assert pipeline.ingest_all.called
+    # enabled source 应被同步:调用了 build_generation(P1 生成构建)
+    assert _builder.build_generation.called
     # disabled source 不应被处理:ConnectorRegistry.create 只被调一次
     # (简脚本只对 enabled 源 create connector)
     assert handles["engine"].dispose.called
@@ -242,16 +254,9 @@ async def test_run_sync_filters_by_source_id():
         connector=connector,
         pipeline=pipeline,
     )
-    with (
-        patches[0],
-        patches[1],
-        patches[2],
-        patches[3],
-        patches[4],
-        patches[5],
-        patches[6],
-        patches[7],
-    ):
+    with contextlib.ExitStack() as _stack:
+        for _p in patches:
+            _stack.enter_context(_p)
         await run_sync(settings, source_id="src-a")
 
     # 只同步了 src-a(src-b 被过滤),ConnectorRegistry.create 只被调一次
@@ -273,22 +278,16 @@ async def test_run_sync_records_failed_status_on_exception():
     session_factory, session = _make_async_session_factory()
     pipeline = MagicMock()
 
-    patches, _ = _patch_sync_deps(
+    patches, handles = _patch_sync_deps(
         configs=[cfg],
         connector=bad_connector,
         pipeline=pipeline,
         session_factory=session_factory,
     )
-    with (
-        patches[0],
-        patches[1],
-        patches[2],
-        patches[3],
-        patches[4],
-        patches[5],
-        patches[6],
-        patches[7],
-    ):
+    _builder = handles["builder"]
+    with contextlib.ExitStack() as _stack:
+        for _p in patches:
+            _stack.enter_context(_p)
         await run_sync(settings)
 
     # SyncLog 应被写入,且 status="failed"
@@ -296,8 +295,8 @@ async def test_run_sync_records_failed_status_on_exception():
     added_entry = session.add.call_args[0][0]
     assert added_entry.status == "failed"
     assert "network down" in (added_entry.error_detail or "")
-    # 失败时不应调用 ingest_all
-    assert not pipeline.ingest_all.called
+    # 失败(connector 抓取异常)时不应进入构建
+    assert not _builder.build_generation.called
 
 
 @pytest.mark.unit
@@ -311,16 +310,9 @@ async def test_run_sync_skips_disabled_sources():
         configs=[cfg_disabled],
         connector=connector,
     )
-    with (
-        patches[0],
-        patches[1],
-        patches[2],
-        patches[3],
-        patches[4],
-        patches[5],
-        patches[6],
-        patches[7],
-    ):
+    with contextlib.ExitStack() as _stack:
+        for _p in patches:
+            _stack.enter_context(_p)
         await run_sync(settings)
 
     # disabled src 不应触发 ConnectorRegistry.create
@@ -376,26 +368,20 @@ async def test_run_sync_dry_run_skips_persistence():
     session_factory, session = _make_async_session_factory()
     pipeline = MagicMock()
 
-    patches, _ = _patch_sync_deps(
+    patches, handles = _patch_sync_deps(
         configs=[cfg],
         connector=connector,
         pipeline=pipeline,
         session_factory=session_factory,
     )
-    with (
-        patches[0],
-        patches[1],
-        patches[2],
-        patches[3],
-        patches[4],
-        patches[5],
-        patches[6],
-        patches[7],
-    ):
+    _builder = handles["builder"]
+    with contextlib.ExitStack() as _stack:
+        for _p in patches:
+            _stack.enter_context(_p)
         await run_sync(settings, dry_run=True)
 
-    # dry-run 模式下不应灌入向量库 / 写 SyncLog
-    assert not pipeline.ingest_all.called
+    # dry-run 模式下不应构建 / 写 SyncLog
+    assert not _builder.build_generation.called
     assert not session.add.called
     assert not session.commit.called
 
@@ -417,7 +403,6 @@ async def test_sync_one_falls_back_to_fetch_all_when_changes_empty():
 
     cfg = _make_config(id="src-1")
     pipeline = MagicMock()
-    pipeline.ingest_all.return_value = {"doc1": 2}
     connector = MagicMock()
     # fetch_changes 空 → 进入 documents 表查询分支
     connector.fetch_changes.return_value = iter([])
@@ -434,13 +419,16 @@ async def test_sync_one_falls_back_to_fetch_all_when_changes_empty():
         )
     )
 
-    with patch("scripts.sync.ConnectorRegistry.create", return_value=connector):
+    with (
+        patch("scripts.sync.ConnectorRegistry.create", return_value=connector),
+        patch("scripts.sync.GenerationBuilder") as builder_cls,
+    ):
         await _sync_one(cfg, pipeline, session_factory)
 
     # fetch_all 应被调用(回退路径)
     connector.fetch_all.assert_called_once()
-    # ingest_all 应被调用(全量灌入)
-    pipeline.ingest_all.assert_called_once()
+    # build_generation 应被调用(全量构建,P1 生成路径)
+    builder_cls.return_value.build_generation.assert_called_once()
     # SyncLog 应被写入
     assert session.add.called
 
@@ -456,7 +444,6 @@ async def test_sync_one_reindex_forces_fetch_all_bypassing_skip():
 
     cfg = _make_config(id="src-1")
     pipeline = MagicMock()
-    pipeline.ingest_all.return_value = {"doc1": 2}
     connector = MagicMock()
     # fetch_changes 空(无近期变更)
     connector.fetch_changes.return_value = iter([])
@@ -471,13 +458,17 @@ async def test_sync_one_reindex_forces_fetch_all_bypassing_skip():
         )
     )
 
-    with patch("scripts.sync.ConnectorRegistry.create", return_value=connector):
+    with (
+        patch("scripts.sync.ConnectorRegistry.create", return_value=connector),
+        patch("scripts.sync.GenerationBuilder") as builder_cls,
+    ):
         await _sync_one(cfg, pipeline, session_factory, reindex=True)
 
     # reindex 应强制 fetch_all(绕过 skip)
     connector.fetch_all.assert_called_once()
-    # ingest_all 应被调用(全量重灌)
-    pipeline.ingest_all.assert_called_once()
+    # build_generation 应被调用,且 force_rebuild=True(P1 全量生成重建)
+    builder_cls.return_value.build_generation.assert_called_once()
+    assert builder_cls.return_value.build_generation.call_args.kwargs.get("force_rebuild") is True
 
 
 @pytest.mark.unit
@@ -487,38 +478,57 @@ async def test_sync_one_reindex_skips_fetch_changes():
 
     cfg = _make_config(id="src-1")
     pipeline = MagicMock()
-    pipeline.ingest_all.return_value = {"doc1": 2}
     connector = MagicMock()
     connector.fetch_changes.return_value = iter([MagicMock(name="should-not-use")])
     connector.fetch_all.return_value = iter([MagicMock(name="doc1")])
     connector.fetch_deleted.return_value = []
     session_factory, _ = _make_async_session_factory()
 
-    with patch("scripts.sync.ConnectorRegistry.create", return_value=connector):
+    with (
+        patch("scripts.sync.ConnectorRegistry.create", return_value=connector),
+        patch("scripts.sync.GenerationBuilder") as builder_cls,
+    ):
         await _sync_one(cfg, pipeline, session_factory, reindex=True)
 
     # fetch_changes 不应被调用(reindex 直接 fetch_all)
     connector.fetch_changes.assert_not_called()
     connector.fetch_all.assert_called_once()
-    """SyncLog 字段 items_new / items_updated / items_deleted 应正确填充。"""
+    builder_cls.return_value.build_generation.assert_called_once()
+
+
+@pytest.mark.unit
+async def test_sync_one_synclog_fields_accounting():
+    """SyncLog 字段 items_new / items_updated / items_deleted 应按构建账本填充(P1)。
+
+    items_new = 新文档篇数;items_updated = chunks_written + metadata-only 篇数;
+    items_deleted = 墓碑生效数(fetch_deleted → 逻辑删除,非物理)。
+    """
+    from backend.pipeline.generation_builder import BuildAccounting
     from scripts.sync import _sync_one
 
     cfg = _make_config(id="src-1")
     pipeline = MagicMock()
-    # 2 个 doc:一个成功(>0),一个失败(=0)
-    pipeline.ingest_all.return_value = {"doc1": 5, "doc2": 0}
     connector = _make_connector_mock(deleted=["deleted-doc-1"])
     session_factory, session = _make_async_session_factory()
 
-    with patch("scripts.sync.ConnectorRegistry.create", return_value=connector):
+    with (
+        patch("scripts.sync.ConnectorRegistry.create", return_value=connector),
+        patch("scripts.sync.GenerationBuilder") as builder_cls,
+    ):
+        builder_cls.return_value.build_generation.return_value = BuildAccounting(
+            source_id="src-1",
+            new_docs=["new-doc"],
+            updated_docs=["upd-doc"],
+            chunks_written=5,
+        )
         await _sync_one(cfg, pipeline, session_factory)
 
     added_entry = session.add.call_args[0][0]
-    # items_new: results 中 v>0 的项数 = 1
+    # items_new: 新文档 1 篇
     assert added_entry.items_new == 1
-    # items_updated: results 值之和 = 5
+    # items_updated: chunks_written=5(metadata-only 0 篇)
     assert added_entry.items_updated == 5
-    # items_deleted: deleted 列表长度 = 1
+    # items_deleted: 墓碑生效 1(fetch_deleted → 墓碑,逻辑删除)
     assert added_entry.items_deleted == 1
     assert added_entry.status == "success"
 
@@ -539,7 +549,6 @@ async def test_sync_one_commit_failure_does_not_propagate():
 
     cfg = _make_config(id="src-1")
     pipeline = MagicMock()
-    pipeline.ingest_all.return_value = {"doc1": 1}
     connector = _make_connector_mock()
 
     # session 可用(窗口查询正常),但 commit 失败(死锁 / 连接断开场景)
@@ -547,11 +556,14 @@ async def test_sync_one_commit_failure_does_not_propagate():
     session.commit = AsyncMock(side_effect=RuntimeError("db commit failed"))
 
     # 不应抛异常 - finally 内层 try/except 应吞掉异常
-    with patch("scripts.sync.ConnectorRegistry.create", return_value=connector):
+    with (
+        patch("scripts.sync.ConnectorRegistry.create", return_value=connector),
+        patch("scripts.sync.GenerationBuilder") as builder_cls,
+    ):
         await _sync_one(cfg, pipeline, session_factory)
 
     # 主流程应已正常完成
-    pipeline.ingest_all.assert_called_once()
+    builder_cls.return_value.build_generation.assert_called_once()
 
 
 @pytest.mark.unit
@@ -572,7 +584,6 @@ async def test_sync_log_commit_failure_does_not_break_isolation():
     connector.fetch_deleted.return_value = []
 
     pipeline = MagicMock()
-    pipeline.ingest_all.return_value = {"doc1": 1}
 
     # 第一次 commit 抛异常,第二次正常 - 验证错误隔离
     call_state = {"n": 0}
@@ -594,78 +605,57 @@ async def test_sync_log_commit_failure_does_not_break_isolation():
 
     factory = MagicMock(side_effect=_ctx)
 
-    patches, _ = _patch_sync_deps(
+    patches, handles = _patch_sync_deps(
         configs=[cfg_a, cfg_b],
         connector=connector,
         pipeline=pipeline,
         session_factory=factory,
     )
-    with (
-        patches[0],
-        patches[1],
-        patches[2],
-        patches[3],
-        patches[4],
-        patches[5],
-        patches[6],
-        patches[7],
-    ):
+    with contextlib.ExitStack() as _stack:
+        for _p in patches:
+            _stack.enter_context(_p)
         # run_sync 整体不应抛异常
         await run_sync(settings)
 
-    # 第二个 source 仍应被处理:ingest_all 被调用 2 次
-    assert pipeline.ingest_all.call_count == 2
+    # 第二个 source 仍应被处理:build_generation 被调用 2 次
+    assert handles["builder"].build_generation.call_count == 2
 
 
 # --------------------------------------------------------------------------- #
-# --reindex:删除并重建 collection(Task 9)
+# --reindex:全量生成重建,不再删除 collection(P1 Gate P1-E)
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_reindex_deletes_and_recreates_collection():
-    """``--reindex`` 应先删除 collection,再让 IngestionPipeline 重建。
+async def test_reindex_rebuilds_generation_without_collection_delete():
+    """``--reindex`` P1 语义:全量生成重建 + 原子激活,零服务损失。
+
+    契约 Compatibility Boundary 显式取代项:旧"先删整个 collection 再重灌"
+    废除——重建期间在服投影分毫不动,验证通过才原子切换(Gate P1-E)。
 
     验证:
-        - ``reindex=True`` 时调用 ``weaviate_client.collections.delete(name=...)``。
-        - ``reindex=False``(默认)时不调用 delete(由其他 run_sync 测试覆盖)。
-
-    适配说明(brief 原文用 ``Settings(postgres_dsn=...)`` 构造,但 ``postgres_dsn``
-    是 ``Settings`` 的 ``@property`` 而非构造器字段,会抛 ``TypeError``):
-        - 改用本文件已有的 ``_make_settings()`` MagicMock 辅助(与现有 run_sync
-          测试一致)。
-        - 额外 patch ``_load_configs_from_db``,因为 Task 7 起 run_sync
-          从 Postgres 读配置;此处用 AsyncMock 返回空列表避免实际同步。
+        - ``reindex=True`` 时**不调用** ``collections.delete``(P1 红线);
+        - ``build_generation`` 以 ``force_rebuild=True`` 被调用(生成重建,
+          非原位覆写)。
     """
     settings = _make_settings()
+    cfg = _make_config(id="src-1", enabled=True)
+    connector = _make_connector_mock()
 
-    with (
-        patch(
-            "scripts.sync._load_configs_from_db",
-            new_callable=AsyncMock,
-            return_value=[],
-        ),
-        patch("scripts.sync.weaviate") as mock_weaviate,
-        patch("scripts.sync.get_engine") as mock_get_engine,
-        patch("scripts.sync.get_session_factory"),
-        patch("scripts.sync.init_db", new_callable=AsyncMock),
-        patch("scripts.sync.BGEEmbedder"),
-        patch("scripts.sync.IngestionPipeline") as mock_pipeline_cls,
-    ):
-        mock_client = MagicMock()
-        mock_collections = MagicMock()
-        mock_client.collections = mock_collections
-        mock_weaviate.connect_to_local.return_value = mock_client
-
-        mock_engine = MagicMock()
-        mock_engine.dispose = AsyncMock()
-        mock_get_engine.return_value = mock_engine
-
-        mock_pipeline = MagicMock()
-        mock_pipeline_cls.return_value = mock_pipeline
-
+    patches, handles = _patch_sync_deps(
+        configs=[cfg],
+        connector=connector,
+    )
+    builder = handles["builder"]
+    with contextlib.ExitStack() as _stack:
+        for _p in patches:
+            _stack.enter_context(_p)
         await run_sync(settings, dry_run=False, reindex=True)
 
-        # 验证删除了 collection
-        mock_collections.delete.assert_called_once_with(name="Document")
+    # P1 红线:重建绝不删除 collection(在服投影不动)
+    handles["weaviate_client"].collections.delete.assert_not_called()
+    # 重建经生成构建:fetch_all 全量 → force_rebuild=True 新代构建
+    connector.fetch_all.assert_called_once()
+    builder.build_generation.assert_called_once()
+    assert builder.build_generation.call_args.kwargs.get("force_rebuild") is True

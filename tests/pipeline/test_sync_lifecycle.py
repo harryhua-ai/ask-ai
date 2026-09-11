@@ -10,8 +10,6 @@
 诊断三分类:MISSING_LEGITIMATE / EXTRA_CONFIRMED_RETIRED / EXTRA_UNRESOLVED_ORPHAN。
 """
 
-import uuid as uuid_mod
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,6 +20,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.connectors.base import RawDocument
 from backend.db.models import Base, Document, SyncLog
+from backend.pipeline.generation_builder import BuildAccounting
 from backend.pipeline.ingest import _deterministic_uuid
 from backend.services.vector_consistency import VectorGapReport
 from scripts.sync import _handle_no_change
@@ -111,6 +110,33 @@ def _report_side_effect(*reports):
     return m
 
 
+class _StubBuilder:
+    """P1 gap-heal 接缝桩:替代真实 GenerationBuilder。
+
+    真值修复(repair_documents)默认全成功;build_generation 仅在
+    unrepairable 回退路径被调,记调用供断言。
+    """
+
+    def __init__(self, pipeline, session_factory=None):
+        self.pipeline = pipeline
+        self.repair_calls: list[list[str]] = []
+        self.build_calls: list[dict] = []
+
+    def repair_documents(self, source_ids, *, source_id_scope=None):
+        self.repair_calls.append(list(source_ids))
+        return (list(source_ids), [], len(source_ids))
+
+    def build_generation(self, docs, *, source_id=None, force_rebuild=False, progress=None):
+        self.build_calls.append(
+            {
+                "source_id": source_id,
+                "force_rebuild": force_rebuild,
+                "docs": [d.source_id for d in docs],
+            }
+        )
+        return BuildAccounting(source_id=source_id or "", chunks_written=1)
+
+
 # --------------------------------------------------------------------------- #
 # G001 稳定 no-op
 # --------------------------------------------------------------------------- #
@@ -148,15 +174,20 @@ async def test_g002_changed_doc_refill_touches_only_that_doc():
     connector = MagicMock()
     connector.fetch_all.return_value = iter([_doc(f"{SRC}/a"), _doc(f"{SRC}/b")])
     pipeline = _make_pipeline()
-    pipeline.ingest_all.return_value = {f"{SRC}/a": 2}
     log_entry = SyncLog()
+    builder = _StubBuilder(pipeline)
 
     with patch("scripts.sync.verify_source_vectors", _report_side_effect(report1, report2)):
-        await _handle_no_change(SRC, 5, connector, pipeline, MagicMock(), log_entry, 0.0)
+        await _handle_no_change(
+            SRC, 5, connector, pipeline, MagicMock(), log_entry, 0.0, builder=builder
+        )
 
-    ingested = [d.source_id for d in pipeline.ingest_all.call_args[0][0]]
-    assert ingested == [f"{SRC}/a"]  # 兄弟 B 不进灌入
-    assert log_entry.status == "success"  # 重灌后复验收敛 → success(窗口推进)
+    # P1 gap-heal:真值修复只动缺口文档 A(零源抓取),兄弟 B 不触碰
+    assert builder.repair_calls == [[f"{SRC}/a"]]
+    # 无 unrepairable → 不回退源抓取重建
+    assert builder.build_calls == []
+    connector.fetch_all.assert_not_called()
+    assert log_entry.status == "success"  # 修复后复验收敛 → success(窗口推进)
 
 
 # --------------------------------------------------------------------------- #
@@ -294,13 +325,16 @@ async def test_g007_missing_legitimate_chunk_still_repaired():
     connector = MagicMock()
     connector.fetch_all.return_value = iter([_doc(f"{SRC}/a")])
     pipeline = _make_pipeline()
-    pipeline.ingest_all.return_value = {f"{SRC}/a": 1}
     log_entry = SyncLog()
+    builder = _StubBuilder(pipeline)
 
     with patch("scripts.sync.verify_source_vectors", _report_side_effect(report1, report2)):
-        await _handle_no_change(SRC, 110, connector, pipeline, MagicMock(), log_entry, 0.0)
+        await _handle_no_change(
+            SRC, 110, connector, pipeline, MagicMock(), log_entry, 0.0, builder=builder
+        )
 
-    pipeline.ingest_all.assert_called_once()
+    # 缺失合法 chunk 不因 ghost 忽略而被弱化:定向真值修复仍执行
+    assert builder.repair_calls == [[f"{SRC}/a"]]
     assert log_entry.status == "success"
 
 
@@ -324,14 +358,16 @@ async def test_g008_mixed_state_classes_handled_independently():
         [_doc(f"{SRC}/changed"), _doc(f"{SRC}/other")]  # ghost 不在源
     )
     pipeline = _make_pipeline(orphan_props=_ghost_props(ghost))
-    pipeline.ingest_all.return_value = {f"{SRC}/changed": 2}
     log_entry = SyncLog()
+    builder = _StubBuilder(pipeline)
 
     with patch("scripts.sync.verify_source_vectors", _report_side_effect(report1, report2)):
-        await _handle_no_change(SRC, 110, connector, pipeline, MagicMock(), log_entry, 0.0)
+        await _handle_no_change(
+            SRC, 110, connector, pipeline, MagicMock(), log_entry, 0.0, builder=builder
+        )
 
-    ingested = [d.source_id for d in pipeline.ingest_all.call_args[0][0]]
-    assert ingested == [f"{SRC}/changed"]  # 只灌变更文档
+    # 缺失/变更文档:定向真值修复,只动 changed
+    assert builder.repair_calls == [[f"{SRC}/changed"]]
     got = sorted(
         str(v)
         for c in pipeline._collection.data.delete_many.call_args_list
@@ -464,9 +500,9 @@ async def test_g003b_membership_confirmed_absence_still_retires_exactly():
 
 
 def _real_client():
-    import weaviate
-
     import os
+
+    import weaviate
 
     port = int(os.environ.get("P1_WEAVIATE_PORT", "21100"))
     try:

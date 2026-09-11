@@ -133,6 +133,71 @@ def _deterministic_uuid(source_id: str, chunk_index: int) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{source_id}#{chunk_index}"))
 
 
+def generation_uuid(source_id: str, generation_id: str, chunk_index: int) -> str:
+    """生成命名空间确定性 UUID(P1):同文档不同版本的 chunk 对象互不覆盖。
+
+    发现 §4B 的命名空间扩展:``uuid5(source_id#generation#chunk_index)``。
+    旧版本对象在新版本构建/验证/激活全程保持原位(失败隔离,Freeze I-5),
+    激活后旧代对象即时退出服务集,物理清除归 GC(RETIRED+7 天,§8a)。
+    确定性:同 (source_id, generation, index) 重跑幂等;跨版本/跨文档唯一。
+    """
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{source_id}#{generation_id}#{chunk_index}"))
+
+
+def legacy_chunk_uuids(source_id: str, chunk_count: int) -> list[str]:
+    """legacy 命名空间(初始代)的文档 chunk UUID 全集(迁移/GC 枚举用)。"""
+    return [_deterministic_uuid(source_id, i) for i in range(max(chunk_count, 0))]
+
+
+def generation_chunk_uuids(source_id: str, generation_id: str, chunk_count: int) -> list[str]:
+    """生成命名空间的文档 chunk UUID 全集(验证/GC/repair 枚举用;P0-A 文档局部)。"""
+    return [generation_uuid(source_id, generation_id, i) for i in range(max(chunk_count, 0))]
+
+
+def chunk_uuids_for_version(source_id: str, generation_id: str, generation_ordinal: int, chunk_count: int) -> list[str]:
+    """按版本的代归属返回其对象 UUID 全集(ordinal=0 → legacy 命名空间)。"""
+    if int(generation_ordinal) == 0:
+        return legacy_chunk_uuids(source_id, chunk_count)
+    return generation_chunk_uuids(source_id, generation_id, chunk_count)
+
+
+def write_collection_objects(collection: Any, data_objs: list[Any]) -> set[int]:
+    """批量写对象(insert_many 分块 → 失败对象 replace 回退)→ 彻底失败下标集。
+
+    从 _ingest_doc_batch Phase 3 提取的共用写路径(单一代价:行为与原实现
+    逐字节一致)。返回值 = insert 且 replace 都失败的对象下标(调用方记账)。
+    """
+
+    WRITE_CHUNK = 128
+    failed_idx: set[int] = set()
+    for _ws in range(0, len(data_objs), WRITE_CHUNK):
+        _we = min(_ws + WRITE_CHUNK, len(data_objs))
+        try:
+            _result = collection.data.insert_many(data_objs[_ws:_we])
+            # v4 官方返回:errors 键 = 对象在本次 insert_many 中的原始下标。
+            for _i in _result.errors:
+                failed_idx.add(_ws + _i)
+        except Exception as exc:  # noqa: BLE001 - 块级失败:整块对象走 replace 回退
+            logger.warning(
+                "insert_many 块失败(offset=%d,%d objs): %s,整块 replace",
+                _ws,
+                _we - _ws,
+                str(exc)[:120],
+            )
+            failed_idx.update(range(_ws, _we))
+    replace_failed: set[int] = set()
+    for fi in sorted(failed_idx):
+        obj = data_objs[fi]
+        try:
+            collection.data.replace(
+                properties=obj.properties, vector=obj.vector, uuid=obj.uuid
+            )
+        except Exception as exc2:  # noqa: BLE001
+            logger.warning("replace 回退失败 uuid=%s: %s", obj.uuid, str(exc2)[:120])
+            replace_failed.add(fi)
+    return replace_failed
+
+
 def _is_code(doc: RawDocument) -> bool:
     """判断 doc 是否应走代码 AST 分块(按文件扩展名)。
 
@@ -198,6 +263,11 @@ COLLECTION_PROPERTIES: list[tuple[str, str]] = [
     ("evidence_sensitivity", "text"),
     ("evidence_citation_eligibility", "text"),
     ("evidence_origin", "text"),
+    # P1 生命周期地基:对象所属索引生成(INT 精确过滤,PA-0F 教训推广——
+    # 禁止对 TEXT 属性做过滤语义;generation_id 仅审计展示,不用于过滤)。
+    # 迁移初始代 ordinal=0;新增 property 为加性演进,存量对象由迁移回填。
+    ("generation_ordinal", "int"),
+    ("generation_id", "text"),
 ]
 
 

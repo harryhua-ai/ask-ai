@@ -43,6 +43,10 @@ class Settings:
     encryption_key: str
     embedder_batch_size: int = 12
     embedder_max_length: int = 8192
+    # P1 生命周期 GC:墓碑物理清除保留窗(天)。**不设隐式默认** —— None =
+    # 墓碑物理 GC 关闭,直至运营显式配置(已废除的 30 天默认禁止回用;
+    # RETIRED 代 7 天为冻结默认,不走本配置)。运营化归 P5。
+    lifecycle_gc_tombstone_days: int | None = None
     internal_api_base_url: str = "http://backend:8000"
 
     @property
@@ -94,6 +98,11 @@ def load_settings(config_dir: Path | None = None) -> Settings:
         embedder_device=_env("EMBEDDER_DEVICE", "auto"),
         embedder_batch_size=int(_env("EMBEDDER_BATCH_SIZE", "12")),
         embedder_max_length=int(_env("EMBEDDER_MAX_LENGTH", "8192")),
+        lifecycle_gc_tombstone_days=(
+            int(_env("LIFECYCLE_GC_TOMBSTONE_DAYS"))
+            if _env("LIFECYCLE_GC_TOMBSTONE_DAYS")
+            else None
+        ),
         # Hardware-Aware Runtime:sync 执行面消费 backend 单一驻留嵌入运行时的
         # 内部端点基址(compose 网络内服务名;本地联调可覆盖)
         internal_api_base_url=_env("INTERNAL_API_BASE_URL", "http://backend:8000"),

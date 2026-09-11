@@ -14,6 +14,7 @@ import json
 import os
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
@@ -21,6 +22,7 @@ import pytest_asyncio
 from backend.config import load_settings
 from backend.connectors.registry import ConnectorRegistry, SourceConfig
 from backend.connectors.web_crawl import WebCrawlConnector, _url_to_source_path
+from scripts import sync as sync_mod
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -201,14 +203,40 @@ async def test_sync_one_commits_snapshot_after_delete_loop(_sync_env, monkeypatc
     )
     conn = ConnectorRegistry.create(cfg)
     monkeypatch.setattr(ConnectorRegistry, "create", lambda c: conn)  # _sync_one 内部用它
-    real_delete = pipeline.delete_document
+    # 本用例目标 = W6 快照时序(删除循环 → 快照推进),灌入路径 incidental:
+    # P1 打桩 GenerationBuilder(MagicMock collection 无法通过真实验证)。
+    from types import SimpleNamespace
+
+    class _StubBuilder:
+        def __init__(self, pipeline, session_factory=None):
+            pass
+
+        def build_generation(self, docs, *, source_id=None, force_rebuild=False, progress=None):
+            return SimpleNamespace(
+                source_id=source_id or "",
+                new_docs=[d.source_id for d in docs],
+                updated_docs=[],
+                unchanged_docs=[],
+                metadata_docs=[],
+                chunks_written=len(docs),
+                generation_status="ready",
+            )
+
+        def repair_documents(self, source_ids, *, source_id_scope=None):
+            return (list(source_ids), [], 0)
+
+    monkeypatch.setattr(sync_mod, "GenerationBuilder", _StubBuilder)
+    # P1:删除循环 = 逻辑墓碑(lifecycle.tombstone_document;物理清除仅经 GC)。
+    # 打桩墓碑原语记录时序;账本会话用 MagicMock(pipeline._session_factory)。
     order: list = []
+    real_tombstone = sync_mod.lifecycle.tombstone_document
 
-    def spy_delete(sid):
+    def spy_tombstone(session, sid, *, reason="", now=None):
         order.append(("delete", sid))
-        real_delete(sid)
+        return real_tombstone(session, sid, reason=reason, now=now)
 
-    pipeline.delete_document = spy_delete
+    monkeypatch.setattr(sync_mod.lifecycle, "tombstone_document", spy_tombstone)
+    pipeline._session_factory = MagicMock()
     orig_commit = conn.commit_membership_snapshot
 
     def spy_commit():
@@ -242,12 +270,13 @@ async def test_sync_one_delete_failure_does_not_advance_snapshot(_sync_env, monk
     monkeypatch.setattr(ConnectorRegistry, "create", lambda c: conn)
     calls = {"n": 0}
 
-    def flaky_delete(sid):
+    def flaky_tombstone(session, sid, *, reason="", now=None):
         calls["n"] += 1
         if calls["n"] == conn.fail_on:
-            raise RuntimeError("weaviate delete exploded")
+            raise RuntimeError("ledger tombstone exploded")
 
-    pipeline.delete_document = flaky_delete
+    monkeypatch.setattr(sync_mod.lifecycle, "tombstone_document", flaky_tombstone)
+    pipeline._session_factory = MagicMock()
     await _sync_one(cfg, pipeline, factory, triggered_by="manual")
     assert conn._committed is False  # 删除阶段失败 → 快照不推进
     async with factory() as session:

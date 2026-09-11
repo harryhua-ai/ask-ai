@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.db.models import Document
+from backend.services.document_lifecycle import DocLifecycle
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +25,8 @@ logger = logging.getLogger(__name__)
 class VectorGapReport:
     """Postgres ↔ Weaviate 一致性校验结果。"""
 
-    expected_chunks: int  # Postgres SUM(chunk_count)
-    actual_chunks: int  # Weaviate 该源实际 chunk 数
+    expected_chunks: int  # Postgres SUM(chunk_count)(仅 SERVING 生命期文档)
+    actual_chunks: int  # Weaviate 该源实际 chunk 数(SERVING 文档的对象)
     missing_source_ids: list[str] = field(default_factory=list)  # 整篇缺失(pg 有、Weaviate 无)
     # 需整篇重灌的 doc = 整篇缺失 ∪ chunk 集合不一致;is_healthy 判定不依赖此字段
     refill_source_ids: list[str] = field(default_factory=list)
@@ -36,6 +37,9 @@ class VectorGapReport:
     # 供 sync 生命周期 reconciliation 分类(MISSING_LEGITIMATE /
     # EXTRA_CONFIRMED_RETIRED / EXTRA_UNRESOLVED_ORPHAN);本函数只读不删。
     orphan_chunks: dict[str, set[int]] = field(default_factory=dict)
+    # P1:已撤出文档(superseded/deleted 墓碑)的待 GC 对象数——预期存在
+    # (RETIRED/墓碑保留窗内物理仍在),不计缺口、不影响健康判定。
+    withdrawn_chunk_count: int = 0
 
     @property
     def is_healthy(self) -> bool:
@@ -43,6 +47,7 @@ class VectorGapReport:
 
         迭代器口径下 expected/actual 同源相等已蕴含前两者一致;
         显式列出 refill/orphan 条件以保证无「账面一致但存在漂移」的漏判。
+        withdrawn(墓碑/被接替待 GC)对象为 P1 保留窗内的预期残留,不入判定。
         """
         return (
             self.expected_chunks == self.actual_chunks
@@ -68,14 +73,33 @@ async def verify_source_vectors(
         VectorGapReport。is_healthy=True 表示无需补齐;refill_source_ids 为需
         重灌的 doc 清单(整篇缺失 ∪ chunk 集合不一致)。
     """
-    # 1) 汇总级:Postgres SUM(chunk_count)
+    # 1) 汇总级:Postgres SUM(chunk_count)(仅 SERVING 生命期;墓碑/被接替
+    #    文档的对象为保留窗内预期残留,不进期望,I-1 计数权威 = Postgres)
     async with session_factory() as session:
         result = await session.execute(
             select(func.coalesce(func.sum(Document.chunk_count), 0)).where(
-                Document.source_id.like(f"{source_prefix}/%")
+                Document.source_id.like(f"{source_prefix}/%"),
+                Document.lifecycle.in_(DocLifecycle.SERVING),
             )
         )
         expected = int(result.scalar() or 0)
+
+    # 3) 精确级:chunk 级差集 —— 先取 PG 侧 (source_id, chunk_count, lifecycle),
+    #    供迭代器统计口径拆分(SERVING 对象 vs 撤出文档待 GC 残留)
+    async with session_factory() as session:
+        result = await session.execute(
+            select(Document.source_id, Document.chunk_count, Document.lifecycle).where(
+                Document.source_id.like(f"{source_prefix}/%")
+            )
+        )
+        pg_rows = result.all()
+        pg_chunks: dict[str, int] = {}
+        withdrawn_docs: set[str] = set()
+        for sid, cc, lc in pg_rows:
+            if lc in DocLifecycle.WITHDRAWN:
+                withdrawn_docs.add(sid)
+                continue  # 墓碑/被接替:对象为待 GC 残留,不计期望
+            pg_chunks[sid] = int(cc)
 
     collection = pipeline._client.collections.get(pipeline._class_name)
 
@@ -97,17 +121,8 @@ async def verify_source_vectors(
         if not sid.startswith(prefix):
             continue  # 客户端前缀过滤
         wv_chunks.setdefault(sid, set()).add(int(idx))
-        actual += 1
-
-    # 3) 精确级:chunk 级差集
-    #    Postgres 侧取 (source_id, chunk_count)
-    async with session_factory() as session:
-        result = await session.execute(
-            select(Document.source_id, Document.chunk_count).where(
-                Document.source_id.like(f"{source_prefix}/%")
-            )
-        )
-        pg_chunks: dict[str, int] = {sid: int(cc) for sid, cc in result.all()}
+        if sid not in withdrawn_docs:
+            actual += 1  # 撤出文档的待 GC 残留不进服务口径统计
 
     # 整篇缺失:pg 有、Weaviate 完全没有
     missing = sorted(sid for sid in pg_chunks if sid not in wv_chunks)
@@ -123,11 +138,20 @@ async def verify_source_vectors(
             refill.add(sid)
             # 仅统计"多余"部分(超出期望范围的 index);丢失不算多余
             stale_total += len(actual_indices - expected_indices)
-    orphans = len(wv_chunks.keys() - pg_chunks.keys())
+    orphans = len(wv_chunks.keys() - pg_chunks.keys() - withdrawn_docs)
     orphan_chunks = {
-        sid: set(wv_chunks[sid]) for sid in sorted(wv_chunks.keys() - pg_chunks.keys())
+        sid: set(wv_chunks[sid])
+        for sid in sorted(wv_chunks.keys() - pg_chunks.keys() - withdrawn_docs)
     }
+    # P1:撤出文档的待 GC 残留对象(预期存在,单列呈现,不入缺口)
+    withdrawn_chunk_count = sum(len(wv_chunks[sid]) for sid in withdrawn_docs if sid in wv_chunks)
 
+    if withdrawn_chunk_count:
+        logger.info(
+            "一致性校验:数据源 %s 有 %d 个待 GC 残留对象(墓碑/被接替保留窗内,预期存在)",
+            source_prefix,
+            withdrawn_chunk_count,
+        )
     if stale_total:
         logger.warning(
             "一致性校验:数据源 %s 发现 %d 个多余 chunk(index 超出 0..chunk_count-1),不删除",
@@ -162,4 +186,5 @@ async def verify_source_vectors(
         stale_chunk_count=stale_total,
         orphan_count=orphans,
         orphan_chunks=orphan_chunks,
+        withdrawn_chunk_count=withdrawn_chunk_count,
     )

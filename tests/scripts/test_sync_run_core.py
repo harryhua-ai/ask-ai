@@ -12,6 +12,7 @@
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
@@ -22,10 +23,40 @@ from backend.config import load_settings
 from backend.db.models import SyncLog, SyncRequest, SyncRun
 from backend.db.session import get_engine, get_session_factory, init_db
 from backend.services import sync_runs as sr
+from scripts import sync as sync_mod
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 W0_SOURCES = ("w0-src", "w0-src2", "w0-orph")
+
+
+class _StubBuilder:
+    """P1 接缝桩:build_generation 委托 fake pipeline.ingest_all(保留进度
+    回调/失败语义);repair_documents 默认全修复。"""
+
+    def __init__(self, pipeline, session_factory=None):
+        self._pipeline = pipeline
+
+    def build_generation(self, docs, *, source_id=None, force_rebuild=False, progress=None):
+        self._pipeline.ingest_all(docs, progress=progress)
+        return SimpleNamespace(
+            source_id=source_id or "",
+            new_docs=[getattr(d, "source_id", f"d{i}") for i, d in enumerate(docs)],
+            updated_docs=[],
+            unchanged_docs=[],
+            metadata_docs=[],
+            chunks_written=2 * len(docs),
+        )
+
+    def repair_documents(self, source_ids, *, source_id_scope=None):
+        return (list(source_ids), [], 2 * len(source_ids))
+
+
+@pytest.fixture(autouse=True)
+def _stub_generation_builder(monkeypatch):
+    """本文件 fake pipeline 面向旧 ingest_all 编排;P1 经 GenerationBuilder
+    接缝驱动,统一打桩保留各测试原语义。"""
+    monkeypatch.setattr(sync_mod, "GenerationBuilder", _StubBuilder)
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
@@ -548,6 +579,8 @@ async def test_sync_one_writes_sync_run_lifecycle_end_to_end(_db):
     seen_during_ingest: dict = {}
 
     class _W0FakePipeline:
+        _session_factory = None  # P1 builder 默认构造读取(桩不使用)
+
         def ingest_all(self, docs, *, progress=None):
             # ingest 完成前 SyncRun 行必须已存在(生命周期先于终局可观察):
             # 标志位由终局断言核实调用顺序
@@ -604,6 +637,8 @@ async def test_sync_one_business_failure_lands_run_failed(_db):
     from scripts.sync import _sync_one
 
     class _BoomPipeline:
+        _session_factory = None  # P1 builder 默认构造读取(桩不使用)
+
         def ingest_all(self, docs, *, progress=None):
             raise RuntimeError("embed 爆炸")
 
@@ -645,6 +680,8 @@ async def test_sync_one_telemetry_failure_never_breaks_business(_db):
             raise RuntimeError("db down")
 
     class _OkPipeline:
+        _session_factory = None  # P1 builder 默认构造读取(桩不使用)
+
         def ingest_all(self, docs, *, progress=None):
             return {}
 
@@ -707,6 +744,8 @@ async def test_red_a_normal_run_emits_and_persists_safety_filter(_db, monkeypatc
     monkeypatch.setattr(sr, "update_progress", _spy)
 
     class _Pipeline:
+        _session_factory = None  # P1 builder 默认构造读取(桩不使用)
+
         def ingest_all(self, docs, *, progress=None):
             if progress is not None:
                 progress("SAFETY_FILTER", len(docs))  # 真实管线:逐 doc 过滤后按批界上报
@@ -752,6 +791,7 @@ async def test_red_b_normal_successful_run_persists_final_consistency_before_don
     class _Pipeline:
         _client = _FakeClient()
         _class_name = "W0Fake"
+        _session_factory = None  # P1 builder 默认构造读取(桩不使用)
 
         def ingest_all(self, docs, *, progress=None):
             if progress is not None:

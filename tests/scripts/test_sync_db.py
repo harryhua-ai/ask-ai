@@ -473,7 +473,7 @@ async def test_sync_one_uses_last_success_as_window():
 @pytest.mark.integration
 async def test_sync_one_marks_failed_when_ingest_raises():
     """ingest_all 抛错(全零守卫/OOM 模式)→ SyncLog 记 failed + error_detail。"""
-    from unittest.mock import MagicMock
+    from unittest.mock import MagicMock, patch
 
     from backend.connectors.base import RawDocument
     from backend.connectors.registry import ConnectorRegistry, SourceConfig
@@ -523,8 +523,19 @@ async def test_sync_one_marks_failed_when_ingest_raises():
 
         orig_create = ConnectorRegistry.create
         ConnectorRegistry.create = staticmethod(lambda c: _FailingConnector())
+
+        # P1 接缝桩:build_generation 委托 MagicMock pipeline.ingest_all,
+        # 保留 side_effect 抛错语义(失败契约不变)
+        class _StubBuilder:
+            def __init__(self, pipeline, session_factory=None):
+                self._pipeline = pipeline
+
+            def build_generation(self, docs, *, source_id=None, force_rebuild=False, progress=None):
+                self._pipeline.ingest_all(docs, progress=progress)
+
         try:
-            await _sync_one(cfg, pipeline, async_factory, triggered_by="test")
+            with patch("scripts.sync.GenerationBuilder", _StubBuilder):
+                await _sync_one(cfg, pipeline, async_factory, triggered_by="test")
         finally:
             ConnectorRegistry.create = orig_create
 

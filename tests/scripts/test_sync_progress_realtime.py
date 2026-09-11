@@ -20,14 +20,42 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
+import scripts.sync as sync_mod
 from backend.config import load_settings
+from backend.connectors.registry import SourceConfig
 from backend.db.models import SyncLog, SyncRequest, SyncRun
 from backend.db.session import get_engine, get_session_factory, init_db
+from backend.pipeline.generation_builder import BuildAccounting
 from backend.services import sync_runs as sr
-import scripts.sync as sync_mod
-from backend.connectors.registry import SourceConfig
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
+
+
+class _StubBuilder:
+    """P1 接缝桩:build_generation 委托 fake pipeline.ingest_all(工作线程
+    阻塞/失败语义不变);旧 dict 返回映射为 BuildAccounting 记账;
+    repair_documents 默认按每 doc 2 chunks 记真值修复。"""
+
+    def __init__(self, pipeline, session_factory=None):
+        self._pipeline = pipeline
+
+    def build_generation(self, docs, *, source_id=None, force_rebuild=False, progress=None):
+        result = self._pipeline.ingest_all(docs, progress=progress) or {}
+        return BuildAccounting(
+            source_id=source_id or "",
+            new_docs=[str(k) for k in result],
+            chunks_written=int(sum(v for v in result.values() if isinstance(v, int))),
+        )
+
+    def repair_documents(self, source_ids, *, source_id_scope=None):
+        return (list(source_ids), [], 2 * len(source_ids))
+
+
+@pytest.fixture(autouse=True)
+def _stub_generation_builder(monkeypatch):
+    """本文件 fake pipeline 面向旧 ingest_all 编排;P1 经 GenerationBuilder
+    接缝驱动(asyncio.to_thread 包 build_generation),统一打桩保留原语义。"""
+    monkeypatch.setattr(sync_mod, "GenerationBuilder", _StubBuilder)
 
 SRC = "w2-rt"
 
@@ -62,18 +90,20 @@ class _StubConnector:
     def __init__(self, doc_ids: list[str]) -> None:
         self._doc_ids = doc_ids
 
-    def fetch_changes(self, since):  # noqa: ANN001, ANN202
+    def fetch_changes(self, since):
         return list(self._doc_ids)
 
-    def fetch_all(self):  # noqa: ANN202
+    def fetch_all(self):
         return [SimpleNamespace(source_id=doc) for doc in self._doc_ids]
 
-    def fetch_deleted(self, since):  # noqa: ANN001, ANN202
+    def fetch_deleted(self, since):
         return []
 
 
 class _BlockingPipeline:
     """ingest_all 工作线程侧替身:回调后阻塞,直到测试显式放行。"""
+
+    _session_factory = None  # P1 builder 默认构造读取(桩不使用)
 
     def __init__(self, doc_ids: list[str], raise_before_index: bool = False) -> None:
         self._doc_ids = doc_ids
@@ -83,7 +113,7 @@ class _BlockingPipeline:
     def release(self) -> None:
         self._release.set()
 
-    def ingest_all(self, docs, progress=None):  # noqa: ANN001, ANN202
+    def ingest_all(self, docs, progress=None):
         if progress is not None:
             progress(sr.STAGE_SAFETY_FILTER, len(docs))
             progress(sr.STAGE_CHUNK, len(docs))
@@ -97,7 +127,9 @@ class _BlockingPipeline:
 
 
 class _NoopPipeline:
-    def ingest_all(self, docs, progress=None):  # noqa: ANN001, ANN202
+    _session_factory = None  # P1 builder 默认构造读取(桩不使用)
+
+    def ingest_all(self, docs, progress=None):
         return {i: 2 for i, _ in enumerate(docs)}  # 每 doc 2 chunks(不可哈希对象作 key 不安全)
 
 

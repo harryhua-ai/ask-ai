@@ -6,12 +6,12 @@
 - 合同#7:一致性缺口必须修因(孤儿漂移全量重灌自愈),不是只发警告。
 """
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from backend.db.models import SyncLog
+from backend.pipeline.generation_builder import BuildAccounting
 from scripts.sync import _handle_no_change, _sync_one
 
 
@@ -26,6 +26,25 @@ def _make_pipeline(chunks: int = 1) -> MagicMock:
     pipeline = MagicMock()
     pipeline.ingest_all.return_value = {f"doc-{i}": chunks for i in range(8)}
     return pipeline
+
+
+class _StubBuilder:
+    """P1 接缝桩:build_generation 委托 MagicMock pipeline.ingest_all,并把旧
+    dict 结果映射为 BuildAccounting(保持 items_* 记账语义)。"""
+
+    def __init__(self, pipeline, session_factory=None):
+        self._pipeline = pipeline
+
+    def build_generation(self, docs, *, source_id=None, force_rebuild=False, progress=None):
+        result = self._pipeline.ingest_all(docs, progress=progress) or {}
+        return BuildAccounting(
+            source_id=source_id or "",
+            new_docs=list(result),
+            chunks_written=int(sum(result.values())),
+        )
+
+    def repair_documents(self, source_ids, *, source_id_scope=None):
+        return (list(source_ids), [], 0)
 
 
 def _make_doc(source_id: str):
@@ -115,6 +134,7 @@ async def _run_sync_one(connector, pipeline, factory):
         patch("scripts.sync._count_documents", new_callable=AsyncMock) as mc,
         patch("scripts.sync._last_success_at", new_callable=AsyncMock) as ml,
         patch("scripts.sync.ConnectorRegistry.create") as mcr,
+        patch("scripts.sync.GenerationBuilder", _StubBuilder),
     ):
         mc.return_value = 0  # 首次同步(existing=0)→ fetch_all 路径
         ml.return_value = None
@@ -258,9 +278,8 @@ async def test_no_change_orphan_only_drift_reconciles_without_full_reingest(mock
 
     pipeline._collection.query.fetch_objects.side_effect = _fake_fetch
 
-    saved, factory = _commit_capture()
+    _saved, factory = _commit_capture()
     log_entry = SyncLog(source_id="website-x", source_type="web_crawl", status="success")
-    started = datetime.now(UTC)
 
     with patch("scripts.sync.verify_source_vectors", new_callable=AsyncMock) as mv:
         mv.side_effect = [report, report2]

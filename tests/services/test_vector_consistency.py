@@ -62,7 +62,7 @@ async def test_summary_level_not_fooled_by_like_token_pollution():
     vs 迭代器 10953),造成永久假 partial。新实现:汇总级与精确级同为
     迭代器口径 → 迭代器一致即健康。
     """
-    pg_rows = [("neomind-local/main/a.md", 2), ("neomind-local/main/b.md", 1)]
+    pg_rows = [("neomind-local/main/a.md", 2, "active"), ("neomind-local/main/b.md", 1, "active")]
     session_factory = _make_session_factory(scalar=3, rows=pg_rows)
     # 真实对象仅 3 个(与 pg 一致);聚合口径被污染成 16983(模拟 like 虚高)
     pipeline = _make_pipeline(
@@ -83,7 +83,7 @@ async def test_summary_level_not_fooled_by_like_token_pollution():
 async def test_verify_healthy_when_counts_match():
     """迭代器口径一致 → is_healthy=True;汇总级不再使用 like 聚合(D4-ACC)。"""
     # Postgres SUM(chunk_count) == Weaviate 迭代器可见 chunks == 10
-    pg_rows = [("wiki-documents-local/main/a.md", 3), ("wiki-documents-local/main/b.md", 7)]
+    pg_rows = [("wiki-documents-local/main/a.md", 3, "active"), ("wiki-documents-local/main/b.md", 7, "active")]
     session_factory = _make_session_factory(scalar=10, rows=pg_rows)
     pipeline = _make_pipeline(
         actual_chunks=10,  # 旧聚合口径的 mock 值,新实现不再读取
@@ -109,7 +109,7 @@ async def test_verify_healthy_when_counts_match():
 async def test_verify_detects_missing_source_ids_when_counts_differ():
     """汇总级不等 → 深入精确级,差集出 pg 有、Weaviate 无(整篇缺失)的 source_id。"""
     # Postgres:3 篇文档 SUM=6;Weaviate 实际 3(缺 doc-a 全部 3 chunks)
-    pg_rows = [("src/doc-a", 3), ("src/doc-b", 2), ("src/doc-c", 1)]
+    pg_rows = [("src/doc-a", 3, "active"), ("src/doc-b", 2, "active"), ("src/doc-c", 1, "active")]
     session_factory = _make_session_factory(scalar=6, rows=pg_rows)
     # Weaviate 只有 doc-b(2 chunks)/ doc-c(1 chunk)
     pipeline = _make_pipeline(actual_chunks=3, wv_chunks={"src/doc-b": {0, 1}, "src/doc-c": {0}})
@@ -133,7 +133,7 @@ async def test_verify_detects_partial_chunk_loss():
     该 doc 需整篇重灌;丢失不算"多余",stale_chunk_count 仍为 0
     (仅统计实际 index 超出 0..chunk_count-1 的部分)。
     """
-    pg_rows = [("src/doc-x", 4)]
+    pg_rows = [("src/doc-x", 4, "active")]
     session_factory = _make_session_factory(scalar=4, rows=pg_rows)
     pipeline = _make_pipeline(actual_chunks=2, wv_chunks={"src/doc-x": {0, 1}})
 
@@ -152,7 +152,7 @@ async def test_verify_detects_extra_chunks():
 
     该 doc 需整篇重灌;多余 2 个 chunk 计入 stale_chunk_count(仅统计,不删除)。
     """
-    pg_rows = [("src/doc-y", 2)]
+    pg_rows = [("src/doc-y", 2, "active")]
     session_factory = _make_session_factory(scalar=2, rows=pg_rows)
     pipeline = _make_pipeline(actual_chunks=4, wv_chunks={"src/doc-y": {0, 1, 2, 3}})
 
@@ -169,7 +169,7 @@ async def test_verify_detects_extra_chunks():
 async def test_refill_unions_missing_and_chunk_mismatch_sorted():
     """refill_source_ids = 整篇缺失 ∪ chunk 集合不一致,排序稳定输出。"""
     # src/doc-a 整篇缺失;src/doc-b 多余 1 chunk;src/doc-c 完全一致
-    pg_rows = [("src/doc-a", 3), ("src/doc-b", 2), ("src/doc-c", 1)]
+    pg_rows = [("src/doc-a", 3, "active"), ("src/doc-b", 2, "active"), ("src/doc-c", 1, "active")]
     session_factory = _make_session_factory(scalar=6, rows=pg_rows)
     pipeline = _make_pipeline(actual_chunks=3, wv_chunks={"src/doc-b": {0, 1, 2}, "src/doc-c": {0}})
 
@@ -206,7 +206,7 @@ async def test_orphan_count_only_within_source_prefix():
     pipeline._class_name = "Document"
 
     # Postgres SUM=1(仅 src/doc-1);迭代器可见 actual=2(ghost 计入)→ 不健康
-    session_factory = _make_session_factory(scalar=1, rows=[("src/doc-1", 1)])
+    session_factory = _make_session_factory(scalar=1, rows=[("src/doc-1", 1, "active")])
 
     report = await verify_source_vectors(session_factory, pipeline, "src")
 

@@ -48,7 +48,7 @@ from backend.api.internal_embeddings import router as internal_embeddings_router
 from backend.api.routes import router as api_router
 from backend.auth.crypto import decrypt_api_key
 from backend.config import load_settings, load_yaml_config
-from backend.db.session import get_engine, get_session_factory, init_db
+from backend.db.session import get_engine, get_session_factory, get_sync_session_factory, init_db
 from backend.embedder.bge import BGEEmbedder, BGEReranker  # noqa: F401 (runtime 工厂默认)
 from backend.llm.registry import LLMRegistry, LLMRouter
 from backend.pipeline.rag import RAGOrchestrator
@@ -362,7 +362,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             channel_customizations = None
 
         # RAG
-        searcher = HybridSearcher(weaviate_client, embedder, settings.weaviate_class_name)
+        # P1 服务选择:在服代集合供给(Postgres 权威:current_version 关系 →
+        # generation_ordinal;激活/墓碑事务提交即时生效)。检索调用栈为同步
+        # (请求路径内阻塞式调用,与既有检索一致)→ 用同步会话直查,不触碰
+        # 事件循环;查询失败由 HybridSearcher 降级为不加生成过滤(fail-open,
+        # 与未迁移部署行为一致)。
+        from backend.services.document_lifecycle import active_generation_ordinals_sync
+
+        _gen_sync_session_factory = get_sync_session_factory(settings.postgres_dsn)
+
+        def _active_generation_provider() -> list[int]:
+            with _gen_sync_session_factory() as session:
+                return active_generation_ordinals_sync(session)
+
+        searcher = HybridSearcher(
+            weaviate_client,
+            embedder,
+            settings.weaviate_class_name,
+            generation_filter_provider=_active_generation_provider,
+        )
         rerank_pipeline = RerankPipeline(reranker)
 
         # Pruner(Phase 3A):检查 routing 中是否有 "pruning" task

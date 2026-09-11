@@ -2,8 +2,8 @@
 
 串联所有 RAG 组件,完成一次完整的数据源 → 向量库同步流程:
     配置加载 → Connector 实例化 → fetch_changes/fetch_all →
-    IngestionPipeline.ingest_all → fetch_deleted → delete_document →
-    SyncLog 写入 Postgres。
+    变更判定 → GenerationBuilder 生成构建/验证/原子激活(持久内容副本
+    入 Postgres)→ fetch_deleted → 墓碑(逻辑删除)→ SyncLog 写入 Postgres。
 
 设计要点
 --------
@@ -24,7 +24,7 @@
 - **CLI 参数**(argparse,比 ``sys.argv`` 更标准):
     --source SOURCE_ID  仅同步指定数据源(默认同步全部启用源)
     --dry-run           仅列举抓取的文档数,不写向量库 / 不写 SyncLog
-    --reindex           删除并重建 collection 后全量重灌
+    --reindex           全量生成重建(新代构建→验证→原子激活,零服务损失)
     --triggered-by      sync_log 触发方标记(auto/manual/cron;
                         独立执行面的 Admin 手动触发显式传 manual)
     --help              显示帮助
@@ -59,9 +59,9 @@ import backend.connectors.github
 import backend.connectors.local_git  # 触发 @register 装饰器
 import backend.connectors.web_crawl  # 触发 @register 装饰器
 import backend.connectors.woocommerce  # noqa: F401 - 触发 @register 装饰器
-from backend.connectors.github import GitTransportError  # #34:传输失败证据化分类
 from backend.config import Settings, load_settings
 from backend.connectors.db_adapter import to_source_config
+from backend.connectors.github import GitTransportError  # #34:传输失败证据化分类
 from backend.connectors.registry import ConnectorRegistry, SourceConfig
 from backend.db.models import DataSource, Document, SyncLog
 from backend.db.session import (
@@ -78,7 +78,9 @@ from backend.embedder.fallback import (
     _terminal_sync_embedder,
 )
 from backend.embedder.remote import build_remote_sync_embedder
+from backend.pipeline.generation_builder import GenerationBuilder
 from backend.pipeline.ingest import IngestionPipeline
+from backend.services import document_lifecycle as lifecycle
 from backend.services.source_lifecycle import sync_eligible_condition
 from backend.services.sync_runs import (
     STAGE_CHUNK,
@@ -479,6 +481,7 @@ async def _handle_no_change(
     start: float,
     dry_run: bool = False,
     telemetry: "_RunTelemetry | None" = None,
+    builder: GenerationBuilder | None = None,
 ) -> None:
     """无变更路径:先做向量一致性校验,缺口则 fetch_all 过滤补灌并记 partial。
 
@@ -505,6 +508,8 @@ async def _handle_no_change(
         start: time.monotonic() 起点(算 duration_ms)。
         dry_run: True 时维持旧语义仅统计,绝不触发校验/灌入副作用。
     """
+    if builder is None:
+        builder = GenerationBuilder(pipeline, pipeline._session_factory)
     if dry_run:
         # dry-run 原语义:无变更时也只列举,不做任何校验/写库副作用
         log_entry.items_new = 0
@@ -555,13 +560,29 @@ async def _handle_no_change(
         items_updated = 0
         if report.refill_source_ids:
             refill_set = set(report.refill_source_ids)
-            docs = [d for d in connector.fetch_all() if d.source_id in refill_set]
-            results = pipeline.ingest_all(docs)  # 写失败仍 raise → 走外层 except 记 failed
-            items_updated = sum(results.values())
+            # P1 gap-heal:优先从 PG 持久 chunk 副本重建(零源抓取;真值驱动);
+            # 无持久副本的迁移缺口文档回退源抓取 + 强制重建(新代激活,非原位覆写)。
+            repaired, unrepairable, chunks_repaired = builder.repair_documents(
+                sorted(refill_set), source_id_scope=source_id
+            )
+            items_updated = chunks_repaired
             gap_parts.append(
                 f"需重灌 {refill_n} 篇(整篇缺失 {missing_n} + chunk 不一致 {mismatch_n});"
-                f"多余 chunk {report.stale_chunk_count} 个(已由 ingest 清理)"
+                f"真值修复 {len(repaired)} 篇/{chunks_repaired} chunks"
             )
+            if report.stale_chunk_count:
+                gap_parts.append(
+                    f"多余 chunk {report.stale_chunk_count} 个"
+                    "(退出在服投影;物理清除仅经 retire/GC)"
+                )
+            if unrepairable:
+                docs = [d for d in connector.fetch_all() if d.source_id in set(unrepairable)]
+                _fb = builder.build_generation(docs, source_id=source_id, force_rebuild=True)
+                items_updated += _fb.chunks_written
+                gap_parts.append(
+                    f"无持久副本回退源重建 {len(_fb.updated_docs) + len(_fb.new_docs)} 篇"
+                    f"/{_fb.chunks_written} chunks"
+                )
         retired = repaired = unresolved = 0
         chunk_totals = {"retired_chunks": 0, "repaired_chunks": 0}
         if report.orphan_chunks:
@@ -787,18 +808,20 @@ def _reconcile_orphan_vectors(
                 continue
             try:
                 with session_factory() as session:
-                    session.add(
-                        Document(
-                            content_hash=str(content_hash),
-                            source_id=sid,
-                            source_type=str(props.get("source_type") or ""),
-                            product=str(props.get("product") or ""),
-                            title=str(props.get("title") or ""),
-                            url=str(props.get("url") or ""),
-                            branch=str(props.get("branch") or ""),
-                            chunk_count=max(indices) + 1,
-                        )
+                    doc_row = Document(
+                        content_hash=str(content_hash),
+                        source_id=sid,
+                        source_type=str(props.get("source_type") or ""),
+                        product=str(props.get("product") or ""),
+                        title=str(props.get("title") or ""),
+                        url=str(props.get("url") or ""),
+                        branch=str(props.get("branch") or ""),
+                        chunk_count=max(indices) + 1,
                     )
+                    session.add(doc_row)
+                    # P1 不变量:每文档恒有 current 版本(账本修复同样落初始版本,
+                    # 归迁移初始代;chunk 副本暂缺属迁移缺口,由 repair/refill 演进)
+                    lifecycle.ensure_initial_version(session, doc_row)
                     session.commit()
                 repaired += 1
                 if chunk_totals is not None:
@@ -855,16 +878,16 @@ async def _sync_one(
     request_id: int | None = None,
     attempt: int = 1,
     recovery_replay: bool = False,
+    builder: GenerationBuilder | None = None,
 ) -> bool:
-    """同步单个数据源:fetch → ingest → delete → 写 SyncLog。
+    """同步单个数据源:fetch → 变更判定/生成构建/原子激活 → 墓碑 → 写 SyncLog。
 
     - 异常被捕获并记录到 SyncLog(status="failed"),**不向上传播**,
       避免一个数据源失败中断整个批次。
     - ``dry_run=True`` 时只列举文档数,不灌入向量库、不写 SyncLog。
-    - ``reindex=True`` 时绕过增量 skip 逻辑,强制 ``fetch_all()`` 全量重灌。
-      用于 schema 变更 / 符号字段回填等需要重分块的场景。配合 ``run_sync``
-      的 collection 删除,所有对象全新 insert(insert_many 批量写,不走
-      replace 回退,远程 tunnel 下性能可接受)。
+    - ``reindex=True`` 时绕过增量 skip 逻辑,强制 ``fetch_all()`` 全量重建:
+      **P1 语义 = 生成重建 + 原子激活**(旧"先删整个 collection 再重灌"已
+      废除——重建期间在服投影分毫不动,验证通过才切换,Gate P1-E)。
     - ``finally`` 块确保无论成功 / 失败 / 异常都会写 SyncLog(除非 dry_run)。
     - 返回值(#34):本次是否发生**传输类**失败(GitTransportError)。
       业务失败仍恒以 0 退出(契约 §14 不变);run_sync 聚合后决定 runner
@@ -879,6 +902,8 @@ async def _sync_one(
         reindex: True 时强制全量重灌(绕过增量 skip)。
     """
     start = time.monotonic()
+    if builder is None:
+        builder = GenerationBuilder(pipeline, pipeline._session_factory)
     log_entry = SyncLog(
         source_id=cfg.id,
         source_type=cfg.type,
@@ -932,10 +957,9 @@ async def _sync_one(
         logger.info("数据源 %s 增量窗口: %s", cfg.id, since.isoformat())
 
         if reindex:
-            # reindex 模式:绕过增量 skip,强制全量重灌(符号字段回填 /
-            # schema 变更)。collection 已由 run_sync 删除,此处 fetch_all
-            # 后全部走 insert_many 批量写,UUID 不冲突。
-            logger.info("reindex 模式:数据源 %s 强制全量重灌", cfg.id)
+            # reindex 模式(P1 语义):绕过增量 skip,强制 fetch_all 全量重建。
+            # 构建走新生成代(旧代持续服务),验证通过才原子激活——先删后灌已废除。
+            logger.info("reindex 模式:数据源 %s 全量生成重建(零服务损失)", cfg.id)
             docs = list(connector.fetch_all())
             await tel.progress(session_factory, STAGE_FETCH, len(docs), len(docs))
         else:
@@ -956,6 +980,7 @@ async def _sync_one(
                         start,
                         dry_run=dry_run,
                         telemetry=tel if not dry_run else None,
+                        builder=builder,
                     )
                     return
                 # 首次同步:documents 表无记录,回退到全量拉取
@@ -1021,7 +1046,16 @@ async def _sync_one(
 
         flusher = asyncio.create_task(_flush_ingest_progress())
         try:
-            results = await asyncio.to_thread(pipeline.ingest_all, docs, progress=_ingest_progress)
+            # P1:生成构建 + 原子激活(替代旧 ingest_all 原位覆写)。
+            # 任一文档失败 → IngestFailures raise → 本轮零激活,旧真相持续服务
+            # (既有"失败不推窗口"纪律不变);reindex → force_rebuild 全量重建。
+            accounting = await asyncio.to_thread(
+                builder.build_generation,
+                docs,
+                source_id=cfg.id,
+                force_rebuild=reindex,
+                progress=_ingest_progress,
+            )
         finally:
             flusher.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -1031,13 +1065,25 @@ async def _sync_one(
         for _st in (STAGE_SAFETY_FILTER, STAGE_CHUNK, STAGE_EMBED, STAGE_INDEX):
             if _st in _ingest_live:
                 await tel.progress(session_factory, _st, _ingest_live[_st], _docs_total)
-        await tel.counters(session_factory, docs_total=_docs_total, docs_done=len(results))
+        await tel.counters(session_factory, docs_total=_docs_total, docs_done=len(docs))
+        # P1 删除安全:fetch_deleted → 墓碑(逻辑删除,非物理;I-6/FC-4)。
+        # 墓碑文档即时退出服务集(active 集不再含其对象),物理清除仅经 GC。
         deleted = connector.fetch_deleted(since)
-        for doc_id in deleted:
-            pipeline.delete_document(doc_id)
+        tombstoned = 0
+        # 账本工厂缺省(无 Postgres 部署/纯投影运行)时墓碑不可能成立:
+        # 逻辑删除原语依赖账本;此处如实跳过(物理清除本就仅经 GC),
+        # 绝不以删除向量对象伪造墓碑语义。
+        if deleted and pipeline._session_factory is not None:
+            with pipeline._session_factory() as sync_session:
+                for doc_id in deleted:
+                    if lifecycle.tombstone_document(
+                        sync_session, doc_id, reason=f"fetch_deleted:{cfg.id}"
+                    ):
+                        tombstoned += 1
+                sync_session.commit()
         # 阶段⑩ W6:retirement 效应安全完成后才推进 crawl 成员快照。
         # 删除循环中途被 kill → 本调用不执行 → 旧快照保留 → 下轮重报同一
-        # 差集(重复删除幂等),ghost 不再永久化。无此能力的 connector no-op。
+        # 差集(重复墓碑幂等),ghost 不再永久化。无此能力的 connector no-op。
         committer = getattr(connector, "commit_membership_snapshot", None)
         if callable(committer):
             committer()
@@ -1069,9 +1115,12 @@ async def _sync_one(
             )
             await tel.consistency(session_factory, {"verification_failed": str(exc)[:300]})
 
-        log_entry.items_new = sum(1 for v in results.values() if v > 0)
-        log_entry.items_updated = sum(results.values())
-        log_entry.items_deleted = len(deleted)
+        log_entry.items_new = len(accounting.new_docs)
+        # 既有 SyncLog 口径:items_updated 按 chunk 数记账;metadata-only 变更
+        # (零重嵌)按篇计入,保持"本轮发生变更的量"可观测。
+        log_entry.items_updated = accounting.chunks_written + len(accounting.metadata_docs)
+        log_entry.items_deleted = tombstoned
+        log_entry.items_unchanged = len(accounting.unchanged_docs)
 
         # WEB 合同#6/#7:全量抓取覆盖记账 —— coverage 行始终写入 error_detail
         # (成功也留痕),完整性不足时降级 status,绝不让「85 页只活 2 页」
@@ -1217,11 +1266,9 @@ async def run_sync(
         triggered_by: 显式触发方标记("manual"/"cron");``None`` 按旧规则
             由 source_id 推导(独立执行面的手动触发经 CLI 显式传 manual)。
         dry_run: 仅列举抓取的文档数,不灌入向量库 / 不写 SyncLog。
-        reindex: 删除并重建 Weaviate collection 后全量同步所有数据源。
-            Weaviate v4 不允许修改已有 collection 的 property 类型,故
-            schema 变更(如 Task 4 新增的 channel_visibility / doc_section /
-            chunk_type)必须通过 ``--reindex`` 触发 collection 重建才能生效。
-            ⚠️ 期间服务不可用(零停机迁移为后续工作)。
+        reindex: 全量**生成重建**(逐源 fetch_all → 新代构建 → 验证 →
+            原子激活)。P1 语义:旧"先删 collection 再重灌"已废除,
+            重建全程服务不中断(零停机,契约 Gate P1-E)。
 
     Returns:
         #34:本次运行是否发生传输类失败(GitTransportError)。main 据此以
@@ -1235,20 +1282,16 @@ async def run_sync(
         host, port = _parse_weaviate_endpoint(settings.weaviate_url)
         weaviate_client = weaviate.connect_to_local(host=host, port=port)
 
-        if reindex and not dry_run:
-            logger.info("reindex 模式:删除 collection %s", settings.weaviate_class_name)
-            try:
-                weaviate_client.collections.delete(
-                    name=settings.weaviate_class_name,
-                )
-                logger.info(
-                    "collection %s 已删除,将由 IngestionPipeline 重建",
-                    settings.weaviate_class_name,
-                )
-            except Exception as exc:  # noqa: BLE001 - collection 不存在时不中断
-                logger.warning("删除 collection 失败(可能不存在):%s", exc)
-        elif reindex and dry_run:
-            logger.warning("reindex 在 dry_run 模式下跳过 collection 删除(避免删后不重灌)")
+        if reindex and dry_run:
+            logger.warning("reindex 在 dry_run 模式下仅列举,不构建(P1:零服务损失重建)")
+        elif reindex:
+            # P1:--reindex 语义 = 生成重建 + 原子激活(逐源,见 _sync_one)。
+            # 旧"先删整个 collection 再重灌"已废除(先删后灌不再是任何权威
+            # 重建路径,Gate P1-E);重建全程在服投影分毫不动。
+            logger.info(
+                "reindex 模式:全量生成重建(旧'先删 collection'已废除;"
+                "重建期间服务不中断)"
+            )
 
         if not dry_run:
             await init_db(engine)
@@ -1273,6 +1316,7 @@ async def run_sync(
             # 预切超限 chunk,杜绝「文本超长 → 413 → 整文档必败且重试无效」。
             max_chunk_chars=settings.embedder_max_length,
         )
+        builder = GenerationBuilder(pipeline, sync_session_factory)
 
         marker = _resolve_triggered_by(source_id, triggered_by)
         if force_replay:
@@ -1293,6 +1337,7 @@ async def run_sync(
                 request_id=request_id,
                 attempt=attempt,
                 recovery_replay=force_replay,
+                builder=builder,
             ):
                 had_transport_failure = True
     finally:
@@ -1329,7 +1374,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--reindex",
         action="store_true",
-        help="删除并重建 Weaviate collection 后全量同步所有数据源",
+        help="全量生成重建(逐源 fetch_all → 新代构建 → 验证 → 原子激活;"
+        "零服务损失;P1 起不再先删 collection)",
     )
     parser.add_argument(
         "--triggered-by",
