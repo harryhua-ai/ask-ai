@@ -365,6 +365,12 @@ def test_query_preempts_queued_sync():
     release_s1.set()
     t_q.join(timeout=10)
     assert not t_q.is_alive(), "查询必须能在一个在飞 sync 批次内得到执行"
+    # s2 的 worker 线程调度与主线程断言存在竞态(CI 慢机上两次实证):
+    # 先有界等待 s2:start 真正出现,再做顺序断言——排序契约本身不变。
+    deadline = time.time() + 10
+    while "s2:start" not in script["calls"] and time.time() < deadline:
+        time.sleep(0.005)
+    assert "s2:start" in script["calls"], f"s2 未在在飞批次结束后启动: {script['calls']}"
     # 排队中的 sync 只能在查询完成之后启动(顺序断言见下方 ends 序列)
     assert script["calls"].index("s2:start") > script["calls"].index("q:end")
     assert t_s2.is_alive()  # s2 已启动但仍在等脚本释放(不构成抢先)
