@@ -44,6 +44,52 @@ logger = logging.getLogger(__name__)
 # https://github.com/{owner}/{repo}[.git] —— 兼容带 / 不带 .git 后缀
 _REPO_URL_RE = re.compile(r"github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$", re.IGNORECASE)
 
+# ---- #34:git 传输失败的证据化分类(生产 09-07 事故:github.com:443 连接
+#      ~130s 后失败,attempt=1/recovery=false 无有界恢复)---- #
+
+# stderr 证据模式:命中即判定传输层失败(可重试类)。生产实测样本:
+# 「Failed to connect to github.com port 443 after 130072 ms: Couldn't connect to server」
+_TRANSPORT_PATTERNS: tuple[str, ...] = (
+    "failed to connect",  # TCP 连接失败(含 SYN 超时耗尽)
+    "could not resolve host",  # DNS 解析失败
+    "connection timed out",  # 连接超时
+    "timed out",  # 通用超时(libcurl 各相位)
+    "connection reset",  # 连接被重置
+    "ssl",  # TLS/SSL 层失败(openssl 前缀)
+    "gnutls",  # TLS 层失败(gnutls 后端)
+    "tls connection",  # TLS 握手失败(TLS 措辞)
+)
+
+# 子进程总时长上限(秒);生产默认 900s,env 可调;≤0 关闭(旧行为)。
+_DEFAULT_GIT_TIMEOUT_SECONDS = 900
+
+
+class GitTransportError(RuntimeError):
+    """git 传输层失败(连接/DNS/超时/SSL),证据化可重试类(#34)。
+
+    与普通 RuntimeError(非传输类业务/契约失败,如分支不存在、鉴权拒绝)
+    区分:sync.py 据此计入 transport_failures 并决定 run 退出码,从而落入
+    executor 既有 runner_failed 有界重试(4 次/30/120/600s)。
+    """
+
+
+def _git_timeout_seconds() -> float | None:
+    """读 git 子进程超时(env ``GITHUB_GIT_TIMEOUT_SECONDS``);≤0/非法 = None(关闭)。"""
+    raw = os.environ.get("GITHUB_GIT_TIMEOUT_SECONDS", "")
+    if not raw:
+        return float(_DEFAULT_GIT_TIMEOUT_SECONDS)
+    try:
+        value = float(raw)
+    except ValueError:
+        return float(_DEFAULT_GIT_TIMEOUT_SECONDS)
+    return value if value > 0 else None
+
+
+def _is_transport_failure(summary: str) -> bool:
+    """脱敏后的 git stderr 摘要是否命中传输失败证据模式(#34 证据化分类)。"""
+    lowered = summary.lower()
+    return any(pattern in lowered for pattern in _TRANSPORT_PATTERNS)
+
 
 @ConnectorRegistry.register("github")
 class GitHubConnector(DataSourceConnector):
@@ -120,18 +166,35 @@ class GitHubConnector(DataSourceConnector):
         URL)且丢弃 stderr 真因,错误不可诊断还泄密。私有仓库仓库不存在
         时 clone 亦走此路径(如被自动带入的 main)。
 
+        #34:子进程带显式超时(默认 900s,env ``GITHUB_GIT_TIMEOUT_SECONDS``
+        可调,≤0 关闭),消除「连接挂起可无限占用 run」;超时与传输类失败
+        (连接/解析/超时/SSL)抛 :class:`GitTransportError`,供上层做证据化
+        分类与有界恢复;其余 git 失败维持原 RuntimeError(非重试类)。
+
         Args:
             args: git 子命令与参数(不含 "git" 前缀;可含鉴权 URL,脱敏后展示)。
             cwd: 工作目录(已有 clone 的 fetch/reset 用)。
 
         Raises:
-            RuntimeError: 命令非零退出,message 含脱敏后的 stderr 首行摘要。
+            GitTransportError: 超时或 stderr 证据表明传输层失败(可重试类)。
+            RuntimeError: 命令非零退出(非传输类),message 含脱敏后 stderr 首行摘要。
         """
-        proc: subprocess.CompletedProcess[str] | subprocess.CalledProcessError
+        timeout = _git_timeout_seconds()
         try:
-            proc = subprocess.run(
-                ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
+            proc: subprocess.CompletedProcess[str] | subprocess.CalledProcessError = subprocess.run(
+                ["git", *args],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
             )
+        except subprocess.TimeoutExpired as exc:
+            safe_args = " ".join(self._sanitize(a) for a in args)
+            detail = self._sanitize(str(exc.stderr or "") or f"timeout after {timeout}s")
+            raise GitTransportError(
+                f"git {safe_args} 失败(传输超时,timeout={timeout}s): {detail[:200]}"
+            ) from None
         except subprocess.CalledProcessError as exc:  # check=True 调用形态兼容
             proc = exc
         if getattr(proc, "returncode", 1) == 0:
@@ -144,6 +207,8 @@ class GitHubConnector(DataSourceConnector):
             lines[0] if lines else f"exit code {proc.returncode}",
         )[:200]
         safe_args = " ".join(self._sanitize(a) for a in args)
+        if _is_transport_failure(summary):
+            raise GitTransportError(f"git {safe_args} 失败: {summary}") from None
         raise RuntimeError(f"git {safe_args} 失败: {summary}") from None
 
     def _ensure_cloned(self, branch: str) -> None:
