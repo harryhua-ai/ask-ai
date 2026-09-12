@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom";
 import {
   Database,
+  LayoutGrid,
   Palette,
   Sparkles,
   Cpu,
@@ -69,8 +70,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <aside className="flex w-60 flex-col border-r bg-card">
-      <div className="flex h-14 items-center border-b px-6">
-        <span className="text-lg font-bold">Ask AI</span>
+      <div className="flex h-14 items-center gap-2.5 border-b px-4">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+          <LayoutGrid className="h-4 w-4" />
+        </span>
+        <span className="text-lg font-bold tracking-tight">ASK-AI</span>
       </div>
       <nav className="flex-1 space-y-4 p-3">
         <div className="space-y-1">

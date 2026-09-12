@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  /* 可观测性设计 token(三页统一) */
+  /* 可观测性设计 token(三页统一;--acc 已随 v1.6.3 Integration 收敛到参考蓝,与 --primary 同源) */
   --bg: #fafafa;
   --panel: #fff;
   --bd: #ececec;
@@ -11,8 +11,8 @@
   --t1: #111827;
   --t2: #6b7280;
   --t3: #9ca3af;
-  --acc: #4f46e5;
-  --acc-t: #eef2ff;
+  --acc: #2563eb;
+  --acc-t: #eff6ff;
   --warn: #b45309;
   --err: #dc2626;
   --ok: #059669;
@@ -24,7 +24,9 @@
   --card-foreground: 0 0% 3.9%;
   --popover: 0 0% 100%;
   --popover-foreground: 0 0% 3.9%;
-  --primary: 0 0% 9%;
+  /* v1.6.3 Integration:共享主操作语法收敛到参考蓝(KB-OPS-V163-002 §7 primary blue actions)。
+     #2563eb = hsl(221.2 83.2% 53.3%),全应用主按钮/选中导航/链接/开关选中态共用此 token。 */
+  --primary: 221.2 83.2% 53.3%;
   --primary-foreground: 0 0% 98%;
   --secondary: 0 0% 96.1%;
   --secondary-foreground: 0 0% 9%;
@@ -36,7 +38,7 @@
   --destructive-foreground: 0 0% 98%;
   --border: 0 0% 89.8%;
   --input: 0 0% 89.8%;
-  --ring: 0 0% 3.9%;
+  --ring: 221.2 83.2% 53.3%;
   --radius: 0.5rem;
 }
 

@@ -1,15 +1,24 @@
 import { type ReactNode, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Menu } from "lucide-react";
+import { ChevronDown, LogOut, Menu } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 
 export function Layout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const displayName = user?.name || user?.email || "";
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -47,19 +56,45 @@ export function Layout({ children }: { children: ReactNode }) {
             >
               <Menu className="h-5 w-5" />
             </Button>
-            <span className="truncate text-sm text-muted-foreground">
-              欢迎，{user?.name || user?.email}
-            </span>
           </div>
-          <div className="flex shrink-0 items-center gap-3">
-            <span className="rounded bg-muted px-2 py-0.5 text-xs">{user?.role}</span>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => { logout(); navigate("/login"); }}
-            >
-              退出
-            </Button>
+          {/* v1.6.3 Integration:身份区收敛为 头像+用户名+角色 身份菜单(KB-OPS-V163-002 共享 chrome 语法);
+              登出沿用既有 auth 真相,语义不变。 */}
+          <div className="flex shrink-0 items-center">
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                className={cn(
+                  "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm outline-none transition-colors",
+                  "hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+                )}
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
+                  {displayName.slice(0, 1).toUpperCase()}
+                </span>
+                <span className="max-w-[16rem] truncate font-medium">{displayName}</span>
+                <span className="rounded bg-muted px-2 py-0.5 text-xs">{user?.role}</span>
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[14rem]">
+                <DropdownMenuLabel className="flex flex-col">
+                  <span className="truncate">{displayName}</span>
+                  {user?.email && user.email !== displayName && (
+                    <span className="truncate text-xs font-normal text-muted-foreground">
+                      {user.email}
+                    </span>
+                  )}
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => {
+                    logout();
+                    navigate("/login");
+                  }}
+                >
+                  <LogOut className="h-4 w-4" />
+                  退出
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
         <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
