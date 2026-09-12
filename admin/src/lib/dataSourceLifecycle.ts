@@ -175,7 +175,9 @@ export function bucketCountsOf(input: BucketCountsInput): Record<BucketKey, numb
 
 /** 桶/原因合成所需的完整权威字段子集(清单行超集)。 */
 export interface ReasonInput extends BucketInput {
-  current_version_seq: number | null;
+  /** 未被 notServingReason 引用(原因只来自 L 轴状态 + 接替/删除权威字段);
+   * optional 以兼容清单行与单文档真相两种输入形状。 */
+  current_version_seq?: number | null;
   superseded_by?: string | null;
   superseded_at?: string | null;
   deleted_at?: string | null;
