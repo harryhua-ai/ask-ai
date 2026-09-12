@@ -428,3 +428,90 @@ export interface ReleaseInfo {
   ci_run_id: string | null;
   source: "manifest" | "fallback";
 }
+
+// ==================== #7 系统运行时可观测(SystemRuntime) ====================
+// 与后端 GET /api/admin/system/runtime 一一对应。每项观测四元组:
+// available/value/reason/as_of;不可得 → available:false + 非空原因、
+// value 恒 null(后端绝不虚构,前端如实直呈)。
+
+export interface RuntimeObservation<T = string | number | boolean | null> {
+  available: boolean;
+  value: T;
+  reason: string | null;
+  as_of: string;
+}
+
+export interface HostRuntimeSection {
+  as_of: string;
+  hostname: RuntimeObservation;
+  os: RuntimeObservation;
+  kernel: RuntimeObservation;
+  uptime_seconds: RuntimeObservation;
+}
+
+export interface ResourcesRuntimeSection {
+  as_of: string;
+  cpu_model: RuntimeObservation;
+  cpu_logical_cores: RuntimeObservation;
+  cpu_utilization_percent: RuntimeObservation;
+  loadavg_1m: RuntimeObservation;
+  loadavg_5m: RuntimeObservation;
+  loadavg_15m: RuntimeObservation;
+  memory_total_mb: RuntimeObservation;
+  memory_used_mb: RuntimeObservation;
+  memory_available_mb: RuntimeObservation;
+  swap_total_mb: RuntimeObservation;
+  swap_used_mb: RuntimeObservation;
+  disk_path: RuntimeObservation;
+  disk_total_gb: RuntimeObservation;
+  disk_used_gb: RuntimeObservation;
+  disk_free_gb: RuntimeObservation;
+  disk_used_percent: RuntimeObservation;
+}
+
+export interface AcceleratorGpuInfo {
+  index: number | null;
+  uuid: string | null;
+  name: string | null;
+  driver_version: string | null;
+  utilization_percent: number | null;
+  memory_used_mb: number | null;
+  memory_free_mb: number | null;
+  memory_total_mb: number | null;
+  temperature_c: number | null;
+  as_of: string;
+}
+
+export interface AcceleratorRuntimeSection {
+  as_of: string;
+  available: boolean;
+  reason: string | null;
+  driver_version: RuntimeObservation;
+  cuda_version: RuntimeObservation;
+  gpus: AcceleratorGpuInfo[];
+  nvidia_smi_error: string | null;
+}
+
+/** model-runtime snapshot 真相面五键直呈(与 /model-runtime GET 同源,只读)。 */
+export interface ModelRuntimeSummary {
+  devices: Array<Record<string, unknown>>;
+  policies: Array<Record<string, unknown>>;
+  shared_embedding_runtime: boolean;
+  runtime_plan: Record<string, unknown>;
+  capacity: Record<string, unknown>;
+}
+
+export interface ServiceRuntimeSection {
+  as_of: string;
+  health: RuntimeObservation;
+  release: RuntimeObservation<ReleaseInfo | null>;
+  model_runtime: RuntimeObservation<ModelRuntimeSummary | null>;
+}
+
+export interface SystemRuntimeInfo {
+  as_of: string;
+  host: HostRuntimeSection;
+  resources: ResourcesRuntimeSection;
+  accelerator: AcceleratorRuntimeSection;
+  service: ServiceRuntimeSection;
+}
