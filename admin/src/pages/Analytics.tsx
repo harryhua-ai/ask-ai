@@ -15,8 +15,18 @@ import {
   fetchCoverageGaps,
   fetchGapTrends,
   fetchSourceHealth,
+  fetchSyncIncidents,
+  fetchGenerationEvents,
+  type GenerationEventItem,
 } from "@/lib/api/techInsight";
 import type { TechKpi } from "@/lib/api/techInsight";
+import {
+  syncIncidentSeverity,
+  syncIncidentTypeLabel,
+  generationEventSeverity,
+  generationEventTypeLabel,
+  type IncidentSeverity,
+} from "@/lib/generationStatus";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -193,6 +203,9 @@ function TechPerfTab({ range }: { range: string }) {
         </div>
       )}
 
+      {/* #51 B2 事件信号区:同步/索引/生成失败与降级事件(每行可下钻源详情) */}
+      <IncidentSection />
+
       {/* DIAGNOSTIC:慢在哪 / 什么异常 / 降级到什么 */}
       <div data-tech-grid3 className="grid grid-cols-3 gap-4">
         {/* 瓶颈在哪:阶段表 + 主导瓶颈高亮 */}
@@ -349,6 +362,182 @@ function TechPerfTab({ range }: { range: string }) {
       )}
     </div>
   );
+}
+
+/** #51 B2 事件信号区统一行模型:症状 → 源详情下钻。
+ *  洞察页零源清单:行内只呈现事件事实(源归属/类型/时间/原因/严重度),
+ *  源的全部事实经链接进入 /data-sources/{id}(#50 FROZEN INTERFACE)。 */
+interface IncidentRow {
+  key: string;
+  sourceId: string;
+  /** 机器类型:sync_failed / sync_interrupted / generation_failed / generation_retired。 */
+  typeKey: string;
+  typeLabel: string;
+  severity: IncidentSeverity;
+  eventAt: string | null;
+  reason: string | null;
+  detail: string | null;
+}
+
+const SEVERITY_COLOR: Record<IncidentSeverity, string> = {
+  error: "var(--err)",
+  warning: "var(--warn)",
+  info: "var(--t3)",
+};
+
+/** 同步/索引/生成事件信号区(复用优先裁定,#51 B2):
+ *  - 同步级事件:既有 GET /sync-runs(failed/interrupted 跨源,零新增后端);
+ *  - 生成级事件:新增只读 GET /tech/generation-events(failed/retired)。
+ *  每行 react-router Link 下钻 /data-sources/{source_id}(source_id 经
+ *  encodeURIComponent 编码;组合前该路由尚不存在属预期,端到端点击验收
+ *  在 Integration B 组合树执行)。 */
+function IncidentSection() {
+  const syncQuery = useQuery({
+    queryKey: ["sync-incidents"],
+    queryFn: () => fetchSyncIncidents(10),
+  });
+  const genQuery = useQuery({
+    queryKey: ["generation-events"],
+    queryFn: () => fetchGenerationEvents(10),
+  });
+
+  if (syncQuery.isLoading || genQuery.isLoading) {
+    return (
+      <div
+        className="rounded-lg border p-4"
+        style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
+        data-incident-section
+      >
+        <h2 className="text-[14px] font-medium text-[var(--t1)]">
+          同步 / 索引 / 生成事件
+        </h2>
+        <div className="mt-1 text-[12px] text-[var(--t3)]">加载中...</div>
+      </div>
+    );
+  }
+
+  const rows: IncidentRow[] = [];
+  const sync = syncQuery.data;
+  if (sync) {
+    for (const r of sync.failed.items) {
+      rows.push({
+        key: `sync-${r.id}`,
+        sourceId: r.source_id,
+        typeKey: "sync_failed",
+        typeLabel: syncIncidentTypeLabel(r.status),
+        severity: syncIncidentSeverity(r.status),
+        eventAt: r.started_at,
+        reason: r.error_summary ?? r.fallback_reason ?? r.sync_log?.error_detail ?? null,
+        detail: `第 ${r.attempt ?? 1} 次尝试${r.stage ? ` @ ${r.stage}` : ""}`,
+      });
+    }
+    for (const r of sync.interrupted.items) {
+      rows.push({
+        key: `sync-${r.id}`,
+        sourceId: r.source_id,
+        typeKey: "sync_interrupted",
+        typeLabel: syncIncidentTypeLabel(r.status),
+        severity: syncIncidentSeverity(r.status),
+        eventAt: r.started_at,
+        reason: r.error_summary ?? r.fallback_reason ?? null,
+        detail: `第 ${r.attempt ?? 1} 次尝试${r.stage ? ` @ ${r.stage}` : ""}`,
+      });
+    }
+  }
+  const gen = genQuery.data;
+  if (gen) {
+    for (const e of gen.items) {
+      rows.push(generationEventRow(e));
+    }
+  }
+  rows.sort(
+    (a, b) =>
+      new Date(b.eventAt ?? 0).getTime() - new Date(a.eventAt ?? 0).getTime(),
+  );
+  const visible = rows.slice(0, 10);
+
+  if (!sync && !gen) {
+    // 两路读面都失败:显式请求失败态(不渲染为空态)
+    return (
+      <div data-incident-section>
+        <LoadError
+          error={syncQuery.error ?? genQuery.error}
+          onRetry={() => {
+            void syncQuery.refetch();
+            void genQuery.refetch();
+          }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="rounded-lg border p-4"
+      style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
+      data-incident-section
+    >
+      <div className="flex items-baseline justify-between mb-2">
+        <h2 className="text-[14px] font-medium text-[var(--t1)]">
+          同步 / 索引 / 生成事件
+        </h2>
+        <span className="text-[11px] text-[var(--t3)]">
+          最近事件 · 点击行查看归属数据源
+        </span>
+      </div>
+      {visible.length === 0 ? (
+        <div className="text-[12px] text-[var(--t3)]">
+          无同步 / 索引 / 生成失败事件
+        </div>
+      ) : (
+        <div className="space-y-1" data-incident-list>
+          {visible.map((row) => (
+            <Link
+              key={row.key}
+              to={`/data-sources/${encodeURIComponent(row.sourceId)}`}
+              data-incident-row
+              data-incident-type={row.typeKey}
+              data-severity={row.severity}
+              data-source-id={row.sourceId}
+              title="查看归属数据源详情"
+              className="flex items-center gap-2 rounded px-2 py-1.5 text-[13px] hover:bg-black/5"
+            >
+              <span
+                className="inline-block w-2 h-2 rounded-full shrink-0"
+                style={{ background: SEVERITY_COLOR[row.severity] }}
+              />
+              <span className="shrink-0">{row.typeLabel}</span>
+              <span className="shrink-0 text-[var(--t1)]">{row.sourceId}</span>
+              <span className="flex-1 truncate text-[var(--t2)]">
+                {row.reason ?? "—"}
+                {row.detail && (
+                  <span className="text-[var(--t3)]"> · {row.detail}</span>
+                )}
+              </span>
+              {row.eventAt && (
+                <span className="shrink-0 text-[11px] text-[var(--t3)] tabular-nums">
+                  {new Date(row.eventAt).toLocaleString()}
+                </span>
+              )}
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function generationEventRow(e: GenerationEventItem): IncidentRow {
+  return {
+    key: `generation-${e.generation_id}`,
+    sourceId: e.source_id,
+    typeKey: `generation_${e.status}`,
+    typeLabel: generationEventTypeLabel(e.status),
+    severity: generationEventSeverity(e.status),
+    eventAt: e.event_at,
+    reason: e.reason_summary,
+    detail: `第 ${e.ordinal} 代`,
+  };
 }
 
 /** 数据源健康摘要:一行计数 + 跳转链接;逐源明细与操作见数据源管理页。
@@ -516,7 +705,16 @@ function KnowledgeGapsTab() {
               {data.items.map((cluster) => (
                 <TableRow key={cluster.id}>
                   <TableCell className="font-medium">
-                    {cluster.representative_question}
+                    {/* #51 B2 冻结下钻参数语法:/conversations?q={代表问题
+                        URL 编码}(Conversations 页已读 q 参数做全文搜索) */}
+                    <Link
+                      to={`/conversations?q=${encodeURIComponent(cluster.representative_question)}`}
+                      data-action="inspect-gap"
+                      title="在对话审查中核查该缺口"
+                      className="text-[var(--acc)] hover:underline"
+                    >
+                      {cluster.representative_question}
+                    </Link>
                   </TableCell>
                   <TableCell>
                     {cluster.miss_type && <GapTypeBadge type={cluster.miss_type} />}

@@ -1,5 +1,5 @@
 import { apiFetch } from "@/lib/api";
-import type { ClusterList } from "@/types/api";
+import type { ClusterList, SyncRunList } from "@/types/api";
 
 export interface TechKpi {
   p95_ms: number;
@@ -127,4 +127,55 @@ export function fetchSourceHealth(
   days: number = 30,
 ): Promise<{ items: SourceHealthItem[]; days: number }> {
   return apiFetch(`/analytics/source-health?days=${days}`);
+}
+
+// --------------------------------------------------------------------------- //
+// #51 B2 事件信号区(复用优先:同步级事件消费既有 GET /sync-runs 权威读面;
+// 生成级事件是该缺口唯一新增只读读面 GET /tech/generation-events)
+// --------------------------------------------------------------------------- //
+
+/** 生成级事件(index_generations failed/retired;后端 P 轴权威表只读透传)。 */
+export interface GenerationEventItem {
+  generation_id: string;
+  ordinal: number;
+  source_id: string;
+  status: string;
+  /** failed=error / retired=info(机器词表;运营标签见 lib/generationStatus.ts)。 */
+  severity: string;
+  doc_count: number;
+  chunk_count: number;
+  /** 失败证据 JSONB 原样透传(retired 为 null)。 */
+  failure: Record<string, unknown> | null;
+  reason_summary: string | null;
+  created_at: string | null;
+  activated_at: string | null;
+  retired_at: string | null;
+  /** retired→retired_at;failed→updated_at(诚实近似,后端注明)。 */
+  event_at: string | null;
+}
+
+export interface GenerationEventList {
+  items: GenerationEventItem[];
+  total: number;
+}
+
+export function fetchGenerationEvents(
+  limit: number = 10,
+): Promise<GenerationEventList> {
+  return apiFetch(`/tech/generation-events?limit=${limit}`);
+}
+
+/**
+ * 同步级事件信号(复用既有 GET /sync-runs,零新增后端):
+ * 跨源取 failed 与 interrupted 两类终态(status 参数为单词表,两次并行),
+ * 运营标签/严重度映射见 lib/generationStatus.ts。
+ */
+export async function fetchSyncIncidents(
+  sizePerStatus: number = 10,
+): Promise<{ failed: SyncRunList; interrupted: SyncRunList }> {
+  const [failed, interrupted] = await Promise.all([
+    apiFetch<SyncRunList>(`/sync-runs?status=failed&size=${sizePerStatus}`),
+    apiFetch<SyncRunList>(`/sync-runs?status=interrupted&size=${sizePerStatus}`),
+  ]);
+  return { failed, interrupted };
 }
