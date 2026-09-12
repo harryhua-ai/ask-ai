@@ -6,10 +6,10 @@
 
 ## Critical governance notice
 
-The original accepted visual references have now been recovered and preserved in-repo:
+The original accepted visual references have now been recovered and preserved in-repo as compressed visual copies suitable for agent/reference review:
 
-- `docs/product/design/admin-knowledge-ops/references/data-source-operations-original.jpeg`
-- `docs/product/design/admin-knowledge-ops/references/technical-insights-answer-gaps-original.jpeg`
+- `docs/product/design/admin-knowledge-ops/references/data-source-operations-original.webp`
+- `docs/product/design/admin-knowledge-ops/references/technical-insights-answer-gaps-original.webp`
 
 They materially change several assumptions encoded in this v001 baseline.
 
@@ -44,7 +44,7 @@ The following governance rules remain in force:
 
 ### Data Source Operations
 
-`references/data-source-operations-original.jpeg`
+`references/data-source-operations-original.webp`
 
 Contains accepted visual/product intent for:
 
@@ -58,7 +58,7 @@ Contains accepted visual/product intent for:
 
 ### Technical Insights / Answer Gaps
 
-`references/technical-insights-answer-gaps-original.jpeg`
+`references/technical-insights-answer-gaps-original.webp`
 
 Contains accepted visual/product intent for:
 
