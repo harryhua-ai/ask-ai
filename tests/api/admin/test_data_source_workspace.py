@@ -475,7 +475,7 @@ async def test_document_truth_unknown_source_404(viewer_headers, ws_seed):
     async with _client() as client:
         resp = await client.get(
             f"/api/admin/data-sources/b1ws-nope-{uuid.uuid4().hex[:6]}/documents/detail",
-            params={"doc_source_id": f"b1ws-nope-x/main/a.md"},
+            params={"doc_source_id": "b1ws-nope-x/main/a.md"},
             headers=viewer_headers,
         )
     assert resp.status_code == 404
