@@ -1,8 +1,9 @@
 # FROZEN TASK CONTRACT — #51 Technical Insights V2(B2)
 
-Iteration:v1.6.2;owner=B2;依赖:**FROZEN INTERFACE ← #50**
-(`/data-sources/{source_id}` 详情路由;lifecycleLabels 模块 COMMIT 级可选);
-候选分支基于 B1 候选树;报告:docs/engineering/tasks/
+Iteration:v1.6.2;owner=B2;依赖:**FROZEN INTERFACE ← #50 = 路由字符串
+`/data-sources/{source_id}` 本身**(Role A 已裁定:无代码级依赖,B2 自
+origin/main 全并行开工);下钻端到端验收在 **Integration B 组合树**解析;
+候选分支基于 origin/main;报告:docs/engineering/tasks/
 v162-i51-technical-insights-v2-execution.md(B2 产出)。
 
 ## Objective
@@ -16,8 +17,10 @@ v162-i51-technical-insights-v2-execution.md(B2 产出)。
 
 - 技术性能 = Trace/性能权威聚合(既有 /tech/performance 语义保持);
   事件信号 = sync_runs(failed/interrupted/stage/error/fallback)+
-  index_generations(status/failure)权威表,B2 设计**跨源事件聚合读**
-  (新只读端点或 /tech 扩展;所有权冻结,不得复制 #50 逐源清单)。
+  index_generations(status/failure)权威表。**复用优先**:既有
+  `/sync-runs`/`/sync-health` 读面能权威表达的(跨源同步失败/降级)
+  直接消费;仅当既有端点无法权威表达(如 generation 级事件)才新增
+  只读读面(新端点或 /tech 扩展;所有权冻结,不得复制 #50 逐源清单)。
 - 回答缺口 = 既有权威证明(coverage-gaps miss_type 四类/gap-trends/
   conversations.is_answered/sources JSONB/Trace generation_error);
   不新增正确性契约、不虚构指标。
@@ -48,26 +51,31 @@ KnowledgeGaps(趋势/miss_type/缺口表);ServiceHealthBanner→
 
 ## Change Boundary
 
-- **EXPECTED**:跨源事件聚合只读读模型(B2 设计)+ 信号区 UI;缺口行/
-  事件行下钻链接;/tech 或 /analytics 只读扩展的后端测试;前端 vitest。
-- **REQUIRED SUPPORTING**:lifecycleLabels 复用(可选);既有面板回归保护。
+- **EXPECTED**:事件信号区(优先复用既有读面;缺口面才新增只读读模型,
+  B2 设计)+ 信号区 UI;缺口行/事件行下钻链接(路由字符串已冻结);
+  必要的只读后端扩展测试;前端 vitest。
+- **REQUIRED SUPPORTING**:生成状态(P 轴)→ 运营标签映射由 B2 自有
+  (P 轴词汇与 #50 的 L 轴映射本就不同;若 B1 的映射模块已可用亦可复用);
+  既有面板回归保护。
 - **FORBIDDEN**:知识概览/源清单/源配置复刻;虚构指标;检索/排序/引用
   语义变更;gap resolve/refresh 与 top-questions UI 接线(显式推迟);
-  重复 #50 详情真相。
+  重复 #50 详情真相;等待 B1 实现完成才开工(并行权已被授权)。
 - **BEHAVIORAL**:既有 TechPerf/KnowledgeGaps 展示语义零回归;新端点
   只读;RBAC 不变。
 
 ## Dependencies
 
-- inbound:#50 FROZEN INTERFACE(详情路由)+ COMMIT(lifecycleLabels);
-  下钻验收门 = B1 详情面可用。
+- inbound:#50 FROZEN INTERFACE = 路由字符串
+  `/data-sources/{source_id}`(+ source_id 编码);**无代码级依赖**;
+  下钻端到端验收在 Integration B 组合树执行。
 - outbound:NONE。
 
 ## Acceptance Criteria
 
 1. 事件信号区:展示最近同步/索引/生成失败与降级事件(源、类型、时间、
    原因摘要、严重度),数据全部来自权威表;空态显式;后端测试覆盖。
-2. 下钻链路:事件行 → `/data-sources/{source_id}`(B1 面);缺口行 →
+2. 下钻链路:事件行 → `/data-sources/{source_id}`(#50 面;链接实现于
+   本任务,端到端点击验收在 Integration B 组合树执行);缺口行 →
    对话核查面(冻结参数语法);健康横幅既有深链保持。
 3. 非重叠检查:洞察页不出现源清单/内容列表/源配置控件(测试或代码
    审查可证)。

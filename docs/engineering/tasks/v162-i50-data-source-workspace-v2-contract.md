@@ -26,8 +26,9 @@ SSH/SQL/Weaviate 即可回答:
   - **Retired**:已接替/删除/退役(superseded/deleted + 版本链与退役时间)。
 - 每个非 Current(或有风险)条目**必须显示原因**;后端无记录的原因显示
   "后端无此记录",不得编造。
-- L 轴/生成状态 → 运营标签与 badge 语义集中在
-  `admin/src/lib/lifecycleLabels.ts`(B1 新建,#51 COMMIT 级可复用)。
+- L 轴/生成状态 → 运营标签与 badge 语义必须来自**单一权威前端映射模块**
+  (语义级冻结:一处定义、详情面消费、#51 可复用;具体文件位置与形态 =
+  B1 工程设计,合同不规定)。
 
 ## UX Intent
 
@@ -58,7 +59,8 @@ SourceHealthPanel)、聚合计数(doc_count/chunk_count)、删除生命周期、
 - **FORBIDDEN**:per-item 编辑/删除/重索引等破坏性控件;独立 Knowledge
   顶级模块;重复 Overview 标签页;虚构 content-role/discovered/last-seen
   等后端不存在的字段或状态;Weaviate 直连读;retention/时长设置 UI
-  (#30 残余/P5);检索/排序/引用语义变更。
+  (#30 残余/P5);检索/排序/引用语义变更;**任何 P1/lifecycle/生成语义
+  变更(本合同是只读观察面,状态机零改动)**。
 - **BEHAVIORAL**:列表页全部现有行为零回归;新端点全部只读 GET;
   RBAC 不变。
 
@@ -66,7 +68,8 @@ SourceHealthPanel)、聚合计数(doc_count/chunk_count)、删除生命周期、
 
 - inbound:NONE。
 - outbound:FROZEN INTERFACE → #51:`/data-sources/{source_id}` 路由 +
-  source_id 编码(DataSource.id 单段);COMMIT:lifecycleLabels 模块。
+  source_id 编码(DataSource.id 单段);COMMIT(可选复用):L 轴/生成状态
+  前端标签映射模块(语义单一权威;B1 产出,#51 按需采用)。
 
 ## Acceptance Criteria(独立可验收)
 
@@ -82,7 +85,8 @@ SourceHealthPanel)、聚合计数(doc_count/chunk_count)、删除生命周期、
 5. 计数真相:预期/账本/已索引按既有权威定义展示,不可证处显式标注。
 6. 列表页零回归(既有测试全绿);新端点只读(无任何写路径);RBAC
    viewer 可读。
-7. lifecycleLabels 模块导出并在详情面消费。
+7. L 轴/生成状态标签来自单一权威映射模块并在详情面消费(文件位置 =
+   B1 设计自由;语义一处定义、无第二份映射表)。
 8. 后端 pytest 新增覆盖 + 全量回归绿;ruff 改动文件 0 error;admin
    vitest 新增覆盖 + 全绿。
 

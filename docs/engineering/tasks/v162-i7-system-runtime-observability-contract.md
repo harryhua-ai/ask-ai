@@ -42,9 +42,10 @@ hardware.py(CPU/内存发现、nvidia-smi 显存查询)+ /health。
 - **EXPECTED**:新只读 GET 端点(挂 /system router,形状 B3 设计):
   一次返回上述可得事实 + 每项 unavailable 语义;SystemInfo 新分区 UI;
   后端 pytest(真实采集 mock/fixture + 无 GPU 降级态)+ 前端 vitest。
-- **REQUIRED SUPPORTING**:只读扩展 nvidia-smi 查询字段(利用率/温度,
-  与既有内存查询同权限同方式);如需采集库(如 psutil)允许引入
-  (pyproject 变更记录进执行报告);读权限沿用既有 admin 读约定。
+- **REQUIRED SUPPORTING**(允许而非强制,由 B3 按验收需要取舍):只读
+  扩展 nvidia-smi 查询字段(利用率/温度,与既有内存查询同权限同方式);
+  如需采集库(如 psutil)允许引入(pyproject 变更记录进执行报告);
+  读权限沿用既有 admin 读约定。
 - **FORBIDDEN**:任何操作控制(restart/kill/cache-clear/reindex/shell/
   任意命令执行);写端点;暴露 env/secrets/凭据;虚构或缓存过期的
   硬件值;改变 model-runtime 管理面语义(#7 只加观察,不改

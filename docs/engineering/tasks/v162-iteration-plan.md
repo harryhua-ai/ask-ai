@@ -40,41 +40,47 @@
 | #7 Priority | 正文 P1 vs 标签 priority:p2 冲突 | 以标签为准 → 正文对齐 P2(随本轮 Issue 更新修正) |
 | #30 关系 | iteration:v1.6.0 标签已 stale;#50 自声明为其 UI 交付轨 | #30 本轮**不改标签**(治理面另行处理);其内容清单需求由 #50 承接;**retention 设置 UI 与变体级 Store 清单深度 = #30 残余,不在 v1.6.2**(retention 运营化=Freeze P5;Woo 变体粒度=F-1' 已知 Scope Expansion 候选)——显式推迟,不静默携带 |
 
-## 3. Dependency Graph(Phase 3,证据裁定)
+### 依赖图(Role A 修正后终版)
 
 ```
-#50(B1)── FROZEN INTERFACE:详情路由 /data-sources/{source_id}
-│           (+ lifecycle 标签模块 COMMIT 级共享)
-│           ──> #51(B2)下钻目标
-#7 (B3)── NONE(完全独立,任意时间可并行)
+#50(B1)── FROZEN INTERFACE = 路由字符串 /data-sources/{source_id}
+│           (下钻端到端验收在 Integration B 组合树解析)
+│           ──> #51(B2;自 origin/main 全并行,无代码级依赖)
+#7 (B3)── NONE(完全独立)
 共享基础(已存在,零新建):导航壳/API 客户端/查询模式/LoadError/badge/分页/三面板
+L 轴/生成状态前端标签映射 = B1 产出的单一权威语义模块(B2 按需采用,非阻塞)
 ```
 
-- **#50 → #51 = FROZEN INTERFACE**:数据源详情路由路径 `/data-sources/{source_id}`(source_id 为 DataSource.id,单段无斜杠,evidence:`data_sources.py` PK 语义 + 前端现有 `/data-sources` 平铺列表)。B2 据此冻结下钻链接;下钻**验收**依赖 B1 集成。
-- **#50 → #51 lifecycle 标签模块 = COMMIT**(非冻结接口):B1 产出 `admin/src/lib/lifecycleLabels.ts`(L 轴 + 生成状态 → 运营标签/badge 语义);B2 可选用,不阻塞。
-- **#51 → #50 反向零依赖**:技术洞察的跨源事件聚合读模型由 B2 自有(直接读 sync_runs/index_generations 权威表),**不得**复制 #50 的逐源清单端点(以链接代替)。
+- **#50 → #51 = FROZEN INTERFACE(仅路由字符串)**:Role A 裁定 B2 无
+  代码级依赖(Link 指向未注册路由无构建依赖;生成状态标签属 P 轴词汇
+  本就由 B2 自有),**B1/B2/B3 三任务全并行授权**;依赖在 Integration B
+  组合树强制解析(端到端下钻点击验收)。
+- **#51 → #50 反向零依赖**:跨源事件信号优先复用既有 `/sync-runs`/
+  `/sync-health` 读面;仅既有端点无法权威表达时(如 generation 级事件)
+  由 B2 新增只读读面,**不得**复制 #50 逐源清单端点(以链接代替)。
 - **#7 = NONE**:挂载点(/system 页 + /system router)已预留,无 inbound/outbound。
-
-### 后端读模型所有权矩阵(防重复契约)
+- **后端读模型所有权矩阵(防重复契约)**
 | 读模型 | owner | 说明 |
 | --- | --- | --- |
 | 逐源文档清单 / 单文档真相 / 逐源生成列表 | **#50 B1** | 新只读端点,形状由 B1 工程设计 |
-| 跨源技术事件聚合(sync/index/generation/rebuild incidents) | **#51 B2** | 新只读端点或 /tech 扩展,B2 设计 |
+| 跨源技术事件(sync/index/generation/rebuild incidents;复用优先,缺口才新增) | **#51 B2** | 新只读端点或 /tech 扩展,B2 设计 |
 | 主机/硬件运行时 | **#7 B3** | 新只读 GET /api/admin/system/* 端点 |
 | 既有端点(tech/performance、coverage-gaps、gap-trends、sync-*、source-health、model-runtime、system/release) | 不变 | 三方仅消费 |
 
-## 4. Execution Topology(Prioritize)
+## 4. Execution Topology(Role A 修正后:三任务全并行)
 
 ```
-B1(#50)──────┬──> Integration B(组合候选,owner=Role B 集成代理)
-B3(#7)───────┤        │
-B2(#51,基于 B1 候选树,   └──> Role A 组合复审 → 授权合并
-    接口冻结后即可开发)──┘
+B1(#50)──────┬──> Integration B(组合候选,owner=Role B 集成代理;
+B2(#51)──────┤    在此强制解析 #50→#51 下钻端到端验收)
+B3(#7)───────┘        │
+                      └──> Role A 组合复审 → 授权合并
 ```
 
-- **并行**:B1 ∥ B3 立即可并行;B2 的 TechPerf 重聚焦部分在接口冻结后即可开发。
-- **串行**:B2 的下钻验收必须等 B1 详情面落地;B2 候选分支基于 B1 候选树。
-- **Integration owner**:Integration B(组合 #50→#51→#7,回归+组合验收,零生产部署)。
+- **并行**:B1 ∥ B2 ∥ B3 全部自 origin/main 立即并行(Role A 裁定,
+  见 §3;组合前互不等待)。
+- **串行**:仅 Integration B 一个串行点——组合顺序 #50→#51→#7(任意
+  顺序亦可),并在此执行下钻端到端验收。
+- **Integration owner**:Integration B(组合候选,回归+组合验收,零生产部署)。
 - 每 B 独立走 Role A 评审(CANDIDATE READY → FINAL PASS)后进组合。
 
 ## 5. Phase 5 治理:防止"后端交付 ≠ 产品交付"
@@ -88,7 +94,7 @@ B2(#51,基于 B1 候选树,   └──> Role A 组合复审 → 授权合并
 ## 6. Iteration Exit Criteria(v1.6.2 = COMPLETE 当且仅当)
 
 1. #50 accepted(含 runtime/real-world acceptance);
-2. #51 accepted(含下钻链路 runtime 证据);
+2. #51 accepted(含下钻链路 runtime 证据,于 Integration B 组合树采集);
 3. #7 accepted(含 GPU 主机 + 无 GPU 降级两态 runtime 证据);
 4. 共享/集成回归绿(组合树全量 + project automation + admin vitest + ruff);
 5. 组合候选 Role A 验收绿;
@@ -117,8 +123,9 @@ docs/engineering/tasks/v162-iteration-plan.md。候选分支
 b1/data-source-workspace-v2-20260912(自主 main 创建)。
 交付:单一详情工作面路由 /data-sources/{source_id}(此路径为对 #51 的
 FROZEN INTERFACE,不得更改);新增只读端点族(逐源文档清单[分页/过滤/
-搜索]、单文档真相、逐源生成列表——工程设计与形状由你拥有);新建
-admin/src/lib/lifecycleLabels.ts 并消费;现有三面板与列表页复用/零回归。
+搜索]、单文档真相、逐源生成列表——工程设计与形状由你拥有);L 轴/
+生成状态运营标签建单一权威前端映射模块(位置/形态由你设计,详情面
+消费,禁止第二份映射表);现有三面板与列表页复用/零回归。
 纪律:对新增端点与 UI 先 RED 测试后实现;真实原因只来自权威账本
 (documents/document_versions/index_generations/sync_*),后端无记录显示
 "后端无此记录",禁止虚构 content-role/discovered 等不存在字段;零破坏性
@@ -132,25 +139,29 @@ Runtime/Real-World Acceptance(合同强制项)在本任务只准备走查脚本�
 数据点清单;实际执行在部署验收阶段。
 ```
 
-### B2 prompt(#51)
+### B2 prompt(#51)(Role A 修正版:全并行)
 
 ```
 Task — B2:#51 Technical Insights V2(v1.6.2)。仓库 harryhua-ai/ask-ai。
-基线:B1 候选分支 b1/data-source-workspace-v2-20260912(等其 CANDIDATE
-READY 后开工;下钻验收依赖 B1 详情面)。冻结合同:
+基线:origin/main(先 fetch 确认;当前 57717ea 谱系)。**Role A 已授权
+全并行**:与 B1/B3 互不等待,无代码级依赖。冻结合同:
 docs/engineering/tasks/v162-i51-technical-insights-v2-contract.md;迭代
 上下文:docs/engineering/tasks/v162-iteration-plan.md。候选分支
-b2/technical-insights-v2-20260912(基于 B1 候选树)。
-交付:技术洞察双 tab 重聚焦——跨源 sync/index/generation 事件信号区
-(只读聚合读模型由你设计,所有权归 #51,不得复制 #50 逐源清单端点);
-下钻链路:事件行→/data-sources/{source_id}(冻结接口),缺口行→既有
-/conversations 核查面(冻结参数语法);零源清单/源配置复刻;gap
-resolve/refresh 与 top-questions UI 接线为 FORBIDDEN(显式推迟)。
+b2/technical-insights-v2-20260912(自主 main 创建)。
+交付:技术洞察双 tab 重聚焦——sync/index/generation 事件信号区
+(**复用优先**:既有 /sync-runs、/sync-health 能权威表达的直接消费;
+仅 generation 级等既有端点无法权威表达的事件才新增只读读面,形状由
+你设计,所有权归 #51,不得复制 #50 逐源清单端点);下钻链接:事件行→
+/data-sources/{source_id}(FROZEN INTERFACE 路由字符串,来自 #50 合同;
+组合前该路由尚不存在属预期,端到端点击验收在 Integration B 组合树执行),
+缺口行→既有 /conversations 核查面(冻结参数语法);生成状态(P 轴)→
+运营标签映射由你自有;零源清单/源配置复刻;gap resolve/refresh 与
+top-questions UI 接线为 FORBIDDEN(显式推迟)。
 纪律:RED→GREEN;新端点只读;既有 TechPerf/KnowledgeGaps 零回归;
-lifecycleLabels 可复用(COMMIT 级);docs/ 提交 add -f。
+docs/ 提交 add -f。
 回归:新增后端 pytest + admin vitest;全量后端回归;ruff 改动文件。
 报告:docs/engineering/tasks/v162-i51-technical-insights-v2-execution.md
-(下钻参数语法与事件聚合设计在案)。
+(下钻参数语法、事件读面复用/新增裁定与设计在案)。
 最终态:仅 B2-TECHNICAL-INSIGHTS-V2 = CANDIDATE READY|PARTIAL|BLOCKED;
 STOP 待 Role A。不 merge main,不部署,不触碰生产。Runtime 走查脚本
 随报告产出,实际执行在部署验收阶段。
@@ -186,9 +197,11 @@ BLOCKED;STOP 待 Role A。不 merge main,不部署,不触碰生产。
 ```
 Task — Integration B:v1.6.2 组合候选。前提:B1/B2/B3 各自 Role A FINAL
 PASS。按 #50→#51→#7 顺序组合候选树(零改写已接受提交);跑组合树全量
-后端回归 + project automation + admin vitest + ruff;执行三合同 Runtime
-走查(全栈伺服面,真实数据点,证据落 ask-ai-acceptance 谱系目录);对账
-GitHub Issue 验收项;零部署零生产触碰。产出组合验收报告与
+后端回归 + project automation + admin vitest + ruff;**强制解析 #50→#51
+FROZEN INTERFACE:在组合树上端到端验收下钻链路(#51 事件行→#50 详情
+路由,含 source_id 编码正确性)**;执行三合同 Runtime 走查(全栈伺服面,
+真实数据点,证据落 ask-ai-acceptance 谱系目录);对账 GitHub Issue 验收
+项;零部署零生产触碰。产出组合验收报告与
 INTEGRATION-B-V162 = READY-FOR-DEPLOY-REVIEW|PARTIAL|BLOCKED;STOP。
 (部署为独立授权任务;关闭 #50/#51/#7 需部署后生产可见面核验。)
 ```
