@@ -203,6 +203,28 @@ class DataSourceDocumentTruth(BaseModel):
     generation: DocumentGenerationTruth | None = None
 
 
+class SourceAttentionSummaryItem(BaseModel):
+    """v1.6.3 B1:逐源运营桶聚合投影(只读;与 documents 端点聚合同一定义)。
+
+    current = active ∧ 现行版本可解析;retired = superseded + deleted;
+    attention = ledger_total − current − retired(冻结公式,DocLifecycle 词表)。
+    """
+
+    source_id: str
+    ledger_total: int
+    current_count: int
+    serving_count: int
+    retired_count: int
+    attention_count: int
+    lifecycle_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class SourceAttentionSummaryResponse(BaseModel):
+    """GET /data-sources/attention-summary 响应(全源一次取全,零文档源为零值行)。"""
+
+    items: list[SourceAttentionSummaryItem]
+
+
 class DataSourceGenerationsResponse(BaseModel):
     """GET /data-sources/{source_id}/generations 响应(ordinal 倒序)。"""
 

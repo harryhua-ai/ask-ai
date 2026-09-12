@@ -34,6 +34,10 @@ vi.mock("@/hooks/useDataSources", () => ({
   })),
   useSyncStatus: vi.fn(() => ({ data: { items: [] }, isLoading: false })),
   useSourceHealth: vi.fn(() => ({ data: undefined, isLoading: false })),
+  useAttentionSummary: vi.fn(() => ({ data: undefined, isLoading: false })),
+  useCreateDataSource: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdateDataSource: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDeleteDataSource: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock("@/hooks/useDataSourceWorkspace", () => ({
   useSourceDocuments: vi.fn(() => ({
@@ -274,8 +278,10 @@ describe("DataSourceDetail 详情工作面", () => {
   it("身份/配置摘要:产品线、类型中文标签、同步间隔、来源地址可见", () => {
     renderDetail();
     expect(screen.getAllByText("wiki").length).toBeGreaterThan(0);
-    expect(screen.getByText("代码仓库")).toBeInTheDocument();
-    expect(screen.getByText("24h")).toBeInTheDocument();
+    expect(screen.getAllByText("代码仓库").length).toBeGreaterThan(0);
+    // v1.6.3 B1:同步间隔以人性化 周期 呈现(同步状态卡),原文 24h 保留于编辑抽屉
+    expect(screen.getByText(/同步周期/)).toBeInTheDocument();
+    expect(screen.getByText("每 24 小时")).toBeInTheDocument();
     expect(screen.getByText("https://github.com/camthink-ai/wiki.git")).toBeInTheDocument();
   });
 
@@ -290,9 +296,8 @@ describe("DataSourceDetail 详情工作面", () => {
     expect(screen.getByText("当前在服 2")).toBeInTheDocument();
     expect(screen.getByText("需要关注 1")).toBeInTheDocument();
     expect(screen.getByText("已退役 3")).toBeInTheDocument();
-    expect(screen.getByText(/账本文档 6 篇/)).toBeInTheDocument();
-    // 计数真相注记:已索引(向量库)不由账本直接证明
-    expect(screen.getByText(/已索引/)).toBeInTheDocument();
+    // v1.6.3 B1:总量注记收敛为 共 N 条(账本 6)
+    expect(screen.getAllByText(/账本 6/).length).toBeGreaterThan(0);
   });
 
   it("内容清单行:L 轴中文标签 + 在服徽章 + 分块数 + 权威更新时间", () => {
@@ -300,13 +305,16 @@ describe("DataSourceDetail 详情工作面", () => {
     expect(screen.getByText("Alive Doc")).toBeInTheDocument();
     expect(screen.getByText("Old Doc")).toBeInTheDocument();
     expect(screen.getAllByText("在服").length).toBeGreaterThan(0);
-    expect(screen.getByText("已被接替")).toBeInTheDocument();
-    expect(screen.getByText("2026-09-01T00:00:00+00:00")).toBeInTheDocument();
+    // v1.6.3 B1 收敛:状态列 = 运营桶词表(已退役);L 轴中文标签移至展开真相
+    expect(screen.getAllByText("已退役").length).toBeGreaterThan(0);
+    // 更新时间 = 人性化相对时间,精确 ISO 保留在 title 属性
+    expect(screen.getAllByText(/天前|小时前|个月前|刚刚/).length).toBeGreaterThan(0);
+    expect(screen.getAllByTitle("2026-09-01T00:00:00+00:00").length).toBeGreaterThan(0);
   });
 
   it("搜索与生命周期过滤触发清单查询(单一权威映射模块消费标签)", async () => {
     renderDetail();
-    fireEvent.change(screen.getByLabelText("搜索标题或 URL"), {
+    fireEvent.change(screen.getByLabelText("搜索知识内容"), {
       target: { value: "alive" },
     });
     await waitFor(() =>
@@ -345,9 +353,11 @@ describe("DataSourceDetail 详情工作面", () => {
     );
     // 原因来自权威字段(接替者)
     expect(screen.getByText(/已被 wiki-documents-local\/main\/new.md 接替/)).toBeInTheDocument();
-    // 版本与生成归属
-    expect(screen.getByText(/现行版本 #2/)).toBeInTheDocument();
-    expect(screen.getByText(/生成 #4/)).toBeInTheDocument();
+    // 版本与生成归属(v1.6.3 B1 词语:当前有效版本 / 生成真相)
+    expect(screen.getByText(/当前有效版本/)).toBeInTheDocument();
+    expect(screen.getAllByText(/v2/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/生成真相/).length).toBeGreaterThan(0);
+    expect(screen.getByText("#4")).toBeInTheDocument();
     // canonical 身份原样
     expect(screen.getAllByText("wiki-documents-local/main/old.md").length).toBeGreaterThan(0);
   });
@@ -364,16 +374,17 @@ describe("DataSourceDetail 详情工作面", () => {
     });
     fireEvent.click(screen.getAllByRole("button", { name: /查看真相/ })[0]);
     await waitFor(() =>
-      expect(screen.getByText(/现行版本:后端无此记录/)).toBeInTheDocument(),
+      expect(screen.getByText(/当前有效版本:/)).toBeInTheDocument(),
     );
-    expect(screen.getByText(/生成记录:后端无此记录/)).toBeInTheDocument();
+    expect(screen.getAllByText(/后端无此记录/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/生成真相/).length).toBeGreaterThan(0);
   });
 
   it("生成可见性:失败代显示失败证据,在服代打标", () => {
     renderDetail();
     expect(screen.getByText("构建失败")).toBeInTheDocument();
     expect(screen.getByText(/embedder 返回 0 向量/)).toBeInTheDocument();
-    expect(screen.getByText("已退役")).toBeInTheDocument(); // retired 代标签(同桶词)
+    expect(screen.getAllByText("已退役").length).toBeGreaterThan(0); // retired 代标签 + 运营桶词
     // 在服代标记(ordinal=4)
     expect(screen.getByText("在服代")).toBeInTheDocument();
   });
@@ -440,9 +451,30 @@ describe("DataSourceDetail 详情工作面", () => {
         },
         isLoading: false,
       } as never);
+      // v1.6.3 B1:进行中同步收敛进 活动时间线(sync-runs running 行 → 同步进行中)
+      vi.mocked(useSyncRuns).mockReturnValue({
+        data: {
+          items: [
+            {
+              id: 99,
+              source_id: "wiki-documents-local",
+              triggered_by: "manual",
+              status: "running",
+              started_at: "2026-09-10T00:00:00+00:00",
+              counters: null,
+              sync_log: null,
+            },
+          ],
+          total: 1,
+          page: 1,
+          size: 20,
+        },
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      } as never);
     });
-    expect(screen.getByText("当前同步")).toBeInTheDocument();
-    expect(screen.getByText("生成向量")).toBeInTheDocument();
+    expect(screen.getByText("同步进行中")).toBeInTheDocument();
   });
 
   it("翻页触发清单查询分页参数", async () => {

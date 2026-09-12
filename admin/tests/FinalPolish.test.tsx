@@ -34,6 +34,7 @@ vi.mock("@/hooks/useDataSources", () => ({
   useSyncHealth: () => ({ data: undefined, isLoading: false }),
   useSyncStatus: () => ({ data: { items: [] }, isLoading: false }),
   useSyncRuns: () => ({ data: undefined, isLoading: false, error: null, refetch: vi.fn() }),
+  useAttentionSummary: () => ({ data: undefined, isLoading: false }),
   usePreviewDirs: () => ({ data: { dirs: [] }, isLoading: false, error: null }),
   fetchPreviewBranches: vi.fn(),
   fetchPreviewFileTypes: vi.fn(),
@@ -98,11 +99,12 @@ function renderPage(ui: React.ReactElement) {
 }
 
 describe("AFP-002 viewer 不被广告写操作", () => {
-  it("viewer 打开数据源:无 同步全部/新增数据源/删除", async () => {
+  it("viewer 打开数据源:无 同步全部/添加数据源/删除", async () => {
     state.role = "viewer";
     renderPage(<DataSources />);
-    await waitFor(() => expect(screen.getByText("数据源管理")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "数据源" })).toBeInTheDocument());
     expect(screen.queryByText("同步全部")).not.toBeInTheDocument();
+    expect(screen.queryByText("添加数据源")).not.toBeInTheDocument();
     expect(screen.queryByText("新增数据源")).not.toBeInTheDocument();
     expect(screen.queryByText("删除")).not.toBeInTheDocument();
   });
@@ -110,7 +112,7 @@ describe("AFP-002 viewer 不被广告写操作", () => {
   it("admin 打开数据源:写操作保留(G010)", async () => {
     renderPage(<DataSources />);
     await waitFor(() => expect(screen.getByText("同步全部")).toBeInTheDocument());
-    expect(screen.getByText("新增数据源")).toBeInTheDocument();
+    expect(screen.getByText("+ 添加数据源")).toBeInTheDocument();
   });
 
   it("viewer 打开模型配置:无 供应商凭证/端点授权/应用变更", async () => {

@@ -11,6 +11,7 @@ import type {
   SyncRunList,
   SyncStatusResponse,
 } from "@/types/api";
+import type { AttentionSummaryResponse } from "@/lib/dataSourceOps";
 
 export interface SyncRunParams {
   status?: string;
@@ -78,6 +79,22 @@ export function useDataSources(options?: {
   return useQuery({
     queryKey: ["data-sources"],
     queryFn: () => apiFetch<DataSource[]>("/data-sources"),
+    refetchInterval: options?.refetchInterval,
+  });
+}
+
+/**
+ * v1.6.3 B1(KB-OPS-V163-002):全源运营桶聚合投影(只读)。
+ * 列表页 需处理 一等列 + 知识数量列的权威计数来源;前端零重判。
+ */
+export function fetchAttentionSummary(): Promise<AttentionSummaryResponse> {
+  return apiFetch<AttentionSummaryResponse>("/data-sources/attention-summary");
+}
+
+export function useAttentionSummary(options?: { refetchInterval?: number | false }) {
+  return useQuery({
+    queryKey: ["data-sources-attention-summary"],
+    queryFn: fetchAttentionSummary,
     refetchInterval: options?.refetchInterval,
   });
 }
