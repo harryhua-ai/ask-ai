@@ -7,6 +7,7 @@ import { Toaster } from "@/components/ui/toast";
 import Login from "@/pages/Login";
 import Users from "@/pages/Users";
 import DataSources from "@/pages/DataSources";
+import DataSourceDetail from "@/pages/DataSourceDetail";
 import Customizations from "@/pages/Customizations";
 import LLMProviders from "@/pages/LLMProviders";
 import Conversations from "@/pages/Conversations";
@@ -32,6 +33,8 @@ export default function App() {
                 <Routes>
                   <Route path="/" element={<BusinessOverview />} />
                   <Route path="/data-sources" element={<DataSources />} />
+                  {/* #50 B1 详情工作面(对 #51 的冻结接口路由,不得更改) */}
+                  <Route path="/data-sources/:sourceId" element={<DataSourceDetail />} />
                   <Route path="/customizations" element={<Customizations />} />
                   <Route path="/llm-providers" element={<LLMProviders />} />
                   <Route path="/leads" element={<SalesLeads />} />

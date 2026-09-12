@@ -9,20 +9,38 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.api.admin.schemas import DataSourceCreate, DataSourceOut, DataSourceUpdate
+from backend.api.admin.schemas import (
+    DataSourceCreate,
+    DataSourceDocumentItem,
+    DataSourceDocumentsResponse,
+    DataSourceDocumentTruth,
+    DataSourceGenerationsResponse,
+    DataSourceOut,
+    DataSourceUpdate,
+    DocumentCurrentVersionTruth,
+    DocumentGenerationTruth,
+)
 from backend.api.admin.source_center_schemas import (
     DiscoveryResultOut,
     GitHubDiscoveryRequest,
     WebsiteDiscoveryRequest,
 )
 from backend.auth.dependencies import CurrentUser, require_role
-from backend.db.models import DataSource, SyncLog
+from backend.db.models import (
+    DataSource,
+    Document,
+    DocumentVersion,
+    DocumentVersionChunk,
+    IndexGeneration,
+    SyncLog,
+)
 from backend.services import repo_discovery, source_lifecycle
+from backend.services.document_lifecycle import DocLifecycle
 from backend.services.source_deletion import DeletionRequestError, request_deletion
 from backend.services.source_discovery import parse_discovery_rules
 from backend.services.source_lifecycle import DELETE_FAILED
@@ -31,6 +49,7 @@ from backend.services.website_discovery import build_website_preview
 router = APIRouter(prefix="/data-sources", tags=["数据源管理"])
 logger = logging.getLogger(__name__)
 EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
+ViewerDep = Annotated[CurrentUser, Depends(require_role("admin", "editor", "viewer"))]
 
 # C9 上传护栏:单文件大小上限(20MB)
 MAX_UPLOAD_FILE_BYTES = 20 * 1024 * 1024
@@ -39,7 +58,7 @@ MAX_UPLOAD_FILE_BYTES = 20 * 1024 * 1024
 def _norm_discovery_target(value: object) -> str:
     """发现目标归一化(repo_url/base_url 匹配用):trim + 去尾斜杠 + 去 .git + 小写。"""
     v = str(value or "").strip().rstrip("/").lower()
-    return v[:-4] if v.endswith(".git") else v
+    return v.removesuffix(".git")
 
 
 async def _load_source_discovery_rules(
@@ -741,3 +760,376 @@ async def trigger_sync_all(_: EditorDep, request: Request) -> dict[str, Any]:
         "count": len(sources),
         "request_id": submit.request_id,
     }
+
+
+# --------------------------------------------------------------------------- #
+# #50 B1 Data Source Workspace V2:只读内容/生成真相读面(全部 GET,零写路径)
+#
+# 合同(docs/engineering/tasks/v162-i50-data-source-workspace-v2-contract.md):
+# - 真相一律来自权威账本(documents / document_versions / document_version_chunks
+#   / index_generations);Weaviate 永不作 UI 真相源(本读面零向量库访问);
+# - 在服判定 = DocLifecycle.SERVING ∧ documents.current_version_id 可解析到
+#   document_versions 行(与 active_generation_ordinals 同一权威关系);
+# - 行只暴露权威存在的字段(title/url/source_id/lifecycle/chunk_count/
+#   created_at/updated_at/superseded_*/deleted_at);不虚构 content-role、
+#   discovered、last-seen;
+# - 复合文档身份 ``<source_id>/<branch>/<rel_path>`` 含斜杠 → 单文档真相经
+#   query 参数 ``doc_source_id`` 传递,规避 path 段斜杠编码歧义;
+# - RBAC 与既有读约定一致:viewer 可读。
+# --------------------------------------------------------------------------- #
+
+
+def _escape_like(value: str) -> str:
+    """LIKE 通配符转义(%/_/\\);配合 ``escape="\\")`` 使用。"""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _iso_or_none(value: Any) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+async def _get_source_or_404(session: AsyncSession, source_id: str) -> DataSource:
+    result = await session.execute(select(DataSource).where(DataSource.id == source_id))
+    ds = result.scalar_one_or_none()
+    if ds is None:
+        raise HTTPException(status_code=404, detail="数据源不存在")
+    return ds
+
+
+def _document_scope(source_id: str):
+    """源内文档范围(与 /sync-health document_count 同一 LIKE 前缀口径)。"""
+    return Document.source_id.like(f"{_escape_like(source_id)}/%", escape="\\")
+
+
+def _current_version_resolvable():
+    """现行版本可解析谓词:current_version_id 非空且存在对应 document_versions 行。"""
+    return Document.current_version_id.is_not(None) & select(
+        DocumentVersion.id
+    ).where(DocumentVersion.id == Document.current_version_id).exists()
+
+
+@router.get("/{source_id}/documents", response_model=DataSourceDocumentsResponse)
+async def list_source_documents(
+    source_id: str,
+    _: ViewerDep,
+    request: Request,
+    lifecycle: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=100),
+) -> DataSourceDocumentsResponse:
+    """逐源文档清单(分页 + L 轴生命周期过滤 + title/url 子串搜索;只读)。
+
+    聚合计数(lifecycle_counts / ledger_total / serving_count / current_count)
+    为全源账本口径,不受本次过滤影响,供运营三桶(Current / Needs Attention /
+    Retired)呈现。搜索不区分大小写,命中 title / url / 复合身份任一子串。
+    """
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        await _get_source_or_404(session, source_id)
+        if lifecycle is not None and lifecycle not in DocLifecycle.ALL:
+            raise HTTPException(
+                status_code=400,
+                detail=f"非法 lifecycle 过滤值,可用词表: {', '.join(DocLifecycle.ALL)}",
+            )
+        filters = [_document_scope(source_id)]
+        if lifecycle is not None:
+            filters.append(Document.lifecycle == lifecycle)
+        if search is not None and search.strip():
+            term = f"%{_escape_like(search.strip())}%"
+            filters.append(
+                Document.title.ilike(term, escape="\\")
+                | Document.url.ilike(term, escape="\\")
+                | Document.source_id.ilike(term, escape="\\")
+            )
+        total = int(
+            (
+                await session.execute(
+                    select(func.count()).select_from(Document).where(*filters)
+                )
+            ).scalar()
+            or 0
+        )
+        # 全源账本聚合(不受过滤影响)
+        lifecycle_rows = (
+            await session.execute(
+                select(Document.lifecycle, func.count())
+                .where(_document_scope(source_id))
+                .group_by(Document.lifecycle)
+            )
+        ).all()
+        lifecycle_counts = {row[0]: int(row[1]) for row in lifecycle_rows}
+        ledger_total = sum(lifecycle_counts.values())
+        resolvable = _current_version_resolvable()
+        serving_count = int(
+            (
+                await session.execute(
+                    select(func.count())
+                    .select_from(Document)
+                    .where(
+                        _document_scope(source_id),
+                        Document.lifecycle.in_(DocLifecycle.SERVING),
+                        resolvable,
+                    )
+                )
+            ).scalar()
+            or 0
+        )
+        current_count = int(
+            (
+                await session.execute(
+                    select(func.count())
+                    .select_from(Document)
+                    .where(
+                        _document_scope(source_id),
+                        Document.lifecycle == DocLifecycle.ACTIVE,
+                        resolvable,
+                    )
+                )
+            ).scalar()
+            or 0
+        )
+        rows = (
+            (
+                await session.execute(
+                    select(Document)
+                    .where(*filters)
+                    .order_by(
+                        Document.updated_at.desc().nulls_last(),
+                        Document.source_id,
+                    )
+                    .offset((page - 1) * size)
+                    .limit(size)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        version_by_id: dict[Any, DocumentVersion] = {}
+        version_ids = [d.current_version_id for d in rows if d.current_version_id is not None]
+        if version_ids:
+            vrows = (
+                (
+                    await session.execute(
+                        select(DocumentVersion).where(DocumentVersion.id.in_(version_ids))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            version_by_id = {v.id: v for v in vrows}
+        items = [
+            DataSourceDocumentItem(
+                source_id=d.source_id,
+                title=d.title,
+                url=d.url,
+                branch=d.branch,
+                source_type=d.source_type,
+                product=d.product,
+                lifecycle=d.lifecycle,
+                serving=(
+                    d.lifecycle in DocLifecycle.SERVING
+                    and d.current_version_id in version_by_id
+                ),
+                chunk_count=d.chunk_count,
+                created_at=_iso_or_none(d.created_at),
+                updated_at=_iso_or_none(d.updated_at),
+                current_version_seq=(
+                    version_by_id[d.current_version_id].version_seq
+                    if d.current_version_id in version_by_id
+                    else None
+                ),
+                generation_ordinal=(
+                    version_by_id[d.current_version_id].generation_ordinal
+                    if d.current_version_id in version_by_id
+                    else None
+                ),
+            )
+            for d in rows
+        ]
+    return DataSourceDocumentsResponse(
+        source_id=source_id,
+        total=total,
+        ledger_total=ledger_total,
+        page=page,
+        size=size,
+        lifecycle_counts=lifecycle_counts,
+        serving_count=serving_count,
+        current_count=current_count,
+        items=items,
+    )
+
+
+@router.get("/{source_id}/documents/detail", response_model=DataSourceDocumentTruth)
+async def get_source_document_truth(
+    source_id: str,
+    _: ViewerDep,
+    request: Request,
+    doc_source_id: str = Query(..., description="复合文档身份 <source_id>/<branch>/<rel_path>"),
+) -> DataSourceDocumentTruth:
+    """单文档真相(状态 + 权威归属字段 + 现行版本/生成;只读)。
+
+    - 文档行不存在 / 不属于本源 → 404 "后端无此记录"(显式缺席,不编造);
+    - current_version / generation 为 null = 后端无该记录(前端显式呈现);
+    - 不提供任何推断性原因,风险证据仅来自权威列(lifecycle /
+      superseded_by / superseded_at / deleted_at / generation.failure)。
+    """
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        await _get_source_or_404(session, source_id)
+        if not doc_source_id.startswith(f"{source_id}/"):
+            raise HTTPException(status_code=404, detail="后端无此记录")
+        doc = (
+            await session.execute(select(Document).where(Document.source_id == doc_source_id))
+        ).scalar_one_or_none()
+        if doc is None:
+            raise HTTPException(status_code=404, detail="后端无此记录")
+        version: DocumentVersion | None = None
+        if doc.current_version_id is not None:
+            version = (
+                await session.execute(
+                    select(DocumentVersion).where(DocumentVersion.id == doc.current_version_id)
+                )
+            ).scalar_one_or_none()
+        generation: IndexGeneration | None = None
+        if version is not None:
+            generation = (
+                await session.execute(
+                    select(IndexGeneration).where(IndexGeneration.id == version.generation_id)
+                )
+            ).scalar_one_or_none()
+        chunks_total = 0
+        if version is not None:
+            chunks_total = int(
+                (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(DocumentVersionChunk)
+                        .where(DocumentVersionChunk.version_id == version.id)
+                    )
+                ).scalar()
+                or 0
+            )
+        serving = (
+            doc.lifecycle in DocLifecycle.SERVING and version is not None
+        )
+        return DataSourceDocumentTruth(
+            source_id=source_id,
+            doc_source_id=doc.source_id,
+            title=doc.title,
+            url=doc.url,
+            branch=doc.branch,
+            source_type=doc.source_type,
+            product=doc.product,
+            lifecycle=doc.lifecycle,
+            serving=serving,
+            chunk_count=doc.chunk_count,
+            created_at=_iso_or_none(doc.created_at),
+            updated_at=_iso_or_none(doc.updated_at),
+            superseded_by=doc.superseded_by,
+            superseded_at=_iso_or_none(doc.superseded_at),
+            deleted_at=_iso_or_none(doc.deleted_at),
+            current_version=(
+                DocumentCurrentVersionTruth(
+                    id=str(version.id),
+                    version_seq=version.version_seq,
+                    status=version.status,
+                    title=version.title,
+                    url=version.url,
+                    chunk_count=version.chunk_count,
+                    chunks_total=chunks_total,
+                    source_version=version.source_version,
+                    valid_from=_iso_or_none(version.valid_from),
+                    valid_to=_iso_or_none(version.valid_to),
+                    superseded_by_version_id=(
+                        str(version.superseded_by_version_id)
+                        if version.superseded_by_version_id is not None
+                        else None
+                    ),
+                    generation_id=str(version.generation_id),
+                    generation_ordinal=version.generation_ordinal,
+                )
+                if version is not None
+                else None
+            ),
+            generation=(
+                DocumentGenerationTruth(
+                    id=str(generation.id),
+                    ordinal=generation.ordinal,
+                    status=generation.status,
+                    doc_count=generation.doc_count,
+                    chunk_count=generation.chunk_count,
+                    failure=generation.failure,
+                    created_at=_iso_or_none(generation.created_at),
+                    ready_at=_iso_or_none(generation.ready_at),
+                    activated_at=_iso_or_none(generation.activated_at),
+                    withdrawn_at=_iso_or_none(generation.withdrawn_at),
+                    retired_at=_iso_or_none(generation.retired_at),
+                    gc_eligible_at=_iso_or_none(generation.gc_eligible_at),
+                    purged_at=_iso_or_none(generation.purged_at),
+                )
+                if generation is not None
+                else None
+            ),
+        )
+
+
+@router.get("/{source_id}/generations", response_model=DataSourceGenerationsResponse)
+async def list_source_generations(
+    source_id: str,
+    _: ViewerDep,
+    request: Request,
+) -> DataSourceGenerationsResponse:
+    """逐源索引生成列表(ordinal 倒序;失败证据原样;只读)。
+
+    serving_ordinals = 权威在服代序集合(active_generation_ordinals 口径:
+    documents.current_version_id ⋈ SERVING)的源内投影,用于"在服代"标记。
+    """
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        await _get_source_or_404(session, source_id)
+        serving_rows = (
+            await session.execute(
+                select(DocumentVersion.generation_ordinal)
+                .join(Document, Document.current_version_id == DocumentVersion.id)
+                .where(
+                    _document_scope(source_id),
+                    Document.lifecycle.in_(DocLifecycle.SERVING),
+                )
+                .distinct()
+            )
+        ).scalars().all()
+        gens = (
+            (
+                await session.execute(
+                    select(IndexGeneration)
+                    .where(IndexGeneration.source_id == source_id)
+                    .order_by(IndexGeneration.ordinal.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return DataSourceGenerationsResponse(
+            source_id=source_id,
+            total=len(gens),
+            serving_ordinals=sorted(int(o) for o in serving_rows),
+            items=[
+                DocumentGenerationTruth(
+                    id=str(g.id),
+                    ordinal=g.ordinal,
+                    status=g.status,
+                    doc_count=g.doc_count,
+                    chunk_count=g.chunk_count,
+                    failure=g.failure,
+                    created_at=_iso_or_none(g.created_at),
+                    ready_at=_iso_or_none(g.ready_at),
+                    activated_at=_iso_or_none(g.activated_at),
+                    withdrawn_at=_iso_or_none(g.withdrawn_at),
+                    retired_at=_iso_or_none(g.retired_at),
+                    gc_eligible_at=_iso_or_none(g.gc_eligible_at),
+                    purged_at=_iso_or_none(g.purged_at),
+                )
+                for g in gens
+            ],
+        )
