@@ -66,6 +66,73 @@ def _to_cluster_out(c: QuestionCluster, miss_type: str | None = None) -> dict[st
 # ----------------------------------------------------------------------- #
 
 
+async def classify_gap_miss_types(
+    session: AsyncSession, cluster_ids: list[str]
+) -> tuple[dict[str, str], dict[str, dict[str, int]]]:
+    """对给定 gap 聚类批量计算权威 miss_type 分类(v1.6.3 B2 提取共享)。
+
+    分类语义(spec D4,唯一权威来源,消费方必须同源):
+    - reject:is_answered=False(拒答,用户未获回答)
+    - low:answered, sources 非空, 最新 trace confidence<0.6(低相关)
+    - 召回空:answered, sources 空(已回答但未检索到任何知识来源)
+    - 召回不足:answered, sources 非空, confidence>=0.6 或无 trace
+
+    返回 (miss_type_map: cluster_id → 主导分类, breakdown: cluster_id → 各分类计数)。
+    主导 = 聚类内会话计数最多的分类;无任何会话证据 → 未分类。
+    v1.6.3 B2:/tech/answer-gaps 只读投影复用本 helper,保证原因分类单一权威。
+    """
+    miss_type_map: dict[str, str] = {}
+    breakdown: dict[str, dict[str, int]] = {}
+    if not cluster_ids:
+        return miss_type_map, breakdown
+
+    conv_q = select(
+        Conversation.cluster_id,
+        Conversation.sources,
+        Conversation.is_answered,
+        Conversation.id,
+    ).where(Conversation.cluster_id.in_(cluster_ids))
+    conv_rows = (await session.execute(conv_q)).all()
+
+    # 批量查最新 trace confidence(turn_index 最大)
+    conv_ids = [str(row.id) for row in conv_rows]
+    conf_map: dict[str, float | None] = {}
+    if conv_ids:
+        trace_q = (
+            select(
+                Trace.conversation_id,
+                Trace.confidence,
+                Trace.turn_index,
+            )
+            .where(Trace.conversation_id.in_(conv_ids))
+            .order_by(Trace.turn_index.desc())
+        )
+        for row in (await session.execute(trace_q)).all():
+            cid = str(row.conversation_id)
+            if cid not in conf_map:
+                conf_map[cid] = row.confidence
+
+    cluster_stats: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for row in conv_rows:
+        cid = str(row.cluster_id) if row.cluster_id else ""
+        sources = row.sources if isinstance(row.sources, list) else []
+        conf = conf_map.get(str(row.id))
+        if not row.is_answered:
+            miss = "reject"
+        elif sources and conf is not None and conf < 0.6:
+            miss = "low"
+        elif not sources:
+            miss = "召回空"
+        else:
+            miss = "召回不足"
+        cluster_stats[cid][miss] += 1
+    for cid, stats in cluster_stats.items():
+        dominant = max(stats, key=stats.get) if stats else "未分类"
+        miss_type_map[cid] = dominant
+        breakdown[cid] = dict(stats)
+    return miss_type_map, breakdown
+
+
 @router.get("/coverage-gaps", response_model=QuestionClusterList)
 async def list_coverage_gaps(
     _: ViewerDep,
@@ -96,59 +163,12 @@ async def list_coverage_gaps(
         )
         clusters = result.scalars().all()
 
-        # 批量查询每个 cluster 的对话,按四态分类 miss_type(spec D4)
-        # reject:is_answered=False(拒答)
-        # low:answered, sources 非空, 最新 trace confidence<0.6(低相关)
-        # 召回空:answered, sources 空
-        # 召回不足:answered, sources 非空, confidence>=0.6 或无 trace
-        miss_type_map: dict[str, str] = {}
+        miss_type_map, _breakdown = await classify_gap_miss_types(
+            session, [str(c.id) for c in clusters]
+        )
         miss_type_summary: dict[str, int] = defaultdict(int)
-        if clusters:
-            cluster_ids = [str(c.id) for c in clusters]
-            conv_q = select(
-                Conversation.cluster_id,
-                Conversation.sources,
-                Conversation.is_answered,
-                Conversation.id,
-            ).where(Conversation.cluster_id.in_(cluster_ids))
-            conv_rows = (await session.execute(conv_q)).all()
-
-            # 批量查最新 trace confidence(turn_index 最大)
-            conv_ids = [str(row.id) for row in conv_rows]
-            conf_map: dict[str, float | None] = {}
-            if conv_ids:
-                trace_q = (
-                    select(
-                        Trace.conversation_id,
-                        Trace.confidence,
-                        Trace.turn_index,
-                    )
-                    .where(Trace.conversation_id.in_(conv_ids))
-                    .order_by(Trace.turn_index.desc())
-                )
-                for row in (await session.execute(trace_q)).all():
-                    cid = str(row.conversation_id)
-                    if cid not in conf_map:
-                        conf_map[cid] = row.confidence
-
-            cluster_stats: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-            for row in conv_rows:
-                cid = str(row.cluster_id) if row.cluster_id else ""
-                sources = row.sources if isinstance(row.sources, list) else []
-                conf = conf_map.get(str(row.id))
-                if not row.is_answered:
-                    miss = "reject"
-                elif sources and conf is not None and conf < 0.6:
-                    miss = "low"
-                elif not sources:
-                    miss = "召回空"
-                else:
-                    miss = "召回不足"
-                cluster_stats[cid][miss] += 1
-            for cid, stats in cluster_stats.items():
-                dominant = max(stats, key=stats.get) if stats else "未分类"
-                miss_type_map[cid] = dominant
-                miss_type_summary[dominant] += 1
+        for dominant in miss_type_map.values():
+            miss_type_summary[dominant] += 1
 
     items = [_to_cluster_out(c, miss_type_map.get(str(c.id), "未分类")) for c in clusters]
     return {

@@ -3,13 +3,15 @@ import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/re
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const { mockTechPerf, mockCoverageGaps, mockSourceHealth, mockGapTrends, mockSyncIncidents, mockGenerationEvents } = vi.hoisted(() => ({
+const { mockTechPerf, mockCoverageGaps, mockSourceHealth, mockGapTrends, mockSyncIncidents, mockGenerationEvents, mockAnswerGaps, mockGapConversations } = vi.hoisted(() => ({
   mockTechPerf: vi.fn(),
   mockCoverageGaps: vi.fn(),
   mockSourceHealth: vi.fn(),
   mockGapTrends: vi.fn(),
   mockSyncIncidents: vi.fn(),
   mockGenerationEvents: vi.fn(),
+  mockAnswerGaps: vi.fn(),
+  mockGapConversations: vi.fn(),
 }));
 
 vi.mock("@/lib/api/techInsight", () => ({
@@ -19,6 +21,8 @@ vi.mock("@/lib/api/techInsight", () => ({
   fetchGapTrends: mockGapTrends,
   fetchSyncIncidents: mockSyncIncidents,
   fetchGenerationEvents: mockGenerationEvents,
+  fetchAnswerGaps: mockAnswerGaps,
+  fetchGapConversations: mockGapConversations,
 }));
 
 // 缺口趋势默认空(KnowledgeGapsTab 用)
@@ -31,7 +35,7 @@ mockSyncIncidents.mockResolvedValue({
 });
 mockGenerationEvents.mockResolvedValue({ items: [], total: 0 });
 
-// 覆盖缺口默认一条(KnowledgeGapsTab 用)
+// 覆盖缺口默认一条(旧读面兼容保留;v1.6.3 B2 回答缺口队列消费 answer-gaps 投影)
 mockCoverageGaps.mockResolvedValue({
   items: [
     {
@@ -51,6 +55,32 @@ mockCoverageGaps.mockResolvedValue({
   page: 1,
   size: 20,
 });
+
+// v1.6.3 B2:回答缺口只读投影默认一条(AnswerGapsTab 用)
+mockAnswerGaps.mockResolvedValue({
+  items: [
+    {
+      id: "g1",
+      cluster_type: "gap",
+      representative_question: "如何接入 SDK",
+      sample_questions: ["如何接入 SDK"],
+      question_count: 5,
+      impacted_answer_count: 3,
+      status: "open",
+      miss_type: "召回空",
+      miss_type_breakdown: { "召回空": 3 },
+      last_seen_at: "2026-09-01T10:00:00Z",
+      period_start: null,
+      period_end: null,
+      created_at: "2026-08-10T10:00:00Z",
+    },
+  ],
+  total: 1,
+  page: 1,
+  size: 10,
+  miss_type_summary: { "召回空": 1 },
+});
+mockGapConversations.mockResolvedValue({ items: [], total: 0 });
 
 // 数据源健康默认两条(技术洞察只应有摘要条,不再有完整表格)— DSH-02 边界
 mockSourceHealth.mockResolvedValue({
@@ -154,6 +184,32 @@ afterEach(() => {
   });
   mockGenerationEvents.mockReset();
   mockGenerationEvents.mockResolvedValue({ items: [], total: 0 });
+  mockAnswerGaps.mockReset();
+  mockAnswerGaps.mockResolvedValue({
+    items: [
+      {
+        id: "g1",
+        cluster_type: "gap",
+        representative_question: "如何接入 SDK",
+        sample_questions: ["如何接入 SDK"],
+        question_count: 5,
+        impacted_answer_count: 3,
+        status: "open",
+        miss_type: "召回空",
+        miss_type_breakdown: { "召回空": 3 },
+        last_seen_at: "2026-09-01T10:00:00Z",
+        period_start: null,
+        period_end: null,
+        created_at: "2026-08-10T10:00:00Z",
+      },
+    ],
+    total: 1,
+    page: 1,
+    size: 10,
+    miss_type_summary: { "召回空": 1 },
+  });
+  mockGapConversations.mockReset();
+  mockGapConversations.mockResolvedValue({ items: [], total: 0 });
 });
 
 // 未显式设置 mock 的测试用例回退到健康基线
@@ -420,10 +476,10 @@ describe("OBS-G 健康状态场景", () => {
   });
 });
 
-describe("TechInsight 知识缺口 tab", () => {
-  it("切换到知识缺口 tab 显示覆盖缺口 + 类型 badge", async () => {
+describe("TechInsight 回答缺口 tab(v1.6.3 B2 收敛:知识缺口 → 回答缺口)", () => {
+  it("切换到回答缺口 tab 显示缺口队列 + 权威类型 badge", async () => {
     renderWithProviders(<Analytics />);
-    fireEvent.click(await screen.findByText("知识缺口"));
+    fireEvent.click(await screen.findByText("回答缺口"));
     await waitFor(() => {
       expect(screen.getByText("如何接入 SDK")).toBeInTheDocument();
       expect(document.querySelector("[data-gap-type='召回空']")).toBeTruthy();
@@ -432,9 +488,9 @@ describe("TechInsight 知识缺口 tab", () => {
 
   it("AFP-007:不再渲染「澄清漏斗(待接入)」占位面板", async () => {
     renderWithProviders(<Analytics />);
-    fireEvent.click(await screen.findByText("知识缺口"));
+    fireEvent.click(await screen.findByText("回答缺口"));
     await waitFor(() => {
-      expect(screen.getByText(/覆盖缺口/)).toBeInTheDocument();
+      expect(document.querySelector("[data-answer-gaps-queue]")).toBeTruthy();
     });
     expect(screen.queryByText(/澄清漏斗/)).not.toBeInTheDocument();
     expect(screen.queryByText(/待接入/)).not.toBeInTheDocument();
@@ -667,11 +723,15 @@ describe("B2 事件信号区(同步/索引/生成事件)", () => {
 });
 
 describe("B2 覆盖缺口行 → 对话核查面深链(冻结参数语法)", () => {
-  it("缺口行代表问题深链 /conversations?q={代表问题 URL 编码}", async () => {
+  it("选中缺口行后,侧板代表问题深链 /conversations?q={代表问题 URL 编码}", async () => {
     renderWithProviders(<Analytics />);
-    fireEvent.click(await screen.findByText("知识缺口"));
+    fireEvent.click(await screen.findByText("回答缺口"));
     await waitFor(() => {
-      const link = document.querySelector('[data-action="inspect-gap"]');
+      expect(document.querySelector("[data-gap-row]")).toBeTruthy();
+    });
+    fireEvent.click(document.querySelector("[data-gap-row]") as HTMLElement);
+    await waitFor(() => {
+      const link = document.querySelector('[data-gap-panel] [data-action="inspect-gap"]');
       expect(link).toBeTruthy();
       expect(link?.getAttribute("href")).toBe(
         `/conversations?q=${encodeURIComponent("如何接入 SDK")}`,
