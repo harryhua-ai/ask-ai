@@ -52,7 +52,8 @@ SourceHealthPanel)、聚合计数(doc_count/chunk_count)、删除生命周期、
 
 - **EXPECTED**:新增只读 admin 端点族(逐源文档清单[分页/过滤/搜索]、
   单文档真相、逐源生成列表——端点形状由 B1 工程设计,所有权冻结见
-  iteration plan §3 矩阵);详情工作面路由 + UI;lifecycleLabels 模块;
+  iteration plan §3 矩阵);详情工作面路由 + UI;L 轴/生成状态运营标签
+  单一权威映射模块(位置=B1 设计自由);
   后端 pytest + admin vitest。
 - **REQUIRED SUPPORTING**:现有三面板迁入/复用于详情面;列表页入详情的
   入口;auth 沿用 require_role 读约定(viewer 可读,写零新增)。
