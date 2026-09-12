@@ -1,8 +1,8 @@
 # KB-OPS-V163-002 — Design Recovery Review
 
-**Status:** REVIEW REQUIRED — NOT YET AUTHORIZED FOR IMPLEMENTATION  
+**Status:** FROZEN / AUTHORIZED — KB-OPS-V163-002  
 **Iteration:** v1.6.3  
-**Supersedes for planning purposes:** KB-OPS-V163-001 once approved  
+**Supersedes:** KB-OPS-V163-001  
 **Repository baseline reviewed:** current `main` frontend implementation after v1.6.3 deployment  
 **Recovered accepted visual references:**
 
@@ -552,3 +552,47 @@ Required next decisions:
 5. Freeze the approved document as `KB-OPS-V163-002`.
 6. Then authorize B execution with the recovered images as hard visual references.
 
+
+
+# 10. Frozen v1.6.3 scope decision
+
+**Decision:** v1.6.3 is a **Visual + UX Convergence** iteration over already-authoritative product/backend truth.
+
+Authorized in v1.6.3:
+- restore the recovered visual hierarchy and interaction grammar;
+- map existing authoritative lifecycle/generation/sync/health/gap/conversation truth into operator-facing workflows;
+- read-only diagnosis and drill-down;
+- preserve existing already-authorized safe operations;
+- context-preserving source editing using existing authoritative capabilities;
+- implementation screenshots and visual-conformance evidence.
+
+Explicitly NOT authorized in v1.6.3 unless an already-authoritative operation already exists:
+- inventing a persisted Knowledge Issue entity;
+- new row-level reprocess/remediation mutation semantics;
+- a new OBSERVING lifecycle state or observation transitions;
+- Knowledge temporal-role policy;
+- freshness-policy persistence or semantics;
+- high-risk mutation preview counts/semantics;
+- new conversation-export semantics;
+- frontend inference of backend-authoritative cause/health/lifecycle truth.
+
+For v1.6.3, the Knowledge Issue concept is therefore a **read-only operator projection over existing authoritative truth**, not a new persistence model. Unsupported reason/state/action fields must render as unavailable/unclassified or be omitted; they must not be fabricated.
+
+# 11. Release-blocking Design Conformance Gate
+
+Every material UI task under #52–#60 MUST name baseline **KB-OPS-V163-002** and the applicable recovered PNG(s).
+
+Implementation acceptance requires all of the following:
+1. render the real Admin UI from the candidate tree with representative authoritative data;
+2. capture implementation screenshots at the agreed viewport/state corresponding to the recovered reference;
+3. perform side-by-side comparison against the in-repo recovered reference;
+4. maintain a difference ledger in which every material difference is classified **MATCH / JUSTIFIED DIFFERENCE / DEFECT**;
+5. every JUSTIFIED DIFFERENCE must cite current authoritative product/repository truth and be accepted by Role A; B may not self-justify a design divergence;
+6. **DEFECT count must be zero** before individual-track FINAL PASS;
+7. repeat integrated composition review on the combined tree;
+8. repeat rendered-UI review before deployment;
+9. after deployment, capture production screenshots of the same states and verify parity against KB-OPS-V163-002 before closing the iteration.
+
+Passing unit tests, backend tests, type checks, builds, or runtime data validation is necessary but **cannot substitute for Design Conformance**.
+
+**No unexplained material visual/interaction difference may ship.**
