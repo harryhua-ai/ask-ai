@@ -8,8 +8,8 @@
 
 The original accepted visual references have now been recovered and preserved in-repo as compressed visual copies suitable for agent/reference review:
 
-- `docs/product/design/admin-knowledge-ops/references/data-source-operations-original.webp`
-- `docs/product/design/admin-knowledge-ops/references/technical-insights-answer-gaps-original.webp`
+- `docs/product/design/admin-knowledge-ops/references/data-source-operations-original.png`
+- `docs/product/design/admin-knowledge-ops/references/technical-insights-answer-gaps-original.png`
 
 They materially change several assumptions encoded in this v001 baseline.
 
@@ -44,7 +44,7 @@ The following governance rules remain in force:
 
 ### Data Source Operations
 
-`references/data-source-operations-original.webp`
+`references/data-source-operations-original.png`
 
 Contains accepted visual/product intent for:
 
@@ -58,7 +58,7 @@ Contains accepted visual/product intent for:
 
 ### Technical Insights / Answer Gaps
 
-`references/technical-insights-answer-gaps-original.webp`
+`references/technical-insights-answer-gaps-original.png`
 
 Contains accepted visual/product intent for:
 
