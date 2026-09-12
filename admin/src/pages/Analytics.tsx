@@ -852,7 +852,7 @@ function AnswerGapsTab() {
               setStatus(e.target.value as "" | "open" | "resolved");
               setPage(1);
             }}
-            className="h-9 rounded-md border px-2 text-[13px]"
+            className="h-9 shrink-0 rounded-md border px-2 text-[13px]"
             style={{ borderColor: "var(--bd)", background: "var(--panel)" }}
           >
             <option value="">全部状态</option>
@@ -866,7 +866,7 @@ function AnswerGapsTab() {
               setCause(e.target.value);
               setPage(1);
             }}
-            className="h-9 rounded-md border px-2 text-[13px]"
+            className="h-9 shrink-0 rounded-md border px-2 text-[13px]"
             style={{ borderColor: "var(--bd)", background: "var(--panel)" }}
           >
             <option value="">全部原因</option>
@@ -883,7 +883,7 @@ function AnswerGapsTab() {
               setWindow(e.target.value as "7d" | "30d" | "all");
               setPage(1);
             }}
-            className="h-9 rounded-md border px-2 text-[13px]"
+            className="h-9 shrink-0 rounded-md border px-2 text-[13px]"
             style={{ borderColor: "var(--bd)", background: "var(--panel)" }}
           >
             <option value="7d">过去 7 天</option>
@@ -898,33 +898,33 @@ function AnswerGapsTab() {
           <div className="text-[var(--t2)]">加载中...</div>
         ) : (
           <div
-            className="rounded-lg border"
+            className="overflow-x-auto rounded-lg border [&_td]:px-3 [&_th]:whitespace-nowrap [&_th]:px-3"
             style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
             data-answer-gaps-queue
           >
-            <Table>
+            <Table className="table-fixed w-full">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-10" />
-                  <TableHead>问题 / 主题</TableHead>
+                  <TableHead className="w-[6%]" />
+                  <TableHead className="w-[32%]">问题 / 主题</TableHead>
                   <TableHead
-                    className="cursor-pointer select-none"
+                    className="w-[10%] cursor-pointer select-none whitespace-nowrap"
                     data-sort-key="questions"
                     onClick={() => setOrder("questions")}
                   >
                     {`相关提问${order === "questions" ? " ↕" : ""}`}
                   </TableHead>
                   <TableHead
-                    className="cursor-pointer select-none"
+                    className="w-[10%] cursor-pointer select-none whitespace-nowrap"
                     data-sort-key="impacted"
                     onClick={() => setOrder("impacted")}
                   >
                     {`影响回答${order === "impacted" ? " ↕" : ""}`}
                   </TableHead>
-                  <TableHead>原因</TableHead>
-                  <TableHead>状态</TableHead>
+                  <TableHead className="w-[13%]">原因</TableHead>
+                  <TableHead className="w-[14%] whitespace-nowrap">状态</TableHead>
                   <TableHead
-                    className="cursor-pointer select-none"
+                    className="w-[15%] cursor-pointer select-none whitespace-nowrap"
                     data-sort-key="last_seen"
                     onClick={() => setOrder("last_seen")}
                   >
@@ -974,7 +974,7 @@ function AnswerGapsTab() {
                       <TableCell>
                         <div
                           data-gap-question
-                          className="text-[13px] font-semibold text-[var(--t1)]"
+                          className="truncate text-[13px] font-semibold text-[var(--t1)]"
                         >
                           {gap.representative_question}
                         </div>
