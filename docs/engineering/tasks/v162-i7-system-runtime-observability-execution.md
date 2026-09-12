@@ -111,7 +111,7 @@ null**(绝不虚构/占位);段结构恒完整(非错误、非空壳)。
 | ruff | `ruff check backend/services/host_runtime.py backend/api/admin/system.py tests/services/test_host_runtime_collector.py tests/api/admin/test_system_runtime.py` | **0 error**(All checks passed) |
 | admin vitest | `cd admin && npx vitest run` | **46 files / 301 tests 全绿**(含 SystemInfo 新 5 例 + 既有 10 例零回归) |
 | admin tsc | `npx tsc -b` | 本任务文件 0 error(widget 子项目缺 node_modules 的既有报错与本 diff 无关,main 同样存在) |
-| **全量后端回归** | lock wrapper:`pytest tests/ -q --ignore=tests/benchmark --ignore=tests/e2e` | (执行中,结果待回填 §10) |
+| **全量后端回归** | lock wrapper:`pytest tests/ -q --ignore=tests/benchmark --ignore=tests/e2e` | **2434 passed, 6 skipped, 0 failed, 10 errors**(10 errors 全部为基线既有环境性失败,证据见 §11) |
 
 ## 6. Runtime verification scope
 
@@ -185,10 +185,26 @@ nvidia-smi | head -1                    # vs accelerator.driver_version/cuda_ver
 - Candidate SHA:`526a6d1`(implementation)→ 最终见 git log(报告提交后 push)
 - **Verdict:B3-SYSTEM-RUNTIME-OBSERVABILITY = CANDIDATE READY**
   (GPU 主机真值走查按合同归 Integration B/deployment 收口;代码/测试/
-  前端/静态检查完成且绿;全量回归结果见 §5 回填)
+  前端/静态检查/全量回归全部完成且绿)
 
-## 11. 全量回归执行记录(回填)
+## 11. 全量回归执行记录(已回填)
 
-- 命令:`POSTGRES_HOST=ask-ai-local-postgres-1.orb.local bash /tmp/askai-test-run.sh
-  <worktree> .venv/bin/python -m pytest tests/ -q --ignore=tests/benchmark --ignore=tests/e2e`
-- 结果:待回填
+- 命令:`POSTGRES_HOST=ask-ai-local-postgres-1.orb.local
+  TEST_DATABASE_URL=…@ask-ai-local-postgres-1.orb.local:5432/ask_ai_b3_test
+  HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_HUB_DISABLE_XET=1
+  MODEL_CACHE_DIR=<主仓>/models bash /tmp/askai-test-run.sh <worktree>
+  .venv/bin/python -m pytest tests/ -q --ignore=tests/benchmark --ignore=tests/e2e`
+- 结果(B3 分支):**2434 passed, 6 skipped, 0 failed, 10 errors**(1:46)
+- **10 errors 基线对照(0590a82 无本 diff 的 pristine worktree,同 env 同测试集)**:
+  identical errors(tests/scripts 的 container_import×2 / migrate_llm_chain×3 /
+  v140_upgrade×5 —— 均为子进程迁移类测试,依赖共享库预置 schema/容器环境),
+  且基线额外多出 bge 实模型 3 errors(本分支因 MODEL_CACHE_DIR 指向完整
+  模型缓存反而更少)。**结论:全部 errors 为基线既有环境性失败,与本 diff
+  零相关;本 diff 引入 0 失败、0 错误。**
+- 环境注记(非 repo 代码):① 共享 lock wrapper 原 `exec` 写法吞 EXIT trap
+  必然遗留 stale lock → 已升级 v2(子进程 + stale-lock 自愈);② 本机
+  Homebrew postgres@16 占用 127.0.0.1:5432 遮蔽 docker PG → DB 测试以
+  `POSTGRES_HOST=ask-ai-local-postgres-1.orb.local` 指向 docker PG,并用
+  `TEST_DATABASE_URL` 指向本 track 专用 `ask_ai_b3_test`(避免污染共享库);
+  ③ HF xet 传输在当前网络下会无限期停滞 → 离线 env + 本地完整模型缓存
+  (MODEL_CACHE_DIR)绕过;均已在 §8 记录,Integration B 复跑可照抄。
