@@ -179,3 +179,80 @@ export async function fetchSyncIncidents(
   ]);
   return { failed, interrupted };
 }
+
+// --------------------------------------------------------------------------- //
+// v1.6.3 B2 Answer Gaps 只读操作者投影(GET /tech/answer-gaps)。
+// 聚类/会话权威真相之上的投影,非新持久化模型;miss_type 与
+// /analytics/coverage-gaps 权威分类同源。无 OBSERVING/导出/修复语义。
+// --------------------------------------------------------------------------- //
+
+/** 单个答案缺口投影项(全部字段均有权威来源,见后端端点 docstring)。 */
+export interface AnswerGapItem {
+  id: string;
+  cluster_type: "gap";
+  representative_question: string;
+  sample_questions: string[];
+  /** 相关提问数(聚类权威)。 */
+  question_count: number;
+  /** 受影响回答数 = 归属会话计数(conversations.cluster_id 权威)。 */
+  impacted_answer_count: number;
+  status: "open" | "resolved";
+  /** 权威原因分类(reject/low/召回空/召回不足);无证据 → 未分类。 */
+  miss_type: string;
+  /** 本聚类内各权威分类的会话计数分布(诊断详情证据)。 */
+  miss_type_breakdown: Record<string, number>;
+  /** 最近发生 = 归属会话 MAX(created_at);无会话证据 → null(UI 显示证据不可用)。 */
+  last_seen_at: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  created_at: string;
+}
+
+export interface AnswerGapList {
+  items: AnswerGapItem[];
+  total: number;
+  page: number;
+  size: number;
+  miss_type_summary: Record<string, number>;
+}
+
+export interface AnswerGapQuery {
+  status?: "open" | "resolved";
+  cause?: string;
+  q?: string;
+  /** 时间窗:7d/30d/all;last_seen 未知(时间不可用)不因窗口被排除。 */
+  window?: "7d" | "30d" | "all";
+  order?: "last_seen" | "questions" | "impacted";
+  dir?: "asc" | "desc";
+  page?: number;
+  size?: number;
+}
+
+export function fetchAnswerGaps(query: AnswerGapQuery = {}): Promise<AnswerGapList> {
+  const params = new URLSearchParams();
+  if (query.status) params.set("status", query.status);
+  if (query.cause) params.set("cause", query.cause);
+  if (query.q) params.set("q", query.q);
+  if (query.window) params.set("window", query.window);
+  if (query.order) params.set("order", query.order);
+  if (query.dir) params.set("dir", query.dir);
+  if (query.page) params.set("page", String(query.page));
+  if (query.size) params.set("size", String(query.size));
+  const qs = params.toString();
+  return apiFetch<AnswerGapList>(`/tech/answer-gaps${qs ? `?${qs}` : ""}`);
+}
+
+/** 缺口归属会话证据(诊断侧板「相关对话」只读投影)。 */
+export interface GapConversationItem {
+  id: string;
+  question: string;
+  is_answered: boolean;
+  created_at: string;
+}
+
+export function fetchGapConversations(
+  gapId: string,
+  limit: number = 20,
+): Promise<{ items: GapConversationItem[]; total: number }> {
+  return apiFetch(`/tech/answer-gaps/${gapId}/conversations?limit=${limit}`);
+}
