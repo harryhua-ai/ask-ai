@@ -318,6 +318,43 @@ async def test_inventory_search_is_case_insensitive_and_filters_apply_together(v
     assert resp.json()["total"] == 1
 
 
+async def test_inventory_like_wildcards_are_escaped_not_interpreted(viewer_headers, ws_seed):
+    """Role A 窄加固:source_id/搜索词中的 LIKE 通配符(%/_)必须被字面匹配,
+    不得被解释为通配符(防跨源泄漏/防误命中)。种子源 id 含 `_`(b1ws-…),
+    文档 url 含 `/` 与 `.`;用纯通配符搜索应零命中,用源内真实子串应命中。"""
+    async with _client() as client:
+        # `%` 作为搜索词:若未转义将命中全部行 → 必须为 0
+        pct = await client.get(DOCS_URL, params={"search": "%"}, headers=viewer_headers)
+        # `_` 作为搜索词:SQL `_` 单字符通配;未转义会命中所有含单字符的行
+        underscore = await client.get(DOCS_URL, params={"search": "_"}, headers=viewer_headers)
+        # 字面包含 `%` 的文本不存在于种子数据 → 0
+        pct_word = await client.get(DOCS_URL, params={"search": "100%uptime"}, headers=viewer_headers)
+        # 反斜杠转义的源内真实子串仍正常工作
+        alive = await client.get(DOCS_URL, params={"search": "alive.md"}, headers=viewer_headers)
+    assert pct.status_code == 200 and pct.json()["total"] == 0
+    assert underscore.status_code == 200 and underscore.json()["total"] == 0
+    assert pct_word.status_code == 200 and pct_word.json()["total"] == 0
+    assert alive.status_code == 200 and alive.json()["total"] == 1
+
+
+async def test_inventory_wildcard_source_id_does_not_leak_cross_source(viewer_headers, ws_seed):
+    """Role A 窄加固:含 `%` 的 source_id 路径段不得扩大清单范围
+    (OTHER_SRC = f"{SRC}-other" 是独立源;对 SRC 的通配注入不得把
+    OTHER_SRC 的行带进 SRC 的清单)。"""
+    async with _client() as client:
+        # OTHER_SRC 自身清单可访问(控制组:证明前缀隔离是精确的)
+        other = await client.get(
+            f"/api/admin/data-sources/{OTHER_SRC}/documents", headers=viewer_headers
+        )
+        # 对 SRC 清单用带 % 的搜索词(url 字段)不得命中 OTHER_SRC 文档
+        probe = await client.get(DOCS_URL, params={"search": "other%"}, headers=viewer_headers)
+    assert other.status_code == 200
+    assert probe.status_code == 200
+    probe_ids = {row["source_id"] for row in probe.json()["items"]}
+    assert all(sid.startswith(f"{SRC}/") for sid in probe_ids)
+    assert not any(sid.startswith(f"{OTHER_SRC}/") for sid in probe_ids)
+
+
 async def test_inventory_pagination(viewer_headers, ws_seed):
     async with _client() as client:
         page1 = await client.get(DOCS_URL, params={"page": 1, "size": 2}, headers=viewer_headers)
@@ -382,6 +419,20 @@ async def test_documents_endpoint_is_read_only(viewer_headers, ws_seed):
     async with _client() as client:
         resp = await client.post(DOCS_URL, headers=viewer_headers, json={})
     assert resp.status_code == 405
+
+
+async def test_document_detail_and_generations_endpoints_are_read_only(
+    viewer_headers, ws_seed
+):
+    """Role A 窄加固:detail 与 generations 路由同样零写路径(POST/DELETE → 405)。"""
+    detail_url = f"{DOCS_URL}/detail"
+    generations_url = f"/api/admin/data-sources/{SRC}/generations"
+    async with _client() as client:
+        for url in (detail_url, generations_url):
+            post_resp = await client.post(url, headers=viewer_headers, json={})
+            assert post_resp.status_code == 405, url
+            delete_resp = await client.delete(url, headers=viewer_headers)
+            assert delete_resp.status_code == 405, url
 
 
 # --------------------------------------------------------------------------- #

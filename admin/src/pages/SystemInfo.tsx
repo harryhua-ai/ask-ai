@@ -152,6 +152,8 @@ function RuntimeSectionBody({ data }: { data: SystemRuntimeInfo }) {
           <ObsField label="CPU 逻辑核数" obs={data.resources.cpu_logical_cores} />
           <ObsField label="CPU 利用率" obs={data.resources.cpu_utilization_percent} />
           <ObsField label="负载(loadavg 1m)" obs={data.resources.loadavg_1m} />
+          <ObsField label="负载(loadavg 5m)" obs={data.resources.loadavg_5m} />
+          <ObsField label="负载(loadavg 15m)" obs={data.resources.loadavg_15m} />
           <ObsField label="内存总量" obs={data.resources.memory_total_mb} />
           <ObsField label="内存已用" obs={data.resources.memory_used_mb} />
           <ObsField label="Swap 总量" obs={data.resources.swap_total_mb} />

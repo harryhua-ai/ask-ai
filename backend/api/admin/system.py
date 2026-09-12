@@ -9,6 +9,7 @@
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
+from starlette.concurrency import run_in_threadpool
 
 from backend.auth.dependencies import CurrentUser, require_role
 from backend.release import get_release_identity
@@ -61,7 +62,12 @@ async def get_system_runtime(
 
     全程只读采集(stdlib + nvidia-smi 只读查询),平台不可得项显示显式
     不可得 + 原因,绝不虚构值;无 env/secrets 暴露;无任何操作控制。
+
+    Role A 窄加固:采集为同步阻塞面(subprocess/0.1s 双采样/文件 IO),
+    经 ``run_in_threadpool`` 卸出事件循环——nvidia-smi 卡死时不再拖住
+    全部请求(仅本端点的线程池 worker 被占用,且有 10s 子进程超时兜底)。
     """
-    return collect_system_runtime(
-        model_runtime=getattr(request.app.state, "model_runtime", None)
+    return await run_in_threadpool(
+        collect_system_runtime,
+        model_runtime=getattr(request.app.state, "model_runtime", None),
     )

@@ -333,6 +333,13 @@ def _collect_resources(*, as_of: str) -> dict[str, Any]:
     else:
         cpu_model = _unavail("CPU 型号需 Linux /proc/cpuinfo(当前平台不可得)", as_of=as_of)
     cores = os.cpu_count()
+    # Role A 窄加固:os.cpu_count() 理论可返回 None(文档允许),此时按
+    # 不可得语义表达,维持 available=True ⇒ value 非空 的形状不变量。
+    cpu_cores_obs = (
+        _obs(cores, as_of=as_of)
+        if cores is not None
+        else _unavail("无法确定逻辑核数(os.cpu_count() 返回 None)", as_of=as_of)
+    )
     loadavg: dict[str, Any]
     try:
         l1, l5, l15 = _loadavg()
@@ -351,7 +358,7 @@ def _collect_resources(*, as_of: str) -> dict[str, Any]:
     return {
         "as_of": as_of,
         "cpu_model": cpu_model,
-        "cpu_logical_cores": _obs(cores, as_of=as_of),
+        "cpu_logical_cores": cpu_cores_obs,
         "cpu_utilization_percent": _collect_cpu_utilization(as_of=as_of),
         **loadavg,
         **_collect_memory(as_of=as_of),

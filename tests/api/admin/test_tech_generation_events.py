@@ -115,7 +115,13 @@ async def _get(headers, query: str = ""):
 
 
 async def test_generation_events_only_failed_and_retired(genevt_seed):
-    """P 轴事件词表:仅 failed/retired 是事件;ready/processing 不呈现。"""
+    """P 轴事件词表:仅 failed/retired 是事件;ready/processing 不呈现。
+
+    范围注记(Role A 窄加固):``total == 2`` 依赖共享测试库当前没有其他
+    failed/retired 的 index_generations 行(grep 全测试集证实仅本文件播种
+    此类行;ordinal 用高位随机段避让 unique)。若未来其他用例也播种
+    failed/retired 行,须把断言收窄为本前缀(source_id 集断言已是精确形态)。
+    """
     resp = await _get(genevt_seed)
     assert resp.status_code == 200
     j = resp.json()
@@ -147,9 +153,21 @@ async def test_generation_events_item_shape_and_severity(genevt_seed):
 
 
 async def test_generation_events_event_at_semantics(genevt_seed):
-    """event_at 派生:retired → retired_at;failed → updated_at(诚实近似,不虚构)。"""
+    """event_at 派生:retired → retired_at;failed → updated_at(诚实近似,不虚构)。
+
+    Role A 窄加固:failed 分支补 `event_at == updated_at` 精确等值断言
+    (此前仅断言非空)。
+    """
     factory = app.state.session_factory
     async with factory() as session:
+        failed_row = (
+            await session.execute(
+                select(IndexGeneration).where(
+                    IndexGeneration.source_id == f"{_SRC_PREFIX}-a"
+                )
+            )
+        ).scalar_one()
+        failed_updated_at = failed_row.updated_at
         row = (
             await session.execute(
                 select(IndexGeneration).where(
@@ -165,6 +183,7 @@ async def test_generation_events_event_at_semantics(genevt_seed):
     items = {it["status"]: it for it in resp.json()["items"]}
     assert items["retired"]["event_at"] == retired_at.isoformat()
     assert items["retired"]["retired_at"] == retired_at.isoformat()
+    assert items["failed"]["event_at"] == failed_updated_at.isoformat()
 
 
 async def test_generation_events_ordering_recent_first(genevt_seed):

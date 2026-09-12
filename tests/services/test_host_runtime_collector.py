@@ -391,3 +391,61 @@ def test_release_identity_failure_degrades_not_raises(monkeypatch):
     # release 失败不拖垮 health / 其余 section
     assert service["health"]["available"] is True
     assert host_runtime.collect_system_runtime(model_runtime=None)["host"]["as_of"] == FAKE_NOW
+
+
+# ---- Role A 窄加固:Integration B 补的两处微测试缺口 ------------------------------
+
+
+def test_platform_facts_raise_degrades_not_raises(monkeypatch):
+    """`_platform_facts` 抛错时端点采集面整体仍完整返回(200 形状),
+    仅 platform/kernel 两项显式不可得,其余 section 不受牵连。"""
+
+    def _boom():
+        raise RuntimeError("platform probe exploded")
+
+    monkeypatch.setattr(host_runtime, "_now_iso", lambda: FAKE_NOW)
+    monkeypatch.setattr(host_runtime, "_read_file", lambda _path: None)
+    monkeypatch.setattr(
+        host_runtime,
+        "_run_readonly",
+        lambda _args: host_runtime._CmdResult(ok=False, error="nvidia-smi 不可执行(未安装)"),
+    )
+    monkeypatch.setattr(host_runtime, "discover_gpus", list)
+    monkeypatch.setattr(host_runtime, "_hostname", lambda: "some-host")
+    monkeypatch.setattr(host_runtime, "_platform_facts", _boom)
+
+    def _no_loadavg():
+        raise OSError("load average 不可得")
+
+    monkeypatch.setattr(host_runtime, "_loadavg", _no_loadavg)
+
+    def _no_disk(_path):
+        raise OSError("statvfs failed")
+
+    monkeypatch.setattr(host_runtime, "_disk_usage", _no_disk)
+
+    result = host_runtime.collect_system_runtime(model_runtime=None)
+
+    # 整体形状仍完整(根级 as_of + 四组键全在),as_of 正常
+    assert set(result.keys()) == {"as_of", "host", "resources", "accelerator", "service"}
+    assert result["host"]["as_of"] == FAKE_NOW
+    # platform 信息观测显式不可得(available=False + 非空 reason + value=None;
+    # platform 三元组折入 os 观测,kernel 独立)
+    for key in ("os", "kernel"):
+        obs = result["host"][key]
+        assert obs["available"] is False, key
+        assert obs["value"] is None and obs["reason"], key
+    # 其余组不受牵连:accelerator 段为 {available: bool, reason, ...} 分节形状
+    assert result["accelerator"]["available"] is False  # 无 GPU 环境显式不可得,但形状完整
+    assert result["service"]["release"]["available"] is False or isinstance(
+        result["service"]["release"]["value"], dict
+    )
+
+
+def test_smi_int_not_supported_field_is_none():
+    """`[Not Supported]` 等 nvidia-smi 字段值 → 该字段如实不可得(None),不虚构。"""
+    assert host_runtime._smi_int("[Not Supported]") is None
+    assert host_runtime._smi_int("N/A") is None
+    assert host_runtime._smi_int("") is None
+    assert host_runtime._smi_int("42") == 42
+    assert host_runtime._smi_int("-7") == -7

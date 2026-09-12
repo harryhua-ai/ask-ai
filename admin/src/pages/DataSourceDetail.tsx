@@ -387,7 +387,7 @@ export default function DataSourceDetail() {
                           <Badge variant={row.serving ? "success" : "outline"}>
                             {row.serving ? "在服" : "不在服"}
                           </Badge>
-                          {bucket === "attention" && reason && (
+                          {bucket !== "current" && reason && (
                             <div
                               className="mt-1 max-w-[220px] truncate text-xs text-amber-600"
                               title={reason}
