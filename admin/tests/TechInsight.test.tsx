@@ -3,11 +3,13 @@ import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/re
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const { mockTechPerf, mockCoverageGaps, mockSourceHealth, mockGapTrends } = vi.hoisted(() => ({
+const { mockTechPerf, mockCoverageGaps, mockSourceHealth, mockGapTrends, mockSyncIncidents, mockGenerationEvents } = vi.hoisted(() => ({
   mockTechPerf: vi.fn(),
   mockCoverageGaps: vi.fn(),
   mockSourceHealth: vi.fn(),
   mockGapTrends: vi.fn(),
+  mockSyncIncidents: vi.fn(),
+  mockGenerationEvents: vi.fn(),
 }));
 
 vi.mock("@/lib/api/techInsight", () => ({
@@ -15,10 +17,19 @@ vi.mock("@/lib/api/techInsight", () => ({
   fetchCoverageGaps: mockCoverageGaps,
   fetchSourceHealth: mockSourceHealth,
   fetchGapTrends: mockGapTrends,
+  fetchSyncIncidents: mockSyncIncidents,
+  fetchGenerationEvents: mockGenerationEvents,
 }));
 
 // 缺口趋势默认空(KnowledgeGapsTab 用)
 mockGapTrends.mockResolvedValue({ trends: [] });
+
+// #51 B2:事件信号区默认空(显式空态)
+mockSyncIncidents.mockResolvedValue({
+  failed: { items: [], total: 0, page: 1, size: 10 },
+  interrupted: { items: [], total: 0, page: 1, size: 10 },
+});
+mockGenerationEvents.mockResolvedValue({ items: [], total: 0 });
 
 // 覆盖缺口默认一条(KnowledgeGapsTab 用)
 mockCoverageGaps.mockResolvedValue({
@@ -136,6 +147,13 @@ afterEach(() => {
   cleanup();
   mockTechPerf.mockReset();
   mockTechPerf.mockResolvedValue(techPayload());
+  mockSyncIncidents.mockReset();
+  mockSyncIncidents.mockResolvedValue({
+    failed: { items: [], total: 0, page: 1, size: 10 },
+    interrupted: { items: [], total: 0, page: 1, size: 10 },
+  });
+  mockGenerationEvents.mockReset();
+  mockGenerationEvents.mockResolvedValue({ items: [], total: 0 });
 });
 
 // 未显式设置 mock 的测试用例回退到健康基线
@@ -445,5 +463,219 @@ describe("DSH 技术洞察的数据源健康摘要(OBS-G008 边界)", () => {
     expect(screen.queryByText("website-camthink")).not.toBeInTheDocument();
     expect(screen.queryByText("同步成功率")).not.toBeInTheDocument();
     expect(screen.queryByText("文档数")).not.toBeInTheDocument();
+  });
+});
+
+// ====================  #51 B2:事件信号区 + 下钻链路  ====================
+
+/** 复用优先:同步级事件 mock(权威源 GET /sync-runs;前端零新增后端)。 */
+function syncIncidentsPayload() {
+  return {
+    failed: {
+      items: [
+        {
+          id: 101,
+          source_id: "ne301-docs",
+          triggered_by: "cron",
+          request_id: 7,
+          attempt: 2,
+          recovery: false,
+          status: "failed",
+          started_at: "2026-09-10T02:00:00Z",
+          finished_at: "2026-09-10T02:05:00Z",
+          duration_seconds: 300,
+          stage: "fetch",
+          counters: {},
+          consistency: null,
+          execution_device: null,
+          fallback_reason: null,
+          fallback_detail: null,
+          error_summary: "clone 失败:auth required",
+          ingestion_skipped: false,
+          sync_log: null,
+        },
+      ],
+      total: 1,
+      page: 1,
+      size: 10,
+    },
+    interrupted: {
+      items: [
+        {
+          id: 102,
+          source_id: "website camthink",
+          triggered_by: "cron",
+          request_id: 8,
+          attempt: 1,
+          recovery: false,
+          status: "interrupted",
+          started_at: "2026-09-11T08:00:00Z",
+          finished_at: "2026-09-11T08:01:00Z",
+          duration_seconds: 60,
+          stage: "embed",
+          counters: {},
+          consistency: null,
+          execution_device: null,
+          fallback_reason: null,
+          fallback_detail: null,
+          error_summary: null,
+          ingestion_skipped: false,
+          sync_log: null,
+        },
+      ],
+      total: 1,
+      page: 1,
+      size: 10,
+    },
+  };
+}
+
+/** 生成级事件 mock(新增只读读面 GET /tech/generation-events)。 */
+function generationEventsPayload() {
+  return {
+    items: [
+      {
+        generation_id: "11111111-1111-1111-1111-111111111111",
+        ordinal: 1,
+        source_id: "ne301-docs",
+        status: "failed",
+        severity: "error",
+        doc_count: 3,
+        chunk_count: 0,
+        failure: { error: "doc build failures", docs: ["d1"] },
+        reason_summary: "doc build failures",
+        created_at: "2026-09-09T10:00:00Z",
+        activated_at: null,
+        retired_at: null,
+        event_at: "2026-09-09T10:00:00Z",
+      },
+      {
+        generation_id: "22222222-2222-2222-2222-222222222222",
+        ordinal: 2,
+        source_id: "handbook-src",
+        status: "retired",
+        severity: "info",
+        doc_count: 5,
+        chunk_count: 50,
+        failure: null,
+        reason_summary: "知识已从在服集撤出(被新一代接替)",
+        created_at: "2026-09-01T10:00:00Z",
+        activated_at: "2026-09-01T10:01:00Z",
+        retired_at: "2026-09-12T10:00:00Z",
+        event_at: "2026-09-12T10:00:00Z",
+      },
+    ],
+    total: 2,
+  };
+}
+
+describe("B2 事件信号区(同步/索引/生成事件)", () => {
+  it("聚合展示同步失败/中断与生成级事件,行含源/类型/严重度/时间", async () => {
+    mockSyncIncidents.mockResolvedValue(syncIncidentsPayload());
+    mockGenerationEvents.mockResolvedValue(generationEventsPayload());
+    renderWithProviders(<Analytics />);
+    const section = await screen.findByText("同步 / 索引 / 生成事件");
+    expect(section).toBeInTheDocument();
+    await waitFor(() => {
+      const rows = document.querySelectorAll("[data-incident-row]");
+      expect(rows.length).toBe(4);
+    });
+    // 同步失败行:error 严重度 + 源归属
+    const syncFailed = document.querySelector(
+      '[data-incident-row][data-incident-type="sync_failed"]',
+    );
+    expect(syncFailed?.getAttribute("data-severity")).toBe("error");
+    expect(syncFailed?.getAttribute("data-source-id")).toBe("ne301-docs");
+    expect(syncFailed?.textContent).toContain("同步失败");
+    expect(syncFailed?.textContent).toContain("clone 失败:auth required");
+    // 同步中断行:warning
+    const syncInterrupted = document.querySelector(
+      '[data-incident-row][data-incident-type="sync_interrupted"]',
+    );
+    expect(syncInterrupted?.getAttribute("data-severity")).toBe("warning");
+    // 生成级失败行:机器证据(ordinal)透传
+    const genFailed = document.querySelector(
+      '[data-incident-row][data-incident-type="generation_failed"]',
+    );
+    expect(genFailed?.getAttribute("data-severity")).toBe("error");
+    expect(genFailed?.textContent).toContain("生成失败");
+    expect(genFailed?.textContent).toContain("doc build failures");
+    // retired 是生命周期事件,info 严重度,不冒充失败
+    const genRetired = document.querySelector(
+      '[data-incident-row][data-incident-type="generation_retired"]',
+    );
+    expect(genRetired?.getAttribute("data-severity")).toBe("info");
+  });
+
+  it("事件行下钻到源详情(#50 FROZEN INTERFACE 路由字符串;source_id 编码)", async () => {
+    mockSyncIncidents.mockResolvedValue(syncIncidentsPayload());
+    mockGenerationEvents.mockResolvedValue(generationEventsPayload());
+    renderWithProviders(<Analytics />);
+    await screen.findByText("同步 / 索引 / 生成事件");
+    await waitFor(() => {
+      expect(document.querySelectorAll("[data-incident-row]").length).toBe(4);
+    });
+    const syncFailed = document.querySelector(
+      '[data-incident-row][data-incident-type="sync_failed"]',
+    );
+    expect(syncFailed?.getAttribute("href")).toBe("/data-sources/ne301-docs");
+    // 空格等非常规字符经 encodeURIComponent 编码
+    const interrupted = document.querySelector(
+      '[data-incident-row][data-incident-type="sync_interrupted"]',
+    );
+    expect(interrupted?.getAttribute("href")).toBe(
+      `/data-sources/${encodeURIComponent("website camthink")}`,
+    );
+    const genFailed = document.querySelector(
+      '[data-incident-row][data-incident-type="generation_failed"]',
+    );
+    expect(genFailed?.getAttribute("href")).toBe("/data-sources/ne301-docs");
+    const genRetired = document.querySelector(
+      '[data-incident-row][data-incident-type="generation_retired"]',
+    );
+    expect(genRetired?.getAttribute("href")).toBe("/data-sources/handbook-src");
+  });
+
+  it("空态显式:无任何事件时给出明确空态文案", async () => {
+    mockSyncIncidents.mockResolvedValue({
+      failed: { items: [], total: 0, page: 1, size: 10 },
+      interrupted: { items: [], total: 0, page: 1, size: 10 },
+    });
+    mockGenerationEvents.mockResolvedValue({ items: [], total: 0 });
+    renderWithProviders(<Analytics />);
+    await screen.findByText("同步 / 索引 / 生成事件");
+    await waitFor(() => {
+      expect(screen.getByText("无同步 / 索引 / 生成失败事件")).toBeInTheDocument();
+      expect(document.querySelectorAll("[data-incident-row]").length).toBe(0);
+    });
+  });
+
+  it("非重叠:事件区只做源归属与下钻,不渲染源清单/内容列表/配置控件", async () => {
+    mockSyncIncidents.mockResolvedValue(syncIncidentsPayload());
+    mockGenerationEvents.mockResolvedValue(generationEventsPayload());
+    renderWithProviders(<Analytics />);
+    await screen.findByText("同步 / 索引 / 生成事件");
+    await waitFor(() => {
+      expect(document.querySelectorAll("[data-incident-row]").length).toBe(4);
+    });
+    // 无逐源内容计数列(文档数/chunk 数清单)、无源配置控件
+    expect(screen.queryByText("文档数")).not.toBeInTheDocument();
+    expect(screen.queryByText(/同步间隔/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /立即同步/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /启用|禁用/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("B2 覆盖缺口行 → 对话核查面深链(冻结参数语法)", () => {
+  it("缺口行代表问题深链 /conversations?q={代表问题 URL 编码}", async () => {
+    renderWithProviders(<Analytics />);
+    fireEvent.click(await screen.findByText("知识缺口"));
+    await waitFor(() => {
+      const link = document.querySelector('[data-action="inspect-gap"]');
+      expect(link).toBeTruthy();
+      expect(link?.getAttribute("href")).toBe(
+        `/conversations?q=${encodeURIComponent("如何接入 SDK")}`,
+      );
+    });
   });
 });
