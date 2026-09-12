@@ -1,4 +1,5 @@
 import { Fragment, useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import LoadError from "@/components/LoadError";
 import { useForm } from "react-hook-form";
@@ -102,7 +103,8 @@ const formSchema = z
   });
 
 // Task 3:类型中文可读名映射(未知值降级原始 key)
-const TYPE_LABELS: Record<string, string> = {
+// #50 B1:详情工作面复用本映射(单一出处,不复制第二份)
+export const TYPE_LABELS: Record<string, string> = {
   github: "代码仓库",
   local_git: "代码仓库",
   filesystem: "文件目录",
@@ -283,8 +285,9 @@ function githubRepoUrl(ds: DataSource): string {
  * github/local_git → githubRepoUrl(由 repo_path 重建,不裸显本地路径),
  * filesystem → root_path,woocommerce → store_url。
  * href 非 null 表示是可点击 URL(http 开头)。
+ * #50 B1:详情工作面复用本函数(单一出处,不复制第二份)。
  */
-function sourceLocation(ds: DataSource): { text: string; href: string | null } {
+export function sourceLocation(ds: DataSource): { text: string; href: string | null } {
   const cfg = ds.config || {};
   let text = "";
   switch (ds.type) {
@@ -479,6 +482,7 @@ function SourceObservabilityDetails({
 }
 
 export default function DataSources() {
+  const navigate = useNavigate();
   const { data: syncStatus } = useSyncStatus({ refetchInterval: 5000 });
   const activeStatusMap = useMemo(
     () => new Map(
@@ -1627,6 +1631,14 @@ export default function DataSources() {
               </TableCell>
               <TableCell>{ds.sync_interval}</TableCell>
               <TableCell className="space-x-2">
+                {/* #50 B1:详情工作面入口(只读下钻;列表页既有能力零改动) */}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => navigate(`/data-sources/${ds.id}`)}
+                >
+                  详情
+                </Button>
                 {canWrite && (
                 <Button
                   size="sm"

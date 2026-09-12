@@ -101,6 +101,118 @@ class SyncLogOut(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# #50 B1 Data Source Workspace V2 读模型(只读;权威账本投影)
+# --------------------------------------------------------------------------- #
+
+
+class DataSourceDocumentItem(BaseModel):
+    """逐源文档清单行(复合路径身份;禁止虚构 content-role/discovered 等字段)。"""
+
+    source_id: str  # 复合身份 <source_id>/<branch>/<rel_path>(canonical path)
+    title: str
+    url: str
+    branch: str
+    source_type: str
+    product: str
+    lifecycle: str  # L 轴词表(DocLifecycle.ALL)
+    serving: bool  # 在服 = lifecycle ∈ SERVING ∧ 现行版本可解析(权威关系)
+    chunk_count: int
+    created_at: str | None = None  # 权威时间戳(仅 created_at/updated_at)
+    updated_at: str | None = None
+    current_version_seq: int | None = None  # None = 后端无此记录
+    generation_ordinal: int | None = None  # None = 后端无此记录
+
+
+class DataSourceDocumentsResponse(BaseModel):
+    """GET /data-sources/{source_id}/documents 响应。
+
+    total = 过滤后分页总数;lifecycle_counts / ledger_total / serving_count /
+    current_count 为全源账本聚合(不受过滤影响)。
+    """
+
+    source_id: str
+    total: int
+    ledger_total: int
+    page: int
+    size: int
+    lifecycle_counts: dict[str, int] = Field(default_factory=dict)
+    serving_count: int = 0
+    current_count: int = 0
+    items: list[DataSourceDocumentItem]
+
+
+class DocumentCurrentVersionTruth(BaseModel):
+    """单文档现行版本真相(版本链 + 生成归属;chunk 账本计数)。"""
+
+    id: str
+    version_seq: int
+    status: str
+    title: str
+    url: str
+    chunk_count: int
+    chunks_total: int  # document_version_chunks 持久账本计数
+    source_version: dict | None = None
+    valid_from: str | None = None
+    valid_to: str | None = None
+    superseded_by_version_id: str | None = None
+    generation_id: str
+    generation_ordinal: int
+
+
+class DocumentGenerationTruth(BaseModel):
+    """索引生成行真相(P 轴;失败证据 failure JSONB 原样)。"""
+
+    id: str
+    ordinal: int
+    status: str
+    doc_count: int
+    chunk_count: int
+    failure: dict | None = None
+    created_at: str | None = None
+    ready_at: str | None = None
+    activated_at: str | None = None
+    withdrawn_at: str | None = None
+    retired_at: str | None = None
+    gc_eligible_at: str | None = None
+    purged_at: str | None = None
+
+
+class DataSourceDocumentTruth(BaseModel):
+    """GET /data-sources/{source_id}/documents/detail 响应:单文档真相。
+
+    current_version / generation 为 None = 后端无此记录(显式缺席,
+    前端呈现「后端无此记录」,不得编造)。
+    """
+
+    source_id: str  # 数据源配置 id(路径前缀)
+    doc_source_id: str  # 复合文档身份(canonical path)
+    title: str
+    url: str
+    branch: str
+    source_type: str
+    product: str
+    lifecycle: str
+    serving: bool
+    chunk_count: int
+    created_at: str | None = None
+    updated_at: str | None = None
+    superseded_by: str | None = None
+    superseded_at: str | None = None
+    deleted_at: str | None = None
+    current_version: DocumentCurrentVersionTruth | None = None
+    generation: DocumentGenerationTruth | None = None
+
+
+class DataSourceGenerationsResponse(BaseModel):
+    """GET /data-sources/{source_id}/generations 响应(ordinal 倒序)。"""
+
+    source_id: str
+    total: int
+    serving_ordinals: list[int] = Field(default_factory=list)
+    items: list[DocumentGenerationTruth]
+
+
+# --------------------------------------------------------------------------- #
 # ⑫ Sync Truth 读侧 schema(W2;Frozen Discovery §19 contract)
 # --------------------------------------------------------------------------- #
 

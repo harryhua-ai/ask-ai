@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
+import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import DataSources from "@/pages/DataSources";
 import {
@@ -73,13 +74,23 @@ beforeEach(() => {
   });
 });
 
+// #50 B1:列表页新增 useNavigate(详情入口)——本文件所有渲染统一包 MemoryRouter
+function withRouter(ui: React.ReactElement) {
+  return (
+    <MemoryRouter initialEntries={["/data-sources"]}>
+      <Routes>
+        <Route path="/data-sources" element={ui} />
+        <Route path="/data-sources/:sourceId" element={<div data-testid="detail-probe" />} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
 function renderWithSources(sources: unknown[]) {
   vi.mocked(useDataSources).mockReturnValue({ data: sources, isLoading: false });
   const qc = new QueryClient();
   render(
-    <QueryClientProvider client={qc}>
-      <DataSources />
-    </QueryClientProvider>,
+    <QueryClientProvider client={qc}>{withRouter(<DataSources />)}</QueryClientProvider>,
   );
 }
 
@@ -88,7 +99,7 @@ describe("DataSources", () => {
     const qc = new QueryClient();
     render(
       <QueryClientProvider client={qc}>
-        <DataSources />
+        {withRouter(<DataSources />)}
       </QueryClientProvider>,
     );
     expect(screen.getByText("数据源管理")).toBeInTheDocument();
@@ -98,7 +109,7 @@ describe("DataSources", () => {
     const qc = new QueryClient();
     render(
       <QueryClientProvider client={qc}>
-        <DataSources />
+        {withRouter(<DataSources />)}
       </QueryClientProvider>,
     );
     expect(screen.getByText("暂无数据源")).toBeInTheDocument();
@@ -108,11 +119,29 @@ describe("DataSources", () => {
     const qc = new QueryClient();
     render(
       <QueryClientProvider client={qc}>
-        <DataSources />
+        {withRouter(<DataSources />)}
       </QueryClientProvider>,
     );
     fireEvent.click(screen.getByText("新增数据源"));
     expect(screen.getByText("创建")).toBeInTheDocument();
+  });
+
+  // #50 B1:列表行「详情」进入冻结路由 /data-sources/:sourceId(对 #51 的接口)
+  it("#50 详情入口导航到 /data-sources/:sourceId", () => {
+    renderWithSources([
+      {
+        id: "wiki-documents-local",
+        type: "github",
+        product: "wiki",
+        enabled: true,
+        config: {},
+        sync_interval: "24h",
+        created_at: "2026-07-01T00:00:00Z",
+        updated_at: "2026-07-01T00:00:00Z",
+      },
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+    expect(screen.getByTestId("detail-probe")).toBeInTheDocument();
   });
 
   it("#1 编辑 local_git 源:类型归一为 github 且 repo_path 转换为 repo_url+clone_path", () => {
@@ -458,7 +487,7 @@ describe("DataSources", () => {
     const qc = new QueryClient();
     const view = render(
       <QueryClientProvider client={qc}>
-        <DataSources />
+        {withRouter(<DataSources />)}
       </QueryClientProvider>,
     );
 
@@ -487,7 +516,7 @@ describe("DataSources", () => {
     });
     view.rerender(
       <QueryClientProvider client={qc}>
-        <DataSources />
+        {withRouter(<DataSources />)}
       </QueryClientProvider>,
     );
 
@@ -936,7 +965,7 @@ function renderWithHealth(sources: unknown[], items: unknown[] | undefined, sync
   const qc = new QueryClient();
   render(
     <QueryClientProvider client={qc}>
-      <DataSources />
+      {withRouter(<DataSources />)}
     </QueryClientProvider>,
   );
 }
