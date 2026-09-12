@@ -106,3 +106,51 @@ Note for Role A: the workflow fixes execute from main only after merge; their li
 contract-tested pre-merge and the pre-fix event chain for member issues is live-proven above.
 
 PROJECT-AUTOMATION-CLOSED-ISSUE-EVENT-AUDIT = CANDIDATE READY
+
+---
+
+## MERGED / VERIFIED / I-000 CONVERGED (integration record)
+
+**Merge**: fresh gate → main unchanged at `57717ea`, candidate `7c529c8` a direct child (ff-eligible), zero
+overlapping automation drift → `git merge --ff-only` → pushed `HEAD:main` → main = **`7c529c8`**, verified three
+ways (local rev-parse / ls-remote / GitHub API). The merged workflow is the active default-branch workflow
+(per-issue concurrency group + `${number##\#}` sanitization confirmed in main's file).
+
+**Authoritative fresh recompute (not the chat list)**: label holders = 22 (#4/#5/#8/#9/#10/#11/#12/#13/#14/#15/
+#16/#17/#18/#19/#20/#21/#22/#24/#29/#34/#44/#45, all CLOSED, zero multi-iteration conflicts); Project I-000
+holders before convergence = 6 (#4/#5/#19/#20/#29/#44); missing = 16 (7 members incl. Sprint holders #21/#34/#45,
+9 never-members); extra = 0; wrong = 0.
+
+**Convergence mechanism**: burst of 16 `workflow_dispatch` runs of Workflow A (the accepted automation path) —
+15 plain numbers + one `#45` to prove sanitization live. **All 16 runs completed, ZERO cancelled** — per-issue
+concurrency proven under a real burst (pre-fix behavior would have cancelled ~15). Sanitization proven: run
+34660201190 dispatched as `"#45"` executed `--issue "45"` → CONVERGED.
+
+**Run results**: 7 previously-member issues CONVERGED with clean post-apply verification (#8=34660165517,
+#11=34660172430, #15=34660181599, #21=34660190178, #24=34660195578, #34=34660198584, #45=34660201190). The 9
+never-member issues had ALL mutations applied (membership + Iteration + closure-wins Status=Done) but their
+immediate post-apply re-read hit read-after-write replication lag under burst → transient `VERIFICATION FAILURE`
+(e.g. #22=34660192984); live re-read confirmed semantic convergence for all 9, and an idempotent re-dispatch
+(#22=34660457736) returned NO_CHANGE with verification PASS. The lag-verify wart is recorded as a future
+hardening candidate (no code change in this task).
+
+**BEFORE→AFTER (16 converged)**: every one — issue state CLOSED unchanged, labels byte-identical, Sprint
+untouched (#21/#34/#45 kept Bug Fix Sprint), Priority untouched; members changed Iteration only; the 9 new
+members received initial projection only (Iteration=I-000 + Status=Done from unset per the accepted closure-wins
+contract — no pre-existing value modified). Zero field changes on any non-converged item.
+
+**Final equivalence**: label holders 22 ⇔ Project I-000 holders 22 — **missing=0, extra=0, wrong=0,
+conflicts=0**. I-000 resolves from completedIterations (live runs set `fbbcc5e7`).
+
+**Final reconcile (dry-run)**: **I-000 drift = 0; Sprint drift = 0**; DRAFT_NO_AUTHORITY (14 drafts) unchanged.
+
+**Unrelated drift (reported, NOT repaired — out of scope)**: 9× `UNKNOWN_PROJECT_OPTION` on #7/#25/#28/#30/#31/
+#46/#48/#50/#51 — a concurrent track renamed the Status option "Backlog"→"open" mid-task, so issues carrying
+`status:backlog` now fail safe (visible finding, zero mutation). Resolution belongs to the renaming track
+(rename labels to `status:open` semantics or re-authorize the option mapping).
+
+**Unchanged invariants**: Sprint holders exactly the 11 baseline; v1.6.2 membership exactly #7/#50/#51;
+iterations in use {I-000, I-001, I-UX-001, v1.6.0, v1.6.2} — no definition touched; 14 DraftIssues untouched;
+no bootstrap apply; no reconcile apply; no production/TB-P1 contact.
+
+PROJECT-AUTOMATION-CLOSED-ISSUE-EVENT-AUDIT = MERGED / VERIFIED / I-000 CONVERGED
