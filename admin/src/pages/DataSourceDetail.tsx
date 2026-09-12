@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { toast } from "sonner";
+import { useAuth } from "@/hooks/useAuth";
 import LoadError from "@/components/LoadError";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,13 +17,13 @@ import {
 } from "@/components/ui/table";
 import { Pagination } from "@/components/Pagination";
 import { SourceHealthPanel } from "@/components/dataSources/SourceHealthPanel";
-import { SyncHistoryPanel } from "@/components/dataSources/SyncHistoryPanel";
-import { SyncStatusPanel } from "@/components/dataSources/SyncStatusPanel";
+import { SyncActivityPanel } from "@/components/dataSources/SyncActivityPanel";
+import { SourceEditorDrawer } from "@/components/dataSources/SourceEditorDrawer";
 import {
   useDataSources,
+  useSourceHealth,
   useSyncHealth,
   useSyncRuns,
-  useSyncStatus,
   useTriggerSync,
 } from "@/hooks/useDataSources";
 import {
@@ -30,26 +32,54 @@ import {
   useSourceGenerations,
 } from "@/hooks/useDataSourceWorkspace";
 import {
+  attentionReasonClasses,
+  operatorStateOf,
+  relativeTime,
+  toneVariant,
+} from "@/lib/dataSourceOps";
+import {
   bucketCountsOf,
   bucketLabel,
   bucketOfDocument,
-  bucketVariant,
   generationStatusLabel,
-  generationStatusVariant,
   lifecycleLabel,
-  lifecycleVariant,
   notServingReason,
 } from "@/lib/dataSourceLifecycle";
-import { sourceLocation, TYPE_LABELS } from "@/pages/DataSources";
-import type { GenerationTruth } from "@/types/dataSourceWorkspace";
-import type { SyncStatusItem } from "@/types/api";
+import { sourceLocation, TYPE_LABELS, formatSyncTime } from "@/lib/sourceEditorModel";
 
-// #50 B1 详情工作面(路由 /data-sources/:sourceId = 对 #51 的冻结接口)。
-// 信息层级:身份/配置摘要 → 同步与健康(复用既有三面板)→ 内容清单
-// (搜索/过滤/分页)→ 生成可见性 → 最近变化(同步历史)。
-// 全部真相来自权威账本读面;Weaviate 永不是 UI 真相源;零破坏性控件。
+// v1.6.3 B1(KB-OPS-V163-002):Source Detail 收敛(硬参考 panel 2/3/4)。
+// 层级:身份 → 操作者状态 → 最新同步摘要 → 知识总量+需处理 → prominent
+// attention banner → 知识内容工作区 → 本地诊断/历史(次级,可展开)。
+// 零伪造:状态/计数/原因/时间/生成/在服全部来自权威读面;/documents 聚合、
+// /sync-health、/analytics/source-health、sync_runs、index_generations;
+// 后端无记录 → 显式「后端无此记录」。无新增变更语义(无 重新处理/知识设置)。
 
-const ACTIVE_SYNC_STATES = new Set(["QUEUED", "WAITING", "RUNNING", "RECOVERING"]);
+/** 知识行状态(权威 lifecycle+serving 的呈现映射;reference 四态词表)。 */
+function knowledgeStatusOf(doc: { lifecycle: string; serving: boolean }): {
+  label: string;
+  variant: "success" | "warning" | "destructive" | "secondary" | "outline";
+} {
+  if (doc.lifecycle === "active" && doc.serving) return { label: "正常", variant: "success" };
+  if (doc.lifecycle === "missing_candidate") return { label: "需处理", variant: "destructive" };
+  if (doc.lifecycle === "active") return { label: "待分类", variant: "warning" };
+  if (doc.lifecycle === "discovered") return { label: "待分类", variant: "warning" };
+  if (doc.lifecycle === "superseded" || doc.lifecycle === "deleted") {
+    return { label: "已退役", variant: "outline" };
+  }
+  return { label: "待分类", variant: "warning" };
+}
+
+const BUCKET_OPTIONS = [
+  { value: "", label: "全部状态" },
+  { value: "current", label: "当前在服" },
+  { value: "attention", label: "需要关注" },
+  { value: "retired", label: "已退役" },
+];
+
+const SORT_OPTIONS = [
+  { value: "-updated_at", label: "更新时间" },
+  { value: "title", label: "名称" },
+];
 
 const LIFECYCLE_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "全部生命周期" },
@@ -59,15 +89,6 @@ const LIFECYCLE_OPTIONS: { value: string; label: string }[] = [
   { value: "deleted", label: "已删除 (deleted)" },
   { value: "discovered", label: "已发现 (discovered)" },
 ];
-
-function formatTs(value: string | null | undefined): string {
-  return value ?? "—";
-}
-
-function Iso({ value }: { value: string | null | undefined }) {
-  if (!value) return <span className="text-muted-foreground">—</span>;
-  return <span className="font-mono text-xs">{value}</span>;
-}
 
 /** 生成行失败证据(JSONB 原样键值呈现,不改写)。 */
 function FailureEvidence({ failure }: { failure: Record<string, unknown> }) {
@@ -83,22 +104,22 @@ function FailureEvidence({ failure }: { failure: Record<string, unknown> }) {
   );
 }
 
-function GenerationBadges({ gen, servingOrdinals }: { gen: GenerationTruth; servingOrdinals: number[] }) {
+function RelativeTime({ iso }: { iso: string | null | undefined }) {
+  const rel = relativeTime(iso);
+  if (!iso || !rel) return <span className="text-muted-foreground">—</span>;
   return (
-    <div className="flex items-center gap-1">
-      <Badge variant={generationStatusVariant(gen.status)}>{generationStatusLabel(gen.status)}</Badge>
-      {servingOrdinals.includes(gen.ordinal) && (
-        <Badge variant="success" title="该代含当前在服文档(active_generation 权威口径)">
-          在服代
-        </Badge>
-      )}
-    </div>
+    <span title={iso} className="whitespace-nowrap">
+      {rel}
+      <span className="ml-1 font-mono text-[10px] text-muted-foreground">{formatSyncTime(iso)}</span>
+    </span>
   );
 }
 
 export default function DataSourceDetail() {
   const { sourceId = "" } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const canWrite = user?.role === "admin" || user?.role === "editor";
 
   // 身份/配置:复用既有 /data-sources 列表读面(零新增配置端点)
   const {
@@ -113,19 +134,15 @@ export default function DataSourceDetail() {
     [sources, sourceId],
   );
 
-  // 同步与健康(复用既有读面与三面板)
-  const { data: syncStatus } = useSyncStatus({ refetchInterval: 5000 });
-  const activeStatus: SyncStatusItem | undefined = useMemo(
-    () =>
-      syncStatus?.items.find(
-        (i) => i.source_id === sourceId && ACTIVE_SYNC_STATES.has(i.state),
-      ),
-    [syncStatus, sourceId],
-  );
   const { data: syncHealth } = useSyncHealth();
   const healthItem = useMemo(
     () => syncHealth?.items.find((i) => i.source_id === sourceId),
     [syncHealth, sourceId],
+  );
+  const { data: windowHealth } = useSourceHealth();
+  const reliability = useMemo(
+    () => windowHealth?.items.find((i) => i.source_id === sourceId),
+    [windowHealth, sourceId],
   );
   const runsQuery = useSyncRuns(sourceId);
   const runsError =
@@ -135,11 +152,16 @@ export default function DataSourceDetail() {
         ? "同步历史加载失败"
         : null;
 
-  // 内容清单(新只读端点):搜索/生命周期过滤/分页
+  const triggerSync = useTriggerSync();
+
+  // 知识内容工作区(权威账本读面):搜索/bucket/生命周期/排序/分页
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [bucket, setBucket] = useState("");
   const [lifecycle, setLifecycle] = useState("");
+  const [order, setOrder] = useState("-updated_at");
   const [page, setPage] = useState(1);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
   const SIZE = 20;
   // 搜索防抖(300ms)后提交,过滤变更回到第 1 页(跳过挂载首跑,避免重置分页)
   const searchMounted = useRef(false);
@@ -156,10 +178,12 @@ export default function DataSourceDetail() {
   }, [searchInput]);
   useEffect(() => {
     setPage(1);
-  }, [lifecycle]);
+  }, [bucket, lifecycle, order]);
 
   const documentsQuery = useSourceDocuments(sourceId, {
+    bucket: bucket || undefined,
     lifecycle: lifecycle || undefined,
+    order,
     search: search || undefined,
     page,
     size: SIZE,
@@ -178,17 +202,16 @@ export default function DataSourceDetail() {
     [docs],
   );
 
-  // 单文档真相(行展开)
+  // 单文档真相(行展开 = 本地诊断,panel 3 只读部分)
   const [truthDocId, setTruthDocId] = useState<string | null>(null);
   const truthQuery = useSourceDocumentTruth(sourceId, truthDocId);
 
-  // 生成可见性
+  // 生成可见性(次级证据,本地诊断内)
   const generationsQuery = useSourceGenerations(sourceId);
   const generations = generationsQuery.data;
 
-  const triggerSync = useTriggerSync();
-  const runsHasMore =
-    runsQuery.data != null && runsQuery.data.items.length < runsQuery.data.total;
+  // 编辑数据源(context-preserving drawer,§4.5)
+  const [editorOpen, setEditorOpen] = useState(false);
 
   if (sourcesError && !sources) {
     return (
@@ -201,22 +224,33 @@ export default function DataSourceDetail() {
     );
   }
 
+  const operatorState = source
+    ? operatorStateOf({
+        enabled: source.enabled,
+        lastSyncStatus: source.last_sync_status,
+        attentionCount: bucketCounts ? bucketCounts.attention : null,
+        syncHealthOverall: healthItem?.overall ?? null,
+        lifecycleState: source.lifecycle_state,
+      })
+    : null;
+  const attentionCount = bucketCounts?.attention ?? 0;
+  const reasonLines = docs
+    ? attentionReasonClasses(docs.lifecycle_counts, attentionCount)
+    : [];
+  const location = source ? sourceLocation(source) : null;
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <Button variant="outline" size="sm" onClick={() => navigate("/data-sources")}>
-          ← 返回数据源列表
-        </Button>
-        <h1 className="text-2xl font-bold" data-testid="detail-title">
-          {source ? source.product : sourcesLoading ? "加载中..." : sourceId}
-        </h1>
-      </div>
+      {/* 面包屑 */}
+      <nav aria-label="面包屑" className="text-xs text-muted-foreground">
+        <Link to="/data-sources" className="hover:underline">配置 / 数据源</Link>
+        <span className="mx-1">/</span>
+        <span className="text-foreground">{source?.product ?? sourceId}</span>
+      </nav>
 
-      {/* 身份/配置摘要 */}
+      {/* 层级 1-2:身份 + 操作者状态 + 最新同步摘要 + 知识/需处理总量 */}
       {sourcesLoading ? (
-        <Card>
-          <CardContent className="p-4 text-sm text-muted-foreground">加载中...</CardContent>
-        </Card>
+        <p className="text-sm text-muted-foreground">加载中...</p>
       ) : !source ? (
         <Card>
           <CardContent className="space-y-2 p-4">
@@ -227,116 +261,210 @@ export default function DataSourceDetail() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <CardHeader className="flex-row items-center justify-between space-y-0 p-4">
-            <CardTitle className="text-base">源身份与配置</CardTitle>
-            <Badge variant={source.enabled ? "success" : "destructive"}>
-              {source.enabled ? "启用" : "禁用"}
-            </Badge>
-          </CardHeader>
-          <CardContent className="grid gap-x-6 gap-y-2 p-4 pt-0 text-sm sm:grid-cols-2">
-            <div>
-              <span className="text-muted-foreground">数据源 ID:</span>{" "}
-              <span className="font-mono">{source.id}</span>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div
+              aria-hidden
+              className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-lg font-bold text-primary"
+            >
+              {source.product.slice(0, 1).toUpperCase()}
             </div>
             <div>
-              <span className="text-muted-foreground">类型:</span>{" "}
-              {TYPE_LABELS[source.type] ?? source.type}
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-2xl font-bold" data-testid="detail-title">
+                  {source.product}
+                </h1>
+                {operatorState && (
+                  <Badge variant={toneVariant(operatorState.tone)} title={source.id}>
+                    {operatorState.label}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {TYPE_LABELS[source.type] ?? source.type}
+                {location?.text && (
+                  <>
+                    {" | "}
+                    {location.href ? (
+                      <a
+                        className="underline underline-offset-2"
+                        href={location.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {location.text}
+                      </a>
+                    ) : (
+                      <span className="font-mono text-xs">{location.text}</span>
+                    )}
+                  </>
+                )}
+                <span className="ml-2 font-mono text-[10px]" title={`数据源 ID:${source.id}`}>
+                  {source.id}
+                </span>
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-col items-end gap-1 text-sm">
+            <div className="flex items-center gap-2">
+              {canWrite && (
+                <Button size="sm" variant="outline" onClick={() => setEditorOpen(true)}>
+                  编辑
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={() => navigate("/data-sources")}>
+                返回列表
+              </Button>
             </div>
             <div>
-              <span className="text-muted-foreground">产品线:</span> {source.product}
-            </div>
-            <div>
-              <span className="text-muted-foreground">同步间隔:</span> {source.sync_interval}
-            </div>
-            <div className="sm:col-span-2">
-              <span className="text-muted-foreground">来源地址:</span>{" "}
-              {sourceLocation(source).href ? (
-                <a
-                  className="underline underline-offset-2"
-                  href={sourceLocation(source).href ?? "#"}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {sourceLocation(source).text}
-                </a>
+              <span className="text-muted-foreground">最后同步</span>{" "}
+              {source.last_sync ? (
+                <RelativeTime iso={source.last_sync} />
               ) : (
-                <span className="font-mono text-xs">{sourceLocation(source).text || "—"}</span>
+                <span className="text-muted-foreground">从未同步</span>
+              )}
+              {source.last_sync_status && (
+                <>
+                  {" · "}
+                  <span
+                    className={
+                      source.last_sync_status === "failed"
+                        ? "text-destructive"
+                        : source.last_sync_status === "partial"
+                          ? "text-amber-600"
+                          : "text-green-600"
+                    }
+                  >
+                    {{ success: "成功", partial: "部分成功", failed: "失败" }[source.last_sync_status] ?? source.last_sync_status}
+                  </span>
+                </>
               )}
             </div>
-            {source.lifecycle_state && (
-              <div className="sm:col-span-2">
-                <Badge
-                  variant={source.lifecycle_state === "delete_failed" ? "destructive" : "warning"}
-                  title={source.lifecycle_error ?? undefined}
-                >
-                  删除生命周期:{source.lifecycle_state}
-                </Badge>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* 同步与健康(复用既有三面板) */}
-      {source && (
-        <div className="space-y-3">
-          {activeStatus && (
-            <SyncStatusPanel
-              status={activeStatus}
-              onRetry={() => triggerSync.mutate(sourceId)}
-            />
-          )}
-          <SourceHealthPanel health={healthItem} />
+            <div>
+              <span>{docs?.ledger_total ?? "—"}</span> 条知识
+              {attentionCount > 0 ? (
+                <>
+                  {" · "}
+                  <span className="font-medium text-destructive">{attentionCount} 项需处理</span>
+                </>
+              ) : null}
+            </div>
+          </div>
         </div>
       )}
 
-      {/* 内容清单(账本) */}
+      {/* 层级 5:prominent attention banner(权威原因摘要;可关闭为本地呈现状态) */}
+      {source && attentionCount > 0 && !bannerDismissed && (
+        <div className="flex flex-wrap items-start gap-3 rounded-md border border-destructive/40 bg-destructive/10 p-3">
+          <span aria-hidden className="mt-0.5 font-bold text-destructive">!</span>
+          <div className="min-w-0 flex-1 space-y-1">
+            <p className="font-medium text-destructive">有 {attentionCount} 项知识需要处理</p>
+            {reasonLines.length > 0 && (
+              <ul className="space-y-0.5 text-xs text-muted-foreground">
+                {reasonLines.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setBucket("attention");
+                setLifecycle("");
+                setPage(1);
+              }}
+            >
+              查看需处理
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label="关闭提醒"
+              onClick={() => setBannerDismissed(true)}
+            >
+              ✕
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* 层级 6:知识内容工作区 */}
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0 p-4">
-          <CardTitle className="text-base">内容清单(权威账本)</CardTitle>
+          <CardTitle className="text-base">知识内容</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 p-4 pt-0">
-          {bucketCounts && (
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                {(["current", "attention", "retired"] as const).map((b) => (
-                  <Badge key={b} variant={bucketVariant(b)}>
-                    {bucketLabel(b)} {bucketCounts[b]}
-                  </Badge>
-                ))}
-                <span className="text-sm text-muted-foreground">
-                  账本文档 {docs?.ledger_total ?? 0} 篇 · 在服(含宽限){docs?.serving_count ?? 0} 篇
-                </span>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                计数真相:账本(ledger)与在服计数来自 documents 现行版本关系;已索引(向量库)计数不由账本直接证明——
-                实际索引规模以最近同步一致性证据(上方健康面板)与在服代计数为准。
-              </p>
-            </div>
-          )}
-
           <div className="flex flex-wrap items-center gap-2">
             <Input
-              aria-label="搜索标题或 URL"
-              placeholder="搜索标题或 URL 子串"
+              aria-label="搜索知识内容"
+              placeholder="搜索知识内容..."
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               className="max-w-xs"
             />
             <select
-              aria-label="按生命周期过滤"
+              aria-label="按状态过滤"
               className="h-10 rounded-md border px-3 text-sm"
-              value={lifecycle}
-              onChange={(e) => setLifecycle(e.target.value)}
+              value={bucket}
+              onChange={(e) => setBucket(e.target.value)}
             >
-              {LIFECYCLE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
+              {BUCKET_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
+            <select
+              aria-label="按生命周期过滤"
+              className="h-10 rounded-md border px-3 text-xs text-muted-foreground"
+              value={lifecycle}
+              onChange={(e) => setLifecycle(e.target.value)}
+              title="技术过滤(生命周期词表)"
+            >
+              {LIFECYCLE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            <div className="ml-auto flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                共 {docs?.total ?? 0} 条(账本 {docs?.ledger_total ?? 0})
+              </span>
+              <select
+                aria-label="排序"
+                className="h-10 rounded-md border px-3 text-sm"
+                value={order}
+                onChange={(e) => setOrder(e.target.value)}
+              >
+                {SORT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
           </div>
+
+          {bucketCounts && (
+            <div className="flex flex-wrap items-center gap-2">
+              {(["current", "attention", "retired"] as const).map((b) => (
+                <button
+                  key={b}
+                  type="button"
+                  onClick={() => {
+                    setBucket(b === "current" ? "current" : b === "attention" ? "attention" : "retired");
+                    setPage(1);
+                  }}
+                  title="点击过滤该运营桶"
+                >
+                  <Badge variant={b === "current" ? "success" : b === "attention" ? "warning" : "outline"}>
+                    {bucketLabel(b)} {bucketCounts[b]}
+                  </Badge>
+                </button>
+              ))}
+              <span className="text-xs text-muted-foreground">
+                在服(含宽限){docs?.serving_count ?? 0} 篇 · 计数真相 = 账本(documents)权威聚合
+              </span>
+            </div>
+          )}
 
           {documentsQuery.isError && !docs ? (
             <LoadError
@@ -352,23 +480,27 @@ export default function DataSourceDetail() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>标题</TableHead>
-                    <TableHead>生命周期</TableHead>
-                    <TableHead>在服</TableHead>
-                    <TableHead>分块</TableHead>
+                    <TableHead>名称</TableHead>
+                    <TableHead>类型</TableHead>
+                    <TableHead>状态</TableHead>
+                    <TableHead>当前版本</TableHead>
+                    <TableHead>服务</TableHead>
                     <TableHead>更新时间</TableHead>
-                    <TableHead>真相</TableHead>
+                    <TableHead>操作</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {docs?.items.map((row) => {
-                    const bucket = bucketOfDocument(row);
+                    const bucketKey = bucketOfDocument(row);
                     const reason = notServingReason(row);
-                    const expanded = truthDocId === row.source_id && truthQuery.data?.doc_source_id === row.source_id;
+                    const kStatus = knowledgeStatusOf(row);
+                    const expanded =
+                      truthDocId === row.source_id &&
+                      truthQuery.data?.doc_source_id === row.source_id;
                     return (
                       <TableRow key={row.source_id} className="align-top">
                         <TableCell>
-                          <div className="max-w-[260px] truncate" title={row.title}>
+                          <div className="max-w-[260px] truncate font-medium" title={row.title}>
                             {row.title}
                           </div>
                           <div
@@ -378,16 +510,12 @@ export default function DataSourceDetail() {
                             {row.source_id}
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <Badge variant={lifecycleVariant(row.lifecycle)}>
-                            {lifecycleLabel(row.lifecycle)}
-                          </Badge>
+                        <TableCell className="text-sm">
+                          {TYPE_LABELS[row.source_type] ?? row.source_type}
                         </TableCell>
                         <TableCell>
-                          <Badge variant={row.serving ? "success" : "outline"}>
-                            {row.serving ? "在服" : "不在服"}
-                          </Badge>
-                          {bucket !== "current" && reason && (
+                          <Badge variant={kStatus.variant}>{kStatus.label}</Badge>
+                          {bucketKey !== "current" && reason && (
                             <div
                               className="mt-1 max-w-[220px] truncate text-xs text-amber-600"
                               title={reason}
@@ -396,9 +524,22 @@ export default function DataSourceDetail() {
                             </div>
                           )}
                         </TableCell>
-                        <TableCell>{row.chunk_count}</TableCell>
+                        <TableCell className="text-sm">
+                          {row.current_version_seq != null ? (
+                            <span title={`现行版本 #${row.current_version_seq}(权威版本链)`}>
+                              v{row.current_version_seq}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground" title="后端无此记录">—</span>
+                          )}
+                        </TableCell>
                         <TableCell>
-                          <Iso value={row.updated_at} />
+                          <Badge variant={row.serving ? "success" : "destructive"}>
+                            {row.serving ? "在服" : "不在服"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          <RelativeTime iso={row.updated_at} />
                         </TableCell>
                         <TableCell>
                           <Button
@@ -409,7 +550,7 @@ export default function DataSourceDetail() {
                               setTruthDocId((cur) => (cur === row.source_id ? null : row.source_id))
                             }
                           >
-                            {expanded ? "收起真相" : "查看真相"}
+                            {expanded ? "收起真相" : "真相"}
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -417,7 +558,7 @@ export default function DataSourceDetail() {
                   })}
                   {truthDocId && (
                     <TableRow>
-                      <TableCell colSpan={6} className="bg-muted/20">
+                      <TableCell colSpan={7} className="bg-muted/20">
                         <div className="space-y-2 py-1 text-sm">
                           {truthQuery.isLoading && (
                             <p className="text-muted-foreground">加载中...</p>
@@ -431,27 +572,40 @@ export default function DataSourceDetail() {
                           )}
                           {truthQuery.data && (
                             <>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="font-medium">单条真相</span>
-                                <Badge
-                                  variant={bucketVariant(bucketOfDocument(truthQuery.data))}
-                                >
-                                  {bucketLabel(bucketOfDocument(truthQuery.data))}
-                                </Badge>
-                                <Badge
-                                  variant={lifecycleVariant(truthQuery.data.lifecycle)}
-                                >
-                                  {lifecycleLabel(truthQuery.data.lifecycle)}
-                                </Badge>
-                              </div>
-                              {notServingReason(truthQuery.data) && (
-                                <p className="text-sm text-amber-600">
-                                  原因:{notServingReason(truthQuery.data)}
-                                </p>
-                              )}
-                              <p className="font-mono break-all text-xs">
-                                canonical:{truthQuery.data.doc_source_id}
+                              <p className="font-medium">问题</p>
+                              <p className="text-muted-foreground">
+                                {notServingReason(truthQuery.data) ?? "该文档当前在服,无异常记录"}
                               </p>
+                              <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+                                <p>
+                                  <span className="text-muted-foreground">源内容状态:</span>{" "}
+                                  <Badge variant="outline">
+                                    {lifecycleLabel(truthQuery.data.lifecycle)}
+                                  </Badge>
+                                </p>
+                                <p>
+                                  <span className="text-muted-foreground">当前有效版本:</span>{" "}
+                                  {truthQuery.data.current_version ? (
+                                    `v${truthQuery.data.current_version.version_seq}(${truthQuery.data.current_version.status}) · 生效自 ${truthQuery.data.current_version.valid_from ?? "后端无此记录"}`
+                                  ) : (
+                                    <span className="text-amber-600">后端无此记录</span>
+                                  )}
+                                </p>
+                                <p>
+                                  <span className="text-muted-foreground">当前服务:</span>{" "}
+                                  {truthQuery.data.serving ? "在服" : "不在服"}
+                                  {truthQuery.data.current_version &&
+                                    ` · 持久 chunk ${truthQuery.data.current_version.chunks_total}`}
+                                </p>
+                                <p>
+                                  <span className="text-muted-foreground">生成真相:</span>{" "}
+                                  {truthQuery.data.generation ? (
+                                    `#${truthQuery.data.generation.ordinal}(${generationStatusLabel(truthQuery.data.generation.status)}) · 文档 ${truthQuery.data.generation.doc_count} · chunk ${truthQuery.data.generation.chunk_count}`
+                                  ) : (
+                                    <span className="text-amber-600">后端无此记录</span>
+                                  )}
+                                </p>
+                              </div>
                               <p className="break-all text-xs">
                                 URL:{" "}
                                 {truthQuery.data.url.startsWith("http") ? (
@@ -467,47 +621,19 @@ export default function DataSourceDetail() {
                                   <span className="font-mono">{truthQuery.data.url}</span>
                                 )}
                               </p>
-                              <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
-                                <p>
-                                  {truthQuery.data.current_version ? (
-                                    <>
-                                      现行版本 #{truthQuery.data.current_version.version_seq}
-                                      ({truthQuery.data.current_version.status}) · 持久 chunk{" "}
-                                      {truthQuery.data.current_version.chunks_total} · 生效自{" "}
-                                      {formatTs(truthQuery.data.current_version.valid_from)}
-                                    </>
-                                  ) : (
-                                    <span className="text-amber-600">
-                                      现行版本:后端无此记录
-                                    </span>
-                                  )}
-                                </p>
-                                <p>
-                                  {truthQuery.data.generation ? (
-                                    <>
-                                      生成 #{truthQuery.data.generation.ordinal}(
-                                      {generationStatusLabel(truthQuery.data.generation.status)})
-                                      · 文档 {truthQuery.data.generation.doc_count} · chunk{" "}
-                                      {truthQuery.data.generation.chunk_count} · 激活{" "}
-                                      {formatTs(truthQuery.data.generation.activated_at)}
-                                      {truthQuery.data.generation.retired_at
-                                        ? ` · 退役 ${truthQuery.data.generation.retired_at}`
-                                        : ""}
-                                    </>
-                                  ) : (
-                                    <span className="text-amber-600">生成记录:后端无此记录</span>
-                                  )}
-                                </p>
-                                <p>
-                                  创建:<Iso value={truthQuery.data.created_at} /> 更新:
-                                  <Iso value={truthQuery.data.updated_at} />
-                                </p>
+                              <p className="text-xs text-muted-foreground">
+                                创建 <RelativeTime iso={truthQuery.data.created_at} /> · 更新{" "}
+                                <RelativeTime iso={truthQuery.data.updated_at} />
                                 {truthQuery.data.superseded_at && (
-                                  <p>
-                                    接替时间:<Iso value={truthQuery.data.superseded_at} />
-                                  </p>
+                                  <>
+                                    {" "}· 接替 <RelativeTime iso={truthQuery.data.superseded_at} />
+                                  </>
                                 )}
-                              </div>
+                                {truthQuery.data.superseded_by && ` · 接替者 ${truthQuery.data.superseded_by}`}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                本诊断为只读真相呈现;行级修复操作需待权威修复契约(v1.6.3 不提供)。
+                              </p>
                             </>
                           )}
                         </div>
@@ -531,81 +657,116 @@ export default function DataSourceDetail() {
         </CardContent>
       </Card>
 
-      {/* 生成可见性 */}
-      <Card>
-        <CardHeader className="flex-row items-center justify-between space-y-0 p-4">
-          <CardTitle className="text-base">索引生成</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 p-4 pt-0">
-          {generationsQuery.isError && !generations ? (
-            <LoadError
-              error={generationsQuery.error}
-              onRetry={() => generationsQuery.refetch()}
-            />
-          ) : generationsQuery.isLoading ? (
-            <p className="text-sm text-muted-foreground">加载中...</p>
-          ) : (generations?.items.length ?? 0) === 0 ? (
-            <p className="text-sm text-muted-foreground">该源尚无索引生成记录(后端无此记录)</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>序数</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>文档数</TableHead>
-                  <TableHead>分块数</TableHead>
-                  <TableHead>创建 / 就绪 / 激活 / 退役</TableHead>
-                  <TableHead>失败证据</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {generations?.items.map((g) => (
-                  <TableRow key={g.id}>
-                    <TableCell className="font-mono">#{g.ordinal}</TableCell>
-                    <TableCell>
-                      <GenerationBadges gen={g} servingOrdinals={generations.serving_ordinals} />
-                    </TableCell>
-                    <TableCell>{g.doc_count}</TableCell>
-                    <TableCell>{g.chunk_count}</TableCell>
-                    <TableCell>
-                      <div className="space-y-0.5 text-xs">
-                        <div>创建 <Iso value={g.created_at} /></div>
-                        <div>就绪 <Iso value={g.ready_at} /></div>
-                        <div>激活 <Iso value={g.activated_at} /></div>
-                        <div>退役 <Iso value={g.retired_at} /></div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {g.failure ? (
-                        <FailureEvidence failure={g.failure} />
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* 最近变化(同步历史) */}
+      {/* 层级 7:同步状态与活动(panel 4;异常优先时间线) */}
       {source && (
-        <div aria-label="最近同步">
-          <h3 className="mb-2 text-base font-semibold">最近变化(同步历史)</h3>
-          <SyncHistoryPanel
-            runs={runsQuery.data}
-            isLoading={runsQuery.isLoading}
-            error={runsError}
-            onRetry={() => runsQuery.refetch()}
-          />
-          {runsHasMore && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              仅显示最近 {runsQuery.data?.items.length} 次运行(共 {runsQuery.data?.total} 次)
-            </p>
-          )}
+        <SyncActivityPanel
+          source={source}
+          runs={runsQuery.data}
+          runsLoading={runsQuery.isLoading}
+          runsError={runsError}
+          onRetryRuns={() => runsQuery.refetch()}
+          health={reliability}
+          onTriggerSync={
+            source.enabled
+              ? () => {
+                  triggerSync.mutate(source.id, {
+                    onSuccess: () =>
+                      toast.success(`已触发同步:${source.id}(后台进行中,完成后自动刷新)`),
+                  });
+                }
+              : undefined
+          }
+          syncPending={triggerSync.isPending}
+        />
+      )}
+
+      {/* 本地诊断(次级证据,可展开):五维健康 + 索引生成真相(#55 证据定位) */}
+      <details className="rounded-md border">
+        <summary className="cursor-pointer p-3 text-sm font-medium">本地诊断(健康与生成真相)</summary>
+        <div className="space-y-3 p-3 pt-0">
+          <SourceHealthPanel health={healthItem} />
+          <Card>
+            <CardHeader className="flex-row items-center justify-between space-y-0 p-4">
+              <CardTitle className="text-base">索引生成</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 p-4 pt-0">
+              {generationsQuery.isError && !generations ? (
+                <LoadError
+                  error={generationsQuery.error}
+                  onRetry={() => generationsQuery.refetch()}
+                />
+              ) : generationsQuery.isLoading ? (
+                <p className="text-sm text-muted-foreground">加载中...</p>
+              ) : (generations?.items.length ?? 0) === 0 ? (
+                <p className="text-sm text-muted-foreground">该源尚无索引生成记录(后端无此记录)</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>序数</TableHead>
+                      <TableHead>状态</TableHead>
+                      <TableHead>文档数</TableHead>
+                      <TableHead>分块数</TableHead>
+                      <TableHead>创建 / 就绪 / 激活 / 退役</TableHead>
+                      <TableHead>失败证据</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {generations?.items.map((g) => (
+                      <TableRow key={g.id}>
+                        <TableCell className="font-mono">#{g.ordinal}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Badge
+                              variant={
+                                g.status === "failed"
+                                  ? "destructive"
+                                  : g.status === "ready"
+                                    ? "success"
+                                    : g.status === "processing"
+                                      ? "warning"
+                                      : "outline"
+                              }
+                            >
+                              {generationStatusLabel(g.status)}
+                            </Badge>
+                            {generations.serving_ordinals.includes(g.ordinal) && (
+                              <Badge variant="success" title="该代含当前在服文档(active_generation 权威口径)">
+                                在服代
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>{g.doc_count}</TableCell>
+                        <TableCell>{g.chunk_count}</TableCell>
+                        <TableCell>
+                          <div className="space-y-0.5 text-xs">
+                            <div>创建 <RelativeTime iso={g.created_at} /></div>
+                            <div>就绪 <RelativeTime iso={g.ready_at} /></div>
+                            <div>激活 <RelativeTime iso={g.activated_at} /></div>
+                            <div>退役 <RelativeTime iso={g.retired_at} /></div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {g.failure ? (
+                            <FailureEvidence failure={g.failure} />
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
         </div>
+      </details>
+
+      {/* 编辑数据源(context-preserving drawer;完整编辑器能力保持权威) */}
+      {source && (
+        <SourceEditorDrawer open={editorOpen} onOpenChange={setEditorOpen} editing={source} />
       )}
     </div>
   );

@@ -16,6 +16,12 @@ import type {
 export interface SourceDocumentsParams {
   /** L 轴生命周期过滤(词表见 backend document_lifecycle.DocLifecycle)。 */
   lifecycle?: string;
+  /** v1.6.3 B1:运营桶投影(current/attention/retired;后端权威公式)。 */
+  bucket?: string;
+  /** v1.6.3 B1:排序(-updated_at 默认 | title)。 */
+  order?: string;
+  /** v1.6.3 B1:documents.source_type 精确匹配。 */
+  sourceType?: string;
   /** title/url 子串搜索(不区分大小写)。 */
   search?: string;
   page?: number;
@@ -28,6 +34,9 @@ export function fetchSourceDocuments(
 ): Promise<SourceDocumentsResponse> {
   const q = new URLSearchParams();
   if (params.lifecycle) q.set("lifecycle", params.lifecycle);
+  if (params.bucket) q.set("bucket", params.bucket);
+  if (params.order) q.set("order", params.order);
+  if (params.sourceType) q.set("source_type", params.sourceType);
   if (params.search) q.set("search", params.search);
   q.set("page", String(params.page ?? 1));
   q.set("size", String(params.size ?? 20));
@@ -37,10 +46,15 @@ export function fetchSourceDocuments(
 }
 
 export function useSourceDocuments(sourceId: string, params: SourceDocumentsParams = {}) {
-  const { lifecycle, search, page = 1, size = 20 } = params;
+  const { lifecycle, bucket, order, sourceType, search, page = 1, size = 20 } = params;
   return useQuery({
-    queryKey: ["data-source-documents", sourceId, { lifecycle, search, page, size }],
-    queryFn: () => fetchSourceDocuments(sourceId, { lifecycle, search, page, size }),
+    queryKey: [
+      "data-source-documents",
+      sourceId,
+      { lifecycle, bucket, order, sourceType, search, page, size },
+    ],
+    queryFn: () =>
+      fetchSourceDocuments(sourceId, { lifecycle, bucket, order, sourceType, search, page, size }),
     enabled: !!sourceId,
   });
 }

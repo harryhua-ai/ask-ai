@@ -24,6 +24,8 @@ from backend.api.admin.schemas import (
     DataSourceUpdate,
     DocumentCurrentVersionTruth,
     DocumentGenerationTruth,
+    SourceAttentionSummaryItem,
+    SourceAttentionSummaryResponse,
 )
 from backend.api.admin.source_center_schemas import (
     DiscoveryResultOut,
@@ -386,6 +388,82 @@ async def list_data_sources(
         )
         for s in sources
     ]
+
+
+@router.get("/attention-summary", response_model=SourceAttentionSummaryResponse)
+async def get_attention_summary(
+    _: Annotated[CurrentUser, Depends(require_role("admin", "editor", "viewer"))],
+    request: Request,
+) -> SourceAttentionSummaryResponse:
+    """v1.6.3 B1:全源运营桶聚合投影(只读 GET,viewer 可读)。
+
+    与 ``GET /data-sources/{source_id}/documents`` 的聚合计数**同一定义**
+    (current = active ∧ 现行版本可解析;retired = superseded + deleted;
+    attention = ledger_total − current − retired;DocLifecycle 词表)。
+    供扫描优先列表页一次取全,零语义新增,仅查 Postgres;
+    无文档源以零值行出现(列表「需处理」一等列的权威计数来源)。
+    """
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        sources = (
+            (await session.execute(select(DataSource).order_by(DataSource.id))).scalars().all()
+        )
+        resolvable = _current_version_resolvable()
+        items = []
+        for source in sources:
+            lifecycle_rows = (
+                await session.execute(
+                    select(Document.lifecycle, func.count())
+                    .where(_document_scope(source.id))
+                    .group_by(Document.lifecycle)
+                )
+            ).all()
+            lifecycle_counts = {row[0]: int(row[1]) for row in lifecycle_rows}
+            ledger_total = sum(lifecycle_counts.values())
+            retired = (
+                lifecycle_counts.get(DocLifecycle.SUPERSEDED, 0)
+                + lifecycle_counts.get(DocLifecycle.DELETED, 0)
+            )
+            current = int(
+                (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(Document)
+                        .where(
+                            _document_scope(source.id),
+                            Document.lifecycle == DocLifecycle.ACTIVE,
+                            resolvable,
+                        )
+                    )
+                ).scalar()
+                or 0
+            )
+            serving = int(
+                (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(Document)
+                        .where(
+                            _document_scope(source.id),
+                            Document.lifecycle.in_(DocLifecycle.SERVING),
+                            resolvable,
+                        )
+                    )
+                ).scalar()
+                or 0
+            )
+            items.append(
+                SourceAttentionSummaryItem(
+                    source_id=source.id,
+                    ledger_total=ledger_total,
+                    current_count=current,
+                    serving_count=serving,
+                    retired_count=retired,
+                    attention_count=max(0, ledger_total - current - retired),
+                    lifecycle_counts=lifecycle_counts,
+                )
+            )
+    return SourceAttentionSummaryResponse(items=items)
 
 
 @router.post("", response_model=DataSourceOut, status_code=201)
@@ -814,6 +892,12 @@ async def list_source_documents(
     _: ViewerDep,
     request: Request,
     lifecycle: str | None = Query(default=None),
+    # v1.6.3 B1 additive 只读参数(默认行为不变):
+    # bucket = 运营桶投影(与冻结桶公式同定义);order = 排序(默认原行为);
+    # source_type = documents.source_type 精确匹配。
+    bucket: str | None = Query(default=None),
+    order: str = Query(default="-updated_at", pattern="^(-updated_at|title)$"),
+    source_type: str | None = Query(default=None),
     search: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
@@ -823,6 +907,14 @@ async def list_source_documents(
     聚合计数(lifecycle_counts / ledger_total / serving_count / current_count)
     为全源账本口径,不受本次过滤影响,供运营三桶(Current / Needs Attention /
     Retired)呈现。搜索不区分大小写,命中 title / url / 复合身份任一子串。
+
+    v1.6.3 B1 additive 只读参数:
+    - ``bucket``:运营桶投影。current = active ∧ 现行版本可解析;
+      retired = superseded + deleted;attention = 其余(missing_candidate /
+      discovered / active 悬挂)。与 attention-summary 聚合同一定义。
+    - ``order``:``-updated_at``(默认,updated_at 倒序 nulls last,原行为)
+      或 ``title``(title 升序)。
+    - ``source_type``:documents.source_type 精确匹配。
     """
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
@@ -832,9 +924,38 @@ async def list_source_documents(
                 status_code=400,
                 detail=f"非法 lifecycle 过滤值,可用词表: {', '.join(DocLifecycle.ALL)}",
             )
+        if bucket is not None and bucket not in ("current", "attention", "retired"):
+            raise HTTPException(
+                status_code=400,
+                detail="非法 bucket 过滤值,可用词表: current, attention, retired",
+            )
         filters = [_document_scope(source_id)]
         if lifecycle is not None:
             filters.append(Document.lifecycle == lifecycle)
+        if bucket is not None:
+            resolvable_bucket = _current_version_resolvable()
+            if bucket == "current":
+                filters.append(
+                    (Document.lifecycle == DocLifecycle.ACTIVE) & resolvable_bucket
+                )
+            elif bucket == "retired":
+                filters.append(
+                    Document.lifecycle.in_(
+                        [DocLifecycle.SUPERSEDED, DocLifecycle.DELETED]
+                    )
+                )
+            else:  # attention = 全集 − current − retired(同一冻结公式的行级投影)
+                filters.append(
+                    Document.lifecycle.in_(
+                        [DocLifecycle.MISSING_CANDIDATE, DocLifecycle.DISCOVERED]
+                    )
+                    | (
+                        (Document.lifecycle == DocLifecycle.ACTIVE)
+                        & ~resolvable_bucket
+                    )
+                )
+        if source_type is not None:
+            filters.append(Document.source_type == source_type)
         if search is not None and search.strip():
             term = f"%{_escape_like(search.strip())}%"
             filters.append(
@@ -895,7 +1016,9 @@ async def list_source_documents(
                     select(Document)
                     .where(*filters)
                     .order_by(
-                        Document.updated_at.desc().nulls_last(),
+                        Document.title.asc()
+                        if order == "title"
+                        else Document.updated_at.desc().nulls_last(),
                         Document.source_id,
                     )
                     .offset((page - 1) * size)

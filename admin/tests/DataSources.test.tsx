@@ -14,6 +14,7 @@ import {
   useSyncHealth,
   useSyncRuns,
   useSyncStatus,
+  useAttentionSummary,
 } from "@/hooks/useDataSources";
 
 vi.mock("@/hooks/useAuth", () => ({
@@ -51,6 +52,7 @@ vi.mock("@/hooks/useDataSources", () => ({
     error: null,
     refetch: vi.fn(),
   })),
+  useAttentionSummary: vi.fn(() => ({ data: undefined, isLoading: false })),
   usePreviewDirs: vi.fn(() => ({ data: { dirs: [] }, isLoading: false, error: null })),
   fetchPreviewBranches: vi.fn(),
   fetchPreviewFileTypes: vi.fn(),
@@ -72,6 +74,7 @@ beforeEach(() => {
     error: null,
     refetch: vi.fn(),
   });
+  vi.mocked(useAttentionSummary).mockReturnValue({ data: undefined, isLoading: false });
 });
 
 // #50 B1:列表页新增 useNavigate(详情入口)——本文件所有渲染统一包 MemoryRouter
@@ -102,7 +105,7 @@ describe("DataSources", () => {
         {withRouter(<DataSources />)}
       </QueryClientProvider>,
     );
-    expect(screen.getByText("数据源管理")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "数据源" })).toBeInTheDocument();
   });
 
   it("shows empty state when no data sources", () => {
@@ -122,7 +125,7 @@ describe("DataSources", () => {
         {withRouter(<DataSources />)}
       </QueryClientProvider>,
     );
-    fireEvent.click(screen.getByText("新增数据源"));
+    fireEvent.click(screen.getByRole("button", { name: /添加数据源/ }));
     expect(screen.getByText("创建")).toBeInTheDocument();
   });
 
@@ -211,7 +214,7 @@ describe("DataSources", () => {
 
   it("同步间隔:预设下拉(1h/12h/1天) + 自定义显示文本输入", () => {
     renderWithSources([]);
-    fireEvent.click(screen.getByText("新增数据源"));
+    fireEvent.click(screen.getByRole("button", { name: /添加数据源/ }));
     const select = screen.getByLabelText("同步间隔");
     // 默认 24h = "1 天" 预设
     expect(select).toHaveValue("24h");
@@ -242,7 +245,7 @@ describe("DataSources", () => {
       updated_at: "2026-07-01T00:00:00Z",
     };
     renderWithSources([localGitDs]);
-    expect(screen.getByText("代码仓库")).toBeInTheDocument();
+    expect(screen.getAllByText("代码仓库").length).toBeGreaterThan(0);
     expect(screen.queryByText("local_git")).not.toBeInTheDocument();
   });
 
@@ -323,8 +326,9 @@ describe("DataSources", () => {
       last_sync: null,
     };
     renderWithSources([withSync, noSync]);
-    expect(screen.getByText("08-01 18:30")).toBeInTheDocument();
-    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    // v1.6.3 B1:最后同步列人性化相对时间,精确时间保留在 title
+    expect(screen.getAllByText(/天前|小时前|刚刚|个月前/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("从未同步").length).toBeGreaterThan(0);
   });
 
   it("点击某行同步只提交该源，后端没有 active 证据时不伪造同步中", () => {
@@ -531,7 +535,7 @@ describe("DataSources", () => {
 describe("C10 branches 默认分支", () => {
   it("新建表单 branches 初始为空,不再硬编码 main", () => {
     renderWithSources([]);
-    fireEvent.click(screen.getByText("新增数据源"));
+    fireEvent.click(screen.getByRole("button", { name: /添加数据源/ }));
     const el = document.querySelector('input[name="branches"]') as HTMLInputElement;
     expect(el?.value).toBe("");
   });
@@ -542,7 +546,7 @@ describe("C10 branches 默认分支", () => {
       defaultBranch: "hw-v1.2",
     });
     renderWithSources([]);
-    fireEvent.click(screen.getByText("新增数据源"));
+    fireEvent.click(screen.getByRole("button", { name: /添加数据源/ }));
     fireEvent.change(
       screen.getByPlaceholderText("https://github.com/camthink-ai/ne301.git"),
       { target: { value: "https://github.com/camthink-ai/demo.git" } },
@@ -585,7 +589,7 @@ describe("C10 branches 默认分支", () => {
 describe("C9 filesystem 内容来源", () => {
   it("新建 filesystem 源:默认服务器路径模式,root_path 可见", () => {
     renderWithSources([]);
-    fireEvent.click(screen.getByText("新增数据源"));
+    fireEvent.click(screen.getByRole("button", { name: /添加数据源/ }));
     fireEvent.change(screen.getByDisplayValue("代码仓库"), {
       target: { value: "filesystem" },
     });
@@ -595,7 +599,7 @@ describe("C9 filesystem 内容来源", () => {
 
   it("切到上传文件夹模式:root_path 隐藏,出现文件夹选择器", () => {
     renderWithSources([]);
-    fireEvent.click(screen.getByText("新增数据源"));
+    fireEvent.click(screen.getByRole("button", { name: /添加数据源/ }));
     fireEvent.change(screen.getByDisplayValue("代码仓库"), {
       target: { value: "filesystem" },
     });
@@ -614,7 +618,7 @@ it("#16 拉取分支后不再把仓库全部后缀预填进 file_types", async (
     defaultBranch: "master",
   });
   renderWithSources([]);
-  fireEvent.click(screen.getByText("新增数据源"));
+  fireEvent.click(screen.getByRole("button", { name: /添加数据源/ }));
   fireEvent.change(
     screen.getByPlaceholderText("https://github.com/camthink-ai/ne301.git"),
     { target: { value: "https://github.com/camthink-ai/demo.git" } },
@@ -657,7 +661,7 @@ describe("#16 Simple Mode 发现与推荐策略", () => {
   it("扫描后预览三段推荐(include/exclude/review)+ 冻结理由原文", async () => {
     vi.mocked(fetchRepoDiscovery).mockResolvedValue(discoveryFixture as never);
     renderWithSources([]);
-    fireEvent.click(screen.getByText("新增数据源"));
+    fireEvent.click(screen.getByRole("button", { name: /添加数据源/ }));
     fireEvent.change(
       screen.getByPlaceholderText("https://github.com/camthink-ai/ne301.git"),
       { target: { value: "https://github.com/camthink-ai/demo.git" } },
@@ -739,7 +743,7 @@ describe("#16 Simple Mode 发现与推荐策略", () => {
 
   it("Simple Mode:clone 路径显示为自动管理,不再作为大号输入框", () => {
     renderWithSources([]);
-    fireEvent.click(screen.getByText("新增数据源"));
+    fireEvent.click(screen.getByRole("button", { name: /添加数据源/ }));
     expect(screen.getByText(/本地缓存路径:自动管理/)).toBeInTheDocument();
     // 高级选项保留 clone 路径 override(issue 第 6 条)
     expect(
@@ -766,7 +770,7 @@ const c8bWebCrawlDs = (config: Record<string, unknown>) => ({
 describe("C8B web_crawl 表单一等公民", () => {
   it("类型下拉包含网站爬取选项(web_crawl)", () => {
     renderWithSources([]);
-    fireEvent.click(screen.getByText("新增数据源"));
+    fireEvent.click(screen.getByRole("button", { name: /添加数据源/ }));
     const select = screen.getByDisplayValue("代码仓库") as HTMLSelectElement;
     const webOpt = Array.from(select.options).find((o) => o.value === "web_crawl");
     expect(webOpt?.textContent).toBe("网站爬取");
@@ -774,7 +778,7 @@ describe("C8B web_crawl 表单一等公民", () => {
 
   it("新建 web_crawl:四字段表单出现,base_url 留空提交被拦截", async () => {
     renderWithSources([]);
-    fireEvent.click(screen.getByText("新增数据源"));
+    fireEvent.click(screen.getByRole("button", { name: /添加数据源/ }));
     fireEvent.change(screen.getByDisplayValue("代码仓库"), {
       target: { value: "web_crawl" },
     });
@@ -843,7 +847,7 @@ describe("C8B web_crawl 表单一等公民", () => {
 
   it("列表徽标:web_crawl 显示中文「网站爬取」,产品线副标题为 base_url", () => {
     renderWithSources([c8bWebCrawlDs({ base_url: "https://www.camthink.ai" })]);
-    expect(screen.getByText("网站爬取")).toBeInTheDocument();
+    expect(screen.getAllByText("网站爬取").length).toBeGreaterThan(0);
     expect(screen.getByText("https://www.camthink.ai")).toBeInTheDocument();
   });
 });
@@ -971,7 +975,7 @@ function renderWithHealth(sources: unknown[], items: unknown[] | undefined, sync
 }
 
 describe("DSH 数据源健康语义", () => {
-  it("按源懒加载 exact sync-runs 契约，并展开历史与五维健康", () => {
+  it("按源懒加载 exact sync-runs 契约，并展开历史与五维健康", async () => {
     vi.mocked(useSyncRuns).mockImplementation((_sourceId, options) => ({
       data: options?.enabled ? {
         items: [{
@@ -1031,7 +1035,12 @@ describe("DSH 数据源健康语义", () => {
     );
 
     expect(useSyncRuns).toHaveBeenCalledWith("website-camthink", { enabled: false });
-    fireEvent.click(screen.getByRole("button", { name: "查看可观测性" }));
+    // v1.6.3 B1:紧凑操作列 — 可观测性收进 ⋯ 菜单
+    const trigger = screen.getByRole("button", { name: "更多操作" });
+    fireEvent.pointerDown(trigger);
+    fireEvent.click(trigger);
+    const menuItem = await screen.findByRole("menuitem", { name: "查看可观测性" });
+    fireEvent.click(menuItem);
 
     expect(useSyncRuns).toHaveBeenCalledWith("website-camthink", { enabled: true });
     expect(screen.getByText("最近同步")).toBeInTheDocument();
@@ -1051,7 +1060,7 @@ describe("DSH 数据源健康语义", () => {
     expect(screen.getAllByText("孤儿 3").length).toBeGreaterThan(0);
   });
 
-  it("#11 Health Authority:五维面板由 /sync-health 驱动,前端不重判状态", () => {
+  it("#11 Health Authority:五维面板由 /sync-health 驱动,前端不重判状态", async () => {
     const syncHealthItem = {
       source_id: "website-camthink",
       source_type: "web_crawl",
@@ -1072,11 +1081,16 @@ describe("DSH 数据源健康语义", () => {
       [syncHealthItem],
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "查看可观测性" }));
+    const trigger = screen.getByRole("button", { name: "更多操作" });
+    fireEvent.pointerDown(trigger);
+    fireEvent.click(trigger);
+    const menuItem = await screen.findByRole("menuitem", { name: "查看可观测性" });
+    fireEvent.click(menuItem);
 
     // overall 由后端给:STALE → 过期(前端只本地化)
     expect(screen.getByText("数据源健康")).toBeInTheDocument();
-    expect(screen.getAllByText("过期").length).toBe(2); // overall + freshness
+    // v1.6.3 B1:列表操作者状态徽章(过期)也来自同一权威 overall → 3 处
+    expect(screen.getAllByText("过期").length).toBe(3); // 状态徽章 + overall + freshness
     // 后端词表逐维本地化,UNKNOWN 不被改判
     expect(screen.getByText("未知")).toBeInTheDocument();          // coverage unknown
     expect(screen.getByText("证据不足")).toBeInTheDocument();      // sync insufficient_data
@@ -1089,17 +1103,36 @@ describe("DSH 数据源健康语义", () => {
   });
 
   it("G001 健康:当前成功 + 历史 96%(窗口/分母可见)+ 内容数", () => {
+    // v1.6.3 B1:知识数量列来自 attention-summary 权威投影(ledger_total)
+    vi.mocked(useAttentionSummary).mockReturnValue({
+      data: {
+        items: [
+          {
+            source_id: "website-camthink",
+            ledger_total: 75,
+            current_count: 75,
+            serving_count: 75,
+            retired_count: 0,
+            attention_count: 0,
+            lifecycle_counts: { active: 75 },
+          },
+        ],
+      },
+      isLoading: false,
+    } as never);
     renderWithHealth(
       [dshSource({ last_sync: "2026-09-01T02:00:00Z", last_sync_status: "success" })],
       [dshHealth()],
     );
-    // 健康列:正常 badge + 带窗口与分母的历史行
-    expect(screen.getByText("正常")).toBeInTheDocument();
-    expect(screen.getByText("96% 成功 · 近30天 25 次")).toBeInTheDocument();
-    // 内容数可见
-    expect(screen.getByText("75 篇")).toBeInTheDocument();
-    // 最新同步列:成功 badge
-    expect(screen.getByText("成功")).toBeInTheDocument();
+    // v1.6.3 B1 收敛:操作者状态列 正常 徽章;历史可靠性降为徽章 title 次级证据
+    const badge = screen.getAllByTitle(/25 次同步/)[0];
+    expect(badge).toBeInTheDocument();
+    expect(badge.getAttribute("title") ?? "").toContain("24 次成功");
+    expect(screen.getAllByText("正常").length).toBeGreaterThan(0);
+    // 知识数量列来自权威聚合投影(summary)
+    expect(screen.getByText("75")).toBeInTheDocument();
+    // 最后同步列:人性化相对时间
+    expect(screen.getAllByText(/小时前|天前|刚刚/).length).toBeGreaterThan(0);
   });
 
   it("G002 最新成功 + 历史差:两个事实同屏且措辞不冲突", () => {
@@ -1116,9 +1149,11 @@ describe("DSH 数据源健康语义", () => {
         }),
       ],
     );
-    expect(screen.getByText("成功")).toBeInTheDocument(); // 当前态
-    expect(screen.getByText("不稳定")).toBeInTheDocument(); // 历史态
-    expect(screen.getByText("50% 成功 · 近30天 25 次")).toBeInTheDocument();
+    // 当前态=操作者状态徽章(正常);历史态降为 title 次级证据(分母/窗口可见)
+    const badge = screen.getAllByTitle(/25 次同步/)[0];
+    expect(badge).toBeInTheDocument();
+    expect(badge.getAttribute("title") ?? "").toContain("12 次成功");
+    expect(screen.getAllByText("正常").length).toBeGreaterThan(0);
   });
 
   it("G003 最新失败:失败 badge + 错误明细可见(可操作)", () => {
@@ -1132,8 +1167,10 @@ describe("DSH 数据源健康语义", () => {
         }),
       ],
     );
-    expect(screen.getByText("失败")).toBeInTheDocument();
-    expect(screen.getByText("sitemap 请求超时")).toBeInTheDocument();
+    // v1.6.3 B1:操作者状态 = 同步失败;错误明细移至徽章 title 与详情同步卡
+    const badge = screen.getAllByTitle(/sitemap 请求超时/)[0];
+    expect(badge).toBeInTheDocument();
+    expect(screen.getAllByText("同步失败").length).toBeGreaterThan(0);
   });
 
   it("G004 样本不足:不伪造百分比与可靠性结论", () => {
@@ -1149,10 +1186,12 @@ describe("DSH 数据源健康语义", () => {
         }),
       ],
     );
-    expect(screen.getByText("样本不足")).toBeInTheDocument();
-    // 不出现裸百分比(分母过小不给成功率结论)
+    // v1.6.3 B1:证据不足 → 操作者状态 待分类(不伪装正常),样本明细在 title
+    const badge = screen.getAllByTitle(/2 次同步/)[0];
+    expect(badge).toBeInTheDocument();
+    expect(screen.getAllByText("待分类").length).toBeGreaterThan(0);
+    // 不出现裸百分比结论
     expect(screen.queryByText(/成功 · 近30天/)).not.toBeInTheDocument();
-    expect(screen.getByText(/仅 2 次同步/)).toBeInTheDocument();
   });
 
   it("G005 禁用:已禁用状态与不健康可区分", () => {
@@ -1160,14 +1199,14 @@ describe("DSH 数据源健康语义", () => {
       [dshSource({ enabled: false })],
       [dshHealth({ enabled: false, health: "disabled" })],
     );
-    // 健康列显示"已禁用"而非不稳定/严重
-    expect(screen.getByText("已禁用")).toBeInTheDocument();
+    // v1.6.3 B1:操作者状态列显示 已禁用 而非不稳定/严重
+    expect(screen.getAllByText("已禁用").length).toBeGreaterThan(0);
     expect(screen.queryByText("不稳定")).not.toBeInTheDocument();
   });
 
   it("健康数据缺失时优雅降级为 —,不阻塞表格", () => {
     renderWithHealth([dshSource()], undefined);
-    expect(screen.getByText("数据源管理")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "数据源" })).toBeInTheDocument();
   });
 
   it("悬停健康徽标可见分子/分母明细(含 partial)", () => {
@@ -1183,12 +1222,11 @@ describe("DSH 数据源健康语义", () => {
         }),
       ],
     );
-    // #21:历史低成功率是中性参考信号,不再用「严重」当前严重度措辞
-    const badge = screen.getByText("低成功率");
+    // #21 + v1.6.3 B1:历史低成功率降为状态徽章 title 次级证据(中性,不红牌)
+    const badge = screen.getAllByTitle(/12 次成功/)[0];
     expect(badge).toBeInTheDocument();
-    expect(badge.getAttribute("title")).toContain("12 次成功");
-    expect(badge.getAttribute("title")).toContain("3 次补齐");
-    expect(badge.getAttribute("title")).toContain("10 次失败");
+    expect(badge.getAttribute("title") ?? "").toContain("3 次补齐");
+    expect(badge.getAttribute("title") ?? "").toContain("10 次失败");
   });
 });
 
@@ -1227,13 +1265,14 @@ describe("#21 历史可靠性列(current vs historical 语义)", () => {
         last_sync_status: "success",
       },
     ]);
-    // 列头显式历史语义,旧「同步健康」措辞移除
-    expect(screen.getByText("历史可靠性 (近30天)")).toBeInTheDocument();
+    // v1.6.3 B1 收敛:列表列头为扫描优先词表(知识数量/需处理),历史可靠性不再是独立列
+    expect(screen.getByRole("columnheader", { name: "知识数量" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "需处理" })).toBeInTheDocument();
+    expect(screen.queryByText("历史可靠性 (近30天)")).not.toBeInTheDocument();
     expect(screen.queryByText("同步健康 (近30天)")).not.toBeInTheDocument();
-    // 历史低成功率 = 中性徽章,不出现当前严重度红牌
-    expect(screen.getByText("低成功率")).toBeInTheDocument();
+    // 历史低成功率 = 状态徽章 title 次级证据,不出现当前严重度红牌
+    expect(screen.getAllByTitle(/40 次同步/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("正常").length).toBeGreaterThan(0);
     expect(screen.queryByText("严重")).not.toBeInTheDocument();
-    // 悬停明细仍保留窗口分子/分母(徽标与比率行共用同一 title)
-    expect(screen.getAllByTitle(/近 30 天 40 次同步/).length).toBeGreaterThan(0);
   });
 });
