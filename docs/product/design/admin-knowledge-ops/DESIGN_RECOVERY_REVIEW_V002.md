@@ -6,8 +6,8 @@
 **Repository baseline reviewed:** current `main` frontend implementation after v1.6.3 deployment  
 **Recovered accepted visual references:**
 
-- `references/data-source-operations-original.webp`
-- `references/technical-insights-answer-gaps-original.webp`
+- `references/data-source-operations-original.png`
+- `references/technical-insights-answer-gaps-original.png`
 
 ## 1. Purpose
 
@@ -81,7 +81,7 @@ The new baseline must preserve the correctness of the current truth plane while 
 
 Reference:
 
-`data-source-operations-original.webp`
+`data-source-operations-original.png`
 
 ## 4.1 Data Source list
 
@@ -271,7 +271,7 @@ A mutation-preview contract is required before this interaction can be implement
 
 Reference:
 
-`technical-insights-answer-gaps-original.webp`
+`technical-insights-answer-gaps-original.png`
 
 ## 5.1 Technical Insights domain structure
 
