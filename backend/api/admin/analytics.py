@@ -37,6 +37,14 @@ from backend.db.models import (
     Trace,
 )
 from backend.services.document_lifecycle import DocLifecycle
+from backend.services.gap_status import GAP_STATUS_PATTERN
+from backend.services.gap_taxonomy import (
+    GAP_MISS_LOW,
+    GAP_MISS_RECALL_EMPTY,
+    GAP_MISS_RECALL_INSUFFICIENT,
+    GAP_MISS_REJECT,
+    GAP_MISS_UNCLASSIFIED,
+)
 
 router = APIRouter(prefix="/analytics", tags=["分析仪表盘"])
 ViewerDep = Annotated[CurrentUser, Depends(require_role("admin", "editor", "viewer"))]
@@ -118,16 +126,16 @@ async def classify_gap_miss_types(
         sources = row.sources if isinstance(row.sources, list) else []
         conf = conf_map.get(str(row.id))
         if not row.is_answered:
-            miss = "reject"
+            miss = GAP_MISS_REJECT
         elif sources and conf is not None and conf < 0.6:
-            miss = "low"
+            miss = GAP_MISS_LOW
         elif not sources:
-            miss = "召回空"
+            miss = GAP_MISS_RECALL_EMPTY
         else:
-            miss = "召回不足"
+            miss = GAP_MISS_RECALL_INSUFFICIENT
         cluster_stats[cid][miss] += 1
     for cid, stats in cluster_stats.items():
-        dominant = max(stats, key=stats.get) if stats else "未分类"
+        dominant = max(stats, key=stats.get) if stats else GAP_MISS_UNCLASSIFIED
         miss_type_map[cid] = dominant
         breakdown[cid] = dict(stats)
     return miss_type_map, breakdown
@@ -137,7 +145,7 @@ async def classify_gap_miss_types(
 async def list_coverage_gaps(
     _: ViewerDep,
     request: Request,
-    status: str | None = Query(default=None, pattern="^(open|resolved)$"),
+    status: str | None = Query(default=None, pattern=GAP_STATUS_PATTERN),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
 ) -> dict[str, Any]:
@@ -170,7 +178,10 @@ async def list_coverage_gaps(
         for dominant in miss_type_map.values():
             miss_type_summary[dominant] += 1
 
-    items = [_to_cluster_out(c, miss_type_map.get(str(c.id), "未分类")) for c in clusters]
+    items = [
+        _to_cluster_out(c, miss_type_map.get(str(c.id), GAP_MISS_UNCLASSIFIED))
+        for c in clusters
+    ]
     return {
         "items": items,
         "total": total,
