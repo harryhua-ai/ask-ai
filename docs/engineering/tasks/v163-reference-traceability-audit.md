@@ -49,15 +49,17 @@
 | v163-reference-remediation/matrix-TI.md | TI-01..45 | 45 |
 | **合计** | | **152** |
 
-### 终分类分布
+### 终分类分布(2026-09-13 Planning 修订:Role A 裁决冻结后重算)
 
-| 分类 | 行数 |
-|---|---|
-| MATCH | **104** |
-| IMPLEMENTATION DEFECT | **4**(SH-06、DS-P5-02/04/05) |
-| PRODUCT-FUNCTIONAL GAP | **40**(归并 18 族,见 gap register) |
-| USER-APPROVED DESIGN CHANGE | **3**(SH-13 FAB、DS-P1-23 行高、DS-P4-01 结构) |
-| REFERENCE CONFLICT | **1**(SH-16 侧栏明暗,待 User 裁) |
+| 分类 | 行数 | 变化说明 |
+|---|---|---|
+| MATCH | **105** | +1:SH-16 经 U-1 解决(LIGHT=权威方向,实现已浅色) |
+| IMPLEMENTATION DEFECT | **4**(SH-06、DS-P5-02/04/05) | 不变;DS-P5-04 方向已冻结(U-5)但仍为待修复缺陷 |
+| PRODUCT-FUNCTIONAL GAP | **38**(归并 17 族,见 gap register) | −2:SH-10/11 经 U-3 转 UADC |
+| USER-APPROVED DESIGN CHANGE | **5**(UADC-1/2/3 既有 + UADC-4 帮助中心推迟) | +2 行(SH-10/11) |
+| REFERENCE CONFLICT | **0** | −1:SH-16 经 U-1 解决;UNRESOLVED REFERENCE CONFLICT 目标=0 已达成 |
+
+矩阵行新增「冻结决定」列(U-x 或 N/A);方向获授权 ≠ 变 MATCH:GAP 行保持 GAP 直到实现+运行时验收完成。
 
 ## §4 Runtime Verification 记录(2026-09-13,真实栈)
 
@@ -85,7 +87,43 @@
 
 ## §6 结论
 
-V1.6.3 CONFORMANCE = **FAIL**。修复拓扑、冻结合同、新终局验收规则、旧豁免全量 reconcile 见:
+V1.6.3 CONFORMANCE = **FAIL**(仍待全部 GAP/DEFECT 实现+运行时验收)。修复拓扑、冻结合同、新终局验收规则、旧豁免全量 reconcile、执行授权包见:
 - docs/engineering/tasks/v163-reference-gap-register.md
-- docs/engineering/tasks/v163-reference-remediation-plan.md
+- docs/engineering/tasks/v163-reference-remediation-plan.md(含 IMPLEMENTATION AUTHORIZATION PACKAGE)
 - docs/engineering/tasks/v163-reference-remediation/track-{a..f}-contract.md
+
+---
+
+## ROLE A PRODUCT DECISIONS — FROZEN(2026-09-13 Planning 修订)
+
+19 项产品裁决(U-1..U-19)全部冻结,**不得再升给 User**。逐项结果+理由:
+
+| # | 议题 | 裁决 | 性质 |
+|---|---|---|---|
+| U-1 | 侧栏明暗(SH-16) | **LIGHT 侧栏=权威实现方向,无双主题需求**;实现已浅色 → MATCH,REFERENCE CONFLICT 关闭 | Role A 定 |
+| U-2 | 日期范围(SH-09) | **实现;范围=技术洞察分析窗(非全站假全局过滤);技术洞察相关 API 在语义适用处必须遵守所选窗口** | Role A 定 |
+| U-3 | 帮助中心(SH-10/11) | **无权威目标 → USER-APPROVED DESIGN CHANGE(UADC-4)**:「Help Center 入口推迟至存在权威目的地」;保留追溯行;本批唯一获批缺席 | §2 默认冻结 |
+| U-4 | 侧栏收起(SH-12) | **实现为纯 Admin shell 交互,零后端语义** | Role A 定 |
+| U-5 | 编辑抽屉类型(DS-P5-04) | **create 可选;edit 既有源 immutable/disabled;匹配参考** | Role A 定 |
+| U-6 | 品牌(DS-P2-02) | **实现,用权威的 source-type/品牌呈现内建映射;不得引入任意远程 logo_url 作为产品真值** | Role A 定 |
+| U-7 | 逐文档内容类型(DS-P2-16/20) | **实现为结构化后端真值,connector/ingestion 所有;前端禁止从文件名/文本推断** | Role A 定 |
+| U-8 | 行级修复(DS-P2-25/26、DS-P3-07..09) | **实现真实修复工作流:授权/RBAC、幂等命令、可审计执行、进度/结果、修复后验证;禁止假 UI-only repair** | Role A 定 |
+| U-9 | serving 分数(DS-P3-05) | **实现,源自权威 chunk serving 投影;UI 比例(10/12)必须等于后端真值** | Role A 定 |
+| U-10 | 恢复计数(DS-P3-06) | **实现,源自持久化权威恢复事件;禁止前端计数器** | Role A 定 |
+| U-11 | 下次同步(DS-P4-03) | **实现 scheduler 权威 next_run_at;调度现实与 sync_interval 不符时禁止纯派生倒计时** | Role A 定 |
+| U-12 | 知识设置(DS-P6 全部) | **实现,产品语义冻结**:CURRENT=有资格支撑当前事实型回答,受新鲜度政策约束,过期 CURRENT 证据必须诚实浮现;HISTORICAL=保留用于历史问题/溯源/证据链,**不得**支撑「当前价格/当前规格/当前可用性/当前运行状态」类断言。新鲜度政策:按 source/policy 域可配置、后端权威、过期态 Admin 可见、检索资格必须消费该政策真值。**不得重设计整个 lifecycle 模型**——叠加在现行 lifecycle 真值之上的证据资格政策层 | §2 默认冻结 |
+| U-13 | 高风险预览(DS-P7 全部) | **实现;依赖知识设置语义;影响计数必须后端权威;确认必须施加与预览完全一致的 mutation,否则 drift 时失效/重算** | Role A 定 |
+| U-14 | 原因词表(TI-09、DS-P2-10) | **实现参考要求的扩展词表;每类需证据规则;禁止 keyword-only 前端分类** | Role A 定 |
+| U-15 | 观察状态机(TI-07/18/36/37/41/42/43) | **实现 OPEN→OBSERVING→RESOLVED**:进入 OBSERVING 需操作者确认内容修复完成+相关源 sync/reindex 成功+post-sync 验证成功;默认观察期 7 天;OBSERVING 期间同一 gap/证据失败复现→回 OPEN,满窗无复现→转 RESOLVED;操作者可中止 OBSERVING→OPEN;**不得直接强转 RESOLVED**;全部转移持久化、带时间戳、可审计、History 可见 | §2 默认冻结 |
+| U-16 | 导出相关对话(TI-34/35/45) | **实现 admin-only 导出;最小必要字段;排除直接个人身份;导出动作可审计;CSV 必须与所选 gap/query 范围精确对应** | Role A 定 |
+| U-17 | 受影响用户(TI-27) | **不引入真人身份追踪**;定义=所选分析窗内去重的伪匿名会话/会话行为者;稳定匿名 actor/session 身份、不需姓名/邮箱/IP、隐私保持聚合;历史数据不可回填则诚实显示 unavailable(不得编造计数);未来数据必须支持权威聚合。**仓库证据支持**:conversations.session_id(String(64),widget 匿名会话 ID)已存在,可直接承载;历史 NULL 行诚实 unavailable | §2 默认冻结 |
+| U-18 | gap→源归因(TI-33) | **实现;关联必须源自证据/对话/检索真值;禁止前端猜** | Role A 定 |
+| U-19 | 主题短语(TI-12) | **实现;优先确定性派生;仅当确定性质量明显不足且另行授权才用 LLM;必须稳定且忠实于 cluster 内容** | Role A 定 |
+
+**按 §2 默认冻结项**:U-3、U-12、U-15、U-17。**仓库可行性复核结论**:四项均可行,无一项因仓库证据不可行而升级回 User——
+- U-17:`conversations.session_id` 已存在(backend/db/models.py Conversation;sales_leads.thread 依赖),伪匿名会话身份可承载;
+- U-15:`question_clusters.status` 词表可扩展(open/resolved);`sync_runs`(status/finished_at/consistency)+`sync_log`+verify_source_vectors 提供进入条件的同步/验证钩子;
+- U-12:`data_sources` 加性策略列与现行 S0 lifecycle 列(documents.lifecycle 词表 active/superseded/missing_candidate/deleted/discovered)正交,政策层可叠加不重设计;
+- U-3:无权威目的地证据确凿(无帮助路由/外链/内嵌内容源),获批缺席成立。
+
+**升级回 User 项:无。**

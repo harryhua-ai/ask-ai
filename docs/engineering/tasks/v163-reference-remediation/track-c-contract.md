@@ -1,15 +1,26 @@
-# Track C Contract — B1 行级修复 + 知识设置域 + 高风险预览(GAP-B1-1/3/4/5/6/7/8/9/10)
+# Track C Contract — B1 行级修复 + 知识设置域 + 高风险预览(GAP-B1-1/3/4/5/6/7/8/9/10)(Planning 修订:Role A 裁决冻结)
 
-- **目标**:矩阵 DS-P2-02/16/20/25/26、DS-P3-05..09、DS-P4-03、DS-P6-01..05、DS-P7-01..06 全部清零(实现或 User 批准转 UADC)。
-- **参考需求**:PNG1 面板2(行 处理/⋯/逐文档类型)、面板3(10/12、恢复注记、重新处理、验证卡、一致性验证)、面板4(下次同步)、面板6(知识设置 Drawer:时态角色/新鲜度要求)、面板7(确认知识设置变更 Modal:CURRENT→HISTORICAL、预计影响 202/199/199、不删除持久知识、重新验证服务状态、确认变更)。
-- **产品语义**:行级修复=对该文档真实重处理(入库→重建向量→服务恢复);知识设置=源级知识策略(时态角色决定检索资格;新鲜度阈值触发更新提醒);高风险变更保存前必须展示服务端权威计算的影响预览并显式确认;**影响计数禁止前端伪造**。
-- **变更边界**:前端 DataSourceDetail.tsx、新 KnowledgeSettingsDrawer、新 RiskPreviewModal、SourceEditorDrawer 入口;后端 data_sources.py 修复命令/调度真值/预览端点、新 knowledge settings 端点、连接器 content_type 抽取;不动与参考无关的既有能力(同步/删除/可观测性)。
-- **后端数据要求**:修复任务+审计事件持久化;逐文档恢复事件计数;chunk 级 serving 投影(复用 verify_source_vectors 口径);next_run_at 调度真值;源级策略持久化(时态角色/新鲜度);时态角色资格贯通检索服务;documents content_type;mutation-preview 权威聚合。
-- **前端要求**:全部 depicted 控件真实可用;预览 Modal 计数来自预览端点;验证卡数值来自修复结果与一致性核验真值。
-- **禁止捷径**:禁止前端算影响计数;禁止修复命令绕过幂等/审计;禁止时态角色仅存不用(必须贯通资格语义);禁止以「合同未定义」省略 depicted 元素;每项 GAP 若不实现必须逐条 User 批准转 UADC。
-- **验收**:功能 E2E(见下)+ 三角(API=PG=UI);vitest+tsc+build;pytest 新增端点用例。
-- **运行时状态**:交付后本地栈全链复核;AUDIT-FIXTURE 标记隔离,SQL 全文记录。
+- **目标**:矩阵 DS-P2-02/16/20/25/26、DS-P3-05..09、DS-P4-03、DS-P6-01..05、DS-P7-01..06 全部清零(实现;全部方向已获授权冻结,无转 UADC 项)。
+- **参考需求(精确 ID)**:DS-P2-02(品牌)、DS-P2-10(banner 原因,与 Track D 共契约)、DS-P2-16/20(逐文档类型)、DS-P2-25/26(行 处理/⋯)、DS-P3-05(10/12)、DS-P3-06(恢复注记)、DS-P3-07/08/09(重新处理/验证卡/一致性)、DS-P4-03(下次同步)、DS-P6-01..05(知识设置 Drawer)、DS-P7-01..06(确认知识设置变更 Modal)。
+- **冻结产品语义**:
+  - U-6(DS-P2-02):**source-type/品牌呈现内建映射;不得引入任意远程 logo_url 作为产品真值**。
+  - U-7(DS-P2-16/20):**结构化后端真值,connector/ingestion 所有;前端禁止从文件名/文本推断**。
+  - U-8(DS-P2-25/26、DS-P3-07/08/09):**真实修复工作流:授权/RBAC、幂等命令、可审计执行、进度/结果、修复后验证;禁止假 UI-only repair**。
+  - U-9(DS-P3-05):**源自权威 chunk serving 投影;UI 比例(10/12)必须等于后端真值**。
+  - U-10(DS-P3-06):**源自持久化权威恢复事件;禁止前端计数器**。
+  - U-11(DS-P4-03):**scheduler 权威 next_run_at;调度现实与 sync_interval 不符时禁止纯派生倒计时**。
+  - U-12(DS-P6 全部):**CURRENT=有资格支撑当前事实型回答,受新鲜度政策约束,过期 CURRENT 证据必须诚实浮现;HISTORICAL=保留用于历史问题/溯源/证据链,不得支撑「当前价格/当前规格/当前可用性/当前运行状态」类断言;新鲜度政策按 source/policy 域可配置、后端权威、过期态 Admin 可见、检索资格必须消费该政策真值;不得重设计整个 lifecycle 模型(叠加于现行 lifecycle 真值之上的证据资格政策层)**。
+  - U-13(DS-P7 全部):**影响计数必须后端权威;确认必须施加与预览完全一致的 mutation,否则 drift 时失效/重算**。
+- **权威数据源**:documents/document_versions 账本与版本链、verify_source_vectors 口径、sync_runs/sync_log、调度器状态;策略真值=新增源级策略持久化(加性,不动现行 lifecycle 列语义)。
+- **变更边界**:前端 DataSourceDetail.tsx、新 KnowledgeSettingsDrawer、新 RiskPreviewModal、SourceEditorDrawer 入口;后端 data_sources.py 修复命令/调度真值/预览端点、新 knowledge settings 端点、连接器 content_type 抽取;不动与参考无关的既有能力(同步/删除/可观测性)。文件与他轨互斥(IF-6)。
+- **后端数据要求**:修复任务+审计事件持久化(RBAC/幂等键);逐文档恢复事件计数投影;chunk 级 serving 投影(复用 verify_source_vectors 口径);next_run_at 调度真值;源级策略持久化(资格角色/新鲜度);资格判定贯通检索服务(消费政策真值);documents content_type(connector/ingestion 所有);mutation-preview 权威聚合+确认后一致性保障。
+- **前端行为**:全部 depicted 控件真实可用;预览 Modal 计数来自预览端点;验证卡数值来自修复结果与一致性核验真值;serving 分数=投影真值。
+- **运行时状态要求**:交付后本地栈全链复核;AUDIT-FIXTURE 标记隔离,SQL 全文记录。
 - **视觉证据**:面板2/3/4/6/7 逐状态 AFTER 截图(1536×1024 @1x)。
-- **功能 E2E**:①需处理行点击 处理→POST 修复→文档转在服→行状态/服务列更新→展开行验证卡(vN、12/12、一致性 通过);②打开知识设置→改时态角色→保存→预览 Modal 弹出(计数=服务端)→确认变更→重验执行→检索资格变化可断言;③设置新鲜度→超期→提醒呈现;④下次同步倒计时=调度权威。
-- **交付物**:分支 `track/v163-c-b1-product`、合同内契约附录(修复/时态/新鲜度/预览四契约冻结稿)、执行报告、截图、测试日志、fixture SQL 全文。
-- **前置**:U-6..U-13 User 决定;轨内依赖 修复命令→验证卡;知识设置→预览 Modal。
+- **功能 E2E**:①需处理行点击 处理→POST 修复(RBAC 内)→文档转在服→行状态/服务列更新→展开行验证卡(vN、12/12、一致性 通过=真值);②打开知识设置→改资格角色→保存→预览 Modal 弹出(计数=服务端权威)→确认变更→施加与预览完全一致的 mutation→重验执行→检索资格变化可断言;③设置新鲜度→超期→提醒呈现+过期态 Admin 可见;④下次同步倒计时=调度器 next_run_at 权威。
+- **禁止捷径**:frontend-only fake state;fake counts(影响计数/恢复计数/serving 分数前端伪造);fake next_run_at(纯派生倒计时);UI-only repair(无 RBAC/幂等/审计/验证);资格语义只存不用(必须贯通检索资格);确认施加的 mutation 与预览不一致;以「合同未定义」省略 depicted 元素;任意远程 logo_url 作产品真值;前端从文件名/文本推断 content_type。
+- **验收**:功能 E2E 四链+三角(API=PG=UI);vitest+tsc+build;pytest 新增端点用例。
+- **交付物**:分支 `track/v163-c-b1-product`、合同内契约附录(IF-3 修复契约/IF-4 知识设置+预览契约冻结稿)、执行报告、截图、测试日志、fixture SQL 全文。
+- **前置**:IF-3/IF-4 冻结;无 User 决定阻塞;可立即(Wave 1)。轨内依赖:修复命令→验证卡;知识设置→预览 Modal。
+- **Issue 映射**:落地后关闭 #54(详情)、#55(检查器)、#56(历史)。
+- **B 级提示词要点**:worktree=实现授权树;branch `track/v163-c-b1-product`;冻结合同=本文件+IF-3/IF-4+remediation plan §6;范围=U-6/7/8/9/10/11/12/13;验收=四链 E2E+三角+三门;交付物含四契约冻结稿与 fixture SQL 全文。
