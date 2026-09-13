@@ -61,6 +61,24 @@ class DataSourceOut(BaseModel):
     lifecycle_state: str | None = None
     lifecycle_since: str | None = None
     lifecycle_error: str | None = None
+    # ---- v1.6.3 Track C(U-11/U-12;加性真值)----
+    # next_run_at = 调度器权威持久真值;NULL = 调度现实不构成倒计时
+    # (禁用/同步进行中/从未同步),前端禁止从 sync_interval 纯派生。
+    next_run_at: str | None = None
+    schedule_state: str | None = None  # scheduled/syncing/paused/waiting_first/deleting
+    knowledge_role: str | None = None  # U-12 生效角色(current/historical)
+    freshness_hours: int | None = None  # U-12 生效新鲜度阈值(小时)
+    freshness_overdue: bool | None = None  # U-12 后端权威超期态(Admin 可见)
+
+
+class SourceScheduleTruthOut(BaseModel):
+    """GET /data-sources/{source_id}/schedule 响应(U-11 调度真值)。"""
+
+    source_id: str
+    next_run_at: str | None = None
+    state: str  # scheduled/syncing/paused/waiting_first/deleting
+    sync_interval: str
+    enabled: bool
 
 
 class DataSourceCreate(BaseModel):
@@ -121,6 +139,7 @@ class DataSourceDocumentItem(BaseModel):
     updated_at: str | None = None
     current_version_seq: int | None = None  # None = 后端无此记录
     generation_ordinal: int | None = None  # None = 后端无此记录
+    content_type: str | None = None  # U-7(NULL = 存量行不可用)
 
 
 class DataSourceDocumentsResponse(BaseModel):
@@ -128,6 +147,8 @@ class DataSourceDocumentsResponse(BaseModel):
 
     total = 过滤后分页总数;lifecycle_counts / ledger_total / serving_count /
     current_count 为全源账本聚合(不受过滤影响)。
+    content_type_counts = U-7 逐文档内容类型账本聚合(不含 NULL;类型过滤
+    词表的真实来源,前端禁推断)。
     """
 
     source_id: str
@@ -138,6 +159,7 @@ class DataSourceDocumentsResponse(BaseModel):
     lifecycle_counts: dict[str, int] = Field(default_factory=dict)
     serving_count: int = 0
     current_count: int = 0
+    content_type_counts: dict[str, int] = Field(default_factory=dict)
     items: list[DataSourceDocumentItem]
 
 
@@ -177,6 +199,33 @@ class DocumentGenerationTruth(BaseModel):
     purged_at: str | None = None
 
 
+class ChunkServingTruth(BaseModel):
+    """U-9 chunk 级 serving 投影真值(UI 比例必须等于 serving_chunks/total_chunks)。"""
+
+    serving_chunks: int
+    total_chunks: int
+    missing_indices: list[int] = Field(default_factory=list)
+    stale_indices: list[int] = Field(default_factory=list)
+    consistent: bool
+
+
+class DocumentRepairTaskOut(BaseModel):
+    """U-8 修复任务(进度/结果/审计;验证卡数据源 = result 真值)。"""
+
+    id: str
+    source_id: str
+    doc_source_id: str
+    status: str  # pending/running/succeeded/failed
+    stage: str | None = None
+    requested_by: str | None = None
+    idempotency_key: str | None = None
+    result: dict | None = None
+    error: str | None = None
+    events: list[dict] = Field(default_factory=list)
+    created_at: str | None = None
+    finished_at: str | None = None
+
+
 class DataSourceDocumentTruth(BaseModel):
     """GET /data-sources/{source_id}/documents/detail 响应:单文档真相。
 
@@ -199,8 +248,67 @@ class DataSourceDocumentTruth(BaseModel):
     superseded_by: str | None = None
     superseded_at: str | None = None
     deleted_at: str | None = None
+    # ---- v1.6.3 Track C(加性真相;None = 后端无此记录/不可用)----
+    content_type: str | None = None  # U-7(NULL = 存量行不可用,前端诚实呈现)
+    chunk_serving: ChunkServingTruth | None = None  # U-9(None = 向量库不可用)
+    recovery_attempts_failed: int = 0  # U-10(自动恢复尝试未成功权威计数)
+    recovery_attempts_succeeded: int = 0  # U-10
+    latest_repair_task: DocumentRepairTaskOut | None = None  # U-8
     current_version: DocumentCurrentVersionTruth | None = None
     generation: DocumentGenerationTruth | None = None
+
+
+class DocumentRepairRequest(BaseModel):
+    """POST /data-sources/{source_id}/documents/repair 请求(U-8)。"""
+
+    doc_source_id: str  # 复合文档身份 <source_id>/<branch>/<rel_path>
+    idempotency_key: str | None = Field(default=None, max_length=100)
+
+
+class KnowledgeSettingsOut(BaseModel):
+    """GET /data-sources/{source_id}/knowledge-settings 响应(U-12)。
+
+    effective_* = 后端权威生效值(显式配置优先,默认兜底);freshness =
+    新鲜度真值(超期态 Admin 可见)。
+    """
+
+    source_id: str
+    role: str  # current/historical(生效值)
+    explicit_role: str | None = None  # 行上显式配置(NULL=默认)
+    freshness_hours: int
+    explicit_freshness_hours: int | None = None
+    freshness: dict = Field(default_factory=dict)
+    updated_at: str | None = None
+
+
+class KnowledgeSettingsUpdate(BaseModel):
+    """PUT /data-sources/{source_id}/knowledge-settings 请求(U-12/U-13)。
+
+    高风险变更(时态角色变化)必须携带 preview_token(服务端一致性校验),
+    且 pending 策略与预览完全一致,否则 409。
+    """
+
+    role: str = Field(..., pattern="^(current|historical)$")
+    freshness_hours: int | None = Field(default=None, ge=1, le=10000)
+    preview_token: str | None = None
+
+
+class KnowledgePreviewRequest(BaseModel):
+    """POST /data-sources/{source_id}/knowledge-settings/preview 请求(U-13)。"""
+
+    role: str = Field(..., pattern="^(current|historical)$")
+    freshness_hours: int | None = Field(default=None, ge=1, le=10000)
+
+
+class KnowledgePreviewResponse(BaseModel):
+    """预览响应(影响计数 = 服务端权威;token = 确认一致性锚)。"""
+
+    preview_token: str
+    source_id: str
+    current_policy: dict
+    pending_policy: dict
+    impact: dict
+    expires_at: str | None = None
 
 
 class SourceAttentionSummaryItem(BaseModel):

@@ -88,6 +88,11 @@ class Document(Base):
     superseded_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # ---- v1.6.3 Track C(U-7 逐文档 content_type;加性,零回填)----
+    # 结构化后端真值:由 connector/ingestion 写入链所有(词表见
+    # backend/services/content_taxonomy.py);NULL = 存量行不可用(unavailable,
+    # 前端必须诚实呈现,禁止从文件名/文本推断)。
+    content_type: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
 
 
 class DocumentVersion(Base):
@@ -347,6 +352,20 @@ class DataSource(Base):
     lifecycle_state: Mapped[str | None] = mapped_column(String(20), nullable=True)
     lifecycle_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lifecycle_error: Mapped[str | None] = mapped_column(Text)
+    # ---- v1.6.3 Track C(加性列;U-11/U-12 权威真值持久化)----
+    # next_run_at(U-11):调度器权威下次执行时间,由 schedule_truth 服务在
+    # 调度事实变化(同步完成/配置变更/读面 reconcile)时持久化刷新;
+    # NULL = 调度现实不构成倒计时(禁用/同步进行中/从未同步),前端诚实
+    # 呈现对应状态,禁止从 sync_interval 纯派生。
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # knowledge_role(U-12):证据资格政策层(CURRENT/HISTORICAL;词表见
+    # backend/services/knowledge_policy.py)。NULL = 默认 CURRENT。
+    # 政策层叠加于现行 lifecycle 真值之上,不重设计 lifecycle 模型;
+    # 检索资格必须消费本列真值(knowledge_policy.excluded_source_prefixes)。
+    knowledge_role: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # freshness_hours(U-12):新鲜度政策(小时;NULL = 默认 24h)。后端权威
+    # 判定超期(对照最近成功同步),超期态 Admin 可见。
+    freshness_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class SyncRequest(Base):
@@ -779,6 +798,88 @@ class SalesLead(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class DocumentRepairTask(Base):
+    """v1.6.3 Track C(U-8 行级修复工作流):逐文档修复任务 + 可审计执行。
+
+    修复语义迁移自 corpus_repair 工具的受控 plan→apply→verify 管道:
+    - 幂等:同文档存在未完结任务(pending/running)时重复受理返回同一任务;
+      健康文档重复修复 = 真实复验 no-op(0 chunk 重灌,复验通过);
+    - 可审计:``events`` JSONB 逐事件追加(requested_by/stage 迁移/逐项
+      修复/复验结果),含时间戳,任务行即审计记录;
+    - 修复后验证:``result`` 持久化 chunk 级 serving 投影(U-9 同一口径)
+      与一致性判定,serving/total 与一致性通过 = 后端真值(验证卡数据源)。
+    """
+
+    __tablename__ = "document_repair_tasks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    doc_source_id: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    # pending / running / succeeded / failed(终态不可逆;无强转)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
+    # plan / repair / verify(进度阶段;UI 进度呈现数据源)
+    stage: Mapped[str | None] = mapped_column(String(20))
+    requested_by: Mapped[str | None] = mapped_column(String(100))
+    # 幂等键(可选;同一 (doc_source_id, idempotency_key) 重复提交返回原任务)
+    idempotency_key: Mapped[str | None] = mapped_column(String(100), index=True)
+    # 修复结果(验证卡真值:version_seq / chunks_serving / chunks_total /
+    # consistency passed / repaired_indices / repair_mode)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text)
+    # 审计事件(追加式:[{at, event, detail}...])
+    events: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DocumentRecoveryEvent(Base):
+    """v1.6.3 Track C(U-10 逐文档自动恢复计数):持久化恢复事件账本。
+
+    事件由同步执行面的自动恢复路径写入(无变更跳过分支的一致性缺口
+    自愈:refill 集合逐文档 outcome=succeeded/failed);恢复注记计数 =
+    本表 outcome='failed' 权威计数(禁止前端计数器/派生)。
+    """
+
+    __tablename__ = "document_recovery_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    doc_source_id: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    # succeeded / failed(自动恢复尝试结果;词表冻结)
+    outcome: Mapped[str] = mapped_column(String(20), nullable=False)
+    # 来源同步运行(可追溯;sync_runs.id)
+    sync_run_id: Mapped[int | None] = mapped_column(Integer)
+    detail: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class KnowledgeSettingsPreview(Base):
+    """v1.6.3 Track C(U-13 高风险预览):知识设置变更预览快照。
+
+    - 影响计数后端权威:preview 时按当前账本计算并快照(impact);
+    - 确认一致性:confirm 必须携带 preview_token,且 ``ledger_fingerprint``
+      与确认时账本重算一致;drift → 409 失效(重算需重新预览);
+    - 确认施加的 mutation 与预览请求的策略完全一致(pending_policy 快照)。
+    """
+
+    __tablename__ = "knowledge_settings_previews"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    # 预览的策略变更(pending_policy 快照 = 确认时唯一允许施加的 mutation)
+    pending_policy: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    # 服务端权威影响计数快照(受影响知识/当前资格变化/历史资格变化)
+    impact: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    # 预览时账本指纹(计数可重算锚);确认时重算不一致 → 409 drift
+    ledger_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 确认后服务状态重验(策略生效后的权威聚合投影)
+    revalidation: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 # 索引(对齐设计文档 §11 SQL DDL)

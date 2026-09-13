@@ -146,6 +146,8 @@ class LocalGitConnector(DataSourceConnector):
             content_hash=hashlib.sha256(content.encode()).hexdigest(),
             channel_visibility=self._channel_visibility,
             branch=branch,
+            # U-7:仓库源对象=文档文件(结构化真值)
+            content_type="document",
         )
 
     def fetch_all(self) -> Iterator[RawDocument]:

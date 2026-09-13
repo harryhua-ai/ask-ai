@@ -122,6 +122,8 @@ class FilesystemConnector(DataSourceConnector):
             content_hash=content_hash,
             channel_visibility=self._channel_visibility,
             branch=self._branch,
+            # U-7:文件系统源对象=文档文件(结构化真值)
+            content_type="document",
         )
 
     def _is_excluded(self, path: Path) -> bool:

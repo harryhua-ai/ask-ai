@@ -68,6 +68,18 @@ MIN_CONTENT_CHARS = 200
 # 抓取 UA:标识爬虫 + 指向目标站,便于站点方识别与限流
 USER_AGENT = "ask-ai-crawler/0.1 (+camthink-ai knowledge indexer)"
 
+def _derive_content_type(url: str) -> str:
+    """U-7 逐文档 content_type(网页源):URL 后缀结构化推导,零文本语义判断。
+
+    词表见 backend/services/content_taxonomy.py;.pdf/文档类后缀 → document;
+    .html/.htm/无后缀页面 → page。
+    """
+    from backend.services.content_taxonomy import derive_web_content_type
+
+    return derive_web_content_type(url)
+
+
+
 
 def _local_name(tag: str) -> str:
     """去掉 XML 命名空间前缀(兼容带/不带 xmlns 的 sitemap)。"""
@@ -607,6 +619,8 @@ class WebCrawlConnector:
             # content_hash 含 URL 路径:同内容不同页不互撞(PG 主键保护,WEB-G005)
             content_hash=hashlib.sha256(f"{path}|{md}".encode()).hexdigest(),
             channel_visibility=self._channel_visibility,
+            # U-7:网页源对象=页面/文档(按 URL 后缀结构化推导,零文本语义判断)
+            content_type=_derive_content_type(url),
         )
         return doc, new_links
 
