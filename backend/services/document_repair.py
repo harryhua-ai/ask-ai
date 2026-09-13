@@ -208,11 +208,27 @@ async def execute_repair_task(
                     raise RuntimeError("嵌入模型返回空/缺向量,拒绝写入(诚实失败)")
                 for idx, vec in zip(projection.missing_indices, vectors):
                     chunk = chunk_by_index[idx]
-                    props = dict(chunk.props or {})
-                    props["text"] = chunk.text
+                    # 身份字段以账本真值为准(防持久副本 props 缺失时写出
+                    # 无身份对象);props 仅作补充元数据 overlay。
+                    props = {
+                        "source_id": doc.source_id,
+                        "source_type": doc.source_type,
+                        "product": doc.product,
+                        "title": doc.title,
+                        "text": chunk.text,
+                        "url": doc.url,
+                        "chunk_index": chunk.chunk_index,
+                        "content_hash": version.content_hash,
+                        "branch": doc.branch or "",
+                        "channel_visibility": ["widget", "api"],
+                    }
+                    for k, v in (chunk.props or {}).items():
+                        if k not in props and v is not None:
+                            props[k] = v
                     collection.data.insert(
                         properties=props,
-                        vector=list(vec),
+                        # float32→python float(Weaviate REST JSON 序列化要求)
+                        vector=[float(x) for x in vec],
                         uuid=_deterministic_uuid(doc_source_id, idx),
                     )
                     repaired_indices.append(idx)

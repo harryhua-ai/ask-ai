@@ -15,7 +15,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { buildSyncActivity, humanizeInterval, lastSuccessIso, relativeTime } from "@/lib/dataSourceOps";
+import { buildSyncActivity, humanizeInterval, lastSuccessIso, relativeTime, untilRelativeTime } from "@/lib/dataSourceOps";
 import { formatSyncTime } from "@/lib/sourceEditorModel";
 import type { SourceScheduleTruth } from "@/hooks/useDataSourceKnowledge";
 import type { DataSource, SyncRunList } from "@/types/api";
@@ -132,7 +132,7 @@ export function SyncActivityPanel({
             <span className="text-muted-foreground">下次同步:</span>{" "}
             {schedule?.next_run_at ? (
               <span title={formatSyncTime(schedule.next_run_at)}>
-                {relativeTime(schedule.next_run_at)}
+                {untilRelativeTime(schedule.next_run_at)}
               </span>
             ) : schedule ? (
               <span className="text-muted-foreground">
