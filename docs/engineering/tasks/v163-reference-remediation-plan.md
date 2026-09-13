@@ -8,7 +8,7 @@ Planning 修订范围:仅本分支 docs/engineering/tasks/v163-reference-* 文�
 1. **Wave 0 拆分为 0A/0B**(原「Wave 0 零代码却含结构拆分」矛盾消除):Wave 0A = CONTRACT FREEZE(docs only,IF-1..IF-7);Wave 0B = STRUCTURAL PREP(真实代码但仅限结构 refactor,四零约束+行为等价验收),产出 **PREP_BASE_SHA**(Wave 1 六轨强制共同基线,禁止混合基线)。
 2. **U-2 语义适用处具体化**:新增 §3.5「TECHNICAL INSIGHTS WINDOW CAPABILITY MATRIX」(只读仓库审计 8 端点;**Outcome B 冻结**:Track A 后端范围=BC-1/BC-2 参数能力;S3/S4/S6 例外面冻结)。Track A 不再表述为「零后端」。
 3. **D/E 依赖澄清**:新增 §3.6「D/E DEPENDENCY CONTRACT」(实现依赖 D→E=NONE;验收依赖=E joined runtime FINAL PASS 需 D candidate)。旧「Track D 先行」表述废止。
-4. 11 点一致性核验表见 §8(全部 PASS)。
+4. 11 点一致性核验表见 §8(全部 PASS);**FINAL PLANNING BASELINE FIX 2026-09-13:新增 §3.0.2 WAVE_0B_BASE_SHA=7e3e71c 代码基线契约(8 规则),§3.0.3 PREP_BASE_SHA 合同随之修订,核验表扩至 14 点(12–14 PASS)**。
 
 ---
 
@@ -70,23 +70,34 @@ Wave 0A 冻结产物:IF-1..IF-7 附录 + 六轨合同 + 本 plan;**全部 docs-o
 - 既有 runtime smoke(vite 5184/backend 8104 本地栈)零失败;
 - 零视觉/功能行为漂移(与 7e3e71c 运行时对照)。
 
-Wave 0B 产出:**PREP_BASE_SHA = Wave 0B 终局提交**(见 §3.0.2)。
+Wave 0B 产出:**PREP_BASE_SHA = Wave 0B 终局提交**(见 §3.0.3;实现基线=WAVE_0B_BASE_SHA,见 §3.0.2)。
 
-### 3.0.2 PREP_BASE_SHA CONTRACT(Wave 1 强制共同基线)
+### 3.0.2 WAVE_0B_BASE_SHA CONTRACT(代码基线契约;FINAL PLANNING BASELINE FIX 2026-09-13 冻结)
 
-- **定义**:PREP_BASE_SHA = Wave 0B 终局提交 SHA(Wave 0B 验收全过后由 Integration 轨冻结填入下方;**填入前 Wave 1 任何轨道不得开工**)。
+- **WAVE_0B_BASE_SHA = `7e3e71cc1d50a19e8625fffcacbe1c0f7b11af76`**(冻结值,即 152 行追溯审计所评估的 v1.6.3 实现谱系 34c7d5b→2f0bc06→8fa121a→7e3e71c 之 tip)。
+- **规则 1**:Wave 0B 必须直接从 WAVE_0B_BASE_SHA 分支(merge-base(Wave0B, 7e3e71c) = 7e3e71c)。
+- **规则 2**:planning/docs 提交 `b054d9f`(及其后全部 planning 提交)仅为**合同权威证据**,不是 Wave 0B 的实现父。
+- **规则 3**:`origin/main 5c50191` **不是**合法的 Wave 0B 实现基线——152 行追溯审计评估的是止于 7e3e71c 的实现谱系,从 main 开工会丢弃全部已验收 MATCH/UADC 行为。
+- **规则 4**:Wave 0B 必须保全 7e3e71c 中已存在的全部 MATCH / UADC 行为(V-1/V-2/V-3 与 105 项 MATCH 呈现)。
+- **规则 5**:Wave 0B 验收必须显式核验:(a) `merge-base(Wave0B, 7e3e71c) = 7e3e71c`;(b) `diff(7e3e71c → PREP_BASE_SHA)` 仅含授权的结构 refactor 变更(四零约束;任何产品语义/API 语义/数据模型语义/词表扩展 = 越权)。
+- **规则 6**:PREP_BASE_SHA = 行为等价验证全过后的 **Wave 0B 已接受 tip**。
+- **规则 7**:Wave 1 A–F 必须全部从该精确 PREP_BASE_SHA 分支(见下方 PREP_BASE_SHA CONTRACT)。
+- **规则 8**:Integration 必须拒绝任何祖先不含 PREP_BASE_SHA 作为共同实现基线的 Track(merge-base(track, integration) == PREP_BASE_SHA,不满足 = 交付无效)。
+
+### 3.0.3 PREP_BASE_SHA CONTRACT(Wave 1 强制共同基线)
+
+- **定义**:PREP_BASE_SHA = Wave 0B 终局提交 SHA(= 行为等价验证全过后的已接受 Wave 0B tip;Wave 0B 验收全过后由 Integration 轨冻结填入下方;**填入前 Wave 1 任何轨道不得开工**)。
+- **实现父链(冻结)**:`7e3e71c(WAVE_0B_BASE_SHA) → Wave 0B 结构 refactor commits → PREP_BASE_SHA`;planning 分支(`b054d9f`…)与本实现链**并行**,仅提供合同,不是实现祖先。
 - **强制规则:Wave 1 六轨 A–F 必须全部从同一 PREP_BASE_SHA 分支,禁止混合基线。** 理由:IF-6 文件互斥只在拆分后的树上成立;混合基线会重新引入 Analytics.tsx/tech.py 争用并使拆分地图与文件内区域所有权失效。
 - **合并核验**:Integration 轨合并各轨时必须验证 merge-base(track, integration) == PREP_BASE_SHA;不满足 = 该轨交付无效,回炉 rebase 后重验。
 - **基线变更** = planning 修订(不得在执行期临时换基线)。
-- **当前值:PREP_BASE_SHA = (待 Wave 0B 完成时由 Integration 轨填入并冻结)。**
-
-### 3.1 拓扑与依赖
+- **当前值:PREP_BASE_SHA = (待 Wave 0B 完成时由 Integration 轨填入并冻结)。**### 3.1 拓扑与依赖
 
 ```
 Wave 0A(docs only,合同冻结):IF-1..IF-7 冻结(含 U-2 分析窗能力矩阵 Outcome B=§3.5、IF-6 拆分地图+文件内区域所有权)
-Wave 0B(结构预备,Integration 轨;真实代码但仅限结构 refactor,四零约束):
+Wave 0B(结构预备,Integration 轨;真实代码但仅限结构 refactor,四零约束;**直接分支自 WAVE_0B_BASE_SHA=7e3e71c,§3.0.2**):
   Analytics.tsx 拆分 + tech.py router 拆分 + 词表常量模块抽取(既有值迁移)
-  验收:行为等价+pytest/vitest/tsc/build/ruff+既有 runtime smoke+零视觉/功能漂移
+  验收:行为等价+pytest/vitest/tsc/build/ruff+既有 runtime smoke+零视觉/功能漂移+§3.0.2 规则 5 双核验
   → 产出 PREP_BASE_SHA(冻结;Wave 1 开工前置)
 Wave 1(全并行;六轨 A–F 全部从同一 PREP_BASE_SHA 分支,禁止混合基线):
   Track A(chrome:DEF-A1 + U-2 顶栏范围控件+共享窗绑定 + U-4 收起;后端窗口参数能力 BC-1/BC-2)
@@ -336,7 +347,7 @@ FX-1(六源/1,204)、FX-2(98.7%=77+1/78)、FX-3(近因)、FX-4(五原因×两态
 
 每 Track 合同见 `v163-reference-remediation/track-{a..f}-contract.md`(冻结目标/参考需求/产品语义/变更边界/后端数据要求/前端要求/禁止捷径/验收/运行时状态/视觉证据/功能 E2E/交付物;不规定 HOW)。
 
-## 8. CONSISTENCY AUDIT(终轮 review fix 后全量核验;docs-only)
+## 8. CONSISTENCY AUDIT(终轮 review fix 后全量核验;docs-only;**FINAL PLANNING BASELINE FIX 2026-09-13 增补 12–14**)
 
 核验方式:全量重读本 plan + 六轨合同 + gap-register + matrix-SH/TI 相关节,逐点交叉比对下列位置文本;核验后无遗留矛盾。
 
@@ -344,7 +355,7 @@ FX-1(六源/1,204)、FX-2(98.7%=77+1/78)、FX-3(近因)、FX-4(五原因×两态
 |---|---|---|---|
 | 1 | Wave 0A = docs/接口冻结 only | §3.0(零代码/零结构拆分声明);§6.1 Wave 0A;IF-1..IF-7 全冻结 | PASS |
 | 2 | Wave 0B = 结构代码预备 only | §3.0.1(允许清单=四项结构 refactor;禁止清单;四零约束;行为等价+五门验收);§6.1 Wave 0B | PASS |
-| 3 | PREP_BASE_SHA = A–F 强制共同基线 | §3.0.2(定义/强制规则/合并核验);§3.1 拓扑;§3.3 全部前置列;§6.1/§6.2/§6.3;track-a..f 合同 前置+B 提示词要点 | PASS |
+| 3 | PREP_BASE_SHA = A–F 强制共同基线 | §3.0.3(定义/强制规则/合并核验);§3.1 拓扑;§3.3 全部前置列;§6.1/§6.2/§6.3;track-a..f 合同 前置+B 提示词要点 | PASS |
 | 4 | Wave 1 A–F 并行实现 | §3.1;§3.3;§6.1;§6.3 并行组 | PASS |
 | 5 | D/E 无开工依赖 | §3.6(实现依赖 D→E=NONE);§3.3 D/E 行;§6.2 D/E 提示词;track-d/track-e 合同 前置 | PASS |
 | 6 | D candidate 为 E joined acceptance 前置 | §3.6;§3.1 Wave 2;§3.3 E 行;§6.2 D/E 提示词;track-e 合同 验收/前置;track-d 合同 前置 | PASS |
@@ -353,3 +364,6 @@ FX-1(六源/1,204)、FX-2(98.7%=77+1/78)、FX-3(近因)、FX-4(五原因×两态
 | 9 | 无占位接口语义残留 | IF-1..IF-7 全部有冻结内容+消费方;BC-1/BC-2 语义冻结(HOW 不规定);PREP_BASE_SHA 待填值=执行期字段非接口占位 | PASS |
 | 10 | 未决产品决策=0 | §5 U-1..U-19 全冻结;§6.6;主审计文档 ROLE A DECISIONS 章节;本轮零改判 | PASS |
 | 11 | 未决参考冲突=0 | §1 规则 4(SH-16 经 U-1 → MATCH);§6.6 分类 RC 0 | PASS |
+| 12 | **WAVE_0B_BASE_SHA=7e3e71c 冻结且为 Wave 0B 唯一实现基线** | §3.0.2(规则 1–5:直接分支/merge-base 核验/仅结构 refactor diff);§3.1 拓扑 Wave 0B 行;本轮零产品语义变更核对 | PASS |
+| 13 | **planning b054d9f=合同证据、非实现父;origin/main 5c50191=非合法 Wave 0B 基线** | §3.0.2 规则 2–3;§3.0.3 实现父链;track-a..f 合同 前置行(基线措辞已同步) | PASS |
+| 14 | **Wave 0B 必须保全 7e3e71c 全部 MATCH/UADC 行为;Integration 拒绝祖先不含 PREP_BASE_SHA 的 Track** | §3.0.2 规则 4 与规则 8;§3.0.3 合并核验 | PASS |

@@ -12,6 +12,6 @@
 - **禁止捷径**:不得用 CSS 伪装 disabled;不得改 PUT payload 语义;不得删除新建态类型选择;frontend-only fake state 禁止。
 - **验收**:vitest(label/toggle/disabled);切换自动同步→保存→PUT enabled 真实生效(本地栈)。
 - **交付物**:分支 `track/v163-b-drawer`、执行报告、截图、测试日志。
-- **前置**:Wave 0A/0B 完成;**从 PREP_BASE_SHA 分支(强制共同基线,禁止混合基线,remediation plan §3.0.2)**;可立即(Wave 1),与 A/C–F 全并行。
+- **前置**:Wave 0A/0B 完成;**从 PREP_BASE_SHA 分支(强制共同基线,禁止混合基线,remediation plan §3.0.3);实现父链冻结:Wave 0B 直接分支自 WAVE_0B_BASE_SHA=7e3e71c(§3.0.2),PREP_BASE_SHA=其行为等价验收后 tip;origin/main 5c50191 与 planning b054d9f 均非实现基线**;可立即(Wave 1),与 A/C–F 全并行。
 - **Issue 映射**:落地后贡献 #53/#54 编辑抽屉字段范围关闭。
 - **B 级提示词要点**:worktree=实现授权树;**分支基线=PREP_BASE_SHA**;branch `track/v163-b-drawer`;冻结合同=本文件+remediation plan §6 授权包;范围=DEF-A2/A3/A4(U-5 冻结:edit 禁用);验收=vitest+真实栈 E2E+截图;交付物如上。

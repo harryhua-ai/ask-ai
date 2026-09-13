@@ -15,6 +15,6 @@
 - **禁止捷径**:frontend-only fake state;跳过同步核验/操作者确认直接进观察;**unpersisted OBSERVING transitions(转移不留痕)**;直接强转 RESOLVED;前端造 CSV;**export 由当前渲染行而非权威范围数据构建**;导出包含隐私排除清单字段;两态既有行为零回归。
 - **验收**:功能 E2E(观察双路径+中止+导出+审计)+ pytest+vitest+tsc+build;三角(API=PG=UI);**joined 分类×观察流联测(D candidate 就绪后):对 D 的实际词表实现联测,新原因类过滤×观察态共存/同源一致全过(§3.6)**。
 - **交付物**:分支 `track/v163-e-observation`、观察契约(IF-1)+导出/隐私契约(IF-5)冻结稿、执行报告、截图、测试日志、fixture SQL 全文。
-- **前置**:Wave 0A(IF-1/IF-2/IF-5/IF-7 冻结)+ Wave 0B 完成;**从 PREP_BASE_SHA 分支(强制共同基线,禁止混合基线,remediation plan §3.0.2)**。**D/E 依赖(§3.6,冻结):实现依赖 D→E = NONE——依 IF-2 冻结合同开工,不得等 D 开工、不得等 D 任何代码;验收依赖=E joined runtime FINAL PASS 需 D candidate 存在(对 D 实际词表实现联测)**。旧「Track D 先行」表述废止。
+- **前置**:Wave 0A(IF-1/IF-2/IF-5/IF-7 冻结)+ Wave 0B 完成;**从 PREP_BASE_SHA 分支(强制共同基线,禁止混合基线,remediation plan §3.0.3);实现父链冻结:Wave 0B 直接分支自 WAVE_0B_BASE_SHA=7e3e71c(§3.0.2),PREP_BASE_SHA=其行为等价验收后 tip;origin/main 5c50191 与 planning b054d9f 均非实现基线**。**D/E 依赖(§3.6,冻结):实现依赖 D→E = NONE——依 IF-2 冻结合同开工,不得等 D 开工、不得等 D 任何代码;验收依赖=E joined runtime FINAL PASS 需 D candidate 存在(对 D 实际词表实现联测)**。旧「Track D 先行」表述废止。
 - **Issue 映射**:落地后关闭 #58、#59(gap 状态机/导出部分)。
 - **B 级提示词要点**:worktree=实现授权树;**分支基线=PREP_BASE_SHA**;branch `track/v163-e-observation`;冻结合同=本文件+IF-1/IF-2/IF-5+remediation plan §3.6 D/E 依赖合同+§6 授权包;范围=U-15 全状态机+U-16 导出(实现依 IF-2 冻结合同,不等 D);验收=观察双路径+中止+导出审计 E2E+D candidate joined 联测;交付物含契约冻结稿与 fixture SQL 全文。

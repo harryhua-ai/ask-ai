@@ -16,6 +16,6 @@
 - **禁止捷径**:frontend-only fake state;**fake user count(前端估算/编造计数,含对不可回填历史编造数字)**;**fake source attribution(无证据规则归因、代表问句关键词硬配源)**;**hard-coded topic labels**;LLM 主题未经单独授权上线;聚合非服务端权威。
 - **验收**:三角(API=PG=UI):用户去重计数与 DB 一致;归因外链真实到达且规则可解释;主题稳定(同簇多次拉取不变);pytest+vitest。
 - **交付物**:分支 `track/v163-f-evidence`、归因/主题规则冻结稿、隐私评估记录、执行报告、截图、测试日志、fixture SQL 全文。
-- **前置**:Wave 0A(IF-6/IF-7 冻结:U-17 聚合窗=所选分析窗,词表与窗口面/例外面见 remediation plan §3.5 能力矩阵)+ Wave 0B 完成;**从 PREP_BASE_SHA 分支(强制共同基线,禁止混合基线,remediation plan §3.0.2)**;可立即(Wave 1);backend 合并序推荐 D→E→F(拆分到位后冲突面趋零)。
+- **前置**:Wave 0A(IF-6/IF-7 冻结:U-17 聚合窗=所选分析窗,词表与窗口面/例外面见 remediation plan §3.5 能力矩阵)+ Wave 0B 完成;**从 PREP_BASE_SHA 分支(强制共同基线,禁止混合基线,remediation plan §3.0.3);实现父链冻结:Wave 0B 直接分支自 WAVE_0B_BASE_SHA=7e3e71c(§3.0.2),PREP_BASE_SHA=其行为等价验收后 tip;origin/main 5c50191 与 planning b054d9f 均非实现基线**;可立即(Wave 1);backend 合并序推荐 D→E→F(拆分到位后冲突面趋零)。
 - **Issue 映射**:落地后关闭 #59(用户/归因/主题部分)、贡献 #57。
 - **B 级提示词要点**:worktree=实现授权树;**分支基线=PREP_BASE_SHA**;branch `track/v163-f-evidence`;冻结合同=本文件+IF-6/IF-7+remediation plan §6 授权包;范围=U-17/18/19(U-17 聚合消费 IF-7 共享分析窗);验收=三角计数/归因/主题稳定性 E2E;交付物含规则冻结稿+隐私评估记录+fixture SQL 全文。

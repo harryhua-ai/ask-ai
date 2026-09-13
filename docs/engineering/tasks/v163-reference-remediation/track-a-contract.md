@@ -19,6 +19,6 @@
 - **禁止捷径**:不得以「无后端」为由省略 depicted 元素;不得改动各页内既有 filter 真值;**不得发明全站全局过滤语义(U-2 已冻结为技术洞察分析窗)**;**不得让任何窗口面卡片停留在与共享窗不一致的时间窗;S3/S4/S6 例外面不得借例外引入窗口假联动**;frontend-only fake state 禁止(范围联动必须真实贯通 API 参数);**BC-1/BC-2 仅参数能力,禁借机新增端点/新表/改既有窗口语义**;S1 禁依赖 range 未知名→静默 7d 回退(任意窗以显式起止表达);不实现帮助中心入口(UADC-4)。
 - **验收**:vitest 组标签/归属/折叠/范围联动断言;BC-1/BC-2 pytest 参数能力用例(IF-7 全词表 × 既有窗口语义回归);真实栈截图。
 - **交付物**:分支 `track/v163-a-chrome`、执行报告、截图、vitest+pytest 日志、#52 修订记录。
-- **前置**:Wave 0A(IF-6/IF-7 冻结)+ Wave 0B 完成;**从 PREP_BASE_SHA 分支(强制共同基线,禁止混合基线,remediation plan §3.0.2)**;与 B–F 全并行(Wave 1)。
+- **前置**:Wave 0A(IF-6/IF-7 冻结)+ Wave 0B 完成;**从 PREP_BASE_SHA 分支(强制共同基线,禁止混合基线,remediation plan §3.0.3);实现父链冻结:Wave 0B 直接分支自 WAVE_0B_BASE_SHA=7e3e71c(§3.0.2),PREP_BASE_SHA=其行为等价验收后 tip;origin/main 5c50191 与 planning b054d9f 均非实现基线**;与 B–F 全并行(Wave 1)。
 - **Issue 映射**:落地后关闭 #52(IA 收敛)、贡献 #60。
 - **B 级提示词要点**:worktree=实现授权树;**分支基线=PREP_BASE_SHA**;branch `track/v163-a-chrome`;冻结合同=本文件+IF-6/IF-7+remediation plan §3.5 能力矩阵+§6 授权包;范围=SH-06/09/12(SH-10/11 仅记录 UADC-4)+BC-1/BC-2 窗口参数能力;验收=vitest+pytest+真实栈截图+E2E 三项;交付物如上。

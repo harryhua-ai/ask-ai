@@ -21,6 +21,6 @@
 - **禁止捷径**:frontend-only fake state;fake counts(影响计数/恢复计数/serving 分数前端伪造);fake next_run_at(纯派生倒计时);UI-only repair(无 RBAC/幂等/审计/验证);资格语义只存不用(必须贯通检索资格);确认施加的 mutation 与预览不一致;以「合同未定义」省略 depicted 元素;任意远程 logo_url 作产品真值;前端从文件名/文本推断 content_type。
 - **验收**:功能 E2E 四链+三角(API=PG=UI);vitest+tsc+build;pytest 新增端点用例。
 - **交付物**:分支 `track/v163-c-b1-product`、合同内契约附录(IF-3 修复契约/IF-4 知识设置+预览契约冻结稿)、执行报告、截图、测试日志、fixture SQL 全文。
-- **前置**:Wave 0A(IF-3/IF-4 冻结)+ Wave 0B 完成;**从 PREP_BASE_SHA 分支(强制共同基线,禁止混合基线,remediation plan §3.0.2)**;无 User 决定阻塞;可立即(Wave 1)。轨内依赖:修复命令→验证卡;知识设置→预览 Modal。
+- **前置**:Wave 0A(IF-3/IF-4 冻结)+ Wave 0B 完成;**从 PREP_BASE_SHA 分支(强制共同基线,禁止混合基线,remediation plan §3.0.3);实现父链冻结:Wave 0B 直接分支自 WAVE_0B_BASE_SHA=7e3e71c(§3.0.2),PREP_BASE_SHA=其行为等价验收后 tip;origin/main 5c50191 与 planning b054d9f 均非实现基线**;无 User 决定阻塞;可立即(Wave 1)。轨内依赖:修复命令→验证卡;知识设置→预览 Modal。
 - **Issue 映射**:落地后关闭 #54(详情)、#55(检查器)、#56(历史)。
 - **B 级提示词要点**:worktree=实现授权树;**分支基线=PREP_BASE_SHA**;branch `track/v163-c-b1-product`;冻结合同=本文件+IF-3/IF-4+remediation plan §6 授权包;范围=U-6/7/8/9/10/11/12/13;验收=四链 E2E+三角+三门;交付物含四契约冻结稿与 fixture SQL 全文。
