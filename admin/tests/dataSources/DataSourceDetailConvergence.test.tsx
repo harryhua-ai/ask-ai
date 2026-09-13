@@ -3,7 +3,9 @@
  *
  * 冻结层级:身份 → 操作者状态 → 最新同步摘要 → 知识总量+需处理 →
  * prominent attention banner → 知识内容工作区 → 本地诊断/历史。
- * Forbidden 断言:无 重新处理(无既有权威操作支撑)、无 知识设置、
+ * v1.6.3 Wave 1 Track C 授权更新:重新处理(行 ⋯)/知识设置(页头菜单)已随
+ * U-8/U-12 冻结授权实现(后端权威:POST repair + knowledge-settings);
+ * Forbidden 断言仅保留「无权威计数/词表不得静态伪造呈现」部分。
  * 无 高风险变更影响预览。
  */
 
@@ -103,6 +105,7 @@ const documents = {
       updated_at: new Date(Date.now() - H2).toISOString(),
       current_version_seq: 17,
       generation_ordinal: 7,
+      content_type: "product",
     },
     {
       source_id: "woo-store/main/gone",
@@ -118,6 +121,7 @@ const documents = {
       updated_at: new Date(Date.now() - D3).toISOString(),
       current_version_seq: 4,
       generation_ordinal: 7,
+      content_type: null,
     },
   ],
 };
@@ -269,7 +273,11 @@ describe("v1.6.3 B1 数据源详情收敛(hard ref panel 2/3/4)", () => {
   it("层级 1-2 身份与操作者状态:名称 + 需处理徽章 + 类型|来源地址;右侧 最后同步/知识/需处理", () => {
     renderDetail();
     expect(screen.getByTestId("detail-title")).toHaveTextContent("WooCommerce");
-    expect(screen.getAllByText("商城").length).toBeGreaterThan(0);
+    // v1.6.3 Track C(U-7):知识表类型列 = 逐文档 content_type(商品/—=存量不可用),
+    // 源级运营词「商城」仅保留于身份行(局部匹配)。
+    expect(screen.getAllByText("商城", { exact: false }).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("商品").length).toBeGreaterThan(0);
+    expect(screen.getAllByTitle("类型不可用(存量行,后端无真值)").length).toBeGreaterThan(0);
     expect(screen.getByText("https://woocommerce.com")).toBeInTheDocument();
     // 右侧摘要:202 条知识 · 2 项需处理(数字与单位分属相邻节点)
     expect(screen.getByText(/条知识/)).toBeInTheDocument();
@@ -317,10 +325,12 @@ describe("v1.6.3 B1 数据源详情收敛(hard ref panel 2/3/4)", () => {
     expect(screen.queryByText(/生效自 2026-08-01T00:00:00/)).not.toBeInTheDocument();
   });
 
-  it("Forbidden:页面不出现 重新处理 / 知识设置 / 高风险影响预览(无权威支撑不得伪造)", () => {
+  it("U-8/U-12 授权实现(v1.6.3 Wave 1 Track C):行 ⋯ 收纳重新处理;页头菜单含知识设置;预览 Modal 仅确认流出现", () => {
     renderDetail();
-    expect(screen.queryByText("重新处理")).not.toBeInTheDocument();
-    expect(screen.queryByText("知识设置")).not.toBeInTheDocument();
+    // 冻结授权后的呈现:行级 ⋯ 菜单 + 页头知识设置入口存在;
+    // 高风险预览 Modal 仍不静态出现(仅保存时态角色变化时经后端预览触发)
+    expect(screen.getAllByLabelText(/更多行操作/).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("更多页操作")).toBeInTheDocument();
     expect(screen.queryByText(/预计影响/)).not.toBeInTheDocument();
   });
 
@@ -344,7 +354,7 @@ describe("v1.6.3 B1 数据源详情收敛(hard ref panel 2/3/4)", () => {
     expect(screen.getByText(/2 次常规同步/)).toBeInTheDocument();
   });
 
-  it("Forbidden 断言之二:时态角色/新鲜度策略词表不出现(NOT authorized)", () => {
+  it("U-12 词表承载于知识设置抽屉(非详情主面静态出现)", () => {
     renderDetail();
     expect(screen.queryByText(/时态角色/)).not.toBeInTheDocument();
     expect(screen.queryByText(/新鲜度要求/)).not.toBeInTheDocument();

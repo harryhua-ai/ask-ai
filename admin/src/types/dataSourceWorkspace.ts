@@ -28,6 +28,40 @@ export interface SourceDocumentItem {
   current_version_seq: number | null;
   /** 现行版本所属生成序数(null = 后端无此记录)。 */
   generation_ordinal: number | null;
+  /** U-7 逐文档内容类型(结构化后端真值;null = 存量行不可用,禁推断)。 */
+  content_type: string | null;
+}
+
+/** U-9 chunk 级 serving 投影真值(UI 比例必须等于 serving/total)。 */
+export interface ChunkServingTruth {
+  serving_chunks: number;
+  total_chunks: number;
+  missing_indices: number[];
+  stale_indices: number[];
+  consistent: boolean;
+}
+
+/** U-8 修复任务(进度/结果/审计;验证卡数据源 = result 真值)。 */
+export interface DocumentRepairTask {
+  id: string;
+  source_id: string;
+  doc_source_id: string;
+  status: "pending" | "running" | "succeeded" | "failed";
+  stage: string | null;
+  requested_by: string | null;
+  idempotency_key: string | null;
+  result: {
+    version_seq?: number;
+    chunks_serving?: number;
+    chunks_total?: number;
+    consistency?: "passed" | "failed";
+    repaired_indices?: number[];
+    repair_mode?: string;
+  } | null;
+  error: string | null;
+  events: Array<Record<string, unknown>>;
+  created_at: string | null;
+  finished_at: string | null;
 }
 
 /** 逐源文档清单响应(total 为过滤后分页总数;聚合计数不受过滤影响)。 */
@@ -44,6 +78,8 @@ export interface SourceDocumentsResponse {
   serving_count: number;
   /** Current 桶计数(active ∧ 现行版本可解析;严格在服且无风险标记)。 */
   current_count: number;
+  /** U-7 逐文档内容类型账本聚合(类型过滤词表真实来源;NULL 不入)。 */
+  content_type_counts: Record<string, number>;
   items: SourceDocumentItem[];
 }
 
@@ -107,6 +143,16 @@ export interface SourceDocumentTruth {
   current_version: DocumentCurrentVersionTruth | null;
   /** 现行版本所属生成行(null = 后端无此记录,显式缺席)。 */
   generation: GenerationTruth | null;
+  /** U-7 逐文档内容类型(null = 不可用)。 */
+  content_type: string | null;
+  /** U-9 chunk 级 serving 投影(null = 向量库不可用,诚实降级)。 */
+  chunk_serving: ChunkServingTruth | null;
+  /** U-10 自动恢复尝试未成功次数(持久化权威事件计数)。 */
+  recovery_attempts_failed: number;
+  /** U-10 自动恢复尝试成功次数。 */
+  recovery_attempts_succeeded: number;
+  /** U-8 最近一次修复任务(验证卡数据源)。 */
+  latest_repair_task: DocumentRepairTask | null;
 }
 
 /** 逐源索引生成列表响应。 */

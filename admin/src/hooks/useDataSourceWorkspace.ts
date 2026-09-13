@@ -22,6 +22,8 @@ export interface SourceDocumentsParams {
   order?: string;
   /** v1.6.3 B1:documents.source_type 精确匹配。 */
   sourceType?: string;
+  /** v1.6.3 Track C(U-7):逐文档 content_type 精确匹配("none"=不可用行)。 */
+  contentType?: string;
   /** title/url 子串搜索(不区分大小写)。 */
   search?: string;
   page?: number;
@@ -37,6 +39,7 @@ export function fetchSourceDocuments(
   if (params.bucket) q.set("bucket", params.bucket);
   if (params.order) q.set("order", params.order);
   if (params.sourceType) q.set("source_type", params.sourceType);
+  if (params.contentType) q.set("content_type", params.contentType);
   if (params.search) q.set("search", params.search);
   q.set("page", String(params.page ?? 1));
   q.set("size", String(params.size ?? 20));
@@ -46,15 +49,24 @@ export function fetchSourceDocuments(
 }
 
 export function useSourceDocuments(sourceId: string, params: SourceDocumentsParams = {}) {
-  const { lifecycle, bucket, order, sourceType, search, page = 1, size = 20 } = params;
+  const { lifecycle, bucket, order, sourceType, contentType, search, page = 1, size = 20 } = params;
   return useQuery({
     queryKey: [
       "data-source-documents",
       sourceId,
-      { lifecycle, bucket, order, sourceType, search, page, size },
+      { lifecycle, bucket, order, sourceType, contentType, search, page, size },
     ],
     queryFn: () =>
-      fetchSourceDocuments(sourceId, { lifecycle, bucket, order, sourceType, search, page, size }),
+      fetchSourceDocuments(sourceId, {
+        lifecycle,
+        bucket,
+        order,
+        sourceType,
+        contentType,
+        search,
+        page,
+        size,
+      }),
     enabled: !!sourceId,
   });
 }
