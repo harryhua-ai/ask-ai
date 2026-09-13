@@ -5,6 +5,12 @@
  * - 完整编辑器能力保持权威(类型/产品线/同步间隔/连接配置/发现策略/上传),
  *   仅交互容器从页内表单收敛为右侧抽屉;字段与提交行为与原实现逐字等价;
  * - 新建与编辑共用;编辑时数据源保留其运营上下文(列表行/详情页不离开)。
+ *
+ * v1.6.3 Wave 1 Track B 呈现一致性(硬参考 PNG1 面板5;合同 track-b-contract.md):
+ * - DEF-A2(DS-P5-02):「产品线」label →「名称」+必填星号(真值仍为 product);
+ * - DEF-A3(DS-P5-04,U-5 冻结):create 类型可选;edit 既有源类型 immutable/disabled;
+ * - DEF-A4(DS-P5-05):「状态/启用」checkbox →「自动同步」Switch + 逐字说明
+ *   「开启后，系统将按设定周期自动同步。」(真值仍为 enabled,PUT 语义零变更)。
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -14,6 +20,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Sheet,
   SheetContent,
@@ -460,16 +467,28 @@ export function SourceEditorDrawer({
         <form onSubmit={handleSubmit(onSubmit)} className="mt-4 space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label>类型</Label>
-              <select className="h-10 w-full rounded-md border px-3" {...register("type")}>
+              {/* v1.6.3 Wave1 Track B DEF-A3(DS-P5-04,U-5 冻结):create 类型可选;
+                  edit 既有源 immutable/disabled(真 disabled 属性,非 CSS 伪装);
+                  PUT payload 的 type 真值不变(值仍来自表单,即既有源原类型)。 */}
+              <Label htmlFor="ds-type">类型</Label>
+              <select
+                id="ds-type"
+                className="h-10 w-full rounded-md border px-3 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!!editing}
+                {...register("type")}
+              >
                 {SOURCE_TYPES.map((t) => (
                   <option key={t} value={t}>{TYPE_LABELS[t] ?? t}</option>
                 ))}
               </select>
             </div>
             <div className="space-y-1">
-              <Label>产品线</Label>
-              <Input {...register("product")} />
+              {/* v1.6.3 Wave1 Track B DEF-A2(DS-P5-02):label 收敛为「名称」+必填星号;
+                  真值仍为 product(PUT 字段零变更)。 */}
+              <Label htmlFor="ds-product">
+                名称 <span className="text-destructive" aria-hidden="true">*</span>
+              </Label>
+              <Input id="ds-product" {...register("product")} />
               {errors.product && <p className="text-xs text-destructive">{errors.product.message}</p>}
             </div>
           </div>
@@ -504,10 +523,19 @@ export function SourceEditorDrawer({
               )}
             </div>
             <div className="space-y-1">
-              <Label>状态</Label>
-              <div className="flex h-10 items-center gap-2">
-                <input id="ds-enabled" type="checkbox" {...register("enabled")} />
-                <Label htmlFor="ds-enabled" className="font-normal">启用</Label>
+              {/* v1.6.3 Wave1 Track B DEF-A4(DS-P5-05):「状态/启用」checkbox 收敛为
+                  「自动同步」Switch + 逐字说明(参考 PNG 面板5);真值仍为 enabled,
+                  PUT 语义零变更(开关切换 → setValue enabled)。 */}
+              <Label htmlFor="ds-auto-sync">自动同步</Label>
+              <div>
+                <Switch
+                  id="ds-auto-sync"
+                  checked={watch("enabled")}
+                  onCheckedChange={(v) => setValue("enabled", v, { shouldDirty: true })}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  开启后，系统将按设定周期自动同步。
+                </p>
               </div>
             </div>
           </div>
