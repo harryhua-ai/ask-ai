@@ -381,11 +381,11 @@ Playwright Chromium 1536×1024@1x 真实登录;脚本 smoke/capture-final.mjs;�
 
 ## 10.5 diff 审计(累计 7e3e71c → FINAL_PREP_BASE)
 
-- 本轮(相对 acc6756):2 修改/删除 + 3 新增(§10.1 表),全部 admin/src/pages/analytics/ 内;**后端 0 文件**;逐文件均为「逐字迁出+import 消费+Ownership 头注」,零字面量/文案/样式/行为变化;
-- 累计(git diff 7e3e71c..tip):§9.7 的 27 文件基础上 -1(删 GapFilters)+3(新增三 owned filter/window 文件)= 30 文件,**仅结构改动**(拆分/装配/常量迁移/空 router/组件抽取/所有权注释);越权项:**无**(无新端点/无新参数语义/无新词表值/无 BC-1/BC-2 实现/无观察态实现/无导出实现/无 fixture 与数据写入/无 UI 文案视觉交互变化/测试文件 0 改动)。
+- 本轮(相对 acc6756):**3 新增 + 1 删除 + 2 修改**(新增 GapCauseFilter/GapStatusFilter/AnalyticsWindowControl;删除 GapFilters;修改 AnswerGapsTab/本报告),除报告外全部 admin/src/pages/analytics/ 内;**后端 0 文件**;逐文件均为「逐字迁出+import 消费+Ownership 头注」,零字面量/文案/样式/行为变化;
+- 累计(`git diff 7e3e71c..f83740c61f779fd2631c618d3079baac4e966a6c`):**27 文件**(= @acc6756 累计 25 文件 − GapFilters 净零[前轮创建/本轮删除] + 本轮 3 新增),构成:admin 16(页面壳拆分+owned 组件+relTime)+backend 10(tech.py 拆 5 子模块+tech_performance+analytics+gap_taxonomy/gap_status)+本报告;**仅结构改动**(拆分/装配/常量迁移/空 router/组件抽取/所有权注释);越权项:**无**(无新端点/无新参数语义/无新词表值/无 BC-1/BC-2 实现/无观察态实现/无导出实现/无 fixture 与数据写入/无 UI 文案视觉交互变化/测试文件 0 改动——cumulative diff `grep -E "test|spec"` = 0)。
 
 ## 10.6 FINAL_PREP_BASE_SHA 与 STOP 确认
 
-- **FINAL_PREP_BASE_SHA = 本 commit(分支 prep/v163-wave0b 推送后 tip;parent = acc67569aa7112a756934108e1ff554f5f8bee37;字面 SHA 冻结于验收仓 ask-ai-acceptance/v163-wave0b-20260913/completion-final/FINAL_PREP_BASE_SHA.txt 并见执行返回)。实现父链:`7e3e71c(WAVE_0B_BASE_SHA) → c016d50 → acc6756 → 本 commit`;merge-base(HEAD, 7e3e71c) = 7e3e71c 复核 PASS。**
+- **FINAL_PREP_BASE_SHA = 分支 prep/v163-wave0b 本报告冻结后 tip(字面 SHA 见验收仓 ask-ai-acceptance/v163-wave0b-20260913/completion-final/FINAL_PREP_BASE_SHA.txt 与执行返回;结构 commit = f83740c61f779fd2631c618d3079baac4e966a6c,其后仅追加本报告数字勘误 docs commit)。实现父链:`7e3e71c(WAVE_0B_BASE_SHA) → c016d50 → acc6756 → f83740c → FINAL_PREP_BASE`;merge-base(HEAD, 7e3e71c) = 7e3e71c 复核 PASS。**
 - Wave 1 A–F 六轨强制全部从该 SHA 分支;**A/D/E/F 无需编辑 AnswerGapsTab.tsx;D/E 不共享任何 filter 实现文件**;Integration 合并核验 merge-base(track, integration) == FINAL_PREP_BASE_SHA。
 - STOP 确认:未建 Wave 1 A–F 任何轨道分支/未实现任何产品行为(observing/导出/IF-7 全词表/BC-1/BC-2 零实现)/未 merge/未 deploy/未关 issue;零 fixture/数据 mutation(本地库只读);rem 基准树(7e3e71c)零改动;候选栈 8107/5187 于收尾停止。
