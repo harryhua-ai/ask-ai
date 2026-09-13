@@ -1,4 +1,4 @@
-# Track C Contract — B1 行级修复 + 知识设置域 + 高风险预览(GAP-B1-1/3/4/5/6/7/8/9/10)(Planning 修订:Role A 裁决冻结)
+# Track C Contract — B1 行级修复 + 知识设置域 + 高风险预览(GAP-B1-1/3/4/5/6/7/8/9/10)(Planning 终轮 review fix 修订:Wave 0A/0B + PREP_BASE_SHA)
 
 - **目标**:矩阵 DS-P2-02/16/20/25/26、DS-P3-05..09、DS-P4-03、DS-P6-01..05、DS-P7-01..06 全部清零(实现;全部方向已获授权冻结,无转 UADC 项)。
 - **参考需求(精确 ID)**:DS-P2-02(品牌)、DS-P2-10(banner 原因,与 Track D 共契约)、DS-P2-16/20(逐文档类型)、DS-P2-25/26(行 处理/⋯)、DS-P3-05(10/12)、DS-P3-06(恢复注记)、DS-P3-07/08/09(重新处理/验证卡/一致性)、DS-P4-03(下次同步)、DS-P6-01..05(知识设置 Drawer)、DS-P7-01..06(确认知识设置变更 Modal)。
@@ -21,6 +21,6 @@
 - **禁止捷径**:frontend-only fake state;fake counts(影响计数/恢复计数/serving 分数前端伪造);fake next_run_at(纯派生倒计时);UI-only repair(无 RBAC/幂等/审计/验证);资格语义只存不用(必须贯通检索资格);确认施加的 mutation 与预览不一致;以「合同未定义」省略 depicted 元素;任意远程 logo_url 作产品真值;前端从文件名/文本推断 content_type。
 - **验收**:功能 E2E 四链+三角(API=PG=UI);vitest+tsc+build;pytest 新增端点用例。
 - **交付物**:分支 `track/v163-c-b1-product`、合同内契约附录(IF-3 修复契约/IF-4 知识设置+预览契约冻结稿)、执行报告、截图、测试日志、fixture SQL 全文。
-- **前置**:IF-3/IF-4 冻结;无 User 决定阻塞;可立即(Wave 1)。轨内依赖:修复命令→验证卡;知识设置→预览 Modal。
+- **前置**:Wave 0A(IF-3/IF-4 冻结)+ Wave 0B 完成;**从 PREP_BASE_SHA 分支(强制共同基线,禁止混合基线,remediation plan §3.0.2)**;无 User 决定阻塞;可立即(Wave 1)。轨内依赖:修复命令→验证卡;知识设置→预览 Modal。
 - **Issue 映射**:落地后关闭 #54(详情)、#55(检查器)、#56(历史)。
-- **B 级提示词要点**:worktree=实现授权树;branch `track/v163-c-b1-product`;冻结合同=本文件+IF-3/IF-4+remediation plan §6;范围=U-6/7/8/9/10/11/12/13;验收=四链 E2E+三角+三门;交付物含四契约冻结稿与 fixture SQL 全文。
+- **B 级提示词要点**:worktree=实现授权树;**分支基线=PREP_BASE_SHA**;branch `track/v163-c-b1-product`;冻结合同=本文件+IF-3/IF-4+remediation plan §6 授权包;范围=U-6/7/8/9/10/11/12/13;验收=四链 E2E+三角+三门;交付物含四契约冻结稿与 fixture SQL 全文。

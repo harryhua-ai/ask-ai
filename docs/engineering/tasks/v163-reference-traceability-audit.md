@@ -101,7 +101,7 @@ V1.6.3 CONFORMANCE = **FAIL**(仍待全部 GAP/DEFECT 实现+运行时验收)。
 | # | 议题 | 裁决 | 性质 |
 |---|---|---|---|
 | U-1 | 侧栏明暗(SH-16) | **LIGHT 侧栏=权威实现方向,无双主题需求**;实现已浅色 → MATCH,REFERENCE CONFLICT 关闭 | Role A 定 |
-| U-2 | 日期范围(SH-09) | **实现;范围=技术洞察分析窗(非全站假全局过滤);技术洞察相关 API 在语义适用处必须遵守所选窗口** | Role A 定 |
+| U-2 | 日期范围(SH-09) | **实现;范围=技术洞察分析窗(非全站假全局过滤);技术洞察相关 API 在语义适用处必须遵守所选窗口**(终轮 review fix:「语义适用处」已具体化并冻结——remediation plan §3.5「TECHNICAL INSIGHTS WINDOW CAPABILITY MATRIX」:窗口面=performance/source-health/answer-gaps 队列,例外面=同步/生成事件流+缺口会话证据(理由随冻结);Outcome B:Track A 后端范围=BC-1/BC-2 窗口参数能力,仅参数能力零新表零新端点;裁决文本本身不变) | Role A 定 |
 | U-3 | 帮助中心(SH-10/11) | **无权威目标 → USER-APPROVED DESIGN CHANGE(UADC-4)**:「Help Center 入口推迟至存在权威目的地」;保留追溯行;本批唯一获批缺席 | §2 默认冻结 |
 | U-4 | 侧栏收起(SH-12) | **实现为纯 Admin shell 交互,零后端语义** | Role A 定 |
 | U-5 | 编辑抽屉类型(DS-P5-04) | **create 可选;edit 既有源 immutable/disabled;匹配参考** | Role A 定 |

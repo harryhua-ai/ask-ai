@@ -1,21 +1,24 @@
-# Track A Contract — 共享 chrome(Sidebar/Layout)(Planning 修订:Role A 裁决冻结)
+# Track A Contract — 共享 chrome(Sidebar/Layout)+ U-2 技术洞察分析窗(Planning 终轮 review fix 修订:Wave 0A/0B + PREP_BASE_SHA + 能力矩阵 Outcome B)
 
 - **目标**:矩阵 SH-* 中 IMPLEMENTATION DEFECT 清零;SH-09/SH-12 按冻结决定交付;SH-10/11 按 UADC-4 记录缺席;SH-16 已解决(MATCH),本轨零动作。
 - **参考需求(精确 ID)**:SH-06(系统 分组,DEF-A1)、SH-09(全局日期范围,GAP-SC-1)、SH-12(收起菜单,GAP-SC-3)、SH-10/11(帮助中心,= UADC-4 仅记录)、SH-16(已解决:U-1 LIGHT)。
 - **冻结产品语义**:
-  - U-2(SH-09):**实现;范围=技术洞察分析窗(非全站假全局过滤);技术洞察相关 API 在语义适用处必须遵守所选窗口**。
+  - U-2(SH-09):**实现;范围=技术洞察分析窗(非全站假全局过滤);技术洞察相关 API 语义适用处必须遵守所选窗口**。「语义适用处」已具体化=remediation plan §3.5「TECHNICAL INSIGHTS WINDOW CAPABILITY MATRIX」:窗口面 S1(performance)/S2(source-health)/S5(answer-gaps 队列);例外面 S3(同步事件流)/S4(生成事件流)/S6(缺口会话证据)理由随冻结;分析窗词表 IF-7(today/7d/30d/all/显式起止,默认 7d;单一共享窗状态,SH-09 顶栏控件/TI-10 工具栏窗选择/tech tab TimeFilter 为同一状态三个呈现面)。
   - U-4(SH-12):**实现为纯 Admin shell 交互,零后端语义**。
   - U-3(SH-10/11):**UADC-4——Help Center 入口推迟至存在权威目的地;本批唯一获批缺席;保留追溯行**。
   - U-1(SH-16):LIGHT 侧栏=权威方向;实现已浅色,零动作。
-- **权威数据源**:SH-09 范围=技术洞察读面既有 window 参数语义(后端权威窗口);无新表。
-- **后端数据要求**:无(U-4 零后端;U-2 仅贯通既有各读面 window 参数,无新表、无新端点)。
-- **前端行为**:系统 组含 用户管理/系统信息;折叠控件可折叠/展开(记忆可选);顶栏日期范围控件驱动技术洞察分析窗。
-- **运行时状态要求**:交付后真实栈截图+vitest 双证;范围选择→技术洞察 API 请求参数可见变化(真实联动,非本地假态)。
+- **权威数据源**:SH-09 范围=单一共享分析窗状态(IF-7 词表);后端权威窗口;无新表、无新端点。
+- **后端数据要求(Outcome B,冻结;依据=§3.5 能力矩阵)**:本轨 **不再是「零后端」**。精确后端范围=两项窗口参数能力,**仅参数能力:零新表、零新端点、零既有窗口语义变化、不规定 HOW**:
+  - **BC-1**:`/tech/answer-gaps` 窗口参数表达 IF-7 全冻结词表(今日/显式起止;既有 7d/30d/all 词表与 last_seen 未知行不被窗排除、total=过滤后真值语义不变);
+  - **BC-2**:`/analytics/source-health` 窗口参数表达 IF-7 全冻结词表(显式起止/all;DSH-01 语义——signal=historical_reliability、MIN_SYNC_RUNS/insufficient_data、窗字段如实回显——原样保留)。
+  - 文件内区域所有权(IF-6 附录):`tech_answer_gaps.py` 窗口参数面=本轨、分类/cause 挂载面=Track D;`analytics.py` source-health 窗口面=本轨、classify_gap_miss_types=Track D。**U-4 相关范围仍零后端。**
+- **前端行为**:系统 组含 用户管理/系统信息;折叠控件可折叠/展开(记忆可选);顶栏日期范围控件(含显式起止/日历,参考 PNG2)驱动单一共享分析窗状态;窗口面(performance/source-health/answer-gaps 队列)全部随共享窗真实联动;S3/S4/S6 保持例外面语义。
+- **运行时状态要求**:交付后真实栈截图+vitest 双证;任一控制面改窗→各窗口面 API 请求参数可见变化(真实联动,非本地假态);S1/S2 响应窗字段=所选窗。
 - **视觉证据**:AFTER 侧栏全页/折叠态/顶栏范围截图(1536×1024 @1x)入 acceptance/v163-track-a-*/;对照 PNG2。
-- **功能 E2E**:点击 折叠→布局重排;点击 用户管理/系统信息 路由不变;选择范围→技术洞察窗口真实联动(API 参数可见)。
-- **禁止捷径**:不得以「无后端」为由省略 depicted 元素;不得改动各页内既有 filter 真值;**不得发明全站全局过滤语义(U-2 已冻结为技术洞察分析窗)**;frontend-only fake state 禁止(范围联动必须真实贯通 API 参数);不实现帮助中心入口(UADC-4)。
-- **验收**:vitest 组标签/归属/折叠/范围联动断言;真实栈截图。
-- **交付物**:分支 `track/v163-a-chrome`、执行报告、截图、vitest 日志、#52 修订记录。
-- **前置**:无(全部裁决已冻结);可立即,与 B–F 全并行(Wave 1)。
+- **功能 E2E**:点击 折叠→布局重排;点击 用户管理/系统信息 路由不变;选择范围(含显式起止)→performance/source-health/answer-gaps 窗口真实联动(API 参数可见;无任何窗口面卡片停留异窗)。
+- **禁止捷径**:不得以「无后端」为由省略 depicted 元素;不得改动各页内既有 filter 真值;**不得发明全站全局过滤语义(U-2 已冻结为技术洞察分析窗)**;**不得让任何窗口面卡片停留在与共享窗不一致的时间窗;S3/S4/S6 例外面不得借例外引入窗口假联动**;frontend-only fake state 禁止(范围联动必须真实贯通 API 参数);**BC-1/BC-2 仅参数能力,禁借机新增端点/新表/改既有窗口语义**;S1 禁依赖 range 未知名→静默 7d 回退(任意窗以显式起止表达);不实现帮助中心入口(UADC-4)。
+- **验收**:vitest 组标签/归属/折叠/范围联动断言;BC-1/BC-2 pytest 参数能力用例(IF-7 全词表 × 既有窗口语义回归);真实栈截图。
+- **交付物**:分支 `track/v163-a-chrome`、执行报告、截图、vitest+pytest 日志、#52 修订记录。
+- **前置**:Wave 0A(IF-6/IF-7 冻结)+ Wave 0B 完成;**从 PREP_BASE_SHA 分支(强制共同基线,禁止混合基线,remediation plan §3.0.2)**;与 B–F 全并行(Wave 1)。
 - **Issue 映射**:落地后关闭 #52(IA 收敛)、贡献 #60。
-- **B 级提示词要点**:worktree=实现授权树(integration 轨指定发布基线);branch `track/v163-a-chrome`;冻结合同=本文件+remediation plan §6 授权包;范围=SH-06/09/12(SH-10/11 仅记录 UADC-4);验收=vitest+真实栈截图+E2E 三项;交付物如上。
+- **B 级提示词要点**:worktree=实现授权树;**分支基线=PREP_BASE_SHA**;branch `track/v163-a-chrome`;冻结合同=本文件+IF-6/IF-7+remediation plan §3.5 能力矩阵+§6 授权包;范围=SH-06/09/12(SH-10/11 仅记录 UADC-4)+BC-1/BC-2 窗口参数能力;验收=vitest+pytest+真实栈截图+E2E 三项;交付物如上。
