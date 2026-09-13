@@ -12,6 +12,9 @@ const CAUSE_TONE_STYLE: Record<CauseTone, { bg: string; fg: string }> = {
   critical: { bg: "color-mix(in srgb, var(--err) 12%, transparent)", fg: "var(--err)" },
   warning: { bg: "color-mix(in srgb, var(--warn) 15%, transparent)", fg: "var(--warn)" },
   accent: { bg: "color-mix(in srgb, var(--acc) 12%, transparent)", fg: "var(--acc)" },
+  // U-14 六新类语调:参考 PNG 权威中 检索异常/生成异常/引用异常=淡彩紫;
+  // 主题 token 无紫色,唯一字面量(#7c3aed=violet-600)即参考词表语义色。
+  violet: { bg: "color-mix(in srgb, #7c3aed 12%, transparent)", fg: "#7c3aed" },
   neutral: { bg: "color-mix(in srgb, var(--t3) 15%, transparent)", fg: "var(--t2)" },
 };
 
