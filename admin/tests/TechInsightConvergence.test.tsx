@@ -323,7 +323,7 @@ describe("B2 回答缺口队列:question/topic + counts + cause + status + recen
     });
   });
 
-  it("v1.6.3 未授权能力不出现:无 导出相关对话 / 开始观察 / 内容已补充 / 涉及用户数", async () => {
+  it("v1.6.3 未授权能力不出现:无 导出相关对话 / 开始观察 / 内容已补充;U-17 用户计数仅权威(不编造)", async () => {
     await openGapsTab();
     // 点击首行使侧板展开后再断言(侧板是这些元素唯一可能出现的位置)
     fireEvent.click(document.querySelector("[data-gap-row]") as HTMLElement);
@@ -333,7 +333,15 @@ describe("B2 回答缺口队列:question/topic + counts + cause + status + recen
     expect(screen.queryByText(/导出相关对话/)).not.toBeInTheDocument();
     expect(screen.queryByText(/开始观察/)).not.toBeInTheDocument();
     expect(screen.queryByText(/内容已补充/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/个用户/)).not.toBeInTheDocument();
+    // Wave 1 U-17 修订(原 v1.6.3 B2 断言「无 个用户」):「涉及用户」槽位已由
+    // Track F 落地,计数只能来自后端权威聚合(techEvidence);本 mock 环境无
+    // 权威聚合 mock → 槽位必须呈诚实 unavailable,不得出现任何编造数字。
+    expect(screen.queryByText(/涉及 \d+ 个用户/)).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        document.querySelector("[data-panel-users]")?.textContent,
+      ).toContain("证据不可用");
+    });
     expect(screen.queryByText(/CSV/)).not.toBeInTheDocument();
   });
 
@@ -375,7 +383,7 @@ describe("B2 回答缺口队列:question/topic + counts + cause + status + recen
 // ====================  #59 诊断侧板(contextual diagnosis)  ====================
 
 describe("B2 诊断侧板:结论仅当权威、典型问题、面板 Tab(#59 / §5.5)", () => {
-  it("侧板标题=代表问题 + 状态徽章;统计行=相关提问/受影响回答 + 最近发生(无用户数)", async () => {
+  it("侧板标题=代表问题 + 状态徽章;统计行=相关提问/受影响回答 + 涉及用户(U-17)+ 最近发生", async () => {
     await openGapsTab();
     fireEvent.click(
       document.querySelector(
@@ -390,7 +398,13 @@ describe("B2 诊断侧板:结论仅当权威、典型问题、面板 Tab(#59 / �
       expect(stats).toContain("23 次相关提问");
       expect(stats).toContain("18 次受影响回答");
       expect(stats).toContain("最近发生");
-      expect(stats).not.toContain("个用户");
+      // Wave 1 U-17 修订(原 v1.6.3 B2 断言 not.toContain("个用户")):
+      // 「涉及用户」槽位已落地;本 mock 环境无 techEvidence 权威数据 →
+      // 槽位必须呈诚实 unavailable,不得出现编造的数字计数。
+      expect(document.querySelector("[data-panel-users]")?.textContent).toContain(
+        "证据不可用",
+      );
+      expect(stats).not.toMatch(/涉及 \d+ 个用户/);
     });
   });
 

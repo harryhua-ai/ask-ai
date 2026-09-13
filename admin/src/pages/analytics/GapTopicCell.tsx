@@ -1,38 +1,70 @@
 /**
  * Ownership(IF-6 附录,文件内区域互斥):本文件 = **Track F**(证据聚合)
  * Wave 1 专属 —— 队列「问题 / 主题」列单元格。
- * Wave 1(track-f-contract「主题列渲染+回退代表问句」U-19)在本文件内实现
- * 主题短语渲染(现内容=回退代表问句,逐字保留为回退路径),不编辑
- * AnswerGapsTab(Integration 壳仅消费稳定 props=gap)。
- * 队列行用户/源卡 meta(track-f U-17 源卡)同为 Track F 将来区域,
- * 于 F 自有文件落地;本文件零新列/零新语义(§3.0.1 四零约束)。
+ *
+ * Wave 1 实现(track-f-contract U-19;matrix-TI TI-12):
+ * - 主题式标题:确定性主题真值存在(后端权威派生投影
+ *   GET /tech/answer-gaps/{id}/topic,跨问句公共因子,零 LLM 零词表)→
+ *   主行渲染主题短语(data-gap-topic)+ 副行回显代表问句;
+ * - 无主题(不可派生)→ 回退代表问句为主行(合同:无主题回退代表问句),
+ *   副行保持既有样例问句呈现,既有行为逐字保留为回退路径。
+ * 零前端猜测/零 hard-coded topic:主题值仅来自后端权威派生。
+ * 数据经 useQuery 自取(Integration 壳零编辑;加载/失败态保持回退渲染,
+ * 不闪不造)。
  */
 
+import { useQuery } from "@tanstack/react-query";
 import type { AnswerGapItem } from "@/lib/api/techInsight";
+import { fetchGapTopic } from "@/lib/api/techEvidence";
 import { TableCell } from "@/components/ui/table";
 
 export function GapTopicCell({ gap }: { gap: AnswerGapItem }) {
+  const topicQuery = useQuery({
+    queryKey: ["gap-topic", gap.id],
+    queryFn: () => fetchGapTopic(gap.id),
+    retry: false,
+    staleTime: 30_000,
+  });
+
+  const topic = topicQuery.data?.topic ?? null;
+  const samples = gap.sample_questions.filter(
+    (s) => s !== gap.representative_question,
+  );
+
   return (
     <TableCell>
-      <div
-        data-gap-question
-        className="truncate text-[13px] font-semibold text-[var(--t1)]"
-      >
-        {gap.representative_question}
-      </div>
-      {gap.sample_questions.filter(
-        (s) => s !== gap.representative_question,
-      ).length > 0 && (
-        <div
-          data-gap-sample
-          className="mt-0.5 truncate text-[12px] text-[var(--t3)]"
-        >
-          {
-            gap.sample_questions.filter(
-              (s) => s !== gap.representative_question,
-            )[0]
-          }
-        </div>
+      {topic ? (
+        <>
+          <div
+            data-gap-topic
+            className="truncate text-[13px] font-semibold text-[var(--t1)]"
+          >
+            {topic}
+          </div>
+          <div
+            data-gap-question
+            className="mt-0.5 truncate text-[12px] text-[var(--t3)]"
+          >
+            {gap.representative_question}
+          </div>
+        </>
+      ) : (
+        <>
+          <div
+            data-gap-question
+            className="truncate text-[13px] font-semibold text-[var(--t1)]"
+          >
+            {gap.representative_question}
+          </div>
+          {samples.length > 0 && (
+            <div
+              data-gap-sample
+              className="mt-0.5 truncate text-[12px] text-[var(--t3)]"
+            >
+              {samples[0]}
+            </div>
+          )}
+        </>
       )}
     </TableCell>
   );
