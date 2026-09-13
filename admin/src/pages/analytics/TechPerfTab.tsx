@@ -1,6 +1,10 @@
 /**
- * Ownership: Track A — Wave 1(S1 性能窗面:queryKey/fetch 已按 range prop
- * 参数化;Wave 1 将本面接入页面壳共享分析窗状态,IF-7 三控制面绑定)。
+ * Ownership: Track A — Wave 1(S1/S2 窗面接线,IF-7 单一共享分析窗状态):
+ * - S1 /tech/performance:以页面壳传入的共享窗值请求,from/to 真实发送;
+ *   all/任意窗以显式起止表达(禁依赖 range 未知名→静默 7d 回退);
+ * - S2 /analytics/source-health:既有 days=30 硬编码 → 以共享窗解析后的
+ *   from/to 请求(BC-2);摘要窗标签=响应窗 echo 权威(显式窗)或 days 回显;
+ *   DSH-01 历史可靠性语义原样。
  * 其余面板(KPI 三卡/事件区/诊断三列/趋势行/数据源健康摘要挂载)=
  * Integration(Wave 0B)落位,零行为变化。
  */
@@ -14,15 +18,10 @@ import DualStageBar from "@/components/observability/DualStageBar";
 import ContainmentDiagram from "@/components/observability/ContainmentDiagram";
 import NodeFlow from "@/components/observability/NodeFlow";
 import ServiceHealthBanner from "@/components/observability/ServiceHealthBanner";
-import { fetchTechPerformance, fetchSourceHealth, type TechKpi } from "@/lib/api/techInsight";
+import { fetchTechPerformance, fetchSourceHealth } from "@/lib/api/techInsight";
+import { resolveAnalysisWindow, windowLabel } from "@/lib/analysisWindow";
 import { IncidentSection } from "./IncidentSection";
 import { SourceHealthSummary } from "./SourceHealthSummary";
-
-const RANGE_LABELS: Record<string, string> = {
-  today: "今日",
-  "7d": "近 7 天",
-  "30d": "近 30 天",
-};
 
 /** 阶段机器名 → 人类可读标签(§15:机器类型经 data-stage 保留)。 */
 const STAGE_LABELS: Record<string, string> = {
@@ -34,32 +33,24 @@ const STAGE_LABELS: Record<string, string> = {
   output: "输出",
 };
 
-function windowLabel(kpi: TechKpi): string {
-  return RANGE_LABELS[rangeOf(kpi)] ?? kpi.window.from.slice(0, 10);
-}
-
-function rangeOf(kpi: TechKpi): string {
-  const days =
-    (new Date(kpi.window.to).getTime() - new Date(kpi.window.from).getTime()) /
-    86400000;
-  if (days <= 1.5) return "today";
-  if (days <= 8) return "7d";
-  return "30d";
-}
-
 // --------------------------------------------------------------------------- //
 // 技术性能 Tab(#58:运营可读优先,raw 证据可展开,critical 优先)
 // --------------------------------------------------------------------------- //
 
-export default function TechPerfTab({ range }: { range: string }) {
+export default function TechPerfTab({ window: win }: { window: string }) {
+  // S1:from/to 真实发送(fetch 内按 IF-7 词表解析;命名窗附 range 供基线等长语义)
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ["tech-performance", range],
-    queryFn: () => fetchTechPerformance(range),
+    queryKey: ["tech-performance", win],
+    queryFn: () => fetchTechPerformance(win),
   });
 
+  // S2:既有 days=30 硬编码 → 绑定共享分析窗(BC-2 显式起止;响应窗字段=实际评估窗)
   const { data: healthData } = useQuery({
-    queryKey: ["source-health"],
-    queryFn: () => fetchSourceHealth(30),
+    queryKey: ["source-health", win],
+    queryFn: () => {
+      const w = resolveAnalysisWindow(win);
+      return fetchSourceHealth({ from: w.fromISO, to: w.toISO });
+    },
   });
 
   if (isError && !data) return <LoadError error={error} onRetry={refetch} />;
@@ -68,6 +59,8 @@ export default function TechPerfTab({ range }: { range: string }) {
 
   const kpi = data.kpi;
   const hasData = kpi.trace_total > 0;
+  // 健康横幅窗标签 = 所选共享窗(响应 kpi.window = 请求窗 echo,一致)
+  const winLabelText = windowLabel(win);
 
   // 主导瓶颈:超阈值 trace 数最多的阶段(仅在有超阈值证据时呈现)
   const dominant = Object.entries(data.stages)
@@ -82,7 +75,7 @@ export default function TechPerfTab({ range }: { range: string }) {
   return (
     <div className="space-y-6">
       {/* PRIMARY:服务健康横幅(后端确定性推导,前端不做二次推断) */}
-      <ServiceHealthBanner health={data.health} windowLabel={windowLabel(kpi)}>
+      <ServiceHealthBanner health={data.health} windowLabel={winLabelText}>
         {kpi.fail_count > 0 && (
           <Link
             to="/conversations?failure=true"
@@ -308,7 +301,14 @@ export default function TechPerfTab({ range }: { range: string }) {
       {/* 数据源健康(DSH-02:主展示位在「数据源管理」,此处仅保留指向性摘要,
           不再呈现与数据源页重复竞争的健康表格) */}
       {healthData && healthData.items.length > 0 && (
-        <SourceHealthSummary items={healthData.items} />
+        <SourceHealthSummary
+          items={healthData.items}
+          windowLabel={
+            // 窗标签=权威 echo:显式窗请求回显 window(=所选共享窗);days 形态
+            // 回显 days。不本地反推,不停留异窗。
+            healthData.window ? windowLabel(win) : `近 ${healthData.days} 天`
+          }
+        />
       )}
     </div>
   );

@@ -1,4 +1,5 @@
 import { apiFetch } from "@/lib/api";
+import { resolveAnalysisWindow, type AnalysisWindowSerialized } from "@/lib/analysisWindow";
 import type { ClusterList, SyncRunList } from "@/types/api";
 
 export interface TechKpi {
@@ -74,10 +75,23 @@ export interface TechPerformanceData {
   trace_coverage_from: string | null;
 }
 
+/**
+ * S1 技术性能(IF-7 窗口参数面前端,Track A):from/to 真实发送;
+ * 命名窗(today/7d/30d)附 range 供后端「上一等长窗」基线语义;all/显式起止
+ * 以显式 from/to 表达(不发送 range 名 —— 禁依赖 range 未知名→静默 7d 回退)。
+ * 窗值非法 → 解析抛错(fail loud),禁静默回退。
+ */
 export function fetchTechPerformance(
-  range: string = "7d",
+  win: AnalysisWindowSerialized | string = "7d",
 ): Promise<TechPerformanceData> {
-  return apiFetch<TechPerformanceData>(`/tech/performance?range=${range}`);
+  const w = resolveAnalysisWindow(win);
+  const params = new URLSearchParams();
+  if (w.kind === "today" || w.kind === "7d" || w.kind === "30d") {
+    params.set("range", win);
+  }
+  params.set("from", w.fromISO);
+  params.set("to", w.toISO);
+  return apiFetch<TechPerformanceData>(`/tech/performance?${params.toString()}`);
 }
 
 export function fetchCoverageGaps(
@@ -123,10 +137,32 @@ export interface SourceHealthItem {
   last_sync_error: string | null;
 }
 
+export interface SourceHealthResponse {
+  items: SourceHealthItem[];
+  /** 评估窗天数(days 形态=请求 days;显式起止形态=含首尾天数)。 */
+  days: number;
+  /** 显式起止请求的权威窗回显(=实际评估窗);days 形态不存在(既有形状零变化)。 */
+  window?: { from: string; to: string };
+}
+
+/**
+ * S2 数据源健康(IF-7 窗口参数面前端,Track A):共享分析窗以解析后的
+ * from/to 请求(BC-2 显式起止/all 全词表);既有 days 位置参数调用
+ * (useDataSources 等)保持逐字兼容。
+ */
 export function fetchSourceHealth(
-  days: number = 30,
-): Promise<{ items: SourceHealthItem[]; days: number }> {
-  return apiFetch(`/analytics/source-health?days=${days}`);
+  opts: number | { days?: number; from?: string; to?: string } = 30,
+): Promise<SourceHealthResponse> {
+  const params = new URLSearchParams();
+  if (typeof opts === "number") {
+    params.set("days", String(opts));
+  } else {
+    if (opts.days != null) params.set("days", String(opts.days));
+    if (opts.from) params.set("from", opts.from);
+    if (opts.to) params.set("to", opts.to);
+  }
+  const qs = params.toString();
+  return apiFetch<SourceHealthResponse>(`/analytics/source-health${qs ? `?${qs}` : ""}`);
 }
 
 // --------------------------------------------------------------------------- //
@@ -220,8 +256,12 @@ export interface AnswerGapQuery {
   status?: "open" | "resolved";
   cause?: string;
   q?: string;
-  /** 时间窗:7d/30d/all;last_seen 未知(时间不可用)不因窗口被排除。 */
-  window?: "7d" | "30d" | "all";
+  /**
+   * 时间窗(IF-7 全冻结词表序列化形,Track A BC-1):
+   * today | 7d | 30d | all | range:YYYY-MM-DD/YYYY-MM-DD(显式起止)。
+   * last_seen 未知(时间不可用)不因窗口被排除(既有语义不变)。
+   */
+  window?: AnalysisWindowSerialized;
   order?: "last_seen" | "questions" | "impacted";
   dir?: "asc" | "desc";
   page?: number;
