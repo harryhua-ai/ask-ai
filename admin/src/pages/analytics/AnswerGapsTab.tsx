@@ -1,21 +1,22 @@
 /**
- * Ownership(IF-6 附录,文件内区域互斥)— 回答缺口队列 Tab:
- * - 工具栏 status/cause filter(data-filter-status / data-filter-cause)=
- *   **Track D**(Wave 1:词表经 @/lib/gapCause 与 backend gap_taxonomy 同源扩展);
- * - 观察态 filter = **Track E** 将来区域(Wave 1 IF-1;本 Wave 仅区域占位
- *   注释,零观察语义实现);
+ * Ownership(IF-6 附录,文件内区域互斥)— 回答缺口队列 Tab(Integration 壳):
+ * - 共享壳/布局/队列表/排序/分页/选择/查询状态 = **Integration**(Wave 0B 落位;
+ *   Wave 1 各轨只消费稳定 props,不编辑本文件);
+ * - 工具栏 status/cause filter 控件 = **Track D** 专属文件
+ *   ./analytics/GapFilters.tsx(本文件零 D 控件实现);
  * - 工具栏窗选择(data-filter-window)= **Track A** 绑定面(Wave 1 IF-7:
- *   接入页面壳共享分析窗状态);
- * - 队列行 cause chip = Track D(CauseBadge);主题列/用户·源卡 meta 列 =
- *   **Track F** 将来区域(U-19 主题/U-17 用户;本 Wave 仅占位注释);
- * - 其余(队列表/排序/分页/选择)= Integration(Wave 0B 落位)。
+ *   接入页面壳共享分析窗状态;IF-6 文件内区域互斥保留于本壳);
+ * - 队列行「问题/主题」列 = **Track F** 专属文件 ./analytics/GapTopicCell.tsx;
+ * - 队列行 cause chip = Track D 呈现组件 ./analytics/CauseBadge.tsx;
+ *   状态徽章 = Track E 呈现组件 ./analytics/StatusBadge.tsx(词表扩展各改
+ *   自有文件);观察态 filter/导出卡 = Track E 将来区域(占位说明见
+ *   ./analytics/PanelHistory.tsx 头注,本壳零 E 控件实现)。
  */
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import LoadError from "@/components/LoadError";
 import { fetchAnswerGaps, type AnswerGapQuery } from "@/lib/api/techInsight";
-import { GAP_CAUSE_OPTIONS } from "@/lib/gapCause";
 import {
   Table,
   TableHeader,
@@ -27,11 +28,13 @@ import {
 import { CauseBadge } from "./CauseBadge";
 import { StatusBadge } from "./StatusBadge";
 import { relTime } from "./relTime";
+import { GapFilters, type GapStatusFilterValue } from "./GapFilters";
+import { GapTopicCell } from "./GapTopicCell";
 import GapPanel from "./GapPanel";
 
 export default function AnswerGapsTab() {
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<"" | "open" | "resolved">("");
+  const [status, setStatus] = useState<GapStatusFilterValue>("");
   const [cause, setCause] = useState("");
   const [window, setWindow] = useState<"7d" | "30d" | "all">("7d");
   const [order, setOrder] = useState<NonNullable<AnswerGapQuery["order"]>>("last_seen");
@@ -79,8 +82,8 @@ export default function AnswerGapsTab() {
   return (
     <div className="flex gap-4 items-start">
       <div className="min-w-0 flex-1 space-y-3">
-        {/* 工具行:搜索(问题/主题、产品名称或关键词)+ 状态/原因/时间窗筛选;
-            观察态 filter = Track E Wave 1 将来区域(本 Wave 零占位控件) */}
+        {/* 工具行:搜索(Integration)+ GapFilters(D)+ 时间窗筛选(A 绑定面);
+            观察态 filter = Track E Wave 1 将来区域(零占位控件,见 PanelHistory 头注) */}
         <div className="flex items-center gap-2 flex-wrap" data-gap-toolbar>
           <input
             data-gap-search
@@ -93,38 +96,18 @@ export default function AnswerGapsTab() {
             className="h-9 min-w-[260px] flex-1 rounded-md border px-3 text-[13px]"
             style={{ borderColor: "var(--bd)", background: "var(--panel)" }}
           />
-          {/* Track D 区域:status/cause filter(词表随 IF-2/IF-1 Wave 1 扩展) */}
-          <select
-            data-filter-status
-            value={status}
-            onChange={(e) => {
-              setStatus(e.target.value as "" | "open" | "resolved");
+          <GapFilters
+            status={status}
+            onStatusChange={(value) => {
+              setStatus(value);
               setPage(1);
             }}
-            className="h-9 shrink-0 rounded-md border px-2 text-[13px]"
-            style={{ borderColor: "var(--bd)", background: "var(--panel)" }}
-          >
-            <option value="">全部状态</option>
-            <option value="open">需要处理</option>
-            <option value="resolved">已解决</option>
-          </select>
-          <select
-            data-filter-cause
-            value={cause}
-            onChange={(e) => {
-              setCause(e.target.value);
+            cause={cause}
+            onCauseChange={(value) => {
+              setCause(value);
               setPage(1);
             }}
-            className="h-9 shrink-0 rounded-md border px-2 text-[13px]"
-            style={{ borderColor: "var(--bd)", background: "var(--panel)" }}
-          >
-            <option value="">全部原因</option>
-            {GAP_CAUSE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+          />
           {/* Track A 绑定面:窗选择(Wave 1 IF-7 接入共享分析窗状态) */}
           <select
             data-filter-window
@@ -221,29 +204,7 @@ export default function AnswerGapsTab() {
                           style={{ accentColor: "var(--acc)" }}
                         />
                       </TableCell>
-                      {/* Track F 区域(主题列):Wave 1 U-19 主题短语列挂载面 */}
-                      <TableCell>
-                        <div
-                          data-gap-question
-                          className="truncate text-[13px] font-semibold text-[var(--t1)]"
-                        >
-                          {gap.representative_question}
-                        </div>
-                        {gap.sample_questions.filter(
-                          (s) => s !== gap.representative_question,
-                        ).length > 0 && (
-                          <div
-                            data-gap-sample
-                            className="mt-0.5 truncate text-[12px] text-[var(--t3)]"
-                          >
-                            {
-                              gap.sample_questions.filter(
-                                (s) => s !== gap.representative_question,
-                              )[0]
-                            }
-                          </div>
-                        )}
-                      </TableCell>
+                      <GapTopicCell gap={gap} />
                       <TableCell data-gap-questions className="tabular-nums">
                         {gap.question_count}
                       </TableCell>

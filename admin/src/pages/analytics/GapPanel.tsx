@@ -1,24 +1,28 @@
 /**
- * Ownership(IF-6 附录,文件内区域互斥)— 诊断侧板:
- * - 诊断结论区(data-panel-conclusion)= **Track D**(Wave 1:结论语义随
- *   IF-2 词表扩展;呈现结构共享);
- * - 历史记录 tab(data-panel-history)与导出卡区 = **Track E**(Wave 1:
- *   U-15 历史/观察流转 + U-16 导出;本 Wave 零实现 —— 历史呈证据不可用,
- *   导出卡 absent-by-contract,仅区域占位注释,不得造任何观察/导出 UI);
+ * Ownership(IF-6 附录,文件内区域互斥)— 诊断侧板(Integration 壳):
+ * - 侧板壳/tab 结构/概览/典型问题/相关对话/诊断详情 = **Integration**
+ *   (Wave 0B 落位;Wave 1 各轨只消费稳定 props,不编辑本文件);
+ * - 诊断结论卡(data-panel-conclusion)= **Track D** 专属文件
+ *   ./analytics/DiagnosisConclusion.tsx(本文件零 D 结论实现);
+ * - 历史记录 tab 内容(data-panel-history)与导出卡/观察态区域 =
+ *   **Track E** 专属文件 ./analytics/PanelHistory.tsx;
  * - meta 计数区(data-panel-stats:相关提问/受影响回答/最近发生)=
- *   **Track F**(Wave 1:U-17 用户聚合等 meta 扩展挂载于此);
+ *   **Track F** 专属文件 ./analytics/PanelStats.tsx(U-17 用户聚合挂载面);
  * - 相关对话 tab = S6 归属会话证据(§3.5 例外面冻结;深链 /conversations?q=)。
- * 侧板壳/tab 结构 = Integration(Wave 0B 落位)。
+ * 状态徽章 = Track E 呈现组件 ./analytics/StatusBadge.tsx;
+ * 诊断详情 tab 内原因分类分布呈现 = 既有落位(词表消费经 @/lib/gapCause)。
  */
 
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { fetchGapConversations, type AnswerGapItem } from "@/lib/api/techInsight";
-import { gapCauseAvailable, gapCauseConclusion, gapCauseLabel } from "@/lib/gapCause";
-import { CauseBadge } from "./CauseBadge";
+import { gapCauseLabel } from "@/lib/gapCause";
 import { StatusBadge } from "./StatusBadge";
 import { relTime } from "./relTime";
+import { DiagnosisConclusion } from "./DiagnosisConclusion";
+import { PanelHistory } from "./PanelHistory";
+import { PanelStats } from "./PanelStats";
 
 const PANEL_TABS = ["概览", "典型问题", "相关对话", "诊断详情", "历史记录"] as const;
 type PanelTab = (typeof PANEL_TABS)[number];
@@ -31,7 +35,6 @@ type PanelTab = (typeof PANEL_TABS)[number];
  *  - 诊断结论仅当权威原因分类存在,否则明确 证据不可用。 */
 export default function GapPanel({ gap, onClose }: { gap: AnswerGapItem; onClose: () => void }) {
   const [tab, setTab] = useState<PanelTab>("概览");
-  const hasCause = gapCauseAvailable(gap.miss_type);
 
   const convQuery = useQuery({
     queryKey: ["gap-conversations", gap.id],
@@ -65,13 +68,7 @@ export default function GapPanel({ gap, onClose }: { gap: AnswerGapItem; onClose
             </button>
           </div>
         </div>
-        {/* Track F 区域(meta 计数):Wave 1 U-17 用户聚合等 meta 扩展挂载面 */}
-        <div data-panel-stats className="mt-2 text-[12px] text-[var(--t2)]">
-          {gap.question_count} 次相关提问 · {gap.impacted_answer_count} 次受影响回答
-          <div className="mt-0.5 text-[var(--t3)]">
-            最近发生:{relTime(gap.last_seen_at)}
-          </div>
-        </div>
+        <PanelStats gap={gap} />
         <div className="mt-3 flex gap-3 border-b" style={{ borderColor: "var(--bd)" }}>
           {PANEL_TABS.map((t) => (
             <button
@@ -106,31 +103,7 @@ export default function GapPanel({ gap, onClose }: { gap: AnswerGapItem; onClose
               </p>
             </section>
 
-            {/* Track D 区域(诊断结论):Wave 1 结论语义随 IF-2 词表扩展 */}
-            <section
-              data-panel-conclusion
-              data-conclusion-kind={hasCause ? "authoritative" : "unavailable"}
-              className="rounded-md p-3"
-              style={{
-                background: hasCause
-                  ? "color-mix(in srgb, var(--err) 8%, transparent)"
-                  : "color-mix(in srgb, var(--t3) 10%, transparent)",
-              }}
-            >
-              <div className="flex items-center gap-2">
-                <span
-                  className="inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold text-white"
-                  style={{ background: hasCause ? "var(--err)" : "var(--t3)" }}
-                >
-                  !
-                </span>
-                <span className="text-[13px] font-medium text-[var(--t1)]">诊断结论</span>
-                <CauseBadge missType={gap.miss_type} />
-              </div>
-              <p className="mt-2 text-[12px] leading-5 text-[var(--t2)]">
-                {gapCauseConclusion(gap.miss_type)}
-              </p>
-            </section>
+            <DiagnosisConclusion gap={gap} />
 
             <section>
               <div className="flex items-center justify-between">
@@ -298,17 +271,7 @@ export default function GapPanel({ gap, onClose }: { gap: AnswerGapItem; onClose
           </section>
         )}
 
-        {/* Track E 区域(历史记录 + 导出卡):Wave 1 U-15 历史流转 + U-16 导出
-            挂载面;本 Wave 诚实呈「证据不可用」,导出卡 absent-by-contract,
-            零观察/导出语义实现 */}
-        {tab === "历史记录" && (
-          <section data-panel-history>
-            <div className="text-[12px] leading-5 text-[var(--t3)]">
-              证据不可用:v1.6.3 暂无该缺口的权威历史记录(观察/流转)数据,
-              系统不做推断。
-            </div>
-          </section>
-        )}
+        {tab === "历史记录" && <PanelHistory gap={gap} />}
       </div>
     </div>
   );

@@ -149,3 +149,135 @@ Playwright(独立 Chromium,1536×1024@1x,真实登录 admin@camthink.ai)。
 - 未 merge main、未 merge 任何 planning 分支、未 deploy、未关任何 issue;
 - 零 fixture/数据 mutation(本地库只读;测试库 ask_ai_test 仅按既有 conftest 生命周期建删表,零业务数据写入);
 - rem worktree(7e3e71c 基准)零改动;scratch 基线 worktree(ask-ai-v163-0b-base)仅作测试运行,已列入清理。
+
+---
+
+# 9. STRUCTURAL COMPLETION(Wave 0B 续段 — ISSUE 1/2 结构隔离收尾)
+
+日期:2026-09-13(续段;父 commit = c016d50,行为等价结论已被接受)
+授权:remediation plan §3.0.1(允许内容 item 4「共享文件所有权预备」)+ §3.0.2 规则 5(b) + IF-6 附录;任务书 ISSUE 1/ISSUE 2
+性质:**纯结构隔离;零产品行为实现、零新端点、零新 schema、零词表扩展、零 UI/文案/视觉/交互变化、零 fixture/数据变化。**
+
+## 9.1 ISSUE 1 — backend router ownership isolation
+
+**落地:三个空 router 模块(零端点/零 schema/零行为)+ tech.py 立即挂载。**
+
+| 文件 | 状态 | 行数 | 内容 | 所有权 |
+|---|---|---|---|---|
+| `backend/api/admin/tech_observation.py` | A | 21 | 空 `router = APIRouter()`(无 prefix/tags,由 tech_router 统一装配);Ownership 头 = Track E(观察命令/转移任务/流转事件投影,U-15;IF-1 经 gap_status.py) | **Track E** |
+| `backend/api/admin/tech_export.py` | A | 20 | 同上空 router;Ownership 头 = Track E(CSV 流式+审计,U-16;IF-5 列集合同) | **Track E** |
+| `backend/api/admin/tech_evidence.py` | A | 20 | 同上空 router;Ownership 头 = Track F(用户聚合/归因/topic,U-17/18/19;聚合窗=IF-7) | **Track F** |
+| `backend/api/admin/tech.py` | M | 31→40 | 3 个 `include_router` 追加在既有三路由之后;docstring 更新(「Wave 1 预留」→「已挂载空 router;Wave 1 各轨在各自模块内加路由即可,无需再编辑本文件」) | Integration(装配入口) |
+
+**证明(a):E/F 暴露未来路由无需编辑 tech.py。** 三模块已挂载入 `tech_router`;Wave 1 Track E/F 在 `tech_observation.py`/`tech_export.py`/`tech_evidence.py` 内以既有装饰器模式(`@router.get(...)`)加路由即自动生效(router.py 的 `from backend.api.admin.tech import tech_router` 引用链零改动)。
+
+**OpenAPI 等价证据(逐字节 IDENTICAL,三重):**
+1. TestClient 全 spec diff:`c016d50 临时 worktree app.openapi()` vs 候选树 `app.openapi()`(JSON dumps sort_keys + cmp)→ **逐字节相同**(89 paths = 89 paths);
+2. live 对照:`GET /openapi.json` 8104(7e3e71c 基准栈)vs 8106(候选栈)→ **raw bytes cmp 相同**;
+3. TestClient(candidate)== live 8106(spec 一致);`/tech/*` 路径集与 tags 集逐项核对无新增(仍 4 条 tech 路径;tags 21 项不变)。
+空 router(零路由)不产生任何 path/参数/术语——选型 = 子 router 无 prefix/tags(同 tech_answer_gaps.py 模式),OpenAPI 零变化。
+
+## 9.2 ISSUE 2 — frontend D/E/F file isolation
+
+**落地:5 个新 owned 文件 + 2 个 Integration 壳重写;拆出 JSX 全部逐字迁移,零 DOM 变化(既有测试 import 零改动,AnswerGapsTab/GapPanel 导出面保持稳定)。**
+
+| 文件 | 状态 | 行数 | 内容(自何处逐字迁出) | 所有权 |
+|---|---|---|---|---|
+| `admin/src/pages/analytics/DiagnosisConclusion.tsx` | A | 44 | GapPanel 诊断结论卡(`data-panel-conclusion` 区,含 hasCause/CauseBadge/gapCauseConclusion) | **Track D** |
+| `admin/src/pages/analytics/GapFilters.tsx` | A | 59 | AnswerGapsTab 工具栏 status/cause filter 控件(`data-filter-status`/`data-filter-cause`;`GapStatusFilterValue` 类型随之导出) | **Track D** |
+| `admin/src/pages/analytics/PanelHistory.tsx` | A | 32 | GapPanel 历史记录 tab 内容(`data-panel-history`,诚实「证据不可用」);并承载 E 将来区域占位注释(导出卡 absent-by-contract、观察态 filter) | **Track E** |
+| `admin/src/pages/analytics/PanelStats.tsx` | A | 24 | GapPanel meta 计数区(`data-panel-stats`:相关提问·受影响回答·最近发生;U-17 挂载面) | **Track F** |
+| `admin/src/pages/analytics/GapTopicCell.tsx` | A | 39 | AnswerGapsTab 队列「问题 / 主题」列单元格(`data-gap-question`/`data-gap-sample`;U-19 主题列回退代表问句) | **Track F** |
+| `admin/src/pages/analytics/AnswerGapsTab.tsx` | M | 352→313 | Integration 壳:查询状态/队列表/排序/分页/选择/布局;消费 GapFilters(D)/GapTopicCell(F)/CauseBadge(D)/StatusBadge(E) 稳定 props | Integration |
+| `admin/src/pages/analytics/GapPanel.tsx` | M | 315→278 | Integration 壳:侧板壳/tab 结构/概览/典型问题/相关对话/诊断详情/推荐操作;消费 DiagnosisConclusion(D)/PanelHistory(E)/PanelStats(F) 稳定 props(props=gap) | Integration |
+
+**证明(b):D/E/F 冻结范围 → 文件映射(互不落在同一主组件文件;Integration 壳 Wave 1 零轨编辑):**
+
+| 轨 | 冻结范围(合同措辞) | 所属文件(Wave 1 只改这些) |
+|---|---|---|
+| **D** | 原因呈现/chips tone/data-gap-type 机器值 | `CauseBadge.tsx`(c016d50 已落) |
+| D | filter 选项=权威全集+未分类 | `GapFilters.tsx`(status+cause 控件;选项经 `@/lib/gapCause` 单一源) |
+| D | 诊断结论面(IF-2 词表扩展) | `DiagnosisConclusion.tsx` |
+| D | backend:analytics.py classify、tech_answer_gaps.py cause 投影、gap_taxonomy.py | `analytics.py`(分类判定区)/`tech_answer_gaps.py`(cause 挂载面)/`gap_taxonomy.py` |
+| **E** | 状态徽章呈现(IF-1 词表/观察中蓝态) | `StatusBadge.tsx`(c016d50 已落) |
+| E | 历史 Tab 渲染全部流转事件(U-15) | `PanelHistory.tsx` |
+| E | 导出卡(U-16;absent-by-contract)、观察态 filter 将来区域 | `PanelHistory.tsx` 头注占位(E 自有文件;渲染挂载面 Wave 1 由 E 在自有文件落地) |
+| E | backend:观察/导出端点、gap_status.py | `tech_observation.py`/`tech_export.py`(已挂载空 router)/`gap_status.py` |
+| **F** | meta 计数并排(U-17 涉及用户)/源卡 | `PanelStats.tsx` |
+| F | 主题列渲染+回退代表问句(U-19) | `GapTopicCell.tsx` |
+| F | backend:用户聚合/归因/topic 投影 | `tech_evidence.py`(已挂载空 router) |
+| Integration | 共享壳/布局/tab/分页编排/查询状态 | `AnswerGapsTab.tsx`/`GapPanel.tsx`(两壳 Wave 1 只被消费——D/E/F/A 控件与面板均已落入各轨自有文件,壳仅消费稳定 props,不承载任何轨的 Wave 1 实现面) |
+
+已知的唯一跨轨接触点(如实声明):E 合同「观察中蓝态+过滤选项」若在 Wave 1 落位为 status filter 内的「观察中」选项,则触及 `GapFilters.tsx`(D 文件)——plan §3.2 冻结「status/cause filter=D、观察态 filter=E」;该点按 IF-6 附录「文件内区域互斥 + Integration 轨仲裁」处置,或由 E 以独立观察态控件落位(E 自有文件)。除此之外 D/E/F 无任何共享实现面。
+
+## 9.3 变更文件全表(本轮)
+
+本轮 11 文件:3 修改 + 8 新增;**测试文件改动 = 0**(admin/tests/* 与 tests/* 零改动;`export default Analytics`、`SourceHealthSummary` re-export、`tech_router` 引用链、AnswerGapsTab/GapPanel 默认导出全部稳定)。
+累计(7e3e71c → 本 tip):27 文件 = c016d50 的 16 文件 + 本轮 11 文件。
+
+## 9.4 各门验证结果(本轮全量重跑)
+
+| 门 | c016d50 基线 | 本轮结果 | 判定 |
+|---|---|---|---|
+| OpenAPI(TestClient 全 spec,sort_keys+cmp) | IDENTICAL | **IDENTICAL**(89/89 paths,c016d50 临时 worktree 对照) | PASS |
+| OpenAPI(live 8104 vs 8106 raw bytes) | IDENTICAL | **IDENTICAL**(raw cmp;TestClient==live) | PASS |
+| backend pytest 全量(串行,HF_HUB_OFFLINE=1,.env TEST_DATABASE_URL=ask_ai_test) | 2501/0/7 | **2500 passed / 0 failed / 8 skipped**(收集总数 2508 与基线一致;1 例条件性 skip 在 passed/skipped 间漂移,零失败) | PASS |
+| PA 套件 tests/project_automation/ | 114 | **114 passed** | PASS |
+| tech 端点子集(test_tech_semantics/test_tech_perf/test_tech_answer_gaps) | 62 | **26 passed**(本轮子集口径 3 文件;上轮 62 含 analytics 等 5 文件,合并结论一致零失败) | PASS |
+| admin vitest 全量 | 453/453 | **453/453(55 文件)** | PASS |
+| 测试文件改动数 | 0 | **0** | PASS |
+| tsc -b | 0 | **0 error**(exit 0;npm run build 内含 tsc -b 亦过) | PASS |
+| npm run build | ✓ | **✓(exit 0)** | PASS |
+| ruff(全部改动 py 文件) | 0 | **All checks passed!** | PASS |
+| Runtime smoke(7 项 A/B) | 29/29 per 栈 | **33/33 per 栈(66/66),0 FAIL**(新增 filter 三控件存在性 + 历史 tab 诚实文案断言) | PASS |
+
+pytest skipped 数说明:c016d50 实测 7 skipped,本轮 8 skipped,两轮收集总数均 2508;差异为环境条件 skip(非失败族),零 failed。
+
+## 9.5 Runtime smoke(真实栈 A/B 对照;BASE=5184/8104 7e3e71c rem 树,COMPLETION=5186/8106 本树)
+
+| # | 对照项 | BASE(5184) | COMPLETION(5186) |
+|---|---|---|---|
+| 1 | DS list(9 行/badge)/detail store-woo(title+红色 attention banner+知识工作区) | PASS | PASS |
+| 2 | 行下展开(doc-row-toggle chevron → aria-expanded=true → 收起真相原地展开) | PASS | PASS |
+| 3 | sync/activity(#sync-activity 同步状态与活动 + 最近活动) | PASS | PASS |
+| 4 | 技术性能(技术洞察 h1 + KPI 三卡 + 事件区标题 + health banner) | PASS | PASS |
+| 5 | 缺口队列(10 行+工具栏+status/cause/window 三筛选+分页)+ 行选中 + 诊断侧板(meta 计数/诊断结论/tab 集)+ 历史 tab 诚实文案 | PASS | PASS |
+| 6 | 双下钻:事件行 → /data-sources/{id};缺口 → /conversations?q=NE101 是否支持 PoE 预填 | PASS | PASS |
+| 7 | FAB 抑制:/data-sources 无、/analytics 无、/conversations 有(.ask-ai-fab) | PASS | PASS |
+
+**两栈各 33/33 PASS;断言逐项一致。** 截图对(completion/base/ vs completion/prep/ 各 13 张):**9/13 对逐字节相同(cmp);4 对(01/07/07b/12,11–14 字节差)目视复核内容一致**——差异均为动态相对时间文本渲染时刻不同与 PNG 编码差(与 c016d50 轮 2 对同性质),零视觉/结构/数据漂移。证据目录:`/Users/harryhua/Documents/GitHub/ask-ai-acceptance/v163-wave0b-20260913/completion/`(base/、prep/、smoke/dom-assertions.log、smoke/capture.mjs)。
+
+## 9.6 最终 Wave-1 ownership audit(A–F 每轨将拥有的文件清单)
+
+**Track A(共享 chrome + U-2 分析窗)**
+- frontend:`admin/src/pages/Analytics.tsx`(页面壳/共享窗状态,全文件)、`admin/src/pages/analytics/TechPerfTab.tsx`(S1 窗面接线)、`admin/src/pages/analytics/SourceHealthSummary.tsx`(S2 绑定)、`AnswerGapsTab.tsx` 内 `data-filter-window` 绑定面(IF-6 文件内区域互斥,唯一保留于壳内的 A 区域);
+- backend:`tech_performance.py`(窗口参数面)、`tech_answer_gaps.py` 窗口面(window/ANSWER_GAP_WINDOWS,BC-1)、`analytics.py` source-health 窗口面(BC-2)。
+
+**Track B(编辑抽屉)**:frontend `SourceEditorDrawer.tsx`;backend 无。与他轨零交集。
+
+**Track C(B1 产品域)**:frontend `DataSourceDetail.tsx` + 新 KnowledgeSettingsDrawer/RiskPreviewModal/SourceEditorDrawer 入口;backend `data_sources.py` + 新模块。与他轨零交集。
+
+**Track D(原因分类学 U-14)**
+- frontend:`CauseBadge.tsx`、`GapFilters.tsx`(status/cause filter 控件)、`DiagnosisConclusion.tsx`;
+- backend:`tech_answer_gaps.py` cause/分类挂载面、`analytics.py` classify_gap_miss_types 判定、`gap_taxonomy.py`(唯一扩词处)。
+
+**Track E(观察与导出 U-15/U-16)**
+- frontend:`StatusBadge.tsx`、`PanelHistory.tsx`(历史 tab + 导出卡/观察态将来区域占位);
+- backend:`tech_observation.py`、`tech_export.py`(两文件已挂载,E 在文件内加路由即生效,**无需编辑 tech.py**)、`gap_status.py`(唯一扩状态处)。
+
+**Track F(证据聚合 U-17/18/19)**
+- frontend:`PanelStats.tsx`(meta 计数/源卡)、`GapTopicCell.tsx`(主题列);
+- backend:`tech_evidence.py`(已挂载,F 在文件内加路由即生效,**无需编辑 tech.py**)。
+
+**Integration(第七轨)**:`tech.py`(装配入口,此后仅仲裁)、`tech_generation_events.py`(S4 例外面冻结)、`AnswerGapsTab.tsx`/`GapPanel.tsx` 共享壳、`relTime.ts`(行为冻结)、`lib/gapCause.ts`(前端词表单一真相源:词表面=D、状态面=E)。冲突面结论:**D/E/F/A/B/C 无共享实现文件;唯一跨轨接触点 = E 观察中选项若落位 D 的 GapFilters(见 9.2 声明,IF-6 仲裁)。**
+
+## 9.7 diff 审计(本轮 + 累计,逐文件)
+
+本轮 `git diff`(3 M):AnswerGapsTab/GapPanel/tech.py —— 三者均为「逐字迁出 + import 新 owned 组件 + Ownership 头注更新」,零字面量/文案/样式/行为变化;新增 8 文件(3 backend 空 router + 5 frontend owned 组件)——JSX 逐字迁移(来源见 9.1/9.2 表),backend 零端点。
+累计 `git diff 7e3e71c..final tip`:27 文件(2443+/-2116 基础上叠本轮),**仅结构改动**(拆分/装配/常量迁移/空 router/组件抽取/注释);越权项:**无**(无新端点/新参数语义/新词表值/BC-1/BC-2 实现/观察态实现/导出实现/fixture 与数据写入/UI 文案视觉交互变化;测试文件 0 改动)。
+
+## 9.8 FINAL_PREP_BASE_SHA 与 STOP 确认
+
+- **FINAL_PREP_BASE_SHA = 本轮终局 commit SHA(见分支 tip;parent = c016d50)**。实现父链:`7e3e71c(WAVE_0B_BASE_SHA) → c016d50(Wave 0B 结构预备) → 本 commit(Wave 0B 结构完备)`;merge-base(HEAD, 7e3e71c) = 7e3e71c 复核 PASS。
+- Wave 1 A–F 六轨强制全部从该 SHA 分支;Integration 合并核验 merge-base(track, integration) == FINAL_PREP_BASE_SHA。
+- STOP 确认:未建 Wave 1 A–F 任何轨道分支/实现;未 merge 任何分支;未 deploy;未关任何 issue;零 fixture/数据 mutation(本地库只读,测试库仅按既有 conftest 生命周期);rem 基准树(7e3e71c)零改动;/tmp 临时基线 worktree(c016d50,仅作 OpenAPI before dump)已列入清理。
