@@ -1,6 +1,7 @@
 import type { WidgetConfig } from "@widget/types";
 import { App } from "@widget/App";
 import "@widget/styles/widget.css";
+import { useLocation } from "react-router-dom";
 
 /**
  * Login 页嵌入的聊天窗口(共享 widget 的完整 App 组件)。
@@ -13,8 +14,18 @@ import "@widget/styles/widget.css";
  *
  * 包裹 #ask-ai-widget-root:复用 widget.css 已有的定位规则
  * (position:fixed; z-index:99999),确保 FAB 浮在 admin 之上不被遮挡。
+ *
+ * V-2(Role A 终局裁决):浮动 FAB 不在 KB-OPS-V163-002 知识运营面呈现——
+ * 两张权威设计参考均无该元素。仅抑制数据源列表/详情与技术洞察三个路由,
+ * 其余页面(含 Login)行为不变。
  */
+const FAB_SUPPRESSED_PATHS = [/^\/data-sources$/, /^\/data-sources\//, /^\/analytics$/];
+
 export function LoginChat() {
+  const { pathname } = useLocation();
+  if (FAB_SUPPRESSED_PATHS.some((re) => re.test(pathname))) {
+    return null;
+  }
   const config: WidgetConfig = {
     apiUrl: "",  // useSSE 内部拼 /api/ask;vite proxy → backend 8000
     primaryColor: "#000000",

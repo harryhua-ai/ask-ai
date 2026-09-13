@@ -196,3 +196,30 @@ A-B2-01..04:**MATCH**。
 ## 10. git candidate
 
 见分支 `remediation/v163-design-20260913` 推送记录;commit message 含本报告路径与三门结论摘要。
+
+---
+
+## 附录 B — V-2 终局视觉修复(Role A 终局裁决后唯一剩余 DEFECT)
+
+**裁决输入**:V-1 行高 41px ACCEPTED 不变;V-3 同步/活动结构 ACCEPTED 不变;V-2 LoginChat 浮动 FAB 出现在 KB-OPS-V163-002 面而两张权威参考均无该元素 = 唯一剩余视觉缺陷。
+
+**产品边界(遵守)**:不全局移除 LoginChat 能力;仅抑制 /admin/data-sources、/admin/data-sources/:sourceId、/admin/analytics 三面;其余面(含 /login)行为不变;零后端改动;零无关视觉清理。
+
+**实现**:`admin/src/components/LoginChat.tsx`——组件入口 `useLocation()` 路径匹配 `/^\/data-sources$/`、`/^\/data-sources\//`、`/^\/analytics$/` 时返回 `null`(整组件不挂载,#ask-ai-widget-root 不入 DOM)。git diff = 该文件 + 新测试文件 + 本附录,共 3 文件。
+
+**RED→GREEN**:
+- RED(`logs/RED-fab-suppression.log`):`admin/tests/LoginChatFabSuppression.test.tsx` 4 用例——修复前受抑三面断言"FAB 不渲染"全失败(FAB 现存),非受抑面断言通过(jsdom mock site-config fetch 使 launcher 状态机落定);
+- GREEN:4/4 通过;admin vitest 全量 **453/453**;`tsc -b` **0 error**;`npm run build` ✓。
+
+**Runtime 证据**(`logs/final-fix-smoke.log`,真实登录,1536×1024 @1x,vite 5184/backend 8104):
+- /admin/data-sources:root 不存在、FAB 不存在、9 数据行 PASS;
+- /admin/analytics:FAB 不存在 PASS;
+- /admin/conversations:FAB 存在 PASS(非受抑面保留);
+- /admin/login:修复前取证 FAB 存在(非受抑面,login 页聊天为该组件本源)。
+- 截图:`FINAL-AFTER/08-data-sources-fullpage-no-fab.png`、`09-analytics-fullpage-no-fab.png`、`10-conversations-fab-present.png`。
+
+**功能冒烟(修复树上重证)**:
+- B2→B1 下钻:技术性能「生成失败 store-woo」事件行真实点击 → `/admin/data-sources/store-woo`(B1 详情工作面,WooCommerce 标题,FAB 受抑)PASS;
+- gap→对话下钻:NE101 缺口行 → 侧板「查看相关对话」真实点击 → `/conversations?q=NE101 是否支持 PoE` 预填 + 18 条真实对话渲染 PASS(非受抑面 FAB 保留)。
+
+**结论**:V-2 闭合,视觉缺陷归零(acceptance 验收条款 1–7 全满足)。V1.6.3 FINAL VISUAL FIX = CANDIDATE READY。
