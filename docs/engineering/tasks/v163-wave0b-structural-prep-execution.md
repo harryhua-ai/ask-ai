@@ -281,3 +281,111 @@ pytest skipped 数说明:c016d50 实测 7 skipped,本轮 8 skipped,两轮收集�
 - **FINAL_PREP_BASE_SHA = 本轮终局 commit SHA(见分支 tip;parent = c016d50)**。实现父链:`7e3e71c(WAVE_0B_BASE_SHA) → c016d50(Wave 0B 结构预备) → 本 commit(Wave 0B 结构完备)`;merge-base(HEAD, 7e3e71c) = 7e3e71c 复核 PASS。
 - Wave 1 A–F 六轨强制全部从该 SHA 分支;Integration 合并核验 merge-base(track, integration) == FINAL_PREP_BASE_SHA。
 - STOP 确认:未建 Wave 1 A–F 任何轨道分支/实现;未 merge 任何分支;未 deploy;未关任何 issue;零 fixture/数据 mutation(本地库只读,测试库仅按既有 conftest 生命周期);rem 基准树(7e3e71c)零改动;/tmp 临时基线 worktree(c016d50,仅作 OpenAPI before dump)已列入清理。
+
+# 10. FINAL OWNERSHIP ISOLATION(Wave 0B 终段 — 最后所有权冲突消除;零产品行为)
+
+延续 §9(Wave 0B STRUCTURAL COMPLETION)。本轮消除最后已证实的所有权冲突:
+(1)GapFilters.tsx 名义 D 所有但混含 cause(D)+status(E) 两个 filter 实现;
+(2)A 的分析窗选择控件区(data-filter-window)残留于 Integration 壳 AnswerGapsTab.tsx。
+终态:**Wave 1 A/D/E/F 无需编辑 AnswerGapsTab.tsx;D/E 不共享任何 filter 实现文件。**
+
+## 10.1 本轮结构抽取(唯一两项;零可见变化/零行为/零 API/零词表/零措辞/零 fixture)
+
+| 动作 | 文件 | 所有权 | 说明 |
+|---|---|---|---|
+| 新增 | `admin/src/pages/analytics/GapCauseFilter.tsx`(38 行) | **Track D** | cause filter(data-filter-cause)逐字迁出自 GapFilters.tsx;词表经 @/lib/gapCause(GAP_CAUSE_OPTIONS);props=稳定 value/onChange;头部所有权注释 Track D |
+| 新增 | `admin/src/pages/analytics/GapStatusFilter.tsx`(36 行) | **Track E** | status filter(data-filter-status)逐字迁出;值域 ""|open|resolved(既有 GAP_STATUS 词表,gap_status.py 权威);**Wave 1 E 的 observing 选项只在此文件挂载**;零接触 D 文件;props=稳定 value/onChange |
+| 新增 | `admin/src/pages/analytics/AnalyticsWindowControl.tsx`(35 行) | **Track A** | 分析窗选择(data-filter-window)逐字迁出自 AnswerGapsTab;既有 7d/30d/all 词表与呈现逐字保留(**零 IF-7 新语义**);Wave 1 A 的 IF-7 扩展只改此文件;props=稳定 value/onChange |
+| 删除 | `admin/src/pages/analytics/GapFilters.tsx`(59 行→0) | — | 拆分完成后删除(优先删除,零 re-export);全仓 grep "GapFilters" = 0 残留 |
+| 修改 | `admin/src/pages/analytics/AnswerGapsTab.tsx`(313→315 行) | Integration | import 更新 + JSX 消费三个 owned 组件 + Ownership 头注更新;**逐区纯结构**,零字面量/文案/样式/行为变化(setPage(1) 时序逐字保留) |
+
+测试文件改动 = **0**(TechInsightConvergence.test.tsx 等经 DOM 选择器断言,渲染输出不变);后端文件 diff = **0**。
+
+## 10.2 最终 ownership 证明(Wave-1 编辑面零残留;grep/结构证据)
+
+**A. AnswerGapsTab.tsx(315 行)逐区列举:**
+
+| 区域 | 所有权 | Wave-1 编辑面? | 证据 |
+|---|---|---|---|
+| 搜索框(data-gap-search) | Integration | 无 | 壳内实现,非任何轨冻结范围 |
+| status filter 控件 | Track E | 无(在 E 文件) | `<GapStatusFilter value onChange/>`(L106);本文件零 data-filter-status 实现 |
+| cause filter 控件 | Track D | 无(在 D 文件) | `<GapCauseFilter value onChange/>`(L113);本文件零 data-filter-cause 实现 |
+| 窗选择控件 | Track A | 无(在 A 文件) | `<AnalyticsWindowControl value onChange/>`(L121);本文件零 data-filter-window 实现(仅头注 L9 引用文件名) |
+| 队列表/排序/选择/空态/分页 | Integration | 无 | 全部 `<select>` 清点仅 1 处 = data-gap-page-size(L291,分页条/页,Integration);A-B2-03 页码为 v163-rem 既有冻结 |
+| 队列行 问题/主题列 | Track F | 无(在 F 文件) | `<GapTopicCell gap/>`(import-only,L38) |
+| 队列行 cause chip / 状态徽章 | D / E | 无(各在自有文件) | `<CauseBadge/>`/`<StatusBadge/>`(import-only,L32/33) |
+
+结论:本文件 = 纯 Integration 编排 + 稳定 props 消费(grep 实证:data-filter-* 实现 0 处;select 仅分页 1 处)。
+
+**B. GapPanel.tsx(278 行,本轮零改动)逐区列举:**
+
+| 区域 | 所有权 | Wave-1 编辑面? |
+|---|---|---|
+| 侧板壳/tab 集/概览(问题描述/典型问题/推荐操作)/典型问题 tab/相关对话 tab(S6 例外面)/诊断详情 tab | Integration | 无 |
+| 诊断结论卡(data-panel-conclusion) | Track D 专属文件 DiagnosisConclusion.tsx | 无(import-only,L23) |
+| 历史记录 tab 内容 + 导出卡/观察态将来区域 | Track E 专属文件 PanelHistory.tsx | 无(import-only,L24) |
+| meta 计数区(data-panel-stats) | Track F 专属文件 PanelStats.tsx | 无(import-only,L25) |
+| 状态徽章 | Track E StatusBadge.tsx | 无(import-only,L21) |
+
+grep 实证:GapPanel 内 观察/OBSERVING/导出/export/window 仅命中头注边界声明(L7/31/32,「无 导出」「无 观察」NOT-authorized 冻结注记)与语法关键字;零实现残留。原因分类分布(诊断详情)呈现经 @/lib/gapCause gapCauseLabel 消费——D Wave 1 扩词自动生效,零 GapPanel 编辑。
+
+**C. D/E 无共享 filter 文件(最终证明):**
+
+- `data-filter-status` 全仓实现仅 `GapStatusFilter.tsx`(Track E);`data-filter-cause` 全仓实现仅 `GapCauseFilter.tsx`(Track D);`data-filter-window` 全仓实现仅 `AnalyticsWindowControl.tsx`(Track A)——每选择器恰好一个 owned 文件;
+- `GapStatusFilter.tsx` import = **0**(纯组件);`GapCauseFilter.tsx` import 仅 `@/lib/gapCause`(D 词表模块);两文件零共享 import/零共享代码,无任何第三方"共享 filter"文件;
+- GapFilters.tsx 已物理删除,`grep -r "GapFilters" admin/src` = 0;
+- Wave 1 交叉面:**E 的 observing 过滤选项 → 仅改 GapStatusFilter.tsx(+gap_status.py);D 的 filter 选项扩展 → 仅改 GapCauseFilter.tsx(+@/lib/gapCause);两者永不同文件**。§9.6 遗留的唯一跨轨接触点(E 观察中选项若落位 D 的 GapFilters 由 IF-6 仲裁)**就此消除**。
+
+**D. A/D/E/F 冻结范围→文件映射全表(IF-6 附录更新稿,替代 §9.6 对应行):**
+
+| 轨 | frontend(冻结范围→文件) | backend |
+|---|---|---|
+| A | 页面壳/共享窗状态=Analytics.tsx;S1 接线=TechPerfTab.tsx;S2 绑定=SourceHealthSummary.tsx;**TI-10 缺口工具栏窗选择=AnalyticsWindowControl.tsx(全文件,本轮新落位)** | tech_performance.py;tech_answer_gaps.py 窗口面(BC-1);analytics.py source-health 窗口面(BC-2) |
+| B | SourceEditorDrawer.tsx | 无 |
+| C | DataSourceDetail.tsx(+新抽屉/弹窗) | data_sources.py+新模块 |
+| D | **GapCauseFilter.tsx(cause filter,本轮新落位)**;CauseBadge.tsx;DiagnosisConclusion.tsx;DataSourceDetail banner 文案 | tech_answer_gaps.py cause/分类挂载面;analytics.py classify;gap_taxonomy.py(唯一扩词处) |
+| E | **GapStatusFilter.tsx(status filter+Wave1 observing 选项挂载处,本轮新落位)**;StatusBadge.tsx;PanelHistory.tsx(历史/导出卡/观察态区域) | tech_observation.py;tech_export.py(均已挂载);gap_status.py(唯一扩状态处) |
+| F | GapTopicCell.tsx;PanelStats.tsx | tech_evidence.py(已挂载) |
+| Integration | tech.py(装配);tech_generation_events.py(S4);**AnswerGapsTab.tsx / GapPanel.tsx(零 A/D/E/F Wave-1 编辑面)**;relTime.ts;lib/gapCause.ts(词表单一真相源:词表面 D/状态呈现面 E) | — |
+
+冲突面结论:**A/D/E/F/B/C 无共享实现文件;D/E 无共享 filter 文件;跨轨接触点 = 0。**
+
+## 10.3 各门验证结果
+
+| 门 | 结果 | 判定 |
+|---|---|---|
+| tsc(`tsc -b`) | 0 errors | PASS |
+| vitest 全量 | **55 文件 453/453 passed** | PASS |
+| build(`tsc -b && vite build`) | ✓ built(2.04s;chunk 大小告警为既有) | PASS |
+| OpenAPI 等价 | TestClient 全 spec:before=acc6756 vs 本 tip,排序键 JSON `cmp` **逐字节 IDENTICAL**(166,111 bytes;paths=89/schemas=72);本轮后端文件 diff=0 | PASS(IDENTICAL) |
+| pytest 全量(串行,HF_HUB_OFFLINE=1) | run1 2496/4/8 → run2 2497/3/8(失败集轮换:analytics_business×2/leads×1/tech_perf×1)→ 失败 4 项隔离单跑 **4/4 PASS** → run3 全量 **2500 passed / 0 failed / 8 skipped** = 文档基线精确一致 | PASS(flaky 收敛规则,非行为漂移;py 改动=0) |
+| PA 套件(tests/project_automation/) | **114/114 passed** | PASS |
+| ruff | 本轮 .py 改动 = 0;全仓输出与 7e3e71c 基线逐行 diff = **0**(301 pre-existing 双树一致,零新增) | PASS |
+
+## 10.4 Runtime smoke(base 5184/8104=7e3e71c rem 树 vs final 5187/8107=本 tip;同库同数据只读)
+
+Playwright Chromium 1536×1024@1x 真实登录;脚本 smoke/capture-final.mjs;断言日志 smoke/dom-assertions-final.log。
+
+| # | 对照项 | BASE(5184) | FINAL(5187) |
+|---|---|---|---|
+| 1 | 技术洞察入口(h1+KPI 三卡) | PASS | PASS |
+| 2 | 缺口队列三筛选控件在位+词表精确(status=全部状态/需要处理/已解决;cause=全部原因+5 权威项;window=过去 7 天/过去 30 天/全部时间)+分页 | PASS | PASS |
+| 3 | status filter 交互:open=7 行全「需要处理」;resolved=5 行全「已解决」;重置=10 行同基线 | PASS | PASS |
+| 4 | cause filter 交互:知识缺失=2 行 chip 全匹配;重置=10 行同基线 | PASS | PASS |
+| 5 | window 交互:all=10 ≥ 7d=10;30d=10 ≤ all;7d 重置一致 | PASS | PASS |
+| 6 | 诊断侧板(选中 data-selected/meta 计数/诊断结论节点/tab 集) | PASS | PASS |
+| 7 | 双下钻:缺口→/conversations?q=NE101…(搜索框预填同值);事件行→/data-sources/store-woo | PASS | PASS |
+| 8 | FAB 抑制:/data-sources 无、/analytics 无、/conversations 有(.ask-ai-fab) | PASS | PASS |
+
+**两栈各 30/30 PASS,断言逐项一致。** 截图 12+12 张(completion-final/base/ 与 final/):**10/12 对 cmp 逐字节相同;2 对(07-gap-diagnosis-panel/10-fab-datasources)目视复核内容一致**(07=相对时间渲染差;10=website 行 hover 高亮态,零内容/布局差)。零视觉/结构/数据漂移。
+
+## 10.5 diff 审计(累计 7e3e71c → FINAL_PREP_BASE)
+
+- 本轮(相对 acc6756):2 修改/删除 + 3 新增(§10.1 表),全部 admin/src/pages/analytics/ 内;**后端 0 文件**;逐文件均为「逐字迁出+import 消费+Ownership 头注」,零字面量/文案/样式/行为变化;
+- 累计(git diff 7e3e71c..tip):§9.7 的 27 文件基础上 -1(删 GapFilters)+3(新增三 owned filter/window 文件)= 30 文件,**仅结构改动**(拆分/装配/常量迁移/空 router/组件抽取/所有权注释);越权项:**无**(无新端点/无新参数语义/无新词表值/无 BC-1/BC-2 实现/无观察态实现/无导出实现/无 fixture 与数据写入/无 UI 文案视觉交互变化/测试文件 0 改动)。
+
+## 10.6 FINAL_PREP_BASE_SHA 与 STOP 确认
+
+- **FINAL_PREP_BASE_SHA = 本 commit(分支 prep/v163-wave0b 推送后 tip;parent = acc67569aa7112a756934108e1ff554f5f8bee37;字面 SHA 冻结于验收仓 ask-ai-acceptance/v163-wave0b-20260913/completion-final/FINAL_PREP_BASE_SHA.txt 并见执行返回)。实现父链:`7e3e71c(WAVE_0B_BASE_SHA) → c016d50 → acc6756 → 本 commit`;merge-base(HEAD, 7e3e71c) = 7e3e71c 复核 PASS。**
+- Wave 1 A–F 六轨强制全部从该 SHA 分支;**A/D/E/F 无需编辑 AnswerGapsTab.tsx;D/E 不共享任何 filter 实现文件**;Integration 合并核验 merge-base(track, integration) == FINAL_PREP_BASE_SHA。
+- STOP 确认:未建 Wave 1 A–F 任何轨道分支/未实现任何产品行为(observing/导出/IF-7 全词表/BC-1/BC-2 零实现)/未 merge/未 deploy/未关 issue;零 fixture/数据 mutation(本地库只读);rem 基准树(7e3e71c)零改动;候选栈 8107/5187 于收尾停止。

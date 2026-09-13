@@ -2,15 +2,19 @@
  * Ownership(IF-6 附录,文件内区域互斥)— 回答缺口队列 Tab(Integration 壳):
  * - 共享壳/布局/队列表/排序/分页/选择/查询状态 = **Integration**(Wave 0B 落位;
  *   Wave 1 各轨只消费稳定 props,不编辑本文件);
- * - 工具栏 status/cause filter 控件 = **Track D** 专属文件
- *   ./analytics/GapFilters.tsx(本文件零 D 控件实现);
- * - 工具栏窗选择(data-filter-window)= **Track A** 绑定面(Wave 1 IF-7:
- *   接入页面壳共享分析窗状态;IF-6 文件内区域互斥保留于本壳);
+ * - 工具栏 status filter 控件 = **Track E** 专属文件
+ *   ./analytics/GapStatusFilter.tsx(本文件零 E 控件实现);
+ * - 工具栏 cause filter 控件 = **Track D** 专属文件
+ *   ./analytics/GapCauseFilter.tsx(本文件零 D 控件实现);
+ * - 工具栏窗选择(data-filter-window)= **Track A** 专属文件
+ *   ./analytics/AnalyticsWindowControl.tsx(Wave 1 IF-7 扩展只改该文件,
+ *   本文件零 A 控件实现,仅经稳定 props 传窗值);
  * - 队列行「问题/主题」列 = **Track F** 专属文件 ./analytics/GapTopicCell.tsx;
  * - 队列行 cause chip = Track D 呈现组件 ./analytics/CauseBadge.tsx;
  *   状态徽章 = Track E 呈现组件 ./analytics/StatusBadge.tsx(词表扩展各改
  *   自有文件);观察态 filter/导出卡 = Track E 将来区域(占位说明见
  *   ./analytics/PanelHistory.tsx 头注,本壳零 E 控件实现)。
+ * 结论:本文件零 A/D/E/F Wave-1 编辑面残留(纯 Integration 编排+稳定 props)。
  */
 
 import { useState } from "react";
@@ -28,7 +32,9 @@ import {
 import { CauseBadge } from "./CauseBadge";
 import { StatusBadge } from "./StatusBadge";
 import { relTime } from "./relTime";
-import { GapFilters, type GapStatusFilterValue } from "./GapFilters";
+import { GapStatusFilter, type GapStatusFilterValue } from "./GapStatusFilter";
+import { GapCauseFilter } from "./GapCauseFilter";
+import { AnalyticsWindowControl, type AnalyticsWindowValue } from "./AnalyticsWindowControl";
 import { GapTopicCell } from "./GapTopicCell";
 import GapPanel from "./GapPanel";
 
@@ -36,7 +42,7 @@ export default function AnswerGapsTab() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<GapStatusFilterValue>("");
   const [cause, setCause] = useState("");
-  const [window, setWindow] = useState<"7d" | "30d" | "all">("7d");
+  const [window, setWindow] = useState<AnalyticsWindowValue>("7d");
   const [order, setOrder] = useState<NonNullable<AnswerGapQuery["order"]>>("last_seen");
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(10);
@@ -82,8 +88,9 @@ export default function AnswerGapsTab() {
   return (
     <div className="flex gap-4 items-start">
       <div className="min-w-0 flex-1 space-y-3">
-        {/* 工具行:搜索(Integration)+ GapFilters(D)+ 时间窗筛选(A 绑定面);
-            观察态 filter = Track E Wave 1 将来区域(零占位控件,见 PanelHistory 头注) */}
+        {/* 工具行:搜索(Integration)+ GapStatusFilter(E)+ GapCauseFilter(D)+
+            AnalyticsWindowControl(A);观察态 filter = Track E Wave 1 将来区域
+            (零占位控件,见 PanelHistory 头注) */}
         <div className="flex items-center gap-2 flex-wrap" data-gap-toolbar>
           <input
             data-gap-search
@@ -96,33 +103,28 @@ export default function AnswerGapsTab() {
             className="h-9 min-w-[260px] flex-1 rounded-md border px-3 text-[13px]"
             style={{ borderColor: "var(--bd)", background: "var(--panel)" }}
           />
-          <GapFilters
-            status={status}
-            onStatusChange={(value) => {
+          <GapStatusFilter
+            value={status}
+            onChange={(value) => {
               setStatus(value);
               setPage(1);
             }}
-            cause={cause}
-            onCauseChange={(value) => {
+          />
+          <GapCauseFilter
+            value={cause}
+            onChange={(value) => {
               setCause(value);
               setPage(1);
             }}
           />
-          {/* Track A 绑定面:窗选择(Wave 1 IF-7 接入共享分析窗状态) */}
-          <select
-            data-filter-window
+          {/* Track A 专属文件:窗选择(Wave 1 IF-7 扩展只改 AnalyticsWindowControl.tsx) */}
+          <AnalyticsWindowControl
             value={window}
-            onChange={(e) => {
-              setWindow(e.target.value as "7d" | "30d" | "all");
+            onChange={(value) => {
+              setWindow(value);
               setPage(1);
             }}
-            className="h-9 shrink-0 rounded-md border px-2 text-[13px]"
-            style={{ borderColor: "var(--bd)", background: "var(--panel)" }}
-          >
-            <option value="7d">过去 7 天</option>
-            <option value="30d">过去 30 天</option>
-            <option value="all">全部时间</option>
-          </select>
+          />
         </div>
 
         {isError && !data ? (
