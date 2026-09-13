@@ -8,8 +8,8 @@
  *   置信度<0.6;`召回空`=已回答但检索零来源;`召回不足`=已回答且有来源);
  * - 恢复设计的运营词(知识缺失/服务知识不完整等)只映射到语义一致的权威
  *   分类上,属忠实转述;无权威分类 → 未分类,绝不发明新 taxonomy;
- * - 状态词表 = 权威 open|resolved;OBSERVING/观察中 是 v1.6.3 NOT authorized
- *   的新状态语义,不实现、不伪造(未知状态原样透传)。
+ * - 状态词表 = 权威 open|observing|resolved(IF-1,Wave 1 Track E 经
+ *   backend/services/gap_status.py 扩展;状态呈现面归 Track E,未知状态原样透传)。
  */
 
 export type GapCauseTone = "critical" | "warning" | "accent" | "neutral";
@@ -82,9 +82,10 @@ export const GAP_CAUSE_OPTIONS: { value: string; label: string }[] = [
   { value: "未分类", label: "未分类" },
 ];
 
-/** 权威状态(open|resolved)→ 运营状态词。观察中 NOT authorized,未知透传。 */
+/** 权威状态(IF-1:open|observing|resolved)→ 运营状态词。未知透传。 */
 export function gapStatusLabel(status: string): string {
   if (status === "open") return "需要处理";
+  if (status === "observing") return "观察中";
   if (status === "resolved") return "已解决";
   return status;
 }

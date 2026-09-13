@@ -64,14 +64,17 @@ describe("gapCause 权威原因映射(KB-OPS-V163-002 §5.3)", () => {
   });
 });
 
-describe("gapStatus 状态映射(权威 open/resolved → 运营状态)", () => {
+describe("gapStatus 状态映射(IF-1 权威 open/observing/resolved → 运营状态;Wave 1 Track E)", () => {
   it("open → 需要处理;resolved → 已解决", () => {
     expect(gapStatusLabel("open")).toBe("需要处理");
     expect(gapStatusLabel("resolved")).toBe("已解决");
   });
 
-  it("v1.6.3 无 观察中 状态:未知状态原样透传,不映射为观察中", () => {
-    expect(gapStatusLabel("observing")).toBe("observing");
-    expect(gapStatusLabel("observing")).not.toBe("观察中");
+  it("observing → 观察中(Wave 1 U-15 观察状态机词表,IF-1)", () => {
+    expect(gapStatusLabel("observing")).toBe("观察中");
+  });
+
+  it("未知状态原样透传,不发明映射", () => {
+    expect(gapStatusLabel("unknown-state")).toBe("unknown-state");
   });
 });

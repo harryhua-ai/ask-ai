@@ -311,16 +311,20 @@ describe("B2 回答缺口队列:question/topic + counts + cause + status + recen
     expect(row?.querySelector("[data-gap-recency]")?.textContent).toBe("证据不可用");
   });
 
-  it("resolved → 已解决(绿);v1.6.3 无 观察中 状态(NOT authorized,不伪造)", async () => {
+  it("resolved → 已解决(绿);Wave 1 IF-1:filter 词表含 观察中 选项,fixture 无 observing 行 → 无观察中徽章", async () => {
     await openGapsTab();
     const status = document.querySelector(
       '[data-gap-row][data-gap-id="aaaaaaaa-0000-4000-8000-000000000002"] [data-gap-status]',
     );
     expect(status?.getAttribute("data-status")).toBe("resolved");
     expect(status?.textContent).toBe("已解决");
-    await waitFor(() => {
-      expect(screen.queryByText("观察中")).not.toBeInTheDocument();
-    });
+    // Wave 1 Track E(U-15/IF-1):观察中 为授权状态 —— filter 选项在位;
+    // 本 fixture 无 observing 行,队列不出现观察中徽章(不伪造行)
+    const filter = document.querySelector("[data-filter-status]") as HTMLSelectElement;
+    expect(Array.from(filter.options).map((o) => o.value)).toContain("observing");
+    expect(
+      document.querySelector('[data-gap-status][data-status="observing"]'),
+    ).toBeNull();
   });
 
   it("v1.6.3 未授权能力不出现:无 导出相关对话 / 开始观察 / 内容已补充 / 涉及用户数", async () => {
