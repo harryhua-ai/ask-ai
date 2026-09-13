@@ -95,6 +95,23 @@ export const TYPE_LABELS: Record<string, string> = {
   web_crawl: "网站爬取",
 };
 
+/**
+ * v1.6.3 A-P1-05(audit §4):运营呈现词表(硬参考 panel 1/2 词表)。
+ * 仅呈现层映射,不改 source_type 真值;列表/详情知识表共用本映射;
+ * 编辑抽屉保留 TYPE_LABELS(既有编辑器权威超集,合同 C-B1-09)。
+ */
+export const SOURCE_TYPE_OPERATION_LABELS: Record<string, string> = {
+  github: "Wiki",
+  local_git: "Wiki",
+  filesystem: "文件系统",
+  web_crawl: "网站",
+  woocommerce: "商城",
+};
+
+export function sourceTypeLabel(type: string): string {
+  return SOURCE_TYPE_OPERATION_LABELS[type] ?? TYPE_LABELS[type] ?? type;
+}
+
 export function splitComma(s: string | undefined): string[] {
   if (!s) return [];
   return s

@@ -1,7 +1,7 @@
 /** Final Polish 修复集验收测试(AFP-002 RBAC 真相 / AFP-003 登录文案 / AFP-008 空结果语义)。 */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -111,7 +111,11 @@ describe("AFP-002 viewer 不被广告写操作", () => {
 
   it("admin 打开数据源:写操作保留(G010)", async () => {
     renderPage(<DataSources />);
-    await waitFor(() => expect(screen.getByText("同步全部")).toBeInTheDocument());
+    // A-P1-08(audit):「同步全部」收进页头 ⋯ 菜单(admin 可见),写操作能力保留
+    const pageMenu = await screen.findByRole("button", { name: "更多页操作" });
+    fireEvent.pointerDown(pageMenu, { button: 0, ctrlKey: false });
+    fireEvent.click(pageMenu);
+    expect(await screen.findByRole("menuitem", { name: "同步全部" })).toBeInTheDocument();
     expect(screen.getByText("+ 添加数据源")).toBeInTheDocument();
   });
 

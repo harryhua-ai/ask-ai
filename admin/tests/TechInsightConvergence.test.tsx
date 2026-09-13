@@ -475,6 +475,61 @@ describe("B2 诊断侧板:结论仅当权威、典型问题、面板 Tab(#59 / �
   });
 });
 
+// ==================== v1.6.3 Design Remediation A 类呈现锁定(audit v163-design-20260913 §4) ====================
+
+describe("v1.6.3 Design Remediation A 类呈现(技术洞察)", () => {
+  it("A-B2-01:技术洞察 标题深蓝 rgb(4,3,108),不再近黑", async () => {
+    renderWithProviders(<Analytics />);
+    const h1 = await screen.findByRole("heading", { name: "技术洞察" });
+    expect(h1.getAttribute("style")).toContain("rgb(4, 3, 108)");
+  });
+
+  it("A-B2-02:状态徽章 = 圈形图标(ⓘ 需要处理 / ✓ 已解决),不再裸圆点", async () => {
+    await openGapsTab();
+    const badges = document.querySelectorAll("[data-gap-status]");
+    expect(badges.length).toBeGreaterThan(0);
+    for (const b of badges) {
+      // 圈形图标:svg 内含 circle 基元
+      expect(b.querySelector("svg circle")).toBeTruthy();
+    }
+    // resolved 徽章含 ✓ 对勾 path;open 徽章含 ⓘ 竖点
+    const resolved = document.querySelector(
+      '[data-gap-status][data-status="resolved"] svg path',
+    );
+    expect(resolved).toBeTruthy();
+  });
+
+  it("A-B2-03:多页时页码按钮组 + 当前页高亮(aria-current)", async () => {
+    mockAnswerGaps.mockResolvedValue(answerGapsPayload({ total: 12 }));
+    await openGapsTab();
+    const numbers = document.querySelectorAll("[data-gap-page-number]");
+    expect(numbers.length).toBe(2);
+    expect(numbers[0].getAttribute("aria-current")).toBe("page");
+    expect(numbers[1].getAttribute("aria-current")).toBeNull();
+    // 条/页选择器保留
+    expect(document.querySelector("[data-gap-page-size]")).toBeTruthy();
+  });
+
+  it("A-B2-03b:单页保持诚实简洁(不造页码按钮组)", async () => {
+    await openGapsTab(); // total=3 → 单页
+    expect(document.querySelectorAll("[data-gap-page-number]").length).toBe(0);
+    expect(document.querySelector("[data-gap-page-size]")).toBeTruthy();
+  });
+
+  it("A-B2-04:诊断侧板宽 ~460px;典型问题 bullets 标记强化", async () => {
+    await openGapsTab();
+    fireEvent.click(
+      document.querySelector("[data-gap-row]") as HTMLElement,
+    );
+    await waitFor(() => {
+      const panel = document.querySelector("[data-gap-panel]") as HTMLElement | null;
+      expect(panel?.className).toContain("w-[460px]");
+      const bullet = panel?.querySelector("[data-panel-typical] li") as HTMLElement | null;
+      expect(bullet?.className).toContain("marker:text-[var(--t1)]");
+    });
+  });
+});
+
 // ====================  #58 技术性能:事件层级 + 可展开证据  ====================
 
 describe("B2 技术性能:运营可读事件行优先,raw 证据可展开,critical 盖过 routine(#58)", () => {

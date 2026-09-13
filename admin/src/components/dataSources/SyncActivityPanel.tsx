@@ -52,8 +52,8 @@ function reliabilityLine(health: SourceHealthItem | undefined): string {
       ? `仅 ${health.total_syncs} 次同步,暂不评估`
       : "暂无同步记录";
   }
-  const pct = Math.round(health.sync_success_rate * 100);
-  return `${pct}% · 近${health.window_days}天 ${health.total_syncs} 次`;
+  // A-P4-01(audit):参考「98.7%」一位小数;样本注记(近30天 N 次)收进 title(次级)
+  return `${(health.sync_success_rate * 100).toFixed(1)}%`;
 }
 
 function reliabilityTitle(health: SourceHealthItem | undefined): string | undefined {

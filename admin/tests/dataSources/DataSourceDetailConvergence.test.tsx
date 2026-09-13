@@ -298,7 +298,8 @@ describe("v1.6.3 B1 数据源详情收敛(hard ref panel 2/3/4)", () => {
     }
     expect(screen.getAllByText(/共 6 条/).length).toBeGreaterThan(0);
     expect(screen.getByText("v17")).toBeInTheDocument();
-    expect(screen.getAllByText("在服").length).toBeGreaterThan(0);
+    // A-P2-02(audit):serving 真相的参考词+色映射 = 正常(绿);不在服 → 不完整(蓝)
+    expect(screen.getAllByText("正常").length).toBeGreaterThan(0);
   });
 
   it("展开行本地诊断(panel 3 只读部分):问题说明 + 当前有效版本 + 服务真相 + 生成真相", async () => {
@@ -307,11 +308,13 @@ describe("v1.6.3 B1 数据源详情收敛(hard ref panel 2/3/4)", () => {
       data: truth as never, isLoading: false, isError: false, error: null, refetch: vi.fn(),
     } as never);
     renderDetail();
-    // 第二行(Vanishing Page / missing_candidate)的真相展开
-    fireEvent.click(screen.getAllByRole("button", { name: /查看真相/ })[1]);
+    // 第二行(Vanishing Page / missing_candidate)的真相展开(A-P3-01:行头 chevron 触发,原地展开)
+    fireEvent.click(screen.getAllByTestId("doc-row-toggle")[1]);
     expect(await screen.findByText(/当前有效版本/)).toBeInTheDocument();
     expect(screen.getByText("#7")).toBeInTheDocument();
     expect(screen.getAllByText(/缺席宽限/).length).toBeGreaterThan(0);
+    // A-P3-02(audit):「生效自」人类化,不再裸 ISO
+    expect(screen.queryByText(/生效自 2026-08-01T00:00:00/)).not.toBeInTheDocument();
   });
 
   it("Forbidden:页面不出现 重新处理 / 知识设置 / 高风险影响预览(无权威支撑不得伪造)", () => {
@@ -327,7 +330,8 @@ describe("v1.6.3 B1 数据源详情收敛(hard ref panel 2/3/4)", () => {
     expect(screen.getByText(/最近结果/)).toBeInTheDocument();
     expect(screen.getAllByText("部分成功").length).toBeGreaterThan(0);
     expect(screen.getByText(/同步可靠性/)).toBeInTheDocument();
-    expect(screen.getByText(/99%/)).toBeInTheDocument(); // 0.987 → 99%(近30天 80 次)
+    // A-P4-01(audit):参考「98.7%」一位小数(0.987 → 98.7%);样本注记收进 title
+    expect(screen.getByText("98.7%")).toBeInTheDocument();
     expect(screen.getByText(/同步周期/)).toBeInTheDocument();
     expect(screen.getByText("每 6 小时")).toBeInTheDocument();
   });
@@ -344,5 +348,86 @@ describe("v1.6.3 B1 数据源详情收敛(hard ref panel 2/3/4)", () => {
     renderDetail();
     expect(screen.queryByText(/时态角色/)).not.toBeInTheDocument();
     expect(screen.queryByText(/新鲜度要求/)).not.toBeInTheDocument();
+  });
+});
+
+// ==================== v1.6.3 Design Remediation A 类呈现锁定(audit v163-design-20260913 §4) ====================
+
+describe("v1.6.3 Design Remediation A 类呈现(数据源详情)", () => {
+  it("A-P2-01:部分成功 = 链接态(蓝 + chevron svg),指向同步活动锚点", () => {
+    renderDetail();
+    const link = screen.getByTestId("partial-result-link");
+    expect(link.className).toContain("text-[var(--acc)]");
+    expect(link.querySelector("svg")).toBeTruthy();
+    expect(document.getElementById("sync-activity")).toBeTruthy();
+    // A-P2-03:相对时间单格式(精确时间收进 title),不再「N小时前 + 绝对时间」双格式并排
+    const relSpans = Array.from(document.querySelectorAll("span")).filter((s) =>
+      /小时前/.test(s.textContent ?? ""),
+    );
+    expect(relSpans.length).toBeGreaterThan(0);
+    for (const s of relSpans) {
+      expect(s.querySelector("span")).toBeNull();
+    }
+  });
+
+  it("A-P2-02:服务列呈现映射 = 正常(绿)/不完整(蓝)/—(灰,无现行版本)", () => {
+    // renderDetail 内部固定 mock documents;此处临时替换其 items 注入 serving 变体
+    const originalItems = documents.items;
+    documents.items = [
+      { ...originalItems[0], serving: false },
+      { ...originalItems[1], current_version_seq: null },
+    ];
+    try {
+      renderDetail();
+    } finally {
+      documents.items = originalItems;
+    }
+    const incomplete = screen.getByText("不完整");
+    expect(incomplete.className).toContain("bg-blue-50");
+    // 无现行版本 → 「—」(灰),不再红「不在服」
+    expect(screen.queryByText("不在服")).not.toBeInTheDocument();
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  });
+
+  it("A-P2-04:banner 图标 = 红圈 ⚠ 图标", () => {
+    renderDetail();
+    const icon = document.querySelector("span.rounded-full.bg-red-600");
+    expect(icon?.textContent).toContain("⚠");
+  });
+
+  it("A-P2-05:页头动作 = 单「⋯」;编辑/返回列表在菜单内", async () => {
+    renderDetail();
+    expect(screen.queryByRole("button", { name: "编辑" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "返回列表" })).not.toBeInTheDocument();
+    const trigger = screen.getByRole("button", { name: "更多页操作" });
+    fireEvent.pointerDown(trigger);
+    fireEvent.click(trigger);
+    expect(await screen.findByRole("menuitem", { name: "编辑" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "返回列表" })).toBeInTheDocument();
+  });
+
+  it("A-P1-07:面包屑「配置 › 数据源 › {源}」,返回列表由面包屑承担", () => {
+    renderDetail();
+    const nav = screen.getByRole("navigation", { name: "面包屑" });
+    expect(nav.textContent).toContain("›");
+    const backLinks = nav.querySelectorAll('a[href="/data-sources"]');
+    expect(backLinks.length).toBe(2);
+  });
+
+  it("A-P3-01:真相 = 行下原地展开(行头 chevron 触发,aria-expanded)", async () => {
+    vi.mocked(useSourceDocumentTruth).mockReturnValue({
+      data: truth as never, isLoading: false, isError: false, error: null, refetch: vi.fn(),
+    } as never);
+    renderDetail();
+    const toggles = screen.getAllByTestId("doc-row-toggle");
+    fireEvent.click(toggles[1]);
+    expect(await screen.findByText(/当前有效版本/)).toBeInTheDocument();
+    expect(screen.getAllByTestId("doc-row-toggle")[1]).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("A-P1-03 同口径:知识表名称单行,doc_source_id 收进 title", () => {
+    renderDetail();
+    expect(screen.queryByText("woo-store/main/p1")).not.toBeInTheDocument();
+    expect(screen.getByTitle(/woo-store\/main\/p1/)).toBeInTheDocument();
   });
 });

@@ -206,10 +206,15 @@ describe("v1.6.3 B1 数据源列表收敛(hard ref panel 1)", () => {
     expect(screen.queryByText("Product Wiki")).not.toBeInTheDocument();
   });
 
-  it("编辑打开右侧抽屉(context-preserving drawer 语法,§4.5),抽屉含标题 编辑数据源", () => {
+  it("编辑打开右侧抽屉(context-preserving drawer 语法,§4.5),抽屉含标题 编辑数据源", async () => {
     renderList([wooSource, wikiSource]);
-    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    // A-P1-04:参考=单「⋯」;编辑收进行操作菜单(既有能力保留)
+    const trigger = screen.getAllByRole("button", { name: "更多操作" })[0];
+    fireEvent.pointerDown(trigger);
+    fireEvent.click(trigger);
+    const editItem = await screen.findByRole("menuitem", { name: "编辑" });
+    fireEvent.click(editItem);
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(screen.getByText("编辑数据源")).toBeInTheDocument();
   });
 
@@ -228,5 +233,82 @@ describe("v1.6.3 B1 数据源列表收敛(hard ref panel 1)", () => {
     renderList([], { items: [] });
     expect(screen.getByText(/暂无数据源/)).toBeInTheDocument();
     expect(screen.getByText(/共 0 个数据源/)).toBeInTheDocument();
+  });
+});
+
+// ==================== v1.6.3 Design Remediation A 类呈现锁定(audit v163-design-20260913 §4) ====================
+
+describe("v1.6.3 Design Remediation A 类呈现(数据源列表)", () => {
+  const unclassifiedSource = {
+    ...wikiSource,
+    id: "unknown-src",
+    product: "Unknown Source",
+    last_sync: null,
+    last_sync_status: null,
+  };
+
+  it("A-P1-01:红系徽章 = 淡红底红字(bg-red-50 text-red-600),不再实底白字", () => {
+    renderList([wooSource]);
+    const badge = screen.getAllByText("需处理").find((el) => el.tagName === "DIV");
+    expect(badge?.className).toContain("bg-red-50");
+    expect(badge?.className).toContain("text-red-600");
+    expect(badge?.className).not.toContain("bg-destructive");
+  });
+
+  it("A-P1-02:待分类 = 琥珀淡底(bg-amber-50),不再灰底", () => {
+    renderList([unclassifiedSource], { items: [] });
+    const badge = screen.getAllByText("待分类").find((el) => el.tagName === "DIV");
+    expect(badge?.className).toContain("bg-amber-50");
+    expect(badge?.className).toContain("text-amber-600");
+  });
+
+  it("A-P1-03:名称列单行密表,来源地址不作副行文本(收进 title)", () => {
+    renderList([wooSource]);
+    // 副行 URL 文本不再出现
+    expect(screen.queryByText("https://woocommerce.com")).not.toBeInTheDocument();
+    expect(screen.getByTitle("https://woocommerce.com")).toBeInTheDocument();
+  });
+
+  it("A-P1-04:操作列 = 单「⋯」,详情/同步/编辑均在菜单内", async () => {
+    renderList([wooSource]);
+    expect(screen.queryByRole("button", { name: "详情" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "同步" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "编辑" })).not.toBeInTheDocument();
+    const trigger = screen.getAllByRole("button", { name: "更多操作" })[0];
+    fireEvent.pointerDown(trigger);
+    fireEvent.click(trigger);
+    expect(await screen.findByRole("menuitem", { name: "详情" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "同步" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "编辑" })).toBeInTheDocument();
+  });
+
+  it("A-P1-05:类型运营词表 商城/Wiki/网站/文件系统(仅呈现映射)", () => {
+    renderList([wooSource, wikiSource]);
+    expect(screen.getAllByText("商城").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Wiki").length).toBeGreaterThan(0);
+    expect(screen.queryByText("woocommerce")).not.toBeInTheDocument();
+    expect(screen.queryByText("github")).not.toBeInTheDocument();
+  });
+
+  it("A-P1-06:筛选控件紧凑(h-8)", () => {
+    renderList([]);
+    expect(screen.getByLabelText("按状态过滤").className).toContain("h-8");
+    expect(screen.getByLabelText("按类型过滤").className).toContain("h-8");
+  });
+
+  it("A-P1-07:面包屑分隔符「›」", () => {
+    renderList([wooSource]);
+    const nav = screen.getByRole("navigation", { name: "面包屑" });
+    expect(nav.textContent).toContain("›");
+    expect(nav.textContent).not.toContain("/");
+  });
+
+  it("A-P1-08:页头仅一枚主按钮;同步全部收进页头 ⋯ 菜单", async () => {
+    renderList([wooSource]);
+    expect(screen.queryByText("同步全部")).not.toBeInTheDocument();
+    const pageMenu = screen.getByRole("button", { name: "更多页操作" });
+    fireEvent.pointerDown(pageMenu);
+    fireEvent.click(pageMenu);
+    expect(await screen.findByRole("menuitem", { name: "同步全部" })).toBeInTheDocument();
   });
 });

@@ -278,7 +278,8 @@ describe("DataSourceDetail 详情工作面", () => {
   it("身份/配置摘要:产品线、类型中文标签、同步间隔、来源地址可见", () => {
     renderDetail();
     expect(screen.getAllByText("wiki").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("代码仓库").length).toBeGreaterThan(0);
+    // A-P1-05(audit):运营呈现词表 github→Wiki(仅呈现映射,source_type 真值不变)
+    expect(screen.getAllByText("Wiki").length).toBeGreaterThan(0);
     // v1.6.3 B1:同步间隔以人性化 周期 呈现(同步状态卡),原文 24h 保留于编辑抽屉
     expect(screen.getByText(/同步周期/)).toBeInTheDocument();
     expect(screen.getByText("每 24 小时")).toBeInTheDocument();
@@ -304,7 +305,8 @@ describe("DataSourceDetail 详情工作面", () => {
     renderDetail();
     expect(screen.getByText("Alive Doc")).toBeInTheDocument();
     expect(screen.getByText("Old Doc")).toBeInTheDocument();
-    expect(screen.getAllByText("在服").length).toBeGreaterThan(0);
+    // A-P2-02(audit):serving=true → 正常(绿);不再呈现 在服/不在服 红
+    expect(screen.getAllByText("正常").length).toBeGreaterThan(0);
     // v1.6.3 B1 收敛:状态列 = 运营桶词表(已退役);L 轴中文标签移至展开真相
     expect(screen.getAllByText("已退役").length).toBeGreaterThan(0);
     // 更新时间 = 人性化相对时间,精确 ISO 保留在 title 属性
@@ -358,8 +360,10 @@ describe("DataSourceDetail 详情工作面", () => {
     expect(screen.getAllByText(/v2/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/生成真相/).length).toBeGreaterThan(0);
     expect(screen.getByText("#4")).toBeInTheDocument();
-    // canonical 身份原样
-    expect(screen.getAllByText("wiki-documents-local/main/old.md").length).toBeGreaterThan(0);
+    // A-P1-03 同口径(audit 附录 C):canonical 身份收进行头 title,不再作副行文本
+    expect(screen.getByTitle(/wiki-documents-local\/main\/old\.md/)).toBeInTheDocument();
+    // A-P3-02(audit):「生效自」人类化时间,不裸 ISO
+    expect(screen.queryByText(/生效自 \d{4}-\d{2}-\d{2}T/)).not.toBeInTheDocument();
   });
 
   it("真相中现行版本缺席 → 显式 后端无此记录", async () => {
@@ -372,7 +376,8 @@ describe("DataSourceDetail 详情工作面", () => {
         refetch: vi.fn(),
       } as never);
     });
-    fireEvent.click(screen.getAllByRole("button", { name: /查看真相/ })[0]);
+    // A-P3-01:真相行 = 匹配 doc_source_id 的行下原地展开(fixture 真相为 old.md 行)
+    fireEvent.click(screen.getAllByRole("button", { name: /查看真相/ })[1]);
     await waitFor(() =>
       expect(screen.getByText(/当前有效版本:/)).toBeInTheDocument(),
     );

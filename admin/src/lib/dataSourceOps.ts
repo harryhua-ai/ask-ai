@@ -137,7 +137,7 @@ export function operatorStateOf(input: {
   return { key: "ok", label: "正常", tone: "ok" };
 }
 
-export function toneVariant(tone: OperatorTone): "success" | "warning" | "destructive" | "secondary" | "outline" {
+export function toneVariant(tone: OperatorTone): "success" | "warning" | "destructive" | "secondary" | "outline" | "info" {
   switch (tone) {
     case "ok":
       return "success";
@@ -148,8 +148,9 @@ export function toneVariant(tone: OperatorTone): "success" | "warning" | "destru
       return "warning";
     case "disabled":
       return "outline";
+    // A-P1-02(audit):待分类 = 琥珀(参考语法;详情页待分类已是琥珀,统一同一 token)
     default:
-      return "secondary";
+      return "warning";
   }
 }
 

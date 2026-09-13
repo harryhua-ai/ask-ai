@@ -97,6 +97,25 @@ function renderWithSources(sources: unknown[]) {
   );
 }
 
+// A-P1-04(audit):操作列收敛为单「⋯」;详情/同步/编辑均收进行操作菜单。
+// 测试辅助:打开第 index 行的 ⋯ 菜单。
+function openRowMenu(index = 0) {
+  const trigger = screen.getAllByRole("button", { name: "更多操作" })[index];
+  fireEvent.pointerDown(trigger);
+  fireEvent.click(trigger);
+}
+
+// 关闭已打开的 Radix 菜单(Escape),否则外层触发器对可达性树不可见。
+function closeRowMenu() {
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+}
+
+// A-P1-04:经行 ⋯ 菜单打开编辑抽屉(既有能力保留,入口收敛)。
+async function openEditViaMenu() {
+  openRowMenu(0);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "编辑" }));
+}
+
 describe("DataSources", () => {
   it("renders title", () => {
     const qc = new QueryClient();
@@ -130,7 +149,8 @@ describe("DataSources", () => {
   });
 
   // #50 B1:列表行「详情」进入冻结路由 /data-sources/:sourceId(对 #51 的接口)
-  it("#50 详情入口导航到 /data-sources/:sourceId", () => {
+  // A-P1-04:详情入口收进 ⋯ 菜单(参考单「⋯」语法)
+  it("#50 详情入口导航到 /data-sources/:sourceId", async () => {
     renderWithSources([
       {
         id: "wiki-documents-local",
@@ -143,11 +163,12 @@ describe("DataSources", () => {
         updated_at: "2026-07-01T00:00:00Z",
       },
     ]);
-    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+    openRowMenu(0);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "详情" }));
     expect(screen.getByTestId("detail-probe")).toBeInTheDocument();
   });
 
-  it("#1 编辑 local_git 源:类型归一为 github 且 repo_path 转换为 repo_url+clone_path", () => {
+  it("#1 编辑 local_git 源:类型归一为 github 且 repo_path 转换为 repo_url+clone_path", async () => {
     const localGitDs = {
       id: "ne301-docs-local",
       type: "local_git",
@@ -163,7 +184,7 @@ describe("DataSources", () => {
       updated_at: "2026-07-01T00:00:00Z",
     };
     renderWithSources([localGitDs]);
-    fireEvent.click(screen.getByText("编辑"));
+    await openEditViaMenu();
     // 类型下拉归一为 github(选项显示中文可读名,选中值仍为 github)
     expect(screen.getByDisplayValue("代码仓库")).toHaveValue("github");
     // repo_path → repo_url(与迁移脚本 build_github_config 一致的 camthink-ai org 规则)
@@ -194,7 +215,7 @@ describe("DataSources", () => {
       last_sync: null,
     };
     renderWithSources([ds]);
-    fireEvent.click(screen.getByText("编辑"));
+    await openEditViaMenu();
     fireEvent.click(screen.getByText("拉取分支"));
     // 拉取后渲染复选框(远端 3 个分支)
     const mainChk = await screen.findByRole("checkbox", { name: "main" });
@@ -233,7 +254,7 @@ describe("DataSources", () => {
     expect(screen.queryByPlaceholderText("30m / 48h")).not.toBeInTheDocument();
   });
 
-  it("#2 表格对 local_git 源显示中文类型标签(代码仓库),不裸显英文", () => {
+  it("#2 表格对 local_git 源显示运营词标签(Wiki),不裸显英文", () => {
     const localGitDs = {
       id: "ne301-docs-local",
       type: "local_git",
@@ -245,7 +266,8 @@ describe("DataSources", () => {
       updated_at: "2026-07-01T00:00:00Z",
     };
     renderWithSources([localGitDs]);
-    expect(screen.getAllByText("代码仓库").length).toBeGreaterThan(0);
+    // A-P1-05(audit):运营呈现词表 local_git/github → Wiki(仅呈现映射,真值不变)
+    expect(screen.getAllByText("Wiki").length).toBeGreaterThan(0);
     expect(screen.queryByText("local_git")).not.toBeInTheDocument();
   });
 
@@ -275,14 +297,15 @@ describe("DataSources", () => {
     renderWithSources([dsA, dsB]);
     // 两行同名产品线下,产品线统一显示裸 product key(与编辑框一致,不再查中文标签)
     expect(screen.getAllByText("neomind").length).toBe(2);
-    expect(screen.getByText("https://github.com/camthink-ai/neomind-docs.git")).toBeInTheDocument();
-    expect(screen.getByText("/data/neomind-sdk")).toBeInTheDocument();
+    // A-P1-03(audit):参考单行密表,来源地址不作副行;收进行名 title 用于区分
+    expect(screen.getByTitle("https://github.com/camthink-ai/neomind-docs.git")).toBeInTheDocument();
+    expect(screen.getByTitle("/data/neomind-sdk")).toBeInTheDocument();
     // 源 ID 不裸显在产品线列
     expect(screen.queryByText("neomind-docs")).not.toBeInTheDocument();
     expect(screen.queryByText("neomind-sdk")).not.toBeInTheDocument();
   });
 
-  it("代码仓库源缺 repo_url 时:副标题由 repo_path 重建 github 链接,不裸显本地路径", () => {
+  it("代码仓库源缺 repo_url 时:行名 title 由 repo_path 重建 github 链接,不裸显本地路径", () => {
     // 历史 local_git 源 DB 里只有 repo_path(本地 clone 路径),没有 repo_url
     const ds = {
       id: "ne301-docs-local",
@@ -296,10 +319,12 @@ describe("DataSources", () => {
       last_sync: null,
     };
     renderWithSources([ds]);
-    // 由 repo_path 末段按 camthink-ai 约定重建 github 链接(与编辑表单 dsToForm 同规则)
-    expect(screen.getByText("https://github.com/camthink-ai/ne301.git")).toBeInTheDocument();
+    // 由 repo_path 末段按 camthink-ai 约定重建 github 链接(与编辑表单 dsToForm 同规则);
+    // A-P1-03:收进行名 title,不再作副行文本
+    expect(screen.getByTitle("https://github.com/camthink-ai/ne301.git")).toBeInTheDocument();
     // 不再把本地 clone 路径当副标题裸显
     expect(screen.queryByText("~/ask-ai-corpus/ne301")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("~/ask-ai-corpus/ne301")).not.toBeInTheDocument();
   });
 
   it("最新同步列:显示最近一次同步时间,无记录显示占位符", () => {
@@ -331,7 +356,7 @@ describe("DataSources", () => {
     expect(screen.getAllByText("从未同步").length).toBeGreaterThan(0);
   });
 
-  it("点击某行同步只提交该源，后端没有 active 证据时不伪造同步中", () => {
+  it("点击某行同步只提交该源，后端没有 active 证据时不伪造同步中", async () => {
     const dsA = {
       id: "neomind-docs",
       type: "github",
@@ -358,16 +383,15 @@ describe("DataSources", () => {
     vi.mocked(useTriggerSync).mockReturnValue({ mutate, isPending: false });
     renderWithSources([dsA, dsB]);
 
-    const syncButtons = screen.getAllByText("同步");
-    expect(syncButtons).toHaveLength(2);
-    fireEvent.click(syncButtons[0]);
+    // A-P1-04:同步收进行 ⋯ 菜单;只提交所打开行的源
+    openRowMenu(0);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "同步" }));
 
     expect(mutate).toHaveBeenCalledWith("neomind-docs");
     expect(screen.queryByText("同步中...")).not.toBeInTheDocument();
-    expect(screen.getAllByText("同步")).toHaveLength(2);
   });
 
-  it("#44 禁用源:同步按钮不可点击", () => {
+  it("#44 禁用源:同步菜单项不可点击", () => {
     const ds = {
       id: "ne301-docs",
       type: "github",
@@ -383,13 +407,15 @@ describe("DataSources", () => {
     vi.mocked(useTriggerSync).mockReturnValue({ mutate, isPending: false });
     renderWithSources([ds]);
 
-    const syncBtn = screen.getByText("同步") as HTMLButtonElement;
-    expect(syncBtn).toBeDisabled();
-    fireEvent.click(syncBtn);
+    openRowMenu(0);
+    const syncItem = screen.getByRole("menuitem", { name: "同步" });
+    // Radix 菜单项:禁用态为 aria-disabled(非原生 disabled 属性)
+    expect(syncItem.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(syncItem);
     expect(mutate).not.toHaveBeenCalled();
   });
 
-  it("挂载即恢复后端 active 状态，并按源隔离动作与阶段进度", () => {
+  it("挂载即恢复后端 active 状态，并按源隔离动作与阶段进度", async () => {
     const dsA = {
       id: "ne301-docs",
       type: "github",
@@ -427,15 +453,22 @@ describe("DataSources", () => {
     renderWithSources([dsA, dsB]);
 
     expect(useSyncStatus).toHaveBeenCalledWith({ refetchInterval: 5000 });
-    expect(screen.getByText("同步中...")).toBeDisabled();
-    expect(screen.getAllByRole("button", { name: "同步" })).toHaveLength(1);
+    // A-P1-04:同步中状态 = 行 ⋯ 菜单内禁用项「同步中...」(Radix aria-disabled)
+    openRowMenu(0);
+    const syncingItem = await screen.findByRole("menuitem", { name: "同步中..." });
+    expect(syncingItem.getAttribute("aria-disabled")).toBe("true");
+    closeRowMenu();
+    // 另一行(无 active 证据)仍为可用「同步」
+    openRowMenu(1);
+    const enabledItem = await screen.findByRole("menuitem", { name: "同步" });
+    expect(enabledItem.getAttribute("aria-disabled")).not.toBe("true");
     expect(screen.getByText("当前同步")).toBeInTheDocument();
     expect(screen.getByText("生成向量")).toBeInTheDocument();
     expect(screen.getByText("3/12 · 25%")).toBeInTheDocument();
     expect(screen.getByText("执行设备：GPU")).toBeInTheDocument();
   });
 
-  it("成功的 last_sync 不能在 /sync-status 无 active 证据时保持同步中", () => {
+  it("成功的 last_sync 不能在 /sync-status 无 active 证据时保持同步中", async () => {
     renderWithSources([{
       id: "ne301-docs",
       type: "github",
@@ -451,7 +484,8 @@ describe("DataSources", () => {
     }]);
 
     expect(screen.queryByText("同步中...")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "同步" })).toBeEnabled();
+    openRowMenu(0);
+    expect(await screen.findByRole("menuitem", { name: "同步" })).toBeEnabled();
     expect(toast.success).not.toHaveBeenCalledWith(expect.stringContaining("同步完成"));
   });
 
@@ -495,7 +529,11 @@ describe("DataSources", () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.click(screen.getByText("同步全部"));
+    // A-P1-08(audit):参考页头仅一枚主按钮;「同步全部」收进页头 ⋯ 菜单
+    const pageMenu = screen.getByRole("button", { name: "更多页操作" });
+    fireEvent.pointerDown(pageMenu);
+    fireEvent.click(pageMenu);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "同步全部" }));
     await waitFor(() => expect(mutateAllAsync).toHaveBeenCalled());
     expect(screen.queryByText("同步中...")).not.toBeInTheDocument();
 
@@ -524,8 +562,10 @@ describe("DataSources", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getAllByText("同步中...")).toHaveLength(2);
-    expect(screen.getByText("同步全部")).toBeDisabled();
+    // 行状态仅由后端 active items 恢复:行菜单内出现禁用的「同步中...」(Radix aria-disabled)
+    openRowMenu(0);
+    const syncingItem = await screen.findByRole("menuitem", { name: "同步中..." });
+    expect(syncingItem.getAttribute("aria-disabled")).toBe("true");
   });
 });
 
@@ -566,7 +606,7 @@ describe("C10 branches 默认分支", () => {
     expect(master.checked).toBe(false);
   });
 
-  it("编辑无 branches 配置的源回填空串,不再兜底 main", () => {
+  it("编辑无 branches 配置的源回填空串,不再兜底 main", async () => {
     renderWithSources([
       {
         id: "c10-src",
@@ -577,7 +617,7 @@ describe("C10 branches 默认分支", () => {
         config: { repo_url: "https://github.com/camthink-ai/demo.git" },
       },
     ]);
-    fireEvent.click(screen.getByText("编辑"));
+    await openEditViaMenu();
     const el = document.querySelector('input[name="branches"]') as HTMLInputElement;
     expect(el?.value).toBe("");
   });
@@ -693,7 +733,7 @@ describe("#16 Simple Mode 发现与推荐策略", () => {
         config: { repo_url: "https://github.com/camthink-ai/demo.git" },
       },
     ]);
-    fireEvent.click(screen.getByText("编辑"));
+    await openEditViaMenu();
     fireEvent.click(screen.getByText("扫描并推荐策略"));
     fireEvent.click(await screen.findByText("采用推荐策略"));
     // 编译产物 = 既有 config 词表(高级输入同步回填,即表单唯一事实源)
@@ -725,7 +765,7 @@ describe("#16 Simple Mode 发现与推荐策略", () => {
         config: { repo_url: "https://github.com/camthink-ai/demo.git" },
       },
     ]);
-    fireEvent.click(screen.getByText("编辑"));
+    await openEditViaMenu();
     fireEvent.click(screen.getByText("扫描并推荐策略"));
     fireEvent.click(await screen.findByText("采用推荐策略"));
     // 移除 .md → 白名单只剩 .py(高级输入为表单事实源;面板推荐原文不受影响)
@@ -792,7 +832,7 @@ describe("C8B web_crawl 表单一等公民", () => {
     expect(mocks.createMutateAsync).not.toHaveBeenCalled();
   });
 
-  it("编辑 web_crawl 源:类型显示 web_crawl 不被归一 github,四字段按本类型预填", () => {
+  it("编辑 web_crawl 源:类型显示 web_crawl 不被归一 github,四字段按本类型预填", async () => {
     renderWithSources([
       c8bWebCrawlDs({
         base_url: "https://www.camthink.ai",
@@ -801,7 +841,7 @@ describe("C8B web_crawl 表单一等公民", () => {
         crawl_delay_ms: 800,
       }),
     ]);
-    fireEvent.click(screen.getByText("编辑"));
+    await openEditViaMenu();
     // 陷阱关闭的直接证据:类型选项显示「网站爬取」且选中值为 web_crawl,不再归一 github
     expect(screen.getByDisplayValue("网站爬取")).toHaveValue("web_crawl");
     expect(
@@ -823,7 +863,7 @@ describe("C8B web_crawl 表单一等公民", () => {
     };
     mocks.updateMutateAsync.mockResolvedValue({});
     renderWithSources([c8bWebCrawlDs(config)]);
-    fireEvent.click(screen.getByText("编辑"));
+    await openEditViaMenu();
     fireEvent.click(screen.getByText("保存"));
     await waitFor(() => expect(mocks.updateMutateAsync).toHaveBeenCalled());
     expect(mocks.updateMutateAsync).toHaveBeenCalledWith(
@@ -834,7 +874,7 @@ describe("C8B web_crawl 表单一等公民", () => {
   it("最简 config(仅 base_url)round-trip:保存后不引入空键,config 仍仅 base_url", async () => {
     mocks.updateMutateAsync.mockResolvedValue({});
     renderWithSources([c8bWebCrawlDs({ base_url: "https://www.camthink.ai" })]);
-    fireEvent.click(screen.getByText("编辑"));
+    await openEditViaMenu();
     fireEvent.click(screen.getByText("保存"));
     await waitFor(() => expect(mocks.updateMutateAsync).toHaveBeenCalled());
     expect(mocks.updateMutateAsync).toHaveBeenCalledWith(
@@ -845,10 +885,12 @@ describe("C8B web_crawl 表单一等公民", () => {
     );
   });
 
-  it("列表徽标:web_crawl 显示中文「网站爬取」,产品线副标题为 base_url", () => {
+  it("列表徽标:web_crawl 显示运营词「网站」,行名 title 为 base_url", () => {
     renderWithSources([c8bWebCrawlDs({ base_url: "https://www.camthink.ai" })]);
-    expect(screen.getAllByText("网站爬取").length).toBeGreaterThan(0);
-    expect(screen.getByText("https://www.camthink.ai")).toBeInTheDocument();
+    // A-P1-05(audit):运营呈现词表 web_crawl → 网站(仅呈现映射,真值不变)
+    expect(screen.getAllByText("网站").length).toBeGreaterThan(0);
+    // A-P1-03:来源地址收进行名 title,不作副行
+    expect(screen.getByTitle("https://www.camthink.ai")).toBeInTheDocument();
   });
 });
 
@@ -887,7 +929,7 @@ describe("C8B 三旧类型回归", () => {
         updated_at: "2026-07-01T00:00:00Z",
       },
     ]);
-    fireEvent.click(screen.getByText("编辑"));
+    await openEditViaMenu();
     fireEvent.click(screen.getByText("保存"));
     await waitFor(() => expect(mocks.updateMutateAsync).toHaveBeenCalled());
     expect(mocks.updateMutateAsync).toHaveBeenCalledWith(
@@ -898,7 +940,7 @@ describe("C8B 三旧类型回归", () => {
     );
   });
 
-  it("local_git 历史归一用例仍在(#1):编辑归一 github 且 repo_path 转换", () => {
+  it("local_git 历史归一用例仍在(#1):编辑归一 github 且 repo_path 转换", async () => {
     const localGitDs = {
       id: "ne301-docs-local",
       type: "local_git",
@@ -910,7 +952,7 @@ describe("C8B 三旧类型回归", () => {
       updated_at: "2026-07-01T00:00:00Z",
     };
     renderWithSources([localGitDs]);
-    fireEvent.click(screen.getByText("编辑"));
+    await openEditViaMenu();
     expect(screen.getByDisplayValue("代码仓库")).toHaveValue("github");
     expect(
       screen.getByDisplayValue("https://github.com/camthink-ai/ne301.git"),

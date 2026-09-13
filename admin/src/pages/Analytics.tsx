@@ -113,7 +113,13 @@ export default function Analytics() {
       <div>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="flex items-baseline gap-3 flex-wrap">
-            <h1 className="text-[26px] font-bold text-[var(--t1)]">技术洞察</h1>
+            {/* A-B2-01(audit):参考「技术洞察」标题为深蓝(RGB 4,3,108 深靛),与主操作蓝区分 */}
+            <h1
+              className="text-[26px] font-bold"
+              style={{ color: "rgb(4, 3, 108)" }}
+            >
+              技术洞察
+            </h1>
             <span className="text-[13px] text-[var(--t2)]">
               从真实用户对话中发现回答问题，定位原因，并形成知识补充和优化闭环。
             </span>
@@ -770,10 +776,33 @@ function StatusBadge({ status }: { status: string }) {
         color: resolved ? "var(--ok)" : "var(--err)",
       }}
     >
-      <span
-        className="inline-block h-1.5 w-1.5 rounded-full"
-        style={{ background: resolved ? "var(--ok)" : "var(--err)" }}
-      />
+      {/* A-B2-02(audit):圈形图标语法 = 需要处理 ⓘ(红)/ 已解决 ✓(绿);观察中不存在,不造 */}
+      {resolved ? (
+        <svg
+          aria-hidden
+          viewBox="0 0 16 16"
+          className="h-3.5 w-3.5 shrink-0"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+        >
+          <circle cx="8" cy="8" r="6.2" />
+          <path d="M5.2 8.2l2 2 3.6-4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ) : (
+        <svg
+          aria-hidden
+          viewBox="0 0 16 16"
+          className="h-3.5 w-3.5 shrink-0"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+        >
+          <circle cx="8" cy="8" r="6.2" />
+          <line x1="8" y1="7.2" x2="8" y2="11.2" strokeLinecap="round" />
+          <circle cx="8" cy="4.8" r="0.9" fill="currentColor" stroke="none" />
+        </svg>
+      )}
       {gapStatusLabel(status)}
     </span>
   );
@@ -1024,27 +1053,56 @@ function AnswerGapsTab() {
                 已选择 {selected.size} 项
               </span>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  className="rounded border px-2 py-1 disabled:opacity-40"
-                  style={{ borderColor: "var(--bd)" }}
-                >
-                  &lt;
-                </button>
-                <span className="tabular-nums">
-                  {page} / {Math.max(1, Math.ceil((data?.total ?? 0) / size))}
-                </span>
-                <button
-                  type="button"
-                  disabled={page >= Math.ceil((data?.total ?? 0) / size)}
-                  onClick={() => setPage((p) => p + 1)}
-                  className="rounded border px-2 py-1 disabled:opacity-40"
-                  style={{ borderColor: "var(--bd)" }}
-                >
-                  &gt;
-                </button>
+                {/* A-B2-03(audit):参考 = 页码按钮「‹ 1 2 ›」+当前页高亮;单页保持诚实简洁(不造第 2 页) */}
+                {(() => {
+                  const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / size));
+                  if (totalPages <= 1) return null;
+                  return (
+                    <>
+                      <button
+                        type="button"
+                        data-gap-page-prev
+                        disabled={page <= 1}
+                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                        className="rounded border px-2 py-1 disabled:opacity-40"
+                        style={{ borderColor: "var(--bd)" }}
+                        aria-label="上一页"
+                      >
+                        &lt;
+                      </button>
+                      {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          data-gap-page-number
+                          data-page={p}
+                          aria-current={p === page ? "page" : undefined}
+                          onClick={() => setPage(p)}
+                          className="min-w-[26px] rounded border px-2 py-1 tabular-nums"
+                          style={{
+                            borderColor: p === page ? "var(--acc)" : "var(--bd)",
+                            background: p === page ? "color-mix(in srgb, var(--acc) 12%, transparent)" : "transparent",
+                            color: p === page ? "var(--acc)" : "var(--t2)",
+                            fontWeight: p === page ? 600 : 400,
+                          }}
+                        >
+                          {p}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        data-gap-page-next
+                        disabled={page >= totalPages}
+                        onClick={() => setPage((p) => p + 1)}
+                        className="rounded border px-2 py-1 disabled:opacity-40"
+                        style={{ borderColor: "var(--bd)" }}
+                        aria-label="下一页"
+                      >
+                        &gt;
+                      </button>
+                    </>
+                  );
+                })()}
                 <select
                   data-gap-page-size
                   value={size}
@@ -1093,7 +1151,7 @@ function GapPanel({ gap, onClose }: { gap: AnswerGapItem; onClose: () => void })
   return (
     <div
       data-gap-panel
-      className="w-[400px] shrink-0 rounded-lg border"
+      className="w-[460px] shrink-0 rounded-lg border"
       style={{ background: "var(--panel)", borderColor: "var(--bd)" }}
     >
       <div className="border-b p-4" style={{ borderColor: "var(--bd)" }}>
@@ -1197,7 +1255,7 @@ function GapPanel({ gap, onClose }: { gap: AnswerGapItem; onClose: () => void })
                   typicalPreview.map((q, i) => (
                     <li
                       key={i}
-                      className="list-disc pl-4 text-[13px] text-[var(--t2)]"
+                      className="list-disc pl-4 text-[13px] text-[var(--t1)] marker:text-[var(--t1)]"
                     >
                       {q}
                     </li>
@@ -1235,7 +1293,7 @@ function GapPanel({ gap, onClose }: { gap: AnswerGapItem; onClose: () => void })
             <ul className="space-y-1">
               {typical.length > 0 ? (
                 typical.map((q, i) => (
-                  <li key={i} className="list-disc pl-4 text-[13px] text-[var(--t2)]">
+                  <li key={i} className="list-disc pl-4 text-[13px] text-[var(--t1)] marker:text-[var(--t1)]">
                     {q}
                   </li>
                 ))

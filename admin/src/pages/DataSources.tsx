@@ -40,7 +40,7 @@ import {
 } from "@/lib/dataSourceOps";
 import {
   sourceLocation,
-  TYPE_LABELS,
+  sourceTypeLabel,
   formatSyncTime,
 } from "@/lib/sourceEditorModel";
 
@@ -80,27 +80,8 @@ const TONE_PRIORITY: Record<OperatorTone, number> = {
   ok: 5,
 };
 
-/** 产品线列的来源地址副标题:URL 渲染为可点击链接(新标签),本地路径/缺失渲染为纯文本。 */
-function SourceLocationLine({ ds }: { ds: DataSource }) {
-  const { text, href } = sourceLocation(ds);
-  if (!text) return <div className="max-w-[280px] truncate text-xs text-muted-foreground">—</div>;
-  if (href)
-    return (
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="block max-w-[280px] truncate text-xs text-muted-foreground underline-offset-2 hover:underline"
-      >
-        {text}
-      </a>
-    );
-  return (
-    <div className="max-w-[280px] truncate text-xs text-muted-foreground" title={text}>
-      {text}
-    </div>
-  );
-}
+// A-P1-03:参考为单行密表(名称列无 URL/路径副行);来源地址不再作副行渲染,
+// 收进行名 title/详情页(工作区列除外),行高收敛 ~36px。
 
 function SourceObservabilityDetails({
   source,
@@ -304,7 +285,7 @@ export default function DataSources() {
       <div>
         <nav aria-label="面包屑" className="text-xs text-muted-foreground">
           <span>配置</span>
-          <span className="mx-1">/</span>
+          <span className="mx-1" aria-hidden>›</span>
           <span className="text-foreground">数据源</span>
         </nav>
         <div className="mt-1 flex items-center justify-between">
@@ -316,27 +297,44 @@ export default function DataSources() {
           </div>
           {canWrite && (
             <div className="flex gap-2">
-              <Button variant="outline" onClick={handleSyncAll} disabled={triggerSyncAll.isPending || hasActiveSyncs}>
-                {triggerSyncAll.isPending ? "触发中..." : "同步全部"}
-              </Button>
+              {/* A-P1-08:参考页头仅一枚主按钮;「同步全部」收进页头 ⋯ 菜单(既有授权动作保留) */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" aria-label="更多页操作" className="px-2">
+                    ⋯
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    disabled={triggerSyncAll.isPending || hasActiveSyncs}
+                    onClick={() => void handleSyncAll()}
+                  >
+                    {triggerSyncAll.isPending
+                      ? "触发中..."
+                      : hasActiveSyncs
+                        ? "同步进行中..."
+                        : "同步全部"}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button onClick={openCreate}>+ 添加数据源</Button>
             </div>
           )}
         </div>
       </div>
 
-      {/* 搜索 + 状态/类型过滤(呈现层) */}
+      {/* 搜索 + 状态/类型过滤(呈现层;A-P1-06:参考为紧凑控件) */}
       <div className="flex flex-wrap items-center gap-2">
         <Input
           aria-label="搜索数据源"
           placeholder="搜索数据源..."
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
-          className="max-w-xs"
+          className="h-8 max-w-xs text-sm"
         />
         <select
           aria-label="按状态过滤"
-          className="h-10 rounded-md border px-3 text-sm"
+          className="h-8 rounded-md border px-2 text-sm"
           value={stateFilter}
           onChange={(e) => setStateFilter(e.target.value)}
         >
@@ -346,18 +344,19 @@ export default function DataSources() {
         </select>
         <select
           aria-label="按类型过滤"
-          className="h-10 rounded-md border px-3 text-sm"
+          className="h-8 rounded-md border px-2 text-sm"
           value={typeFilter}
           onChange={(e) => setTypeFilter(e.target.value)}
         >
           <option value="">全部类型</option>
           {typesInList.map((t) => (
-            <option key={t} value={t}>{TYPE_LABELS[t] ?? t}</option>
+            <option key={t} value={t}>{sourceTypeLabel(t)}</option>
           ))}
         </select>
       </div>
 
-      <Table>
+      {/* A-P1-03:参考 ~36-40px 单行密表(单元格纵向 padding 收敛;⋯ 按钮降为 h-7 不撑行) */}
+      <Table className="[&_td]:!py-1.5 [&_th]:!h-9 [&_th]:!py-1.5">
         <TableHeader>
           <TableRow>
             <TableHead>名称</TableHead>
@@ -409,16 +408,17 @@ export default function DataSources() {
                 <Fragment key={ds.id}>
                   <TableRow>
                     <TableCell>
+                      {/* A-P1-03:单行名称主行;来源地址收进 title(详情工作区列除外) */}
                       <button
                         type="button"
-                        className="text-left leading-tight font-medium hover:underline"
+                        className="block max-w-[280px] truncate text-left leading-tight font-medium hover:underline"
+                        title={sourceLocation(ds).text || ds.product}
                         onClick={() => navigate(`/data-sources/${ds.id}`)}
                       >
                         {ds.product}
                       </button>
-                      <SourceLocationLine ds={ds} />
                     </TableCell>
-                    <TableCell>{TYPE_LABELS[ds.type] ?? ds.type}</TableCell>
+                    <TableCell className="text-sm">{sourceTypeLabel(ds.type)}</TableCell>
                     <TableCell>
                       <div className="flex flex-col items-start gap-1">
                         <Badge
@@ -480,55 +480,48 @@ export default function DataSources() {
                         <span className="text-xs text-muted-foreground">从未同步</span>
                       )}
                     </TableCell>
-                    <TableCell className="space-x-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => navigate(`/data-sources/${ds.id}`)}
-                      >
-                        详情
-                      </Button>
-                      {canWrite && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={
-                            isActive ||
-                            isTriggerPending ||
-                            !ds.enabled ||
-                            !isSyncEligible(ds)
-                          }
-                          title={isSyncEligible(ds) ? undefined : "该源处于删除流程,不能同步"}
-                          onClick={() => handleSync(ds)}
-                        >
-                          {isActive ? "同步中..." : isTriggerPending ? "触发中..." : "同步"}
-                        </Button>
-                      )}
-                      {canWrite && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={isDeletionInFlight(ds)}
-                          onClick={() => openEdit(ds)}
-                        >
-                          编辑
-                        </Button>
-                      )}
-                      {/* 紧凑操作(⋯):既有操作保留,视觉收敛为次要密度(hard ref §4.1) */}
+                    <TableCell>
+                      {/* A-P1-04:参考为单「⋯」;全部既有操作(详情/同步/编辑/可观测性/删除)收进菜单,零授权能力删除 */}
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button size="sm" variant="outline" aria-label="更多操作">
+                          <Button size="sm" variant="outline" aria-label="更多操作" className="h-7 px-2.5">
                             ⋯
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => navigate(`/data-sources/${ds.id}`)}>
+                            详情
+                          </DropdownMenuItem>
+                          {canWrite && (
+                            <DropdownMenuItem
+                              disabled={
+                                isActive ||
+                                isTriggerPending ||
+                                !ds.enabled ||
+                                !isSyncEligible(ds) ||
+                                triggerSync.isPending
+                              }
+                              title={isSyncEligible(ds) ? undefined : "该源处于删除流程,不能同步"}
+                              onSelect={() => handleSync(ds)}
+                            >
+                              {isActive ? "同步中..." : isTriggerPending ? "触发中..." : "同步"}
+                            </DropdownMenuItem>
+                          )}
+                          {canWrite && (
+                            <DropdownMenuItem
+                              disabled={isDeletionInFlight(ds)}
+                              onSelect={() => openEdit(ds)}
+                            >
+                              编辑
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem onClick={() => toggleObservability(ds.id)}>
                             {isExpanded ? "收起可观测性" : "查看可观测性"}
                           </DropdownMenuItem>
                           {canWrite && ds.lifecycle_state === "delete_failed" && (
                             <DropdownMenuItem
                               disabled={retryDeleteDs.isPending}
-                              onClick={() => handleRetryDelete(ds.id)}
+                              onSelect={() => handleRetryDelete(ds.id)}
                             >
                               重试删除
                             </DropdownMenuItem>
@@ -539,7 +532,7 @@ export default function DataSources() {
                               <DropdownMenuItem
                                 className="text-destructive focus:text-destructive"
                                 disabled={deleteDs.isPending || isDeletionInFlight(ds)}
-                                onClick={() => handleDelete(ds.id)}
+                                onSelect={() => handleDelete(ds.id)}
                               >
                                 {isDeletionInFlight(ds) ? "删除中…" : "删除"}
                               </DropdownMenuItem>
