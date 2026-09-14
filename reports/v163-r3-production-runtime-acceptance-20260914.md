@@ -255,8 +255,8 @@ The authenticated Admin smoke exposed the following pre-existing finding:
 
 - production environment variable names include database/JWT settings but no
   `ADMIN_PASSWORD`;
-- the deployed application therefore retains its built-in administrator
-  credential fallback path;
+- `backend/main.py:253` retains the built-in administrator credential fallback
+  path used when that setting is absent;
 - the fallback path was sufficient for the authorized Admin login used by
   this runtime check;
 - the repository already records this as an operational security risk;
