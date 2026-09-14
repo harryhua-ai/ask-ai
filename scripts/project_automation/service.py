@@ -12,13 +12,25 @@ import subprocess
 from dataclasses import dataclass
 
 from . import queries as q
-from .errors import (AuthenticationError, ConfigError, ProjectMutationFailure, VerificationFailure)
+from .errors import AuthenticationError, ConfigError, ProjectMutationFailure, VerificationFailure
 from .iteration_txn import IterationTuple, create_iteration_transaction
-from .labels import parse_control_labels
-from .mapping import PRIORITY_MAP, STATUS_MAP, RESERVED_STATUS_NOTE, resolve_desired
-from .model import (FieldConfig, ItemState, IssueAuthority, IterationDef, OptionDef,
-                    iteration_slug, sprint_title_slug)  # noqa: F401 (re-exported for ensure_labels)
-from .planner import Finding, SyncPlan, plan_sync
+from .mapping import (
+    RESERVED_STATUS_NOTE,
+    STATUS_MAP,
+    resolve_desired,
+    resolve_iteration,
+    resolve_live_control_labels,
+)
+from .model import (
+    FieldConfig,
+    IssueAuthority,
+    ItemState,
+    IterationDef,
+    OptionDef,
+    iteration_slug,
+    sprint_title_slug,
+)
+from .planner import Finding, Mutation, SyncPlan, plan_sync
 from .reconcile import detect_drift
 from .transport import GhCliTransport
 
@@ -54,7 +66,8 @@ def gh_cli_json(args: list[str], token: str, timeout: float = 60.0):
     success output (e.g. `gh issue edit`) are tolerated: the exit code decides success."""
     env = dict(os.environ)
     env["GH_TOKEN"] = token
-    proc = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=timeout, env=env)
+    proc = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=timeout, env=env,
+                           check=False)
     if proc.returncode != 0:
         stderr = (proc.stderr or "").strip()
         if "Bad credentials" in stderr or "401" in stderr:
@@ -78,6 +91,11 @@ def fetch_context(t: GhCliTransport, s: Settings) -> Context:
     if not (status_f and prio_f and iter_f):
         raise ConfigError("Project is missing required fields Status/Priority/Iteration")
     cfg = (iter_f or {}).get("configuration") or {}
+    if not isinstance(status_f.get("options"), list) or not isinstance(prio_f.get("options"), list):
+        raise ConfigError("Project Status/Priority schema is not a single-select field with options")
+    if not isinstance(cfg.get("iterations", []), list) or not isinstance(
+            cfg.get("completedIterations", []), list):
+        raise ConfigError("Project Iteration schema has no readable iteration configuration")
     # Completed iterations are first-class: this project assigns to historical
     # timeboxes, and once an iteration's end date passes, GitHub moves it out of
     # `iterations` into `completedIterations`. Resolution/restore must see both.
@@ -137,6 +155,8 @@ def fetch_items(t: GhCliTransport, s: Settings) -> list[ItemState]:
             priority=(n.get("priority") or {}).get("name"),
             status=(n.get("status") or {}).get("name"),
             sprint_slug=sprint_title_slug(sp["title"]) if sp else None,
+            iteration_id=it.get("iterationId") if it else None,
+            iteration_title=it.get("title") if it else None,
         ))
     return items
 
@@ -181,21 +201,72 @@ def apply_plan(t: GhCliTransport, ctx: Context, item_id: str, plan: SyncPlan) ->
     return applied
 
 
+def _append_control_findings(plan: SyncPlan, control, desired, config: FieldConfig) -> None:
+    """Turn malformed recognized labels into visible, field-scoped failures.
+
+    The parser keeps legacy ``unknown`` visibility, while live options decide
+    whether a future Priority/Status value is actually valid.
+    """
+    existing = {(f.code, f.field) for f in plan.findings}
+    for label in control.unknown:
+        lowered = label.lower()
+        if lowered.startswith("priority:"):
+            if desired.priority_option and config.priority_option(desired.priority_option):
+                continue
+            code, field = "UNKNOWN_OPTION", "priority"
+            message = f"Project has no Priority option for control label '{label}'"
+        elif lowered.startswith("status:"):
+            if desired.status_option and config.status_option(desired.status_option):
+                continue
+            code, field = "UNKNOWN_OPTION", "status"
+            message = f"Project has no Status option for control label '{label}'"
+        elif lowered.startswith("iteration:"):
+            code, field = "UNKNOWN_ITERATION", "iteration"
+            message = f"malformed or unresolved Iteration control label '{label}'"
+        elif lowered.startswith("sprint:"):
+            code, field = "UNKNOWN_SPRINT", "sprint"
+            message = f"malformed or unresolved Sprint control label '{label}'"
+        elif lowered.startswith("schedule:"):
+            code, field = "UNKNOWN_SCHEDULE", "iteration"
+            message = f"unsupported schedule control label '{label}'"
+        else:
+            code, field = "UNKNOWN_CONTROL_LABEL", None
+            message = f"unrecognized control label '{label}'"
+        if (code, field) not in existing:
+            plan.findings.append(Finding(code, message, field=field))
+            existing.add((code, field))
+
+
 def sync_issue(t: GhCliTransport, s: Settings, number: int, dry_run: bool) -> dict:
     ctx = fetch_context(t, s)
     authority, content_id, memberships = fetch_issue(t, s, number)
-    member_item_id = next((m["id"] for m in memberships if m["project"]["id"] == ctx.project_id), None)
+    project_memberships = [m for m in memberships if m.get("project", {}).get("id") == ctx.project_id]
+    if len(project_memberships) > 1:
+        raise VerificationFailure(f"issue #{number} has multiple Project items for project {ctx.project_id}")
+    member_item_id = project_memberships[0]["id"] if project_memberships else None
 
-    control = parse_control_labels(authority.labels)
+    control = resolve_live_control_labels(authority.labels, ctx.config)
     if not control.has_any:
-        return {"issue": number, "result": "SKIPPED_NO_CONTROL_METADATA", "mutations": [], "findings": []}
+        return {"issue": number, "result": "NO_CONTROL_INTENT", "mutations": [], "findings": []}
 
     items = fetch_items(t, s)
-    item = next((i for i in items if i.issue_number == number), None)
+    matching_items = [i for i in items if i.issue_number == number]
+    if len(matching_items) > 1:
+        raise VerificationFailure(f"issue #{number} has multiple resolved Project items")
+    item = matching_items[0] if matching_items else None
     if member_item_id and item is None:
         raise VerificationFailure(f"issue #{number} is a Project member but its item could not be resolved")
 
     desired = resolve_desired(authority, control)
+    # The current live Project uses the built-in ``open`` Status option while
+    # older automation fixtures call the same default ``Backlog``.  Preserve
+    # the legacy mapping, but let the live schema supply its equivalent when
+    # no explicit status label is present.
+    if (authority.state == "OPEN" and not control.has_status_label
+            and ctx.config.status_option(desired.status_option or "") is None):
+        live_open = ctx.config.status_option("open")
+        if live_open is not None:
+            desired.status_option = live_open.name
     plan = plan_sync(item=item, desired_status=desired.status_option,
                      desired_priority=desired.priority_option, desired_priority_clear=desired.priority_clear,
                      desired_iteration_key=desired.iteration_key, desired_iteration_clear=desired.iteration_clear,
@@ -209,6 +280,7 @@ def sync_issue(t: GhCliTransport, s: Settings, number: int, dry_run: bool) -> di
     if control.status_reserved:
         plan.findings.append(Finding(
             "UNSUPPORTED_STATUS_RESERVED", RESERVED_STATUS_NOTE, field="status"))
+    _append_control_findings(plan, control, desired, ctx.config)
 
     report = {
         "issue": number,
@@ -223,6 +295,10 @@ def sync_issue(t: GhCliTransport, s: Settings, number: int, dry_run: bool) -> di
     }
     if dry_run:
         report["result"] = "DRY_RUN"
+        return report
+
+    if plan.findings:
+        report["result"] = "FAILED_VALIDATION"
         return report
 
     if item is None:
@@ -241,7 +317,10 @@ def sync_issue(t: GhCliTransport, s: Settings, number: int, dry_run: bool) -> di
     # VERIFY: re-read and compare against the requested semantic state,
     # excluding fields whose resolution already produced a visible finding
     blocked = {f.field for f in plan.findings if f.field}
-    after = next((i for i in fetch_items(t, s) if i.issue_number == number), None)
+    after_items = [i for i in fetch_items(t, s) if i.issue_number == number]
+    if len(after_items) > 1:
+        raise VerificationFailure(f"issue #{number} has multiple Project items after synchronization")
+    after = after_items[0] if after_items else None
     if after is None:
         raise VerificationFailure(f"issue #{number} still absent from Project after sync")
     problems = []
@@ -254,8 +333,11 @@ def sync_issue(t: GhCliTransport, s: Settings, number: int, dry_run: bool) -> di
     if desired.iteration_clear and "iteration" not in blocked and after.iteration_slug is not None:
         problems.append(f"iteration: expected cleared, got {after.iteration_slug!r}")
     if desired.iteration_key is not None and "iteration" not in blocked:
-        expected_slug = iteration_slug(desired.iteration_key)
-        if after.iteration_slug != expected_slug:
+        expected = resolve_iteration(ctx.config.iterations, desired.iteration_key)
+        expected_slug = expected.slug if expected else iteration_slug(desired.iteration_key)
+        if expected and after.iteration_id and after.iteration_id != expected.id:
+            problems.append(f"iteration: expected id {expected.id!r}, got {after.iteration_id!r}")
+        elif after.iteration_slug != expected_slug:
             problems.append(f"iteration: expected {expected_slug!r}, got {after.iteration_slug!r}")
     if desired.sprint_touch and "sprint" not in blocked:
         expected_sprint = iteration_slug(desired.sprint_key)
@@ -264,9 +346,14 @@ def sync_issue(t: GhCliTransport, s: Settings, number: int, dry_run: bool) -> di
     if problems:
         raise VerificationFailure(f"issue #{number} did not converge: " + "; ".join(problems))
 
-    report["after"] = {"status": after.status, "priority": after.priority, "iteration": after.iteration_slug}
+    report["after"] = {"status": after.status, "priority": after.priority,
+                         "iteration": after.iteration_slug,
+                         "iteration_title": after.iteration_title,
+                         "iteration_id": after.iteration_id}
+    report["read_back"] = {"verified": True, "requested": report["requested"],
+                            "actual": report["after"]}
     report["applied"] = applied
-    report["result"] = "CONVERGED" if applied else "NO_CHANGE"
+    report["result"] = "APPLIED" if applied else "ALREADY_CONVERGED"
     return report
 
 
@@ -280,7 +367,7 @@ def list_repo_issues(s: Settings) -> list[IssueAuthority]:
 def detect_project_drift(t: GhCliTransport, s: Settings):
     ctx = fetch_context(t, s)
     items = fetch_items(t, s)
-    authority = [(a, parse_control_labels(a.labels)) for a in list_repo_issues(s)]
+    authority = [(a, resolve_live_control_labels(a.labels, ctx.config)) for a in list_repo_issues(s)]
     item_states = {i.issue_number: i for i in items if not i.is_draft}
     draft_count = sum(1 for i in items if i.is_draft)
     drifts, skipped = detect_drift(authority, item_states, ctx.config, draft_items=draft_count)
@@ -301,6 +388,7 @@ def reconcile(t: GhCliTransport, s: Settings, dry_run: bool) -> dict:
 
     item_by_number = {i.issue_number: i for i in items if not i.is_draft}
     applied: list[str] = []
+    plans_by_issue: dict[int, list[Mutation]] = {}
     for d in drifts:
         if not (d.fixable and d.fix):
             continue
@@ -310,6 +398,8 @@ def reconcile(t: GhCliTransport, s: Settings, dry_run: bool) -> dict:
             _, content_id, memberships = fetch_issue(t, s, number)
             if not any(m["project"]["id"] == ctx.project_id for m in memberships):
                 t.graphql(q.build_query(q.ADD_ITEM, projectId=ctx.project_id, contentId=content_id))
+            plans_by_issue.setdefault(number, []).append(
+                next(m for m in d.fix.mutations if m.kind == "add_membership"))
         field_plan = SyncPlan(mutations=[m for m in d.fix.mutations if m.kind != "add_membership"])
         if field_plan.mutations:
             target = (item_by_number.get(number) or next(
@@ -317,8 +407,41 @@ def reconcile(t: GhCliTransport, s: Settings, dry_run: bool) -> dict:
             if target is None:
                 raise VerificationFailure(f"reconcile: item for issue #{number} unresolved after add")
             applied += apply_plan(t, ctx, target.item_id, field_plan)
+            plans_by_issue.setdefault(number, []).extend(field_plan.mutations)
+
+    if plans_by_issue:
+        refreshed = {i.issue_number: i for i in fetch_items(t, s) if not i.is_draft}
+        for number, mutations in plans_by_issue.items():
+            item = refreshed.get(number)
+            if item is None:
+                raise VerificationFailure(f"reconcile: issue #{number} missing after mutation")
+            problems = []
+            for mutation in mutations:
+                if mutation.kind == "add_membership":
+                    continue
+                if mutation.kind == "set_status" and item.status != mutation.payload["option_name"]:
+                    problems.append(f"status expected {mutation.payload['option_name']!r}, got {item.status!r}")
+                elif mutation.kind == "set_priority" and item.priority != mutation.payload["option_name"]:
+                    problems.append(f"priority expected {mutation.payload['option_name']!r}, got {item.priority!r}")
+                elif mutation.kind == "clear_priority" and item.priority is not None:
+                    problems.append(f"priority expected cleared, got {item.priority!r}")
+                elif mutation.kind == "set_iteration":
+                    expected = iteration_slug(mutation.payload["iteration_title"])
+                    if item.iteration_id and item.iteration_id != mutation.payload["iteration_id"]:
+                        problems.append(f"iteration expected id {mutation.payload['iteration_id']!r}, got {item.iteration_id!r}")
+                    elif item.iteration_slug != expected:
+                        problems.append(f"iteration expected {expected!r}, got {item.iteration_slug!r}")
+                elif mutation.kind == "clear_iteration" and item.iteration_slug is not None:
+                    problems.append(f"iteration expected cleared, got {item.iteration_slug!r}")
+                elif mutation.kind == "set_sprint":
+                    expected = sprint_title_slug(mutation.payload["sprint_title"])
+                    if item.sprint_slug != expected:
+                        problems.append(f"sprint expected {expected!r}, got {item.sprint_slug!r}")
+            if problems:
+                raise VerificationFailure(f"reconcile issue #{number} did not converge: " + "; ".join(problems))
 
     report["applied"] = applied
+    report["read_back"] = {"verified": True, "issues": sorted(plans_by_issue)} if plans_by_issue else None
     report["result"] = "REPAIRED" if applied else "NO_DRIFT"
     report["needs_attention"] = [{"issue": d.issue_number, "code": d.code, "message": d.message}
                                  for d in drifts if not d.fixable]
@@ -334,11 +457,7 @@ def derive_labels_for_item(item: ItemState, state: str) -> tuple[list[str], list
     if item.sprint_slug:
         labels.append(f"sprint:{item.sprint_slug}")
     if item.priority:
-        inv = {v: k for k, v in PRIORITY_MAP.items()}
-        if item.priority in inv:
-            labels.append(f"priority:{inv[item.priority]}")
-        else:
-            review.append(f"unmapped priority option '{item.priority}'")
+        labels.append(f"priority:{item.priority.strip().lower().replace(' ', '-')}")
     if state != "CLOSED":  # closure owns Done; no status label required
         inv = {v: k for k, v in STATUS_MAP.items()}
         if item.status in inv:
@@ -350,7 +469,7 @@ def derive_labels_for_item(item: ItemState, state: str) -> tuple[list[str], list
 
 def bootstrap(t: GhCliTransport, s: Settings, dry_run: bool) -> dict:
     """One-time migration: accepted Project state → canonical control labels (contract §19)."""
-    ctx = fetch_context(t, s)
+    fetch_context(t, s)
     items = fetch_items(t, s)
     issues = list_repo_issues(s)
     existing_labels = {a.number: set(a.labels) for a in issues}
@@ -392,7 +511,9 @@ def bootstrap(t: GhCliTransport, s: Settings, dry_run: bool) -> dict:
 
 
 def canonical_labels(config: FieldConfig) -> list[str]:
-    return [f"priority:{v}" for v in sorted(PRIORITY_MAP)] + \
+    priority_labels = [f"priority:{o.name.strip().lower().replace(' ', '-')}"
+                       for o in config.priority_options]
+    return priority_labels + \
            [f"status:{v}" for v in sorted(STATUS_MAP)] + \
            [f"iteration:{i.slug}" for i in config.iterations] + \
            [f"sprint:{sprint_title_slug(sp.title)}" for sp in config.sprints]

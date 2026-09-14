@@ -41,6 +41,7 @@ jobs:
           ASKAI_PROJECT_NUMBER: "2"
           ASKAI_REPO: harryhua-ai/ask-ai
         run: |
+          set -euo pipefail
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
             python3 scripts/project_automation/cli.py reconcile --dry-run
           else
