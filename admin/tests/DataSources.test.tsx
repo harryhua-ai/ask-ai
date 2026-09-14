@@ -97,8 +97,7 @@ function renderWithSources(sources: unknown[]) {
   );
 }
 
-// A-P1-04(audit):操作列收敛为单「⋯」;详情/同步/编辑均收进行操作菜单。
-// 测试辅助:打开第 index 行的 ⋯ 菜单。
+// 测试辅助:打开第 index 行的低频操作菜单。
 function openRowMenu(index = 0) {
   const trigger = screen.getAllByRole("button", { name: "更多操作" })[index];
   fireEvent.pointerDown(trigger);
@@ -110,10 +109,9 @@ function closeRowMenu() {
   fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
 }
 
-// A-P1-04:经行 ⋯ 菜单打开编辑抽屉(既有能力保留,入口收敛)。
+// DS-01:编辑为行级直接操作(既有能力保留)。
 async function openEditViaMenu() {
-  openRowMenu(0);
-  fireEvent.click(await screen.findByRole("menuitem", { name: "编辑" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
 }
 
 describe("DataSources", () => {
@@ -149,7 +147,7 @@ describe("DataSources", () => {
   });
 
   // #50 B1:列表行「详情」进入冻结路由 /data-sources/:sourceId(对 #51 的接口)
-  // A-P1-04:详情入口收进 ⋯ 菜单(参考单「⋯」语法)
+  // DS-01:详情入口直接可见
   it("#50 详情入口导航到 /data-sources/:sourceId", async () => {
     renderWithSources([
       {
@@ -163,8 +161,7 @@ describe("DataSources", () => {
         updated_at: "2026-07-01T00:00:00Z",
       },
     ]);
-    openRowMenu(0);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "详情" }));
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
     expect(screen.getByTestId("detail-probe")).toBeInTheDocument();
   });
 
@@ -1045,6 +1042,13 @@ describe("DSH 数据源健康语义", () => {
             items_deleted: 1,
             items_unchanged: 9,
             error_detail: null,
+            delta_counts: {
+              unit: "document",
+              new_count: 2,
+              updated_count: 0,
+              retired_count: 1,
+              unchanged_count: 9,
+            },
           },
         }],
         total: 1,
@@ -1077,29 +1081,20 @@ describe("DSH 数据源健康语义", () => {
     );
 
     expect(useSyncRuns).toHaveBeenCalledWith("website-camthink", { enabled: false });
-    // v1.6.3 B1:紧凑操作列 — 可观测性收进 ⋯ 菜单
+    // #66:轻量同步记录收进 ⋯ 菜单
     const trigger = screen.getByRole("button", { name: "更多操作" });
     fireEvent.pointerDown(trigger);
     fireEvent.click(trigger);
-    const menuItem = await screen.findByRole("menuitem", { name: "查看可观测性" });
+    const menuItem = await screen.findByRole("menuitem", { name: "同步记录" });
     fireEvent.click(menuItem);
 
     expect(useSyncRuns).toHaveBeenCalledWith("website-camthink", { enabled: true });
-    expect(screen.getByText("最近同步")).toBeInTheDocument();
-    expect(screen.getByText("新增文档 2")).toBeInTheDocument();
-    expect(screen.getByText("删除文档 1")).toBeInTheDocument();
-    expect(screen.getByText("未变更文档 9")).toBeInTheDocument();
-    expect(screen.getByText("分块 42")).toBeInTheDocument();
-    expect(screen.getByText("已删除分块 2")).toBeInTheDocument();
-    expect(screen.getByText("CPU")).toBeInTheDocument();
-    expect(screen.getByText("降级原因：CUDA unavailable")).toBeInTheDocument();
-    expect(screen.getByText("数据源健康")).toBeInTheDocument();
-    // #21:30 天同步维显式标注历史
-    for (const label of ["连接", "同步(历史30天)", "覆盖", "新鲜度", "一致性"]) {
-      expect(screen.getByRole("heading", { name: label })).toBeInTheDocument();
-    }
-    expect(screen.getAllByText("缺失 2").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("孤儿 3").length).toBeGreaterThan(0);
+    expect(screen.getByText("同步记录")).toBeInTheDocument();
+    expect(screen.getByText(/新增知识 2/)).toBeInTheDocument();
+    expect(screen.getByText(/淘汰知识 1/)).toBeInTheDocument();
+    expect(screen.getByText(/未变更知识 9/)).toBeInTheDocument();
+    expect(screen.queryByText("数据源健康")).not.toBeInTheDocument();
+    expect(screen.queryByText("最近同步")).not.toBeInTheDocument();
   });
 
   it("#11 Health Authority:五维面板由 /sync-health 驱动,前端不重判状态", async () => {
@@ -1123,25 +1118,10 @@ describe("DSH 数据源健康语义", () => {
       [syncHealthItem],
     );
 
-    const trigger = screen.getByRole("button", { name: "更多操作" });
-    fireEvent.pointerDown(trigger);
-    fireEvent.click(trigger);
-    const menuItem = await screen.findByRole("menuitem", { name: "查看可观测性" });
-    fireEvent.click(menuItem);
-
-    // overall 由后端给:STALE → 过期(前端只本地化)
-    expect(screen.getByText("数据源健康")).toBeInTheDocument();
-    // v1.6.3 B1:列表操作者状态徽章(过期)也来自同一权威 overall → 3 处
-    expect(screen.getAllByText("过期").length).toBe(3); // 状态徽章 + overall + freshness
-    // 后端词表逐维本地化,UNKNOWN 不被改判
-    expect(screen.getByText("未知")).toBeInTheDocument();          // coverage unknown
-    expect(screen.getByText("证据不足")).toBeInTheDocument();      // sync insufficient_data
-    // evidence 原文直呈
-    expect(screen.getByText("no successful sync on record")).toBeInTheDocument();
-    expect(screen.getByText("no sync_runs evidence")).toBeInTheDocument();
-    // 前端不再派生:旧的本地推导文案不得出现
-    expect(screen.queryByText("阈值 2小时")).not.toBeInTheDocument();
-    expect(screen.queryByText("文档 75，分块 1200")).not.toBeInTheDocument();
+    // #66:健康诊断从列表移至详情;列表只呈现后端 overall 的操作者状态。
+    expect(screen.getByText("过期")).toBeInTheDocument();
+    expect(screen.queryByText("数据源健康")).not.toBeInTheDocument();
+    expect(screen.queryByText("暂不可评估")).not.toBeInTheDocument();
   });
 
   it("G001 健康:当前成功 + 历史 96%(窗口/分母可见)+ 内容数", () => {

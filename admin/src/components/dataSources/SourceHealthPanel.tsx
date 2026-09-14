@@ -33,14 +33,25 @@ function overallVariant(state: string): "secondary" | "success" | "warning" | "d
 }
 
 function DimensionCard({ label, dimension }: { label: string; dimension: SyncHealthDimension }) {
+  const unavailable =
+    label === "知识可用性" &&
+    ["unknown", "insufficient_data"].includes(dimension.state);
   return (
     <div className="rounded-lg border border-border p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
         <h4 className="font-medium">{label}</h4>
         <Badge variant={healthVariant(dimension.state)}>{healthStateLabel(dimension.state)}</Badge>
       </div>
-      {/* evidence 原样直呈;为空时仅占位提示,不改写状态徽章 */}
-      {dimension.evidence ? (
+      {label === "知识可用性" && (
+        <p className="mb-2 text-xs text-muted-foreground">以权威在服状态为准；没有分母时不计算覆盖率。</p>
+      )}
+      {label === "检索/索引一致性" && (
+        <p className="mb-2 text-xs text-muted-foreground">PG 预期 chunk 与向量/索引实际值。</p>
+      )}
+      {/* 覆盖分母缺失时只呈现诚实不可评估,不从文档数/向量数自行计算百分比。 */}
+      {unavailable ? (
+        <p className="text-sm font-medium text-muted-foreground">暂不可评估</p>
+      ) : dimension.evidence ? (
         <p className="text-sm text-muted-foreground">{dimension.evidence}</p>
       ) : (
         <p className="text-sm text-muted-foreground">证据不足</p>
@@ -62,13 +73,13 @@ export function SourceHealthPanel({ health }: SourceHealthPanelProps) {
       <CardContent className="p-4 pt-0">
         {health ? (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            <DimensionCard label="连接" dimension={health.connectivity} />
+            <DimensionCard label="连接状态" dimension={health.connectivity} />
             {/* #21:sync 维是 30 天历史窗口成功率(参考信号),显式标注历史,
                 避免其 critical 态被读成当前严重度;当前态维保持主位不动。 */}
-            <DimensionCard label="同步(历史30天)" dimension={health.sync} />
-            <DimensionCard label="覆盖" dimension={health.coverage} />
-            <DimensionCard label="新鲜度" dimension={health.freshness} />
-            <DimensionCard label="一致性" dimension={health.consistency} />
+            <DimensionCard label="同步可靠性（历史30天）" dimension={health.sync} />
+            <DimensionCard label="知识可用性" dimension={health.coverage} />
+            <DimensionCard label="数据新鲜度" dimension={health.freshness} />
+            <DimensionCard label="检索/索引一致性" dimension={health.consistency} />
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">暂无健康数据(等待后端 /sync-health 提供)</p>

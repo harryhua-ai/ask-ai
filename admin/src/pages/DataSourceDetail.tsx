@@ -360,7 +360,18 @@ export default function DataSourceDetail() {
             </div>
           </div>
           <div className="flex flex-col items-end gap-1 text-sm">
-            {/* A-P2-05(audit):页头动作收敛为单「⋯」(编辑/返回列表保留在菜单;返回列表同时由面包屑承担) */}
+            {/* DS-01:高频配置动作直接可见;返回列表为低频导航动作保留菜单。 */}
+            <div className="flex items-center gap-2">
+              {canWrite && (
+                <>
+                  <Button size="sm" variant="outline" onClick={() => setEditorOpen(true)}>
+                    编辑
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setSettingsOpen(true)}>
+                    知识设置
+                  </Button>
+                </>
+              )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button size="sm" variant="ghost" aria-label="更多页操作" className="px-2">
@@ -368,22 +379,12 @@ export default function DataSourceDetail() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                {canWrite && (
-                  <DropdownMenuItem onSelect={() => setEditorOpen(true)}>编辑</DropdownMenuItem>
-                )}
-                {canWrite && (
-                  <DropdownMenuItem
-                    data-testid="knowledge-settings-entry"
-                    onSelect={() => setSettingsOpen(true)}
-                  >
-                    知识设置
-                  </DropdownMenuItem>
-                )}
                 <DropdownMenuItem onSelect={() => navigate("/data-sources")}>
                   返回列表
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            </div>
             <div>
               <span className="text-muted-foreground">最后同步</span>{" "}
               {source.last_sync ? (
@@ -701,13 +702,14 @@ export default function DataSourceDetail() {
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1">
-                              {/* U-8(DS-P2-25):需处理行「处理」= 真实修复工作流入口 */}
-                              {canWrite && bucketKey === "attention" && (
+                              {/* U-8:修复动作与查看真相都是知识行一级操作,不藏进 overflow。 */}
+                              {canWrite && (
                                 <Button
                                   size="sm"
                                   variant="outline"
                                   className="h-7 px-2"
                                   data-testid={`doc-repair-${row.source_id}`}
+                                  title="执行权威修复并在完成后验证"
                                   disabled={
                                     repairMutation.isPending &&
                                     repairMutation.variables?.doc_source_id === row.source_id
@@ -717,41 +719,22 @@ export default function DataSourceDetail() {
                                   {repairMutation.isPending &&
                                   repairMutation.variables?.doc_source_id === row.source_id
                                     ? "处理中..."
-                                    : "处理"}
+                                    : "修复此知识"}
                                 </Button>
                               )}
-                              {/* U-8(DS-P2-26):行级动作收纳 ⋯(重新处理/查看真相) */}
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="h-7 px-2"
-                                    aria-label={`更多行操作 ${row.source_id}`}
-                                  >
-                                    ⋯
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  {canWrite && (
-                                    <DropdownMenuItem
-                                      data-testid={`doc-reprocess-${row.source_id}`}
-                                      onSelect={() => runRepair(row.source_id)}
-                                    >
-                                      重新处理
-                                    </DropdownMenuItem>
-                                  )}
-                                  <DropdownMenuItem
-                                    onSelect={() =>
-                                      setTruthDocId((cur) =>
-                                        cur === row.source_id ? null : row.source_id,
-                                      )
-                                    }
-                                  >
-                                    {expanded ? "收起真相" : "查看真相"}
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2"
+                                data-testid={`doc-truth-${row.source_id}`}
+                                onClick={() =>
+                                  setTruthDocId((cur) =>
+                                    cur === row.source_id ? null : row.source_id,
+                                  )
+                                }
+                              >
+                                {expanded ? "收起真相" : "查看真相"}
+                              </Button>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -828,9 +811,15 @@ export default function DataSourceDetail() {
                                         )}
                                       </p>
                                       <p>
-                                        <span className="text-muted-foreground">生成真相:</span>{" "}
+                                        <span className="text-muted-foreground">生成技术证据:</span>{" "}
                                         {truthQuery.data.generation ? (
-                                          `#${truthQuery.data.generation.ordinal}(${generationStatusLabel(truthQuery.data.generation.status)}) · 文档 ${truthQuery.data.generation.doc_count} · chunk ${truthQuery.data.generation.chunk_count}`
+                                          truthQuery.data.generation.ordinal === 0 ? (
+                                            <span title="legacy migration sentinel; counters are not serving counts">
+                                              迁移哨兵（技术记录，计数不代表在服数量）
+                                            </span>
+                                          ) : (
+                                            `技术记录 #${truthQuery.data.generation.ordinal}(${generationStatusLabel(truthQuery.data.generation.status)}) · 文档 ${truthQuery.data.generation.doc_count} · chunk ${truthQuery.data.generation.chunk_count}`
+                                          )
                                         ) : (
                                           <span className="text-amber-600">后端无此记录</span>
                                         )}
@@ -1006,7 +995,7 @@ export default function DataSourceDetail() {
           <SourceHealthPanel health={healthItem} />
           <Card>
             <CardHeader className="flex-row items-center justify-between space-y-0 p-4">
-              <CardTitle className="text-base">索引生成</CardTitle>
+              <CardTitle className="text-base">索引生成（技术证据）</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 p-4 pt-0">
               {generationsQuery.isError && !generations ? (
@@ -1019,13 +1008,17 @@ export default function DataSourceDetail() {
               ) : (generations?.items.length ?? 0) === 0 ? (
                 <p className="text-sm text-muted-foreground">该源尚无索引生成记录(后端无此记录)</p>
               ) : (
-                <Table>
+                <>
+                  <p className="mb-3 text-xs text-muted-foreground">
+                    生成代序、文档数与分块数仅用于技术核证；迁移哨兵不代表在服数量。
+                  </p>
+                  <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>序数</TableHead>
+                      <TableHead>代序（技术）</TableHead>
                       <TableHead>状态</TableHead>
-                      <TableHead>文档数</TableHead>
-                      <TableHead>分块数</TableHead>
+                      <TableHead>文档数（技术）</TableHead>
+                      <TableHead>分块数（技术）</TableHead>
                       <TableHead>创建 / 就绪 / 激活 / 退役</TableHead>
                       <TableHead>失败证据</TableHead>
                     </TableRow>
@@ -1033,7 +1026,9 @@ export default function DataSourceDetail() {
                   <TableBody>
                     {generations?.items.map((g) => (
                       <TableRow key={g.id}>
-                        <TableCell className="font-mono">#{g.ordinal}</TableCell>
+                        <TableCell className="font-mono">
+                          {g.ordinal === 0 ? "迁移哨兵" : `#${g.ordinal}`}
+                        </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
                             <Badge
@@ -1056,8 +1051,8 @@ export default function DataSourceDetail() {
                             )}
                           </div>
                         </TableCell>
-                        <TableCell>{g.doc_count}</TableCell>
-                        <TableCell>{g.chunk_count}</TableCell>
+                        <TableCell>{g.ordinal === 0 ? "—" : g.doc_count}</TableCell>
+                        <TableCell>{g.ordinal === 0 ? "—" : g.chunk_count}</TableCell>
                         <TableCell>
                           <div className="space-y-0.5 text-xs">
                             <div>创建 <RelativeTime iso={g.created_at} /></div>
@@ -1076,7 +1071,8 @@ export default function DataSourceDetail() {
                       </TableRow>
                     ))}
                   </TableBody>
-                </Table>
+                  </Table>
+                </>
               )}
             </CardContent>
           </Card>

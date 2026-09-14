@@ -11,6 +11,11 @@
 
 import type { SyncRun } from "@/types/api";
 import type { GenerationTruth } from "@/types/dataSourceWorkspace";
+import {
+  documentDelta,
+  documentDeltaChangeSummary,
+  LEGACY_DELTA_UNAVAILABLE,
+} from "@/lib/syncDeltaPresentation";
 
 // --------------------------------------------------------------------------- //
 // 后端权威投影类型(与 GET /data-sources/attention-summary 契约一致)
@@ -296,22 +301,33 @@ export function buildSyncActivity(
           tone: "amber",
           title: "同步完成(部分成功)",
           timeIso: run.started_at ?? null,
-          meta: runMeta(run),
+          meta: [...documentDeltaChangeSummary(run.sync_log), ...runMeta(run)],
           run,
         });
         continue;
       }
-      const changed = (run.sync_log?.items_new ?? 0) > 0 || (run.sync_log?.items_deleted ?? 0) > 0;
-      if (changed) {
-        const meta: string[] = [];
-        if ((run.sync_log?.items_new ?? 0) > 0) meta.push(`新增 ${run.sync_log?.items_new}`);
-        if ((run.sync_log?.items_deleted ?? 0) > 0) meta.push(`删除 ${run.sync_log?.items_deleted}`);
+      const delta = documentDelta(run.sync_log);
+      // #65: only the persisted document-level contract may classify a run as
+      // changed or routine. Historical items_* fields are not interpretable.
+      if (!delta) {
         events.push({
           kind: "run",
           tone: "green",
           title: "同步完成",
           timeIso: run.started_at ?? null,
-          meta: [...meta, ...runMeta(run)],
+          meta: [LEGACY_DELTA_UNAVAILABLE, ...runMeta(run)],
+          run,
+        });
+        continue;
+      }
+      const changed = delta.new_count > 0 || delta.updated_count > 0 || delta.retired_count > 0;
+      if (changed) {
+        events.push({
+          kind: "run",
+          tone: "green",
+          title: "同步完成",
+          timeIso: run.started_at ?? null,
+          meta: [...documentDeltaChangeSummary(run.sync_log), ...runMeta(run)],
           run,
         });
         continue;

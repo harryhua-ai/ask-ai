@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { buildSyncActivity, humanizeInterval, lastSuccessIso, relativeTime, untilRelativeTime } from "@/lib/dataSourceOps";
+import { documentDelta, documentDeltaSummary } from "@/lib/syncDeltaPresentation";
 import { formatSyncTime } from "@/lib/sourceEditorModel";
 import type { SourceScheduleTruth } from "@/hooks/useDataSourceKnowledge";
 import type { DataSource, SyncRunList } from "@/types/api";
@@ -195,19 +196,26 @@ export function SyncActivityPanel({
                       <summary className="cursor-pointer">展开常规运行</summary>
                       <ul className="mt-1 space-y-0.5">
                         {(runs?.items ?? [])
-                          .filter(
-                            (r) =>
+                          .filter((r) => {
+                            const delta = documentDelta(r.sync_log);
+                            return (
                               r.status?.toLowerCase() === "completed" &&
                               r.sync_log?.status === "success" &&
-                              (r.sync_log.items_new ?? 0) === 0 &&
-                              (r.sync_log.items_deleted ?? 0) === 0,
-                          )
-                          .map((r) => (
-                            <li key={r.id} className="font-mono">
-                              {formatSyncTime(r.started_at)} · 未变更 {r.sync_log?.items_unchanged ?? 0} ·
-                              触发 {r.triggered_by ?? "—"}
-                            </li>
-                          ))}
+                              delta != null &&
+                              delta.new_count === 0 &&
+                              delta.updated_count === 0 &&
+                              delta.retired_count === 0
+                            );
+                          })
+                          .map((r) => {
+                            const delta = documentDelta(r.sync_log);
+                            return (
+                              <li key={r.id} className="font-mono">
+                                {formatSyncTime(r.started_at)} · 未变更 {delta?.unchanged_count ?? 0} 篇知识 ·
+                                触发 {r.triggered_by ?? "—"}
+                              </li>
+                            );
+                          })}
                       </ul>
                     </details>
                   )}
@@ -221,9 +229,7 @@ export function SyncActivityPanel({
                         {ev.run.fallback_reason && <p>fallback: {ev.run.fallback_reason}</p>}
                         {ev.run.sync_log && (
                           <p>
-                            业务结果: {ev.run.sync_log.status} · 新增 {ev.run.sync_log.items_new} ·
-                            删除 {ev.run.sync_log.items_deleted} · 未变更{" "}
-                            {ev.run.sync_log.items_unchanged}
+                            业务结果: {ev.run.sync_log.status} · {documentDeltaSummary(ev.run.sync_log).join(" · ")}
                           </p>
                         )}
                       </div>

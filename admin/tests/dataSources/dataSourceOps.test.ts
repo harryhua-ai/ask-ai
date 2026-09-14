@@ -178,8 +178,8 @@ describe("buildSyncActivity(异常优先活动时间线;常规无变更压缩)",
   it("业务结果 partial → amber 部分成功;有变更成功 → green;进行中 → 信息事件", () => {
     const { events } = buildSyncActivity(
       [
-        mkRun({ id: 2, status: "completed", sync_log: { status: "partial", items_new: 0, chunks_written: 5, items_deleted: 0, items_unchanged: 3, error_detail: null }, started_at: isoAgo(600) }),
-        mkRun({ id: 3, status: "completed", sync_log: { status: "success", items_new: 2, chunks_written: 9, items_deleted: 1, items_unchanged: 0, error_detail: null }, started_at: isoAgo(1200) }),
+        mkRun({ id: 2, status: "completed", sync_log: { status: "partial", items_new: 0, chunks_written: 5, items_deleted: 0, items_unchanged: 3, error_detail: null, delta_counts: { unit: "document", new_count: 0, updated_count: 0, retired_count: 0, unchanged_count: 3 } }, started_at: isoAgo(600) }),
+        mkRun({ id: 3, status: "completed", sync_log: { status: "success", items_new: 2, chunks_written: 9, items_deleted: 1, items_unchanged: 0, error_detail: null, delta_counts: { unit: "document", new_count: 2, updated_count: 0, retired_count: 1, unchanged_count: 0 } }, started_at: isoAgo(1200) }),
         mkRun({ id: 4, status: "running", started_at: isoAgo(60) }),
       ],
       [],
@@ -192,9 +192,9 @@ describe("buildSyncActivity(异常优先活动时间线;常规无变更压缩)",
 
   it("常规无变更成功运行被压缩成组,不逐条刷屏", () => {
     const runs = [
-      mkRun({ id: 10, status: "completed", sync_log: { status: "success", items_new: 0, chunks_written: 0, items_deleted: 0, items_unchanged: 12, error_detail: null }, started_at: isoAgo(3600) }),
-      mkRun({ id: 11, status: "completed", sync_log: { status: "success", items_new: 0, chunks_written: 0, items_deleted: 0, items_unchanged: 12, error_detail: null }, started_at: isoAgo(7200) }),
-      mkRun({ id: 12, status: "completed", sync_log: { status: "success", items_new: 0, chunks_written: 0, items_deleted: 0, items_unchanged: 12, error_detail: null }, started_at: isoAgo(10800) }),
+      mkRun({ id: 10, status: "completed", sync_log: { status: "success", items_new: 0, chunks_written: 0, items_deleted: 0, items_unchanged: 12, error_detail: null, delta_counts: { unit: "document", new_count: 0, updated_count: 0, retired_count: 0, unchanged_count: 12 } }, started_at: isoAgo(3600) }),
+      mkRun({ id: 11, status: "completed", sync_log: { status: "success", items_new: 0, chunks_written: 0, items_deleted: 0, items_unchanged: 12, error_detail: null, delta_counts: { unit: "document", new_count: 0, updated_count: 0, retired_count: 0, unchanged_count: 12 } }, started_at: isoAgo(7200) }),
+      mkRun({ id: 12, status: "completed", sync_log: { status: "success", items_new: 0, chunks_written: 0, items_deleted: 0, items_unchanged: 12, error_detail: null, delta_counts: { unit: "document", new_count: 0, updated_count: 0, retired_count: 0, unchanged_count: 12 } }, started_at: isoAgo(10800) }),
     ];
     const { events, routineGroup } = buildSyncActivity(runs, [], NOW);
     expect(routineGroup?.count).toBe(3);
@@ -205,7 +205,7 @@ describe("buildSyncActivity(异常优先活动时间线;常规无变更压缩)",
 
   it("生成失败为红色事件;时间线按时间倒序,异常不因排序被淹没", () => {
     const { events } = buildSyncActivity(
-      [mkRun({ id: 20, status: "completed", sync_log: { status: "success", items_new: 1, chunks_written: 2, items_deleted: 0, items_unchanged: 0, error_detail: null }, started_at: isoAgo(300) })],
+      [mkRun({ id: 20, status: "completed", sync_log: { status: "success", items_new: 1, chunks_written: 2, items_deleted: 0, items_unchanged: 0, error_detail: null, delta_counts: { unit: "document", new_count: 1, updated_count: 0, retired_count: 0, unchanged_count: 0 } }, started_at: isoAgo(300) })],
       [
         {
           id: "g1",
