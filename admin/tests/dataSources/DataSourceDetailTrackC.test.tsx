@@ -29,6 +29,7 @@ import {
   useSourceGenerations,
 } from "@/hooks/useDataSourceWorkspace";
 import {
+  useBulkDocumentRepair,
   useDocumentRepair,
   useKnowledgeSettings,
   useSourceSchedule,
@@ -58,6 +59,7 @@ vi.mock("@/hooks/useDataSourceWorkspace", () => ({
 }));
 vi.mock("@/hooks/useDataSourceKnowledge", () => ({
   useDocumentRepair: vi.fn(() => ({ mutate: vi.fn(), isPending: false, variables: null })),
+  useBulkDocumentRepair: vi.fn(() => ({ mutate: vi.fn(), isPending: false, data: undefined })),
   useSourceSchedule: vi.fn(() => ({ data: undefined, isLoading: false, refetch: vi.fn() })),
   useKnowledgeSettings: vi.fn(() => ({ data: undefined, isLoading: false, isError: false, refetch: vi.fn() })),
   useKnowledgePreview: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
