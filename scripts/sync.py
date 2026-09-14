@@ -81,8 +81,8 @@ from backend.embedder.remote import build_remote_sync_embedder
 from backend.pipeline.generation_builder import GenerationBuilder
 from backend.pipeline.ingest import IngestionPipeline
 from backend.services import document_lifecycle as lifecycle
-from backend.services.source_lifecycle import sync_eligible_condition
 from backend.services import schedule_truth
+from backend.services.source_lifecycle import sync_eligible_condition
 from backend.services.sync_delta import build_document_delta
 from backend.services.sync_runs import (
     STAGE_CHUNK,

@@ -331,7 +331,8 @@ def _build_props(chunk: "Any", doc: RawDocument) -> dict:
         "title": doc.title,
         "text": chunk.text,
         "url": doc.url,
-        "frontmatter_slug": (doc.metadata or {}).get("frontmatter_slug", ""),
+        # 兼容旧的/测试用 RawDocument-like 对象；缺 metadata 时不伪造 slug。
+        "frontmatter_slug": (getattr(doc, "metadata", None) or {}).get("frontmatter_slug", ""),
         "chunk_index": chunk.chunk_index,
         "content_hash": doc.content_hash,
         "channel_visibility": list(chunk.channel_visibility),

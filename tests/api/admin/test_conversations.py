@@ -5,7 +5,7 @@ import uuid
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import desc, select
+from sqlalchemy import select
 
 from backend.auth.jwt import create_access_token, hash_password
 from backend.db.models import Conversation, Trace, User
@@ -142,7 +142,7 @@ async def test_list_conversations_trace_summary_latest_turn_and_confidence(auth_
             "/api/admin/conversations?q=test%20question", headers=auth_headers
         )
     items = resp.json()["items"]
-    target = [c for c in items if c["question"] == "test question"][0]
+    target = next(c for c in items if c["question"] == "test question")
     ts = target["trace_summary"]
     assert ts is not None
     # 取最新轮次(turn 1)
@@ -191,7 +191,7 @@ async def test_list_conversations_markers_inferred(auth_headers):
             "/api/admin/conversations?q=test%20question", headers=auth_headers
         )
     items = resp.json()["items"]
-    target = [c for c in items if c["question"] == "test question"][0]
+    target = next(c for c in items if c["question"] == "test question")
     ts = target["trace_summary"]
     assert ts is not None
     m = ts["markers"]
@@ -349,7 +349,7 @@ async def test_list_conversations_has_failure_filter(auth_headers):
         assert str(cid_fail) in ids
         assert str(cid_ok) not in ids
         # 失败对话的 markers.failure = True(前端 chip 用)
-        target = [c for c in items if c["id"] == str(cid_fail)][0]
+        target = next(c for c in items if c["id"] == str(cid_fail))
         assert target["trace_summary"]["markers"]["failure"] is True
     finally:
         async with factory() as session:

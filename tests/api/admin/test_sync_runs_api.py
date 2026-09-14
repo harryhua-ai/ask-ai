@@ -16,7 +16,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
 
 from backend.auth.jwt import create_access_token, hash_password
 from backend.db.models import DataSource, SyncLog, SyncRequest, SyncRun, User

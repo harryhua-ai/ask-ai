@@ -28,6 +28,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 from urllib.parse import urlparse
 
+from backend.llm import telemetry as tel
 from backend.pipeline.canonical_url import wiki_canonical_url
 from backend.pipeline.citation import (
     PUBLIC_SOURCE_TYPES,
@@ -46,19 +47,7 @@ from backend.pipeline.evidence_selection import (
     context_id_sets,
     order_candidates_for_plan,
 )
-from backend.pipeline.response_strategy import (
-    build_response_strategy_stage,
-    compile_strategy_instructions,
-    derive_response_strategy,
-)
 from backend.pipeline.intent import IntentResult
-from backend.pipeline.task_understanding import (
-    MODE_CAPABILITY,
-    MODE_CLARIFICATION,
-    MODE_OFF_TOPIC,
-    MODE_STANDARD,
-    understand_task,
-)
 from backend.pipeline.lead_qualify import (
     LEAD_ACK_INSTRUCTION,
     LEAD_INVITE_INSTRUCTION,
@@ -76,20 +65,31 @@ from backend.pipeline.product_resolver import (
     ProductResolution,
     resolve_products,
 )
-from backend.llm import telemetry as tel
+from backend.pipeline.response_strategy import (
+    build_response_strategy_stage,
+    compile_strategy_instructions,
+    derive_response_strategy,
+)
 from backend.pipeline.social import match_social
+from backend.pipeline.task_understanding import (
+    MODE_CAPABILITY,
+    MODE_CLARIFICATION,
+    MODE_OFF_TOPIC,
+    MODE_STANDARD,
+    understand_task,
+)
 from backend.product_taxonomy import UNKNOWN_SLUG, get_taxonomy
 from backend.retrieval.search import SearchResult
 from backend.utils.language import detect_language, resolve_answer_language
 from backend.utils.user_messages import (
+    CAPABILITY_ORIENTATION_KEY,
+    CLARIFICATION_REQUIRED_KEY,
     COMPARISON_EVIDENCE_INSUFFICIENT_KEY,
     NO_EVIDENCE_KEY,
     PRODUCT_AMBIGUOUS_KEY,
     PRODUCT_EVIDENCE_INSUFFICIENT_KEY,
     PRODUCT_NOT_SUPPORTED_KEY,
     localized_message,
-    CAPABILITY_ORIENTATION_KEY,
-    CLARIFICATION_REQUIRED_KEY,
 )
 
 logger = logging.getLogger(__name__)
@@ -1212,7 +1212,9 @@ class RAGOrchestrator:
                 # canonical 后再走 citation 层归一化去重(翻译版折叠语义不变)。
                 citation_url = wiki_canonical_url(
                     r.url,
-                    frontmatter_slug=r.frontmatter_slug,
+                    # 旧的/测试用 SearchResult-like 对象可能没有新字段；缺失
+                    # 等同于 authority unavailable，必须走 blob fallback。
+                    frontmatter_slug=getattr(r, "frontmatter_slug", None),
                 )
                 if not _is_renderable_public_url(citation_url):
                     continue
