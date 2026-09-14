@@ -383,3 +383,72 @@ Role A 发现 release-readiness 缺陷：`scripts/migrate_add_track_c_product.py
 
 ## P3.8 Amendment verdict
 预期代码 delta=迁移清单+报告，实际一致；零 CONTRACT DRIFT。**RELEASE READINESS AMENDMENT = CANDIDATE READY**；终局 candidate = 本提交（65c4ac3 + 清单登记 + 本附录）。
+
+# R1. RELEASE EXECUTION（v1.6.3-r2；2026-09-14）
+
+执行树：release worktree `/Users/harryhua/Documents/GitHub/ask-ai-v163-rel`（branch `release/v163-r2-gate` @ fd5ca39；symlink `.env`/`models`/`admin/node_modules`/`widget/node_modules` + `uv sync --extra dev`；开跑前 `git status` 干净）。合并门（编排者）：pre=5c501914 → post=**fd5ca39d7ee1097abe10de513ce7e595f159270a**（main ff）。
+
+## R1.1 Clean-tree Release Gate（fd5ca39 冻结树）
+
+| 门 | 结果 | 基线 | 结论 |
+|---|---|---|---|
+| pytest `tests/` 全量（串行，TEST_DATABASE_URL=ask_ai_test_int，HF_HUB_OFFLINE=1） | **2630 passed / 0 failed / 7 skipped**（118.44s） | 2630/0/7 | **逐字一致 PASS** |
+| tests/project_automation | 114/114 | 114 | PASS |
+| tests/scripts/test_release_migration_plan.py | 31/31（扩展后同套件 33/33） | 31 | PASS |
+| admin vitest 全量 | **540/540** | 540 | PASS |
+| `npx tsc -b` | 0 错误 | 0 | PASS |
+| `npm run build` | ✓ built | ✓ | PASS |
+| ruff（全仓） | 统计指纹 md5 与同 commit 参考树（int2@fd5ca39）**一致**（301 项全为合并树存量；改动面=无 → 零回归） | 同基线 | PASS |
+| release_migration_plan | `PLAN SOURCE: manifest@fd5ca39d7ee1` → **恰 3 条**：site_launcher_presentation → p1_lifecycle_foundation → track_c_product（exit 0） | 3 条 | PASS |
+
+**测试库残留披露（非代码差异）**：首次全量在带残留的 `ask_ai_test_int` 上出现 1 处环境性 skip（`test_sync_trigger_isolation`："测试库存在其他启用源"）与复跑时 recovery 族 5 处连带失败（0.63s 即败，单飞锁被残留行占据）；**重置隔离库后全量复跑 = 基线逐字一致**，flaky 复跑规则未需动用。基线判定以干净库 run 为准。
+
+## R1.2 部署契约最小扩展（授权；commit 801676a）
+
+发现：`deploy-production.yml` 身份步与 `release_migration_plan.py` TAG_RE 均强制精确 `vX.Y.Z`，而 v1.6.3 已被更早生产实现占用（ed71be7，不可变）→ `v1.6.3-r2` 会被 pre-mutation 拒绝。全链其余环节（build 触发 glob `v*.*.*`、`generate_release_manifest.sh`/`backend/release.py` SemVer 词法、release-publish guard、recorder、`verify_runtime_identity`）均原生支持 r2 后缀。经编排会话用户批准**最小契约扩展**：两处正则允许 `-rN` 重转后缀（fail-closed 语义零弱化；guard/迁移/双断言全保留），新增 `TestTagLexicon`（精确/重转接受 + 9 类变体仍拒）；既有 31 条契约测试不变。commit `801676a` push main（tag 仍冻结 fd5ca39；workflow_dispatch 始终取 main 上的 workflow 定义）。改动文件 ruff：3 处均为存量基线项（EXE001/RUF059×2），本 diff 零新增。
+
+## R1.3 Tag + GitHub Release
+
+- Tag：`v1.6.3-r2`（annotated）→ fd5ca39d7ee1097abe10de513ce7e595f159270a，已 push origin
+- Release：**https://github.com/harryhua-ai/ask-ai/releases/tag/v1.6.3-r2**（含 Product iteration=v1.6.3 / 取代早版 v1.6.3 / 152 reconcile / 主要功能清单 / 迁移清单 / 质量门 / 不宣称 iteration COMPLETE）
+- release-publish guard 预检（本地带 GH_TOKEN 复验）：**6 invariants 全 PASS**
+
+## R1.4 CI（tag 触发 Build & Push GPU Image）
+
+- run **34803619956**：test **PASS**（3m19s，checkout 精确 fd5ca39）+ build-and-push **PASS**（11m24s）
+- Lineage（构建日志断言）：`RELEASE.json -> version=1.6.3-r2 git_sha=fd5ca39d7ee1`；镜像内断言 **`in-image RELEASE.json: version=1.6.3-r2 git_sha=fd5ca39d7ee1097abe10de513ce7e595f159270a`**；镜像 tag `ghcr.io/harryhua-ai/ask-ai:v1.6.3-r2`（+ OCI label version=1.6.3-r2）—— tag→SHA→镜像 三点一线
+
+## R1.5 Production Deploy
+
+- run **34804523307**（workflow_dispatch tag=v1.6.3-r2）：**SUCCESS**（3m37s）；GitHub Deployment id=6430201280 state=**success**
+- 身份冻结：`tag=v1.6.3-r2 version=1.6.3-r2 sha=fd5ca39…`；guard 步（runner 内）通过
+
+## R1.6 生产迁移证据（迁移桥日志，冻结镜像 v1.6.3-r2 内执行；每条执行前镜像 RELEASE.json == 冻结身份断言 ✅）
+
+| # | 脚本 | 结果 |
+|---|---|---|
+| 1 | `scripts/migrate_add_site_launcher_presentation.py` | MIGRATION BEGIN→DONE；`site_experiences.launcher_presentation 迁移完成(幂等,零回填)` |
+| 2 | `scripts/migrate_p1_lifecycle_foundation.py` | MIGRATION BEGIN→DONE；PG schema 就绪(documents 加列 + P1 三表)；版本回填补建 0；内容回填扫描 147999/补属性 0/幽灵 0/NUL 0；验证 `{null_current:0, multi_active:0, legacy_expected_chunks:147999}/{missing_ordinal:0, legacy_objects:147999}` 全过 |
+| 3 | `scripts/migrate_add_track_c_product.py` | MIGRATION BEGIN→DONE；`Track C 加性迁移完成:documents.content_type(回填 12000 行)+ data_sources.next_run_at/knowledge_role/freshness_hours + document_repair_tasks/document_recovery_events/knowledge_settings_previews` |
+
+- PLAN SOURCE：`manifest@fd5ca39d7ee1`（planner 以 `--tag v1.6.3-r2` 在 801676a 上解析，恰 3 条按序）
+- SSH 只读 schema 核验（prod PG `ask_ai`）：`documents.content_type(varchar)`、`documents.lifecycle/current_version_id/superseded_by/superseded_at/deleted_at`、`data_sources.next_run_at(tstz)/knowledge_role(varchar)/freshness_hours(integer)`、`site_experiences.launcher_presentation(varchar)`；表 `document_repair_tasks`/`document_recovery_events`/`knowledge_settings_previews`/`gap_observations`/`gap_observation_events` **全部在位**；三张新表 0 行（加性新表，无预置数据）
+- 回填诚实性：documents 共 **12000** 行 = 迁移日志"回填 12000 行"精确吻合；分布 `document:11818 / page:141 / product:41`，**NULL=0**——全部经权威 `derive_content_type` 派生，无猜测值
+- 注：p1 内容回填"补属性 0"= 生产 Weaviate 属性经既有 `_ensure_collection` 已在位（147999 legacy 对象全量验证通过），非跳过
+- `data_sources` 三个政策列当前全 NULL = 加性新列初始态（调度/政策层运行时填充），非缺失
+
+## R1.7 生产身份
+
+- `/health`：`{"status":"ok","version":"1.6.3-r2","git_sha":"fd5ca39d7ee1097abe10de513ce7e595f159270a","app_mode":"production"}`（workflow 内双断言 ✅ + SSH 独立复核一致）
+- 容器：backend/sync-cron/sync-executor = `ghcr.io/harryhua-ai/ask-ai:v1.6.3-r2`；backend `restarts=0 state=running health=healthy`；PG/Weaviate healthy（Up 3 weeks）
+- backend 日志 ERROR 计数（启动以来）：**0**
+
+## R1.8 生产 admin 凭据位置调查（不外泄明文）
+
+- 代码内种子回退：`backend/main.py:253`（`ADMIN_PASSWORD` 环境变量未设时的字面回退值；存在即位置,此处不复述值）
+- 生产实际口令：主机 `/home/ubuntu/ask-ai/.env` 的 `ADMIN_PASSWORD`（契约见 `deploy/prod/.env.example:61` `<生产强密码>` 占位）；仓内不含明文
+- 治理记录：`deploy/prod/RC-2026-09-01-ACTIVATION.md:43` 勾选项"admin 默认口令处置"（生产 admin 若仍为种子口令须立即改密/或 `scripts/create_admin_user.py` 建独立管理员）——生产 UI 验收阶段登录前应先确认该项处置状态
+
+## R1.9 Verdict
+
+**R1 = RELEASE/DEPLOY COMPLETE**：门=基线逐字一致；tag/Release/CI/lineage/部署/迁移/身份全链闭环；零 force push、零历史改写、零 issue 关闭、六候选与已 tag 历史未动、生产仅授权部署+只读核验。遗留：rel worktree `release/v163-r2-gate`（可留）；验收 ledger → 下一 agent（conformance 骨架已建）。
