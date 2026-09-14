@@ -659,10 +659,10 @@ async def test_u12_u13_preview_confirm_chain_and_retrieval_eligibility(
         assert reread.json()["role"] == "historical"
 
     # 检索资格消费(HybridSearcher 排除集合真值)
+    import os
+
     from backend.db.session import get_sync_session_factory
     from backend.services.knowledge_policy import excluded_source_prefixes_sync
-
-    import os
 
     sync_factory = get_sync_session_factory(
         os.environ.get("TEST_DATABASE_URL", app.state.settings.postgres_dsn)
@@ -670,9 +670,7 @@ async def test_u12_u13_preview_confirm_chain_and_retrieval_eligibility(
     excluded = excluded_source_prefixes_sync(sync_factory)
     assert SRC in excluded
     # searcher 消费:构造最小 stub 结果 → HISTORICAL 源 chunk 被过滤
-    from backend.retrieval.search import SearchResult
-
-    from backend.retrieval.search import HybridSearcher
+    from backend.retrieval.search import HybridSearcher, SearchResult
 
     stub = SimpleNamespace(
         _knowledge_exclusions=lambda: excluded,
@@ -706,10 +704,9 @@ async def test_u12_u13_preview_confirm_chain_and_retrieval_eligibility(
 async def test_u13_confirm_policy_mismatch_rejected(admin_headers, c_seed, vector_stack):
     """确认施加的 mutation 必须 = 预览 mutation;不一致 → 409。"""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
-        preview = await client.post(
+        await client.post(
             PREVIEW_URL, json={"role": "current"}, headers=admin_headers
         )
-        token = preview.json()["preview_token"]
         # 预览的是 current(等值,不会触发 role_changed 分支)→ 先拉到 historical
         preview2 = await client.post(
             PREVIEW_URL, json={"role": "historical"}, headers=admin_headers

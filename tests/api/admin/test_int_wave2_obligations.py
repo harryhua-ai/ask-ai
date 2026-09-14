@@ -224,6 +224,9 @@ async def int_seed():
             "ordinal": ordinal,
             "gen_id": str(gen.id),
         }
+    for k, v in saved.items():
+        if v is not None:
+            setattr(app.state, k, v)
     from backend.db.models import DocumentRepairTask
 
     async with factory() as session:
@@ -289,10 +292,6 @@ async def test_int_c01_repair_targets_serving_generation(int_seed):
     collection = int_seed["collection"]
 
     async with factory() as session:
-        doc = (
-            await session.execute(select(Document).where(Document.source_id == doc_id))
-        ).scalar_one()
-
         # ---- before:在服代过滤检索 miss 全部目标 ----
         assert _filtered_serving(collection, doc_id, 12, ordinal) == set()
 
@@ -335,7 +334,6 @@ async def test_int_c01_repair_targets_serving_generation(int_seed):
 async def test_int_c01_legacy_objects_not_counted_as_success(int_seed):
     """禁把 legacy/非在服 chunk 计为成功修复:即便 legacy 命名空间已有
     10 个残片,在服代投影仍 miss;修复不会以 legacy 残片凑满一致性。"""
-    factory = app.state.session_factory
     doc_id = int_seed["doc_id"]
     ordinal = int_seed["ordinal"]
 
@@ -353,7 +351,6 @@ async def test_int_c01_repair_idempotent_rerun(int_seed):
     """幂等:重复修复 = 复验 no-op(0 重灌,复验通过),零重复写。"""
     factory = app.state.session_factory
     doc_id = int_seed["doc_id"]
-    ordinal = int_seed["ordinal"]
     collection = int_seed["collection"]
 
     async with factory() as session:

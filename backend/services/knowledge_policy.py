@@ -225,8 +225,9 @@ async def validate_confirm_token(
       预览 mutation);
     - 账本指纹与预览时不一致 → 409 drift(计数已不可信,需重新预览)。
     """
-    from fastapi import HTTPException
     from uuid import UUID
+
+    from fastapi import HTTPException
 
     try:
         token_uuid = UUID(token)
