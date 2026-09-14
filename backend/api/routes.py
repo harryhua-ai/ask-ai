@@ -43,6 +43,7 @@ from backend.services.attachments import (
     sanitize_filename,
     validate_upload_file,
 )
+from backend.services.conversation_id import new_conversation_id
 from backend.services.lead_service import apply_lead_turn, load_lead_context
 from backend.services.site_experiences import (
     SiteDenied,
@@ -175,7 +176,7 @@ async def ask(
         # (DECLINED,非 generation error),必须持久化真实 Conversation,
         # 禁止幽灵 conversation_id;文案按解析语言本地化;
         # trace type=budget_declined,不污染 generation_error taxonomy。
-        conversation_id = str(uuid.uuid4())
+        conversation_id = str(await new_conversation_id(session_factory))
         busy_msg = localized_message(BUDGET_DECLINED_KEY, answer_language)
         # FINAL REVIEW Blocker A:仅当 Conversation 真实持久化成功,才允许把该 id
         # 作为 declined Conversation 身份下发;持久化失败 → 不下发任何身份
@@ -249,7 +250,7 @@ async def ask(
                 attachment_objs.append(att)
 
     async def event_generator() -> Any:
-        conversation_id = str(uuid.uuid4())
+        conversation_id = str(await new_conversation_id(session_factory))
         full_answer = ""
         sources: list = []
         is_answered = False

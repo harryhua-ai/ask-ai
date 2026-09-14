@@ -11,11 +11,48 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Request
 from starlette.concurrency import run_in_threadpool
 
+from backend.api.admin.schemas import ConversationIdPolicyOut, ConversationIdPolicyUpdate
 from backend.auth.dependencies import CurrentUser, require_role
 from backend.release import get_release_identity
+from backend.services.conversation_id import get_policy, save_policy
 from backend.services.host_runtime import collect_system_runtime
 
 router = APIRouter(prefix="/system", tags=["系统信息"])
+
+
+def _policy_out(policy) -> ConversationIdPolicyOut:
+    return ConversationIdPolicyOut(
+        strategy=policy.strategy,
+        label=policy.label,
+        description=policy.description,
+        example=policy.example,
+        updated_at=policy.updated_at.isoformat() if policy.updated_at else None,
+    )
+
+
+@router.get("/conversation-id-policy", response_model=ConversationIdPolicyOut)
+async def get_conversation_id_policy(
+    _: Annotated[CurrentUser, Depends(require_role("admin", "editor", "viewer"))],
+    request: Request,
+) -> ConversationIdPolicyOut:
+    """读取新建 Conversation ID 策略(缺行安全呈现 uuid4 默认)。"""
+    return _policy_out(await get_policy(request.app.state.session_factory))
+
+
+@router.put("/conversation-id-policy", response_model=ConversationIdPolicyOut)
+async def update_conversation_id_policy(
+    req: ConversationIdPolicyUpdate,
+    _: Annotated[CurrentUser, Depends(require_role("admin", "editor"))],
+    request: Request,
+) -> ConversationIdPolicyOut:
+    """保存新建 Conversation ID 策略;绝不改写历史 Conversation.id。"""
+    try:
+        policy = await save_policy(request.app.state.session_factory, req.strategy)
+    except ValueError as exc:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _policy_out(policy)
 
 
 @router.get("/release")

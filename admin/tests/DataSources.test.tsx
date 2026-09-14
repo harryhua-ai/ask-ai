@@ -380,15 +380,14 @@ describe("DataSources", () => {
     vi.mocked(useTriggerSync).mockReturnValue({ mutate, isPending: false });
     renderWithSources([dsA, dsB]);
 
-    // A-P1-04:同步收进行 ⋯ 菜单;只提交所打开行的源
-    openRowMenu(0);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "同步" }));
+    // A-P1-04:高频同步直接可见;只提交该行的源
+    fireEvent.click(screen.getAllByRole("button", { name: "同步" })[0]);
 
     expect(mutate).toHaveBeenCalledWith("neomind-docs");
     expect(screen.queryByText("同步中...")).not.toBeInTheDocument();
   });
 
-  it("#44 禁用源:同步菜单项不可点击", () => {
+  it("#44 禁用源:同步直接操作不可点击", () => {
     const ds = {
       id: "ne301-docs",
       type: "github",
@@ -404,11 +403,9 @@ describe("DataSources", () => {
     vi.mocked(useTriggerSync).mockReturnValue({ mutate, isPending: false });
     renderWithSources([ds]);
 
-    openRowMenu(0);
-    const syncItem = screen.getByRole("menuitem", { name: "同步" });
-    // Radix 菜单项:禁用态为 aria-disabled(非原生 disabled 属性)
-    expect(syncItem.getAttribute("aria-disabled")).toBe("true");
-    fireEvent.click(syncItem);
+    const syncButton = screen.getByRole("button", { name: "同步" });
+    expect(syncButton).toBeDisabled();
+    fireEvent.click(syncButton);
     expect(mutate).not.toHaveBeenCalled();
   });
 
@@ -450,15 +447,12 @@ describe("DataSources", () => {
     renderWithSources([dsA, dsB]);
 
     expect(useSyncStatus).toHaveBeenCalledWith({ refetchInterval: 5000 });
-    // A-P1-04:同步中状态 = 行 ⋯ 菜单内禁用项「同步中...」(Radix aria-disabled)
-    openRowMenu(0);
-    const syncingItem = await screen.findByRole("menuitem", { name: "同步中..." });
-    expect(syncingItem.getAttribute("aria-disabled")).toBe("true");
-    closeRowMenu();
+    // A-P1-04:同步中状态 = 行内直接可见且禁用
+    const syncingButton = screen.getByRole("button", { name: "同步中..." });
+    expect(syncingButton).toBeDisabled();
     // 另一行(无 active 证据)仍为可用「同步」
-    openRowMenu(1);
-    const enabledItem = await screen.findByRole("menuitem", { name: "同步" });
-    expect(enabledItem.getAttribute("aria-disabled")).not.toBe("true");
+    const enabledButton = screen.getAllByRole("button", { name: "同步" })[0];
+    expect(enabledButton).toBeEnabled();
     expect(screen.getByText("当前同步")).toBeInTheDocument();
     expect(screen.getByText("生成向量")).toBeInTheDocument();
     expect(screen.getByText("3/12 · 25%")).toBeInTheDocument();
@@ -481,8 +475,7 @@ describe("DataSources", () => {
     }]);
 
     expect(screen.queryByText("同步中...")).not.toBeInTheDocument();
-    openRowMenu(0);
-    expect(await screen.findByRole("menuitem", { name: "同步" })).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: "同步" })[0]).toBeEnabled();
     expect(toast.success).not.toHaveBeenCalledWith(expect.stringContaining("同步完成"));
   });
 
@@ -526,11 +519,8 @@ describe("DataSources", () => {
       </QueryClientProvider>,
     );
 
-    // A-P1-08(audit):参考页头仅一枚主按钮;「同步全部」收进页头 ⋯ 菜单
-    const pageMenu = screen.getByRole("button", { name: "更多页操作" });
-    fireEvent.pointerDown(pageMenu);
-    fireEvent.click(pageMenu);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "同步全部" }));
+    // A-P1-08(audit):高频「同步全部」在页头直接可见
+    fireEvent.click(screen.getByRole("button", { name: "同步全部" }));
     await waitFor(() => expect(mutateAllAsync).toHaveBeenCalled());
     expect(screen.queryByText("同步中...")).not.toBeInTheDocument();
 
@@ -559,10 +549,10 @@ describe("DataSources", () => {
       </QueryClientProvider>,
     );
 
-    // 行状态仅由后端 active items 恢复:行菜单内出现禁用的「同步中...」(Radix aria-disabled)
-    openRowMenu(0);
-    const syncingItem = await screen.findByRole("menuitem", { name: "同步中..." });
-    expect(syncingItem.getAttribute("aria-disabled")).toBe("true");
+    // 行状态仅由后端 active items 恢复:行内出现禁用的「同步中...」
+    const syncingButtons = await screen.findAllByRole("button", { name: "同步中..." });
+    expect(syncingButtons).toHaveLength(2);
+    syncingButtons.forEach((button) => expect(button).toBeDisabled());
   });
 });
 

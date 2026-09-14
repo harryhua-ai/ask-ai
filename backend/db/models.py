@@ -691,6 +691,23 @@ class ModelRuntimeSetting(Base):
     )
 
 
+class ConversationIdPolicy(Base):
+    """新建对话 ID 生成策略(全局单例配置)。
+
+    - key 固定为 ``default``;缺行时运行时安全回退到既有 uuid4 语义;
+    - strategy 只允许由 API 词表校验的 uuid4 / uuid7;
+    - 该表只描述未来生成规则,不承载也不改写既有 Conversation.id。
+    """
+
+    __tablename__ = "conversation_id_policies"
+
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    strategy: Mapped[str] = mapped_column(String(20), nullable=False, default="uuid4")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class QuestionCluster(Base):
     """问题聚类结果(Phase 3B Coverage Gaps + Top Questions)。"""
 

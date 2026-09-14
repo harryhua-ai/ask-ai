@@ -9,6 +9,21 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import type { DocumentRepairTask } from "@/types/dataSourceWorkspace";
 
+export interface BulkDocumentRepairItem {
+  doc_source_id: string;
+  status: string;
+  task_id: string | null;
+  error: string | null;
+}
+
+export interface BulkDocumentRepairResult {
+  source_id: string;
+  eligible: number;
+  succeeded: number;
+  failed: number;
+  items: BulkDocumentRepairItem[];
+}
+
 /** U-11 调度真值(后端权威 next_run_at + 状态词表)。 */
 export interface SourceScheduleTruth {
   source_id: string;
@@ -115,6 +130,24 @@ export function useDocumentRepair(sourceId: string) {
       // 与 useDataSourceWorkspace.useSourceDocumentTruth 的 queryKey 对齐:
       // 修复后展开行真相(serving/chunk 投影/验证卡)自动重取
       void qc.invalidateQueries({ queryKey: ["data-source-document-truth"] });
+    },
+  });
+}
+
+/** 数据源级批量修复:资格、逐项状态与聚合结果全部来自后端。 */
+export function useBulkDocumentRepair(sourceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<BulkDocumentRepairResult>(
+        `/data-sources/${encodeURIComponent(sourceId)}/documents/repair-all`,
+        { method: "POST" },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["data-source-documents", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["data-source-document-truth"] });
+      void qc.invalidateQueries({ queryKey: ["data-sources-attention-summary"] });
+      void qc.invalidateQueries({ queryKey: ["data-sources"] });
     },
   });
 }

@@ -95,6 +95,23 @@ class SourceScheduleTruthOut(BaseModel):
     enabled: bool
 
 
+class ConversationIdPolicyOut(BaseModel):
+    """Conversation ID 新建策略(已有 ID 不受影响)。"""
+
+    strategy: str
+    label: str
+    description: str
+    example: str
+    affects_new_conversations_only: bool = True
+    updated_at: str | None = None
+
+
+class ConversationIdPolicyUpdate(BaseModel):
+    """Conversation ID 策略写入词表。"""
+
+    strategy: str = Field(..., pattern="^(uuid4|uuid7)$")
+
+
 class DataSourceCreate(BaseModel):
     id: str | None = Field(default=None, max_length=100)
     type: str = Field(..., pattern="^(github|filesystem|local_git|web_crawl|sdk|woocommerce)$")
@@ -239,6 +256,25 @@ class DocumentRepairTaskOut(BaseModel):
     events: list[dict] = Field(default_factory=list)
     created_at: str | None = None
     finished_at: str | None = None
+
+
+class BulkDocumentRepairItem(BaseModel):
+    """单个批量修复项的权威结果(不把未执行伪装成成功)。"""
+
+    doc_source_id: str
+    status: str
+    task_id: str | None = None
+    error: str | None = None
+
+
+class BulkDocumentRepairOut(BaseModel):
+    """数据源级批量修复聚合结果。"""
+
+    source_id: str
+    eligible: int
+    succeeded: int
+    failed: int
+    items: list[BulkDocumentRepairItem] = Field(default_factory=list)
 
 
 class DataSourceDocumentTruth(BaseModel):

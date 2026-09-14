@@ -252,15 +252,18 @@ async def test_runtime_readable_by_all_admin_roles(
     assert resp.status_code == 200
 
 
-async def test_system_router_is_get_only():
-    """只读证明:system router 全部路由 methods=={"GET"}(无写端点、无操作控制)。"""
+async def test_system_router_methods_are_explicit():
+    """系统观测仍只读;唯一写面仅用于 Conversation ID 策略配置。"""
     from backend.api.admin.system import router as system_router
 
     routes = [r for r in system_router.routes if hasattr(r, "methods")]
-    assert len(routes) == 2
-    for r in routes:
-        assert r.methods == {"GET"}, r.path
-    assert {r.path for r in routes} == {"/system/release", "/system/runtime"}
+    assert len(routes) == 4
+    methods: dict[str, set[str]] = {}
+    for route in routes:
+        methods.setdefault(route.path, set()).update(route.methods)
+    assert methods["/system/release"] == {"GET"}
+    assert methods["/system/runtime"] == {"GET"}
+    assert methods["/system/conversation-id-policy"] == {"GET", "PUT"}
 
 
 # ---------------- 响应形状锁 ----------------

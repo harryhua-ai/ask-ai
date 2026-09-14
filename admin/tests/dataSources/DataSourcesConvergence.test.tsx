@@ -265,15 +265,14 @@ describe("v1.6.3 Design Remediation A 类呈现(数据源列表)", () => {
     expect(screen.getByTitle("https://woocommerce.com")).toBeInTheDocument();
   });
 
-  it("DS-01/#66:操作列直接提供详情/编辑,低频同步与同步记录进菜单", async () => {
+  it("DS-01/#66:操作列直接提供详情/编辑/同步,仅同步记录进菜单", async () => {
     renderList([wooSource]);
     expect(screen.getByRole("button", { name: "详情" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "同步" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "同步" })).toBeInTheDocument();
     const trigger = screen.getAllByRole("button", { name: "更多操作" })[0];
     fireEvent.pointerDown(trigger);
     fireEvent.click(trigger);
-    expect(screen.getByRole("menuitem", { name: "同步" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "同步记录" })).toBeInTheDocument();
   });
 
@@ -333,12 +332,10 @@ describe("v1.6.3 Design Remediation A 类呈现(数据源列表)", () => {
     expect(nav.textContent).not.toContain("/");
   });
 
-  it("A-P1-08:页头仅一枚主按钮;同步全部收进页头 ⋯ 菜单", async () => {
+  it("A-P1-08:页头直接提供同步全部与添加数据源", () => {
     renderList([wooSource]);
-    expect(screen.queryByText("同步全部")).not.toBeInTheDocument();
-    const pageMenu = screen.getByRole("button", { name: "更多页操作" });
-    fireEvent.pointerDown(pageMenu);
-    fireEvent.click(pageMenu);
-    expect(await screen.findByRole("menuitem", { name: "同步全部" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "同步全部" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "+ 添加数据源" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "更多页操作" })).not.toBeInTheDocument();
   });
 });

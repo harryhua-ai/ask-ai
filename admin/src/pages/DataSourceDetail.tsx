@@ -16,7 +16,6 @@ import {
   TableHead,
   TableCell,
 } from "@/components/ui/table";
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Pagination } from "@/components/Pagination";
 import { SourceHealthPanel } from "@/components/dataSources/SourceHealthPanel";
 import { SyncActivityPanel } from "@/components/dataSources/SyncActivityPanel";
@@ -34,6 +33,7 @@ import {
   useSourceGenerations,
 } from "@/hooks/useDataSourceWorkspace";
 import {
+  useBulkDocumentRepair,
   useDocumentRepair,
   useSourceSchedule,
 } from "@/hooks/useDataSourceKnowledge";
@@ -234,6 +234,7 @@ export default function DataSourceDetail() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // U-8:行级修复(POST repair;RBAC/幂等/审计/验证在后端)
   const repairMutation = useDocumentRepair(sourceId);
+  const bulkRepairMutation = useBulkDocumentRepair(sourceId);
   // U-11:调度真值(schedule 端点 reconcile 的权威 next_run_at)
   const scheduleQuery = useSourceSchedule(sourceId);
 
@@ -256,6 +257,22 @@ export default function DataSourceDetail() {
           toast.error(err instanceof Error ? err.message : "修复命令失败"),
       },
     );
+  };
+
+  const runBulkRepair = () => {
+    bulkRepairMutation.mutate(undefined, {
+      onSuccess: (result) => {
+        if (result.failed === 0) {
+          toast.success(`批量修复完成:已修复 ${result.succeeded} 项`);
+        } else {
+          toast.warning(`批量修复部分完成:已修复 ${result.succeeded} 项，${result.failed} 项仍需处理`);
+        }
+        void documentsQuery.refetch();
+        void truthQuery.refetch();
+      },
+      onError: (err) =>
+        toast.error(err instanceof Error ? err.message : "批量修复命令失败"),
+    });
   };
 
   if (sourcesError && !sources) {
@@ -360,8 +377,11 @@ export default function DataSourceDetail() {
             </div>
           </div>
           <div className="flex flex-col items-end gap-1 text-sm">
-            {/* DS-01:高频配置动作直接可见;返回列表为低频导航动作保留菜单。 */}
+            {/* DS-01:页头操作直接可见;返回列表是详情页的稳定导航出口。 */}
             <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={() => navigate("/data-sources")}>
+                返回列表
+              </Button>
               {canWrite && (
                 <>
                   <Button size="sm" variant="outline" onClick={() => setEditorOpen(true)}>
@@ -372,18 +392,6 @@ export default function DataSourceDetail() {
                   </Button>
                 </>
               )}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="sm" variant="ghost" aria-label="更多页操作" className="px-2">
-                  ⋯
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => navigate("/data-sources")}>
-                  返回列表
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
             </div>
             <div>
               <span className="text-muted-foreground">最后同步</span>{" "}
@@ -495,6 +503,19 @@ export default function DataSourceDetail() {
             >
               查看需处理
             </Button>
+            {canWrite && (
+              <Button
+                size="sm"
+                variant="default"
+                data-testid="bulk-document-repair"
+                disabled={bulkRepairMutation.isPending}
+                onClick={runBulkRepair}
+              >
+                {bulkRepairMutation.isPending
+                  ? "一键修复中..."
+                  : `一键修复全部 ${attentionCount} 项`}
+              </Button>
+            )}
             <Button
               size="sm"
               variant="ghost"
@@ -504,6 +525,11 @@ export default function DataSourceDetail() {
               ✕
             </Button>
           </div>
+          {bulkRepairMutation.data && (
+            <p className="w-full text-xs text-muted-foreground" aria-live="polite">
+              已修复 {bulkRepairMutation.data.succeeded} 项，{bulkRepairMutation.data.failed} 项仍需处理
+            </p>
+          )}
         </div>
       )}
 

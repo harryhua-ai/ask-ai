@@ -26,6 +26,7 @@ import {
   useSourceDocumentTruth,
   useSourceGenerations,
 } from "@/hooks/useDataSourceWorkspace";
+import { useBulkDocumentRepair } from "@/hooks/useDataSourceKnowledge";
 
 vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ user: { role: "admin", email: "t@x.com" } }),
@@ -55,6 +56,14 @@ vi.mock("@/hooks/useDataSourceWorkspace", () => ({
   useSourceGenerations: vi.fn(() => ({
     data: undefined, isLoading: false, isError: false, error: null, refetch: vi.fn(),
   })),
+}));
+vi.mock("@/hooks/useDataSourceKnowledge", () => ({
+  useDocumentRepair: vi.fn(() => ({ mutate: vi.fn(), isPending: false, variables: null })),
+  useBulkDocumentRepair: vi.fn(() => ({ mutate: vi.fn(), isPending: false, data: undefined })),
+  useSourceSchedule: vi.fn(() => ({ data: undefined, isLoading: false })),
+  useKnowledgeSettings: vi.fn(() => ({ data: undefined, isLoading: false })),
+  useKnowledgePreview: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useKnowledgeSettingsSave: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
 }));
 
 afterEach(cleanup);
@@ -299,6 +308,30 @@ describe("v1.6.3 B1 数据源详情收敛(hard ref panel 2/3/4)", () => {
     );
   });
 
+  it("批量修复:当前源的权威数量直接可操作,运行中禁用并如实呈现结果", () => {
+    const mutate = vi.fn();
+    vi.mocked(useBulkDocumentRepair).mockReturnValue({
+      mutate,
+      isPending: false,
+      data: undefined,
+    } as never);
+    renderDetail();
+    const button = screen.getByRole("button", { name: "一键修复全部 2 项" });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(mutate).toHaveBeenCalledWith(undefined, expect.any(Object));
+
+    cleanup();
+    vi.mocked(useBulkDocumentRepair).mockReturnValue({
+      mutate: vi.fn(),
+      isPending: true,
+      data: { eligible: 2, succeeded: 1, failed: 1, items: [] },
+    } as never);
+    renderDetail();
+    expect(screen.getByRole("button", { name: "一键修复中..." })).toBeDisabled();
+    expect(screen.getByText(/已修复 1 项，1 项仍需处理/)).toBeInTheDocument();
+  });
+
   it("层级 6 知识内容工作区:表列 名称/类型/状态/当前版本/服务/更新时间 + 共 N 条", () => {
     renderDetail();
     for (const h of ["名称", "类型", "状态", "当前版本", "服务", "更新时间"]) {
@@ -407,15 +440,11 @@ describe("v1.6.3 Design Remediation A 类呈现(数据源详情)", () => {
     expect(icon?.textContent).toContain("⚠");
   });
 
-  it("DS-01:页头直接提供编辑/知识设置,返回列表保留在菜单", async () => {
+  it("DS-01:页头直接提供返回列表/编辑/知识设置", () => {
     renderDetail();
+    expect(screen.getByRole("button", { name: "返回列表" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "知识设置" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "返回列表" })).not.toBeInTheDocument();
-    const trigger = screen.getByRole("button", { name: "更多页操作" });
-    fireEvent.pointerDown(trigger);
-    fireEvent.click(trigger);
-    expect(screen.getByRole("menuitem", { name: "返回列表" })).toBeInTheDocument();
   });
 
   it("A-P1-07:面包屑「配置 › 数据源 › {源}」,返回列表由面包屑承担", () => {

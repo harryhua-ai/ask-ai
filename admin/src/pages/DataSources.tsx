@@ -290,26 +290,19 @@ export default function DataSources() {
           </div>
           {canWrite && (
             <div className="flex gap-2">
-              {/* A-P1-08:参考页头仅一枚主按钮;「同步全部」收进页头 ⋯ 菜单(既有授权动作保留) */}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" aria-label="更多页操作" className="px-2">
-                    ⋯
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem
-                    disabled={triggerSyncAll.isPending || hasActiveSyncs}
-                    onClick={() => void handleSyncAll()}
-                  >
-                    {triggerSyncAll.isPending
-                      ? "触发中..."
-                      : hasActiveSyncs
-                        ? "同步进行中..."
-                        : "同步全部"}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              {/* #66 remediation: routine bulk sync is a first-class page action. */}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={triggerSyncAll.isPending || hasActiveSyncs}
+                onClick={() => void handleSyncAll()}
+              >
+                {triggerSyncAll.isPending
+                  ? "触发中..."
+                  : hasActiveSyncs
+                    ? "同步进行中..."
+                    : "同步全部"}
+              </Button>
               <Button onClick={openCreate}>+ 添加数据源</Button>
             </div>
           )}
@@ -474,7 +467,7 @@ export default function DataSources() {
                       )}
                     </TableCell>
                     <TableCell>
-                      {/* #66:列表保留轻量直达操作;完整同步/删除等低频动作进菜单。 */}
+                      {/* #66 remediation: routine row sync is directly discoverable. */}
                       <div className="flex items-center gap-1">
                         <Button
                           size="sm"
@@ -495,6 +488,24 @@ export default function DataSources() {
                             编辑
                           </Button>
                         )}
+                        {canWrite && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2"
+                            disabled={
+                              isActive ||
+                              isTriggerPending ||
+                              !ds.enabled ||
+                              !isSyncEligible(ds) ||
+                              triggerSync.isPending
+                            }
+                            title={isSyncEligible(ds) ? undefined : "该源处于删除流程,不能同步"}
+                            onClick={() => handleSync(ds)}
+                          >
+                            {isActive ? "同步中..." : isTriggerPending ? "触发中..." : "同步"}
+                          </Button>
+                        )}
                         <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button size="sm" variant="outline" aria-label="更多操作" className="h-7 px-2.5">
@@ -502,21 +513,6 @@ export default function DataSources() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          {canWrite && (
-                            <DropdownMenuItem
-                              disabled={
-                                isActive ||
-                                isTriggerPending ||
-                                !ds.enabled ||
-                                !isSyncEligible(ds) ||
-                                triggerSync.isPending
-                              }
-                              title={isSyncEligible(ds) ? undefined : "该源处于删除流程,不能同步"}
-                              onSelect={() => handleSync(ds)}
-                            >
-                              {isActive ? "同步中..." : isTriggerPending ? "触发中..." : "同步"}
-                            </DropdownMenuItem>
-                          )}
                           <DropdownMenuItem onClick={() => toggleObservability(ds.id)}>
                             {isExpanded ? "收起同步记录" : "同步记录"}
                           </DropdownMenuItem>

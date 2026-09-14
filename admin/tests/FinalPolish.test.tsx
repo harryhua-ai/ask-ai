@@ -109,13 +109,10 @@ describe("AFP-002 viewer 不被广告写操作", () => {
     expect(screen.queryByText("删除")).not.toBeInTheDocument();
   });
 
-  it("admin 打开数据源:写操作保留(G010)", async () => {
+  it("admin 打开数据源:高频写操作直接可见(G010)", async () => {
     renderPage(<DataSources />);
-    // A-P1-08(audit):「同步全部」收进页头 ⋯ 菜单(admin 可见),写操作能力保留
-    const pageMenu = await screen.findByRole("button", { name: "更多页操作" });
-    fireEvent.pointerDown(pageMenu, { button: 0, ctrlKey: false });
-    fireEvent.click(pageMenu);
-    expect(await screen.findByRole("menuitem", { name: "同步全部" })).toBeInTheDocument();
+    // A-P1-08(audit):高频「同步全部」直接可见(admin 可见)
+    expect(await screen.findByRole("button", { name: "同步全部" })).toBeInTheDocument();
     expect(screen.getByText("+ 添加数据源")).toBeInTheDocument();
   });
 

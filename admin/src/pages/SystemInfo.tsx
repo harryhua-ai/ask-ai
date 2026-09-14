@@ -1,8 +1,16 @@
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import LoadError from "@/components/LoadError";
 import { useReleaseInfo } from "@/hooks/useReleaseInfo";
 import { useSystemRuntime } from "@/hooks/useSystemRuntime";
+import { useAuth } from "@/hooks/useAuth";
+import {
+  useConversationIdPolicy,
+  useConversationIdPolicySave,
+} from "@/hooks/useConversationIdPolicy";
 import type {
   AcceleratorGpuInfo,
   RuntimeObservation,
@@ -235,8 +243,26 @@ function RuntimeSectionBody({ data }: { data: SystemRuntimeInfo }) {
 }
 
 export default function SystemInfo() {
+  const { user } = useAuth();
   const { data: release, isLoading, isError, error, refetch } = useReleaseInfo();
   const runtime = useSystemRuntime();
+  const policy = useConversationIdPolicy();
+  const savePolicy = useConversationIdPolicySave();
+  const [strategy, setStrategy] = useState<"uuid4" | "uuid7">("uuid4");
+  const canWrite = user?.role === "admin" || user?.role === "editor";
+
+  useEffect(() => {
+    if (policy.data) setStrategy(policy.data.strategy);
+  }, [policy.data]);
+
+  const saveConversationIdPolicy = async () => {
+    try {
+      await savePolicy.mutateAsync(strategy);
+      toast.success("Conversation ID 生成规则已保存,仅影响新建对话");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "保存 Conversation ID 规则失败");
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -289,6 +315,60 @@ export default function SystemInfo() {
                   <span className="text-muted-foreground">不可用</span>
                 )}
               </Field>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card aria-label="Conversation ID 设置">
+        <CardHeader className="p-4">
+          <CardTitle className="text-base">Conversation ID 生成规则</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 p-4 pt-0">
+          {policy.isLoading && (
+            <p className="text-sm text-muted-foreground" aria-live="polite">
+              正在加载 Conversation ID 规则…
+            </p>
+          )}
+          {policy.isError && (
+            <LoadError error={policy.error} onRetry={() => policy.refetch()} />
+          )}
+          {policy.data && (
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="space-y-2">
+                <label htmlFor="conversation-id-strategy" className="text-xs font-medium text-muted-foreground">
+                  生成策略
+                </label>
+                <select
+                  id="conversation-id-strategy"
+                  aria-label="Conversation ID 生成规则"
+                  className="h-9 w-full rounded-md border px-2 text-sm"
+                  value={strategy}
+                  onChange={(event) => setStrategy(event.target.value as "uuid4" | "uuid7")}
+                  disabled={!canWrite || savePolicy.isPending}
+                >
+                  <option value="uuid4">随机 UUID(v4)</option>
+                  <option value="uuid7">时间有序 UUID(v7)</option>
+                </select>
+                <p className="text-sm font-medium">当前生效：{policy.data.label}</p>
+                <p className="text-xs text-muted-foreground">{policy.data.description}</p>
+              </div>
+              <div className="space-y-2 rounded-md border bg-muted/20 p-3 text-xs">
+                <div className="font-medium text-muted-foreground">新建对话 ID 预览</div>
+                <code className="block break-all">{policy.data.example}</code>
+                <p className="text-muted-foreground">
+                  仅影响新建对话，已有 Conversation ID 不会改变
+                </p>
+                {canWrite && (
+                  <Button
+                    size="sm"
+                    onClick={() => void saveConversationIdPolicy()}
+                    disabled={savePolicy.isPending || strategy === policy.data.strategy}
+                  >
+                    {savePolicy.isPending ? "保存中…" : "保存规则"}
+                  </Button>
+                )}
+              </div>
             </div>
           )}
         </CardContent>

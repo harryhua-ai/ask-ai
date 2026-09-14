@@ -16,6 +16,7 @@
 (接口同 weaviate v4 client;运行时验收用真实栈)。
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -55,6 +56,7 @@ SCHEDULE_URL = f"/api/admin/data-sources/{SRC}/schedule"
 SETTINGS_URL = f"/api/admin/data-sources/{SRC}/knowledge-settings"
 PREVIEW_URL = f"/api/admin/data-sources/{SRC}/knowledge-settings/preview"
 REPAIR_URL = f"/api/admin/data-sources/{SRC}/documents/repair"
+BULK_REPAIR_URL = f"/api/admin/data-sources/{SRC}/documents/repair-all"
 
 
 class _FakeCollection:
@@ -495,6 +497,140 @@ async def test_u8_repair_stack_unavailable_503(admin_headers, c_seed, vector_sta
         assert resp.status_code in (404, 503)
     finally:
         app.state.weaviate_client = vector_stack["client"]
+
+
+async def test_u14_bulk_repair_returns_authoritative_aggregate_and_excludes_healthy(
+    admin_headers, viewer_headers, c_seed, vector_stack
+):
+    """批量修复只处理当前源 attention 桶,并对不可修复项如实聚合失败。"""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        forbidden = await client.post(BULK_REPAIR_URL, headers=viewer_headers)
+        response = await client.post(BULK_REPAIR_URL, headers=admin_headers)
+    assert forbidden.status_code == 403
+    assert response.status_code == 200
+    body = response.json()
+    # c_seed:1 missing_candidate(无现行版本,失败) + 1 healthy active + 1 healthy active
+    assert body["eligible"] == 1
+    assert body["succeeded"] == 0
+    assert body["failed"] == 1
+    assert body["items"][0]["doc_source_id"] == DOC_PRODUCT
+    assert body["items"][0]["status"] == "failed"
+    assert "无法修复" in body["items"][0]["error"]
+
+
+async def test_u14_bulk_repair_partial_success_excludes_retired_and_concurrent_request(
+    admin_headers, c_seed, vector_stack, monkeypatch
+):
+    """资格是 attention 桶全量,结果允许逐项失败,同源并发请求立即 409。"""
+    factory = app.state.session_factory
+    discovered = f"{SRC}/main/bulk-discovered.md"
+    dangling = f"{SRC}/main/bulk-dangling.md"
+    retired = f"{SRC}/main/bulk-retired.md"
+    async with factory() as session:
+        for doc_source_id, lifecycle in (
+            (discovered, "discovered"),
+            (dangling, "active"),
+            (retired, "superseded"),
+        ):
+            session.add(
+                Document(
+                    source_id=doc_source_id,
+                    content_hash="d" * 64,
+                    source_type="woocommerce",
+                    product="trackc",
+                    title=doc_source_id.rsplit("/", 1)[-1],
+                    url=f"https://shop.example.com/{doc_source_id.rsplit('/', 1)[-1]}",
+                    branch="main",
+                    chunk_count=1,
+                    lifecycle=lifecycle,
+                )
+            )
+        await session.commit()
+
+    async def fake_execute(factory, *, task_id, **_kwargs):
+        async with factory() as session:
+            task = await session.get(DocumentRepairTask, task_id)
+            assert task is not None
+            task.status = "succeeded" if task.doc_source_id == discovered else "failed"
+            task.error = None if task.status == "succeeded" else "测试替身拒绝修复"
+            await session.commit()
+            await session.refresh(task)
+            return task
+
+    monkeypatch.setattr("backend.api.admin.data_sources.execute_repair_task", fake_execute)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+            response = await client.post(BULK_REPAIR_URL, headers=admin_headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["eligible"] == 3  # missing_candidate + discovered + active 悬挂
+        assert body["succeeded"] == 1
+        assert body["failed"] == 2
+        assert {item["doc_source_id"] for item in body["items"]} == {
+            DOC_PRODUCT,
+            discovered,
+            dangling,
+        }
+        assert retired not in {item["doc_source_id"] for item in body["items"]}
+
+        # 用一个新的 eligible 文档让首个请求保持在执行态,第二请求必须 409。
+        concurrent_doc = f"{SRC}/main/bulk-concurrent.md"
+        async with factory() as session:
+            session.add(
+                Document(
+                    source_id=concurrent_doc,
+                    content_hash="e" * 64,
+                    source_type="woocommerce",
+                    product="trackc",
+                    title="bulk-concurrent.md",
+                    url="https://shop.example.com/bulk-concurrent.md",
+                    branch="main",
+                    chunk_count=1,
+                    lifecycle="discovered",
+                )
+            )
+            await session.commit()
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocking_execute(factory, *, task_id, **_kwargs):
+            async with factory() as session:
+                task = await session.get(DocumentRepairTask, task_id)
+                assert task is not None
+                if task.doc_source_id == concurrent_doc:
+                    started.set()
+                    await release.wait()
+                task.status = "failed"
+                task.error = "并发测试失败"
+                await session.commit()
+                await session.refresh(task)
+                return task
+
+        monkeypatch.setattr(
+            "backend.api.admin.data_sources.execute_repair_task", blocking_execute
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+            first_task = asyncio.create_task(client.post(BULK_REPAIR_URL, headers=admin_headers))
+            await asyncio.wait_for(started.wait(), timeout=2)
+            second = await client.post(BULK_REPAIR_URL, headers=admin_headers)
+            release.set()
+            first = await first_task
+        assert second.status_code == 409
+        assert first.status_code == 200
+    finally:
+        async with factory() as session:
+            await session.execute(
+                DocumentRepairTask.__table__.delete().where(
+                    DocumentRepairTask.doc_source_id.in_([discovered, dangling, retired, f"{SRC}/main/bulk-concurrent.md"])
+                )
+            )
+            await session.execute(
+                Document.__table__.delete().where(
+                    Document.source_id.in_([discovered, dangling, retired, f"{SRC}/main/bulk-concurrent.md"])
+                )
+            )
+            await session.commit()
 
 
 # --------------------------------------------------------------------------- #

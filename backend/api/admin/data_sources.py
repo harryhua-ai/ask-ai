@@ -1,5 +1,6 @@
 """数据源 CRUD + 手动同步端点。"""
 
+import asyncio
 import logging
 import os
 import re
@@ -12,10 +13,13 @@ from uuid import uuid4
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.api.admin.schemas import (
+    BulkDocumentRepairItem,
+    BulkDocumentRepairOut,
     ChunkServingTruth,
     DataSourceCreate,
     DataSourceDocumentItem,
@@ -73,6 +77,10 @@ ViewerDep = Annotated[CurrentUser, Depends(require_role("admin", "editor", "view
 
 # C9 上传护栏:单文件大小上限(20MB)
 MAX_UPLOAD_FILE_BYTES = 20 * 1024 * 1024
+
+# 批量修复是数据源级命令:进程内立即拒绝重复请求,跨 worker 再由
+# DataSource 行锁兜底。锁只覆盖一次批量操作的受理/执行窗口,不跨请求持久化。
+_BULK_REPAIR_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 def _norm_discovery_target(value: object) -> str:
@@ -936,6 +944,21 @@ def _current_version_resolvable():
     ).where(DocumentVersion.id == Document.current_version_id).exists()
 
 
+def _bulk_repair_eligibility():
+    """批量修复资格:只覆盖当前 attention 桶,不触碰健康或已退役文档。"""
+    resolvable = _current_version_resolvable()
+    return or_(
+        Document.lifecycle.in_((DocLifecycle.MISSING_CANDIDATE, DocLifecycle.DISCOVERED)),
+        (Document.lifecycle == DocLifecycle.ACTIVE) & ~resolvable,
+    )
+
+
+def _is_nowait_lock_conflict(exc: DBAPIError) -> bool:
+    """识别 Postgres SELECT ... FOR UPDATE NOWAIT 的锁冲突。"""
+    orig = getattr(exc, "orig", None)
+    return str(getattr(orig, "sqlstate", "") or getattr(orig, "pgcode", "")) == "55P03"
+
+
 @router.get("/{source_id}/documents", response_model=DataSourceDocumentsResponse)
 async def list_source_documents(
     source_id: str,
@@ -1430,6 +1453,108 @@ def _task_out(task: DocumentRepairTask) -> DocumentRepairTaskOut:
         created_at=_iso_or_none(task.created_at),
         finished_at=_iso_or_none(task.finished_at),
     )
+
+
+@router.post("/{source_id}/documents/repair-all", response_model=BulkDocumentRepairOut)
+async def repair_all_source_documents(
+    source_id: str, user: EditorDep, request: Request
+) -> BulkDocumentRepairOut:
+    """批量修复当前数据源的 attention 文档,返回逐项真实结果。
+
+    资格与 ``/documents?bucket=attention`` 同源:missing_candidate/discovered
+    或没有可解析现行版本的 active;healthy current 和 retired 永不入选。
+    数据源行 ``FOR UPDATE NOWAIT`` 保证跨 worker 不重入,进程内锁覆盖 SQLite
+    等不提供行锁的运行时。任务使用确定幂等键,重复请求不会制造重复执行记录。
+    """
+    lock = _BULK_REPAIR_LOCKS.setdefault(source_id, asyncio.Lock())
+    if lock.locked():
+        raise HTTPException(status_code=409, detail="该数据源已有批量修复正在执行")
+    await lock.acquire()
+    try:
+        factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+        async with factory() as lock_session:
+            try:
+                source = (
+                    await lock_session.execute(
+                        select(DataSource)
+                        .where(DataSource.id == source_id)
+                        .with_for_update(nowait=True)
+                    )
+                ).scalar_one_or_none()
+            except DBAPIError as exc:
+                await lock_session.rollback()
+                if _is_nowait_lock_conflict(exc):
+                    raise HTTPException(
+                        status_code=409, detail="该数据源已有批量修复正在执行"
+                    ) from exc
+                raise
+            if source is None:
+                raise HTTPException(status_code=404, detail="数据源不存在")
+
+            docs = (
+                (
+                    await lock_session.execute(
+                        select(Document)
+                        .where(_document_scope(source_id), _bulk_repair_eligibility())
+                        .order_by(Document.source_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if not docs:
+                return BulkDocumentRepairOut(
+                    source_id=source_id, eligible=0, succeeded=0, failed=0, items=[]
+                )
+
+            # 依赖不可用时整体诚实返回 503;没有任何「成功」假象。
+            weaviate_client, embedder = ensure_repair_stack(
+                request.app.state, request.app.state.weaviate_class_name
+            )
+            requested_by = str(
+                getattr(user, "username", None) or getattr(user, "id", None) or ""
+            )
+            items: list[BulkDocumentRepairItem] = []
+            succeeded = 0
+            for doc in docs:
+                async with factory() as task_session:
+                    task, _created = await create_repair_task(
+                        task_session,
+                        source_id,
+                        doc.source_id,
+                        requested_by=requested_by,
+                        idempotency_key=f"bulk-repair-v1:{source_id}:{doc.source_id}",
+                    )
+                if task.status == "pending":
+                    task = await execute_repair_task(
+                        factory,
+                        weaviate_client=weaviate_client,
+                        embedder=embedder,
+                        class_name=request.app.state.weaviate_class_name,
+                        task_id=task.id,
+                    )
+                status = str(task.status)
+                if status == "succeeded":
+                    succeeded += 1
+                items.append(
+                    BulkDocumentRepairItem(
+                        doc_source_id=doc.source_id,
+                        status=status,
+                        task_id=str(task.id) if task.id else None,
+                        error=(task.error or ("已有修复任务正在执行" if status in {"pending", "running"} else None)),
+                    )
+                )
+            return BulkDocumentRepairOut(
+                source_id=source_id,
+                eligible=len(docs),
+                succeeded=succeeded,
+                failed=len(docs) - succeeded,
+                items=items,
+            )
+    finally:
+        lock.release()
+        if not lock.locked() and _BULK_REPAIR_LOCKS.get(source_id) is lock:
+            _BULK_REPAIR_LOCKS.pop(source_id, None)
 
 
 @router.post("/{source_id}/documents/repair", response_model=DocumentRepairTaskOut)
