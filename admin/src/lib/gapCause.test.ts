@@ -53,14 +53,23 @@ describe("gapCause 权威原因映射(KB-OPS-V163-002 §5.3)", () => {
     expect(gapCauseAvailable("some_future_type")).toBe(false);
   });
 
-  it("筛选选项 = 权威分类全集 + 未分类;不含恢复设计中无权威支撑的词(内容过期/引用异常等)", () => {
+  it("筛选选项 = 权威分类全集 + 未分类(U-14:含六新类,均已有后端证据规则)", () => {
     const values = GAP_CAUSE_OPTIONS.map((o) => o.value);
     for (const v of ["reject", "low", "召回空", "召回不足", "未分类"]) {
       expect(values).toContain(v);
     }
-    expect(values).not.toContain("内容过期");
-    expect(values).not.toContain("引用异常");
-    expect(values).not.toContain("生成异常");
+    // U-14 六新类(IF-2 冻结):后端证据规则就位,进入权威全集
+    for (const v of [
+      "内容过期",
+      "检索异常",
+      "生成异常",
+      "引用异常",
+      "内容冲突",
+      "内容缺失",
+    ]) {
+      expect(values).toContain(v);
+      expect(gapCauseAvailable(v)).toBe(true);
+    }
   });
 });
 

@@ -39,11 +39,10 @@ from backend.db.models import (
 from backend.services.document_lifecycle import DocLifecycle
 from backend.services.gap_status import GAP_STATUS_PATTERN
 from backend.services.gap_taxonomy import (
-    GAP_MISS_LOW,
-    GAP_MISS_RECALL_EMPTY,
-    GAP_MISS_RECALL_INSUFFICIENT,
-    GAP_MISS_REJECT,
     GAP_MISS_UNCLASSIFIED,
+    CitedDocEvidence,
+    classify_conversation_miss_type,
+    extract_cited_source_ids,
 )
 
 router = APIRouter(prefix="/analytics", tags=["分析仪表盘"])
@@ -79,11 +78,21 @@ async def classify_gap_miss_types(
 ) -> tuple[dict[str, str], dict[str, dict[str, int]]]:
     """对给定 gap 聚类批量计算权威 miss_type 分类(v1.6.3 B2 提取共享)。
 
-    分类语义(spec D4,唯一权威来源,消费方必须同源):
-    - reject:is_answered=False(拒答,用户未获回答)
-    - low:answered, sources 非空, 最新 trace confidence<0.6(低相关)
-    - 召回空:answered, sources 空(已回答但未检索到任何知识来源)
-    - 召回不足:answered, sources 非空, confidence>=0.6 或无 trace
+    分类语义(唯一权威来源,消费方必须同源;单会话证据规则 =
+    backend/services/gap_taxonomy.py:classify_conversation_miss_type,IF-2):
+    - 既有 4 类(语义逐字不变;无新类证据时原判不变):
+      reject:is_answered=False(拒答,用户未获回答)
+      low:answered, sources 非空, 最新 trace confidence<0.6(低相关)
+      召回空:answered, sources 空(已回答但未检索到任何知识来源)
+      召回不足:answered, sources 非空, confidence>=0.6 或无 trace
+    - U-14 六新类(每类=后端确定性证据规则,参考词表 TI-09):
+      生成异常=Trace.type=generation_error(generation failure 真相,PC-06);
+      内容缺失=未回答+零来源+检索零候选(知识缺失变体);
+      引用异常=answered+sources 非空+答案引用编号越界(引用一致性违例);
+      内容冲突=同会话同时引用 superseded 文档与其接替者(多源冲突真相);
+      内容过期=所引文档内容更新早于会话超过 180 天(内容时间真相);
+      检索异常=answered+sources 非空+检索未达最低有效召回(检索异常证据)。
+      优先级与冻结细节见 gap_taxonomy 模块 docstring。
 
     返回 (miss_type_map: cluster_id → 主导分类, breakdown: cluster_id → 各分类计数)。
     主导 = 聚类内会话计数最多的分类;无任何会话证据 → 未分类。
@@ -99,40 +108,61 @@ async def classify_gap_miss_types(
         Conversation.sources,
         Conversation.is_answered,
         Conversation.id,
+        Conversation.answer,
+        Conversation.created_at,
     ).where(Conversation.cluster_id.in_(cluster_ids))
     conv_rows = (await session.execute(conv_q)).all()
 
-    # 批量查最新 trace confidence(turn_index 最大)
+    # 批量查最新 trace 证据快照(turn_index 最大;confidence/type/stages 同行)
     conv_ids = [str(row.id) for row in conv_rows]
-    conf_map: dict[str, float | None] = {}
+    trace_map: dict[str, tuple[float | None, str | None, Any]] = {}
     if conv_ids:
         trace_q = (
             select(
                 Trace.conversation_id,
                 Trace.confidence,
                 Trace.turn_index,
+                Trace.type,
+                Trace.stages,
             )
             .where(Trace.conversation_id.in_(conv_ids))
             .order_by(Trace.turn_index.desc())
         )
         for row in (await session.execute(trace_q)).all():
             cid = str(row.conversation_id)
-            if cid not in conf_map:
-                conf_map[cid] = row.confidence
+            if cid not in trace_map:
+                trace_map[cid] = (row.confidence, row.type, row.stages)
+
+    # 批量查被引用第一方文档证据(documents:内容时间/接替者 → 内容过期/内容冲突)
+    cited_ids: set[str] = set()
+    for row in conv_rows:
+        cited_ids.update(extract_cited_source_ids(row.sources))
+    doc_map: dict[str, CitedDocEvidence] = {}
+    if cited_ids:
+        doc_q = select(
+            Document.source_id, Document.updated_at, Document.superseded_by
+        ).where(Document.source_id.in_(cited_ids))
+        for row in (await session.execute(doc_q)).all():
+            doc_map[row.source_id] = CitedDocEvidence(
+                updated_at=row.updated_at, superseded_by=row.superseded_by
+            )
 
     cluster_stats: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for row in conv_rows:
         cid = str(row.cluster_id) if row.cluster_id else ""
-        sources = row.sources if isinstance(row.sources, list) else []
-        conf = conf_map.get(str(row.id))
-        if not row.is_answered:
-            miss = GAP_MISS_REJECT
-        elif sources and conf is not None and conf < 0.6:
-            miss = GAP_MISS_LOW
-        elif not sources:
-            miss = GAP_MISS_RECALL_EMPTY
-        else:
-            miss = GAP_MISS_RECALL_INSUFFICIENT
+        conf, trace_type, trace_stages = trace_map.get(
+            str(row.id), (None, None, None)
+        )
+        miss = classify_conversation_miss_type(
+            is_answered=bool(row.is_answered),
+            sources=row.sources,
+            answer=row.answer,
+            trace_type=trace_type,
+            trace_stages=trace_stages,
+            trace_confidence=conf,
+            cited_docs=doc_map,
+            conversation_at=row.created_at,
+        )
         cluster_stats[cid][miss] += 1
     for cid, stats in cluster_stats.items():
         dominant = max(stats, key=stats.get) if stats else GAP_MISS_UNCLASSIFIED
