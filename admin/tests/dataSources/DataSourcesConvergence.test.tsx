@@ -208,12 +208,8 @@ describe("v1.6.3 B1 数据源列表收敛(hard ref panel 1)", () => {
 
   it("编辑打开右侧抽屉(context-preserving drawer 语法,§4.5),抽屉含标题 编辑数据源", async () => {
     renderList([wooSource, wikiSource]);
-    // A-P1-04:参考=单「⋯」;编辑收进行操作菜单(既有能力保留)
-    const trigger = screen.getAllByRole("button", { name: "更多操作" })[0];
-    fireEvent.pointerDown(trigger);
-    fireEvent.click(trigger);
-    const editItem = await screen.findByRole("menuitem", { name: "编辑" });
-    fireEvent.click(editItem);
+    // DS-01:高频编辑动作直接可见
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(screen.getByText("编辑数据源")).toBeInTheDocument();
   });
@@ -225,7 +221,7 @@ describe("v1.6.3 B1 数据源列表收敛(hard ref panel 1)", () => {
     const trigger = screen.getAllByRole("button", { name: "更多操作" })[0];
     fireEvent.pointerDown(trigger);
     fireEvent.click(trigger);
-    expect(await screen.findByRole("menuitem", { name: "查看可观测性" })).toBeInTheDocument();
+    expect(await screen.findByRole("menuitem", { name: "同步记录" })).toBeInTheDocument();
     expect(screen.getAllByRole("menuitem", { name: "删除" }).length).toBe(1);
   });
 
@@ -269,17 +265,51 @@ describe("v1.6.3 Design Remediation A 类呈现(数据源列表)", () => {
     expect(screen.getByTitle("https://woocommerce.com")).toBeInTheDocument();
   });
 
-  it("A-P1-04:操作列 = 单「⋯」,详情/同步/编辑均在菜单内", async () => {
+  it("DS-01/#66:操作列直接提供详情/编辑,低频同步与同步记录进菜单", async () => {
     renderList([wooSource]);
-    expect(screen.queryByRole("button", { name: "详情" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "详情" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "同步" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "编辑" })).not.toBeInTheDocument();
     const trigger = screen.getAllByRole("button", { name: "更多操作" })[0];
     fireEvent.pointerDown(trigger);
     fireEvent.click(trigger);
-    expect(await screen.findByRole("menuitem", { name: "详情" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "同步" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "编辑" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "同步记录" })).toBeInTheDocument();
+  });
+
+  it("#66:列表展开只显示最近三次轻量同步记录,不复制详情健康诊断", async () => {
+    vi.mocked(useSyncRuns).mockReturnValue({
+      data: {
+        items: [
+          {
+            id: 11,
+            source_id: "woo-store",
+            status: "completed",
+            started_at: "2026-09-14T01:00:00Z",
+            sync_log: {
+              status: "success",
+              delta_counts: { unit: "document", new_count: 1, updated_count: 2, retired_count: 0, unchanged_count: 3 },
+            },
+          },
+        ],
+        total: 1,
+        page: 1,
+        size: 20,
+      } as never,
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    } as never);
+    renderList([wooSource]);
+    const trigger = screen.getAllByRole("button", { name: "更多操作" })[0];
+    fireEvent.pointerDown(trigger);
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "同步记录" }));
+    expect(await screen.findByText("同步记录")).toBeInTheDocument();
+    expect(screen.getByText(/新增知识 1/)).toBeInTheDocument();
+    expect(screen.getByText(/更新知识 2/)).toBeInTheDocument();
+    expect(screen.queryByText("数据源健康")).not.toBeInTheDocument();
+    expect(screen.queryByText("最近同步")).not.toBeInTheDocument();
   });
 
   it("A-P1-05:类型运营词表 商城/Wiki/网站/文件系统(仅呈现映射)", () => {

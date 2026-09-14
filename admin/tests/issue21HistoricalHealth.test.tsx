@@ -37,9 +37,9 @@ const panelItem: SyncHealthItem = {
 } as unknown as SyncHealthItem;
 
 describe("#21 SourceHealthPanel —— 30 天同步维显式标注历史", () => {
-  it("同步维标签为「同步(历史30天)」,critical 态徽章落在历史卡片内", () => {
+  it("同步维标签为「同步可靠性（历史30天）」,critical 态徽章落在历史卡片内", () => {
     render(<SourceHealthPanel health={panelItem} />);
-    expect(screen.getByText("同步(历史30天)")).toBeInTheDocument();
+    expect(screen.getByText("同步可靠性（历史30天）")).toBeInTheDocument();
     // 该维仍是 W2 词表原文(critical → 严重),但语义由历史卡片标题限定
     const syncCritical = screen.getByText("严重");
     expect(syncCritical).toBeInTheDocument();
@@ -47,7 +47,7 @@ describe("#21 SourceHealthPanel —— 30 天同步维显式标注历史", () =>
 
   it("当前态维标签不变且保持主位", () => {
     render(<SourceHealthPanel health={panelItem} />);
-    for (const label of ["连接", "覆盖", "新鲜度", "一致性"]) {
+    for (const label of ["连接状态", "知识可用性", "数据新鲜度", "检索/索引一致性"]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
     expect(screen.getByText("数据源健康")).toBeInTheDocument();

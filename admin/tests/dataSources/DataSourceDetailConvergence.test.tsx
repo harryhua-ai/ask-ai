@@ -203,7 +203,7 @@ const runs = {
       status: "completed",
       started_at: new Date(Date.now() - 7200 * 1000).toISOString(),
       counters: {},
-      sync_log: { status: "success", items_new: 0, chunks_written: 0, items_deleted: 0, items_unchanged: 200, error_detail: null },
+      sync_log: { status: "success", items_new: 0, chunks_written: 0, items_deleted: 0, items_unchanged: 200, error_detail: null, delta_counts: { unit: "document", new_count: 0, updated_count: 0, retired_count: 0, unchanged_count: 200 } },
     },
     {
       id: 29,
@@ -212,7 +212,7 @@ const runs = {
       status: "completed",
       started_at: new Date(Date.now() - 10800 * 1000).toISOString(),
       counters: {},
-      sync_log: { status: "success", items_new: 0, chunks_written: 0, items_deleted: 0, items_unchanged: 200, error_detail: null },
+      sync_log: { status: "success", items_new: 0, chunks_written: 0, items_deleted: 0, items_unchanged: 200, error_detail: null, delta_counts: { unit: "document", new_count: 0, updated_count: 0, retired_count: 0, unchanged_count: 200 } },
     },
   ],
   total: 3,
@@ -325,12 +325,14 @@ describe("v1.6.3 B1 数据源详情收敛(hard ref panel 2/3/4)", () => {
     expect(screen.queryByText(/生效自 2026-08-01T00:00:00/)).not.toBeInTheDocument();
   });
 
-  it("U-8/U-12 授权实现(v1.6.3 Wave 1 Track C):行 ⋯ 收纳重新处理;页头菜单含知识设置;预览 Modal 仅确认流出现", () => {
+  it("U-8/U-12:查看真相/修复此知识与编辑/知识设置均直接可见", () => {
     renderDetail();
-    // 冻结授权后的呈现:行级 ⋯ 菜单 + 页头知识设置入口存在;
+    // 冻结授权后的呈现:知识行直接暴露两个主操作,页头直接暴露配置操作;
     // 高风险预览 Modal 仍不静态出现(仅保存时态角色变化时经后端预览触发)
-    expect(screen.getAllByLabelText(/更多行操作/).length).toBeGreaterThan(0);
-    expect(screen.getByLabelText("更多页操作")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "查看真相" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: "修复此知识" }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "知识设置" })).toBeInTheDocument();
     expect(screen.queryByText(/预计影响/)).not.toBeInTheDocument();
   });
 
@@ -405,14 +407,14 @@ describe("v1.6.3 Design Remediation A 类呈现(数据源详情)", () => {
     expect(icon?.textContent).toContain("⚠");
   });
 
-  it("A-P2-05:页头动作 = 单「⋯」;编辑/返回列表在菜单内", async () => {
+  it("DS-01:页头直接提供编辑/知识设置,返回列表保留在菜单", async () => {
     renderDetail();
-    expect(screen.queryByRole("button", { name: "编辑" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "知识设置" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "返回列表" })).not.toBeInTheDocument();
     const trigger = screen.getByRole("button", { name: "更多页操作" });
     fireEvent.pointerDown(trigger);
     fireEvent.click(trigger);
-    expect(await screen.findByRole("menuitem", { name: "编辑" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "返回列表" })).toBeInTheDocument();
   });
 

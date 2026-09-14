@@ -27,11 +27,10 @@ import {
   useAttentionSummary,
 } from "@/hooks/useDataSources";
 import { SourceEditorDrawer } from "@/components/dataSources/SourceEditorDrawer";
-import { SourceHealthPanel } from "@/components/dataSources/SourceHealthPanel";
-import { SyncHistoryPanel } from "@/components/dataSources/SyncHistoryPanel";
+import { SyncRecordPanel } from "@/components/dataSources/SyncRecordPanel";
 import { SyncStatusPanel } from "@/components/dataSources/SyncStatusPanel";
 import { isDeletionInFlight, isSyncEligible } from "@/types/api";
-import type { DataSource, SyncHealthItem, SyncStatusItem } from "@/types/api";
+import type { DataSource, SyncStatusItem } from "@/types/api";
 import {
   operatorStateOf,
   relativeTime,
@@ -85,13 +84,10 @@ const TONE_PRIORITY: Record<OperatorTone, number> = {
 
 function SourceObservabilityDetails({
   source,
-  syncHealth,
   activeStatus,
   expanded,
 }: {
   source: DataSource;
-  /** #11 Health Authority:W2 /sync-health 权威条目,面板直呈,前端不重判 */
-  syncHealth?: SyncHealthItem;
   activeStatus?: SyncStatusItem;
   expanded: boolean;
 }) {
@@ -110,15 +106,12 @@ function SourceObservabilityDetails({
         <div className="space-y-4 py-2">
           {activeStatus && <SyncStatusPanel status={activeStatus} />}
           {expanded && (
-            <>
-              <SyncHistoryPanel
-                runs={runsQuery.data}
-                isLoading={runsQuery.isLoading}
-                error={historyError}
-                onRetry={() => runsQuery.refetch()}
-              />
-              <SourceHealthPanel health={syncHealth} />
-            </>
+            <SyncRecordPanel
+              runs={runsQuery.data}
+              isLoading={runsQuery.isLoading}
+              error={historyError}
+              onRetry={() => runsQuery.refetch()}
+            />
           )}
         </div>
       </TableCell>
@@ -481,17 +474,34 @@ export default function DataSources() {
                       )}
                     </TableCell>
                     <TableCell>
-                      {/* A-P1-04:参考为单「⋯」;全部既有操作(详情/同步/编辑/可观测性/删除)收进菜单,零授权能力删除 */}
-                      <DropdownMenu>
+                      {/* #66:列表保留轻量直达操作;完整同步/删除等低频动作进菜单。 */}
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2"
+                          onClick={() => navigate(`/data-sources/${ds.id}`)}
+                        >
+                          详情
+                        </Button>
+                        {canWrite && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2"
+                            disabled={isDeletionInFlight(ds)}
+                            onClick={() => openEdit(ds)}
+                          >
+                            编辑
+                          </Button>
+                        )}
+                        <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button size="sm" variant="outline" aria-label="更多操作" className="h-7 px-2.5">
                             ⋯
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => navigate(`/data-sources/${ds.id}`)}>
-                            详情
-                          </DropdownMenuItem>
                           {canWrite && (
                             <DropdownMenuItem
                               disabled={
@@ -507,16 +517,8 @@ export default function DataSources() {
                               {isActive ? "同步中..." : isTriggerPending ? "触发中..." : "同步"}
                             </DropdownMenuItem>
                           )}
-                          {canWrite && (
-                            <DropdownMenuItem
-                              disabled={isDeletionInFlight(ds)}
-                              onSelect={() => openEdit(ds)}
-                            >
-                              编辑
-                            </DropdownMenuItem>
-                          )}
                           <DropdownMenuItem onClick={() => toggleObservability(ds.id)}>
-                            {isExpanded ? "收起可观测性" : "查看可观测性"}
+                            {isExpanded ? "收起同步记录" : "同步记录"}
                           </DropdownMenuItem>
                           {canWrite && ds.lifecycle_state === "delete_failed" && (
                             <DropdownMenuItem
@@ -540,11 +542,11 @@ export default function DataSources() {
                           )}
                         </DropdownMenuContent>
                       </DropdownMenu>
+                      </div>
                     </TableCell>
                   </TableRow>
                   <SourceObservabilityDetails
                     source={ds}
-                    syncHealth={syncHealthMap.get(ds.id)}
                     activeStatus={activeStatus}
                     expanded={isExpanded}
                   />

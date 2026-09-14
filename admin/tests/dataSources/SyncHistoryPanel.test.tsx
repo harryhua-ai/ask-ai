@@ -30,6 +30,18 @@ const run = (overrides: Partial<SyncRun> = {}): SyncRun => ({
     items_deleted: 1,
     items_unchanged: 9,
     error_detail: null,
+    delta_counts: {
+      schema_version: 1,
+      unit: "document",
+      new_count: 2,
+      new_unit: "document",
+      updated_count: 0,
+      updated_unit: "document",
+      retired_count: 1,
+      retired_unit: "document",
+      unchanged_count: 9,
+      unchanged_unit: "document",
+    },
   },
   ...overrides,
 });
@@ -42,10 +54,10 @@ describe("SyncHistoryPanel", () => {
       run({ fallback_reason: "CUDA unavailable", counters: { docs_total: 12, chunks_deleted: 5 } }),
       run({ id: 9, execution_device: "cpu", fallback_reason: null }),
     ])} />);
-    expect(screen.getAllByText("新增文档 2")[0]).toBeInTheDocument();
-    expect(screen.getAllByText("删除文档 1")[0]).toBeInTheDocument();
-    expect(screen.getAllByText("未变更文档 9")[0]).toBeInTheDocument();
-    expect(screen.getAllByText("分块 42")[0]).toBeInTheDocument();
+    expect(screen.getAllByText("新增知识 2")[0]).toBeInTheDocument();
+    expect(screen.getAllByText("淘汰知识 1")[0]).toBeInTheDocument();
+    expect(screen.getAllByText("未变更知识 9")[0]).toBeInTheDocument();
+    expect(screen.getAllByText(/chunks_written（历史技术字段）: 42/)[0]).toBeInTheDocument();
     expect(screen.getAllByText("业务结果：成功")[0]).toBeInTheDocument();
     expect(screen.getAllByText("缺失 2")[0]).toBeInTheDocument();
     expect(screen.getAllByText("孤儿 3")[0]).toBeInTheDocument();

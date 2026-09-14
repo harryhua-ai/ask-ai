@@ -31,8 +31,8 @@ const health = (overrides: Partial<SyncHealthItem> = {}): SyncHealthItem => ({
 describe("SourceHealthPanel(#11 Health Authority:W2 /sync-health 直呈)", () => {
   it("renders the five dimensions and overall exactly as the backend states them", () => {
     render(<SourceHealthPanel health={health()} />);
-    // #21:30 天同步维显式标注历史,其余四维标签不变
-    for (const label of ["连接", "同步(历史30天)", "覆盖", "新鲜度", "一致性"]) {
+    // #67:健康维度使用管理员语义,历史窗口与检索/索引边界明确
+    for (const label of ["连接状态", "同步可靠性（历史30天）", "知识可用性", "数据新鲜度", "检索/索引一致性"]) {
       expect(screen.getByRole("heading", { name: label })).toBeInTheDocument();
     }
     // 后端状态词表 → 本地化徽章(不得改判)
@@ -58,6 +58,8 @@ describe("SourceHealthPanel(#11 Health Authority:W2 /sync-health 直呈)", () =>
     expect(screen.getAllByText("未知").length).toBe(3);
     // overall INSUFFICIENT_DATA 徽章 + 2 个 evidence 空占位,均为「证据不足」
     expect(screen.getAllByText("证据不足").length).toBe(3);
+    expect(screen.getByText("暂不可评估")).toBeInTheDocument();
+    expect(screen.queryByText(/%/)).not.toBeInTheDocument();
   });
 
   it("presents backend RECOVERING without frontend synthesis", () => {

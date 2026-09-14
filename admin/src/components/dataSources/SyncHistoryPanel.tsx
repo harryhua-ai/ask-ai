@@ -9,6 +9,7 @@ import {
   stateLabel,
   syncRunDisplayState,
 } from "@/lib/dataSourceObservability";
+import { documentDeltaSummary } from "@/lib/syncDeltaPresentation";
 import type { SyncRun, SyncRunList, SyncState } from "@/types/api";
 
 export interface SyncHistoryPanelProps {
@@ -44,6 +45,9 @@ function TechnicalEvidence({ run }: { run: SyncRun }) {
         {run.error_summary && <p>{run.error_summary}</p>}
         {run.fallback_detail && <p>{run.fallback_detail}</p>}
         {run.sync_log?.error_detail && <p>{run.sync_log.error_detail}</p>}
+        {run.sync_log?.chunks_written != null && (
+          <p>chunks_written（历史技术字段）: {run.sync_log.chunks_written}</p>
+        )}
       </div>
     </details>
   );
@@ -73,10 +77,7 @@ function RunCard({ run }: { run: SyncRun }) {
           {run.started_at && <span>开始 {run.started_at}</span>}
           {run.triggered_by && <span>触发 {run.triggered_by}</span>}
           {businessStatus && <span>{`业务结果：${businessStatus}`}</span>}
-          {syncLog?.items_new != null && <span>新增文档 {syncLog.items_new}</span>}
-          {syncLog?.items_deleted != null && <span>删除文档 {syncLog.items_deleted}</span>}
-          {syncLog?.items_unchanged != null && <span>未变更文档 {syncLog.items_unchanged}</span>}
-          {syncLog?.chunks_written != null && <span>分块 {syncLog.chunks_written}</span>}
+          {syncLog && documentDeltaSummary(syncLog).map((line) => <span key={line}>{line}</span>)}
           {counters?.chunks_deleted != null && <span>已删除分块 {counters.chunks_deleted}</span>}
           {facts.missing != null && <span>缺失 {facts.missing}</span>}
           {facts.orphan != null && <span>孤儿 {facts.orphan}</span>}
