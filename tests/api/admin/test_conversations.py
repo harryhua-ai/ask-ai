@@ -81,6 +81,27 @@ async def test_list_conversations_q_search(auth_headers):
     assert all("test question" not in c["question"].lower() for c in data2["items"])
 
 
+async def test_list_conversations_q_searches_authoritative_conversation_id(auth_headers):
+    """支持管理员用列表中展示的 canonical Conversation ID 回查。"""
+    factory = app.state.session_factory
+    async with factory() as session:
+        conv = (
+            await session.execute(
+                select(Conversation).where(Conversation.question == "test question")
+            )
+        ).scalar_one()
+        conversation_id = str(conv.id)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get(
+            f"/api/admin/conversations?q={conversation_id}", headers=auth_headers
+        )
+    assert resp.status_code == 200
+    ids = {item["id"] for item in resp.json()["items"]}
+    assert conversation_id in ids
+
+
 async def test_list_conversations_trace_summary_latest_turn_and_confidence(auth_headers):
     """trace_summary 取最新一轮(turn_index 最大)的 trace,且含 confidence。"""
     factory = app.state.session_factory

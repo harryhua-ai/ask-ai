@@ -1,7 +1,7 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Lightbulb, ThumbsUp, ThumbsDown } from "lucide-react";
+import { Check, Copy, Lightbulb, ThumbsUp, ThumbsDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import ToggleFilter from "@/components/observability/ToggleFilter";
 import { deriveOutcome } from "@/utils/outcome";
+import { conversationIdLabel } from "@/utils/conversationId";
 
 const INTENT_LABELS: Record<string, string> = {
   commercial: "商务咨询",
@@ -84,6 +85,7 @@ export default function Conversations() {
   const canWrite = user?.role === "admin" || user?.role === "editor";
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState(searchParams.get("q") ?? "");
+  const [copiedConversationId, setCopiedConversationId] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => {
       setFilters((f) =>
@@ -141,6 +143,7 @@ export default function Conversations() {
   const [turnIndex, setTurnIndex] = useState(0);
   useEffect(() => {
     setTurnIndex(0);
+    setCopiedConversationId(false);
   }, [selectedId]);
   const currentTrace =
     traces?.find((t) => t.turn_index === turnIndex) ?? traces?.[0];
@@ -294,6 +297,13 @@ export default function Conversations() {
                         <span className="font-medium truncate">
                           {conv.question}
                         </span>
+                        <span
+                          data-testid="conversation-id"
+                          title={`完整 Conversation ID: ${conv.id}`}
+                          className="shrink-0 font-mono text-[11px] text-muted-foreground"
+                        >
+                          ID {conversationIdLabel(conv.id)}
+                        </span>
                         {conv.intent_tag && (
                           <Badge variant="outline">
                             {INTENT_LABELS[conv.intent_tag] ?? conv.intent_tag}
@@ -440,6 +450,22 @@ export default function Conversations() {
             </Button>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <div className="flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono" data-testid="conversation-id-detail">
+              <span title={detail.id}>Conversation ID {conversationIdLabel(detail.id)}</span>
+              <button
+                type="button"
+                className="rounded p-0.5 hover:bg-muted"
+                aria-label="复制 Conversation ID"
+                title={detail.id}
+                onClick={async () => {
+                  if (!navigator.clipboard) return;
+                  await navigator.clipboard.writeText(detail.id);
+                  setCopiedConversationId(true);
+                }}
+              >
+                {copiedConversationId ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+              </button>
+            </div>
             {(() => {
               const outcome = deriveOutcome(detail.is_answered, detail.trace_type);
               return (
