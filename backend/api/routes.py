@@ -575,7 +575,7 @@ async def upload_attachments_widget(
     background_tasks: BackgroundTasks,
     session_factory: SessionFactoryDep,
     session_id: str = Form(...),
-    files: list[UploadFile] = File(...),
+    files: list[UploadFile] = File(...),  # noqa: B008 - FastAPI dependency declaration
 ) -> dict[str, Any]:
     """widget 匿名上传:固定 owner_type=widget_anon,owner_id=session_id。"""
     if len(files) > MAX_ATTACHMENTS_PER_MESSAGE:

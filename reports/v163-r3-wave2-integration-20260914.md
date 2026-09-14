@@ -137,3 +137,119 @@ Visual status is candidate-only; Role A retains final visual acceptance authorit
 - branch: `integration/v163-r3-wave2-20260914`
 - report path: `reports/v163-r3-wave2-integration-20260914.md`
 - final report-only commit SHA: recorded by the pushed branch HEAD after this report is finalized; it does not change implementation semantics.
+
+---
+
+## Wave 2 — Admin Operations Remediation (Role B, this cycle)
+
+执行日期：2026-09-14（Asia/Shanghai）
+范围：A Admin action discoverability；B current-data-source bulk knowledge repair；C Admin-configurable Conversation ID policy。
+模式：NARROW REMEDIATION；仅复用 `integration/v163-r3-wave2-20260914`，不新开 Track、不 merge、不 deploy、不做 production migration、不关闭 Issue。
+
+### Fresh gate and candidate identity
+
+- Fresh `origin/main`: `d89a0d198cdc1fa9e82b5525fbbba6d3d14e286c`.
+- Old candidate before this remediation: `c830f2b0b83ad24d9a071e42d22790afbb34439d`.
+- Previous integration candidate: `66695db047be2241a175bebd7930aa75a1142529`.
+- Branch: `integration/v163-r3-wave2-20260914`.
+- Implementation/evidence commit: `edba4cf71ef3b998eb3a558529dfd99cedcbc5b7`.
+- Final pushed SHA: recorded after the report commit and remote verification in the handoff below.
+
+Fresh gate used `git fetch origin --prune`; the worktree was clean before remediation, `origin/main` was unchanged from the accepted planning baseline, and no merge/deploy/tag/production mutation was performed.
+
+### A — Admin action discoverability
+
+`admin/src/pages/DataSources.tsx` now exposes page-level `同步全部` and each enabled row's routine `详情` / `编辑` / `同步` controls directly at desktop width. Existing state guards remain authoritative: disabled sources keep `同步` disabled; active/pending syncs cannot be double-triggered; overflow is retained only for `同步记录` and destructive `删除`. The detail page's `返回列表` is also a direct top-right button and is not hidden inside the page-action overflow.
+
+The real local Admin browser at `http://127.0.0.1:18230` showed 11 data sources, direct page/row actions, a disabled sync control for the disabled source, and the secondary-only row overflow menu. Screenshot evidence:
+
+- `output/playwright/v163-r3-wave2-admin-remediation/01-data-sources-direct-actions.png`
+- `output/playwright/v163-r3-wave2-admin-remediation/02-data-source-overflow-secondary-only.png`
+- `output/playwright/v163-r3-wave2-admin-remediation/03-data-source-detail-bulk-action.png`
+
+### B — Bulk repair semantics
+
+`POST /api/admin/data-sources/{source_id}/documents/repair-all` is editor/admin-only and is scoped to the selected current data source. Eligibility is derived from the existing authoritative attention/lifecycle truth:
+
+- includes `missing_candidate` / `discovered` and active documents whose current version is unresolved;
+- excludes healthy active documents with a resolvable current version;
+- excludes `superseded` and `deleted` retired objects;
+- orders by `doc_source_id` for bounded deterministic processing;
+- returns per-item `succeeded` / `failed` status, task id and error evidence, plus aggregate `eligible` / `succeeded` / `failed` counts;
+- returns 409 for an in-flight same-source repair (process lock plus database `FOR UPDATE NOWAIT` guard);
+- is truthful when vector/embedding dependencies are unavailable (503), never manufacturing success;
+- uses deterministic `bulk-repair-v1:{source_id}:{doc_source_id}` task keys and existing single-document repair execution for idempotence and provenance/audit retention;
+- returns a zero aggregate for an already healthy source without touching the vector stack.
+
+The Admin detail page shows `一键修复全部 N 项`, truthful pending state, and the returned aggregate `已修复 X 项，Y 项仍需处理`; it invalidates the authoritative document/truth/source queries after completion. The live `ne301` detail view showed one attention item and the direct `一键修复全部 1 项` control.
+
+### C — Conversation ID policy
+
+Investigation confirmed the previous runtime generated new IDs with direct `uuid.uuid4()` calls in both new-conversation branches; existing `Conversation.id` values are persisted UUID primary keys and are not rewritten. The remediation adds:
+
+- `conversation_id_policies` ORM table plus additive/idempotent `scripts/migrate_add_conversation_id_policy.py`;
+- migration manifest entry `scripts/migrate_add_conversation_id_policy.py`; table creation uses `CREATE TABLE IF NOT EXISTS`, and the fixed `default` row uses `ON CONFLICT DO NOTHING` with default `uuid4`;
+- `GET/PUT /api/admin/system/conversation-id-policy`; read access is viewer/editor/admin, write access is editor/admin, invalid strategies return 422;
+- `backend/services/conversation_id.py` with RFC 9562 UUIDv7 generation, persisted active-strategy loading, and fail-safe UUIDv4 fallback on missing/invalid/unreadable policy;
+- both new-conversation paths in `backend/api/routes.py` now use the service; ordinary attachment UUIDs are unchanged;
+- Admin System Info control with explicit “当前生效” text, v4/v7 selection, save feedback, preview, and `仅影响新建对话，已有 Conversation ID 不会改变` contract.
+
+The migration is bounded to one fixed policy row, source/config-authoritative, idempotent, and performs no historical Conversation ID backfill. Existing list/detail/copy behavior remains the canonical persisted-ID contract.
+
+Live browser evidence logged in this cycle: authenticated local admin opened `/admin/system`, read current `uuid4`, saved `uuid7` and observed a version-7 preview, then restored `uuid4`; no production account or production database was touched. Screenshots:
+
+- `output/playwright/v163-r3-wave2-admin-remediation/04-conversation-id-policy.png`
+- `output/playwright/v163-r3-wave2-admin-remediation/05-conversation-id-policy-saved.png`
+
+### Regression and acceptance evidence
+
+Frontend:
+
+- Targeted Admin tests: `4 passed, 83 passed` (`DataSourcesConvergence`, `DataSources`, `DataSourceDetailConvergence`, `ConversationIdPolicy`).
+- `npm run build`: passed (`tsc -b` and Vite build); Vite emitted only the existing chunk-size warning.
+
+Backend, run as isolated pytest groups because some legacy API tests intentionally replace process-global `app.state` fixtures:
+
+- Track C bulk repair + policy + UUID service: `28 passed, 4 warnings`.
+- route/reliability/admin-channel compatibility: `20 passed, 4 warnings`.
+- data-source/discovery/website/system/conversation parity: `48 passed, 4 warnings`.
+- The combined all-in-one invocation produced 42 fixture-contamination failures (`get_current_user` saw an `AsyncMock` coroutine); this was reproduced, traced to cross-module `app.state.session_factory` replacement, and the three isolated groups all passed. No candidate failure remains.
+- `python -m compileall -q backend scripts tests/api/admin/test_conversation_id_policy.py tests/services/test_conversation_id.py`: passed.
+- Changed-path `ruff check`: passed.
+- `git diff --check`: passed.
+
+Acceptance coverage includes:
+
+- new policy path and old Conversation IDs remain stable;
+- list/detail/copy canonical behavior through existing conversation regressions;
+- Admin/editor/viewer RBAC for policy and bulk repair;
+- bulk partial success, retired/healthy exclusion, idempotence/concurrency, truthful dependency failure;
+- normal GitHub, Website and WooCommerce source behavior unchanged;
+- Widget and Admin/API parity preserved;
+- provenance/audit retained by reusing existing repair task execution;
+- prior #64 authoritative Wiki citation closure remains untouched: valid frontmatter slug emits canonical Wiki route; absent/invalid authority stays on proven provenance fallback, with no guessed `/resources` URL and no empty/fake clickable URL. Existing #64/NE503 SDK regression evidence remains in the accepted predecessor/closure and was not reopened in this admin-only cycle.
+
+Concrete #64 reproduction evidence retained from the accepted Track D closure: `pytest -q tests/pipeline/test_canonical_url.py -k legacy_ne503_sdk_resources_without_slug` covers `docs/6-neoeyes-ne503-series/3-sdk/reference.md` and `docs/6-neoeyes-ne503-series/4-application-guide/3-resources.md`; before closure those legacy objects guessed `/docs/neoeyes-ne503-series/sdk/reference` and `/docs/neoeyes-ne503-series/application-guide/resources`, while after closure both resolve to their original GitHub blob provenance URLs when `frontmatter_slug` is absent. The same fixture is asserted for Admin and Widget plus `answer()` and `stream_answer()` parity. The valid new-ingest case asserts frontmatter slug propagation to the canonical Wiki route. This cycle's Admin changes do not alter that path.
+
+### Changed files
+
+- Admin: `admin/src/hooks/useConversationIdPolicy.ts`, `admin/src/hooks/useDataSourceKnowledge.ts`, `admin/src/pages/DataSourceDetail.tsx`, `admin/src/pages/DataSources.tsx`, `admin/src/pages/SystemInfo.tsx`.
+- Admin tests: `admin/tests/ConversationIdPolicy.test.tsx`, `admin/tests/DataSources.test.tsx`, `admin/tests/FinalPolish.test.tsx`, `admin/tests/dataSources/DataSourceDetailConvergence.test.tsx`, `admin/tests/dataSources/DataSourcesConvergence.test.tsx`.
+- Backend: `backend/api/admin/data_sources.py`, `backend/api/admin/schemas.py`, `backend/api/admin/system.py`, `backend/api/routes.py`, `backend/db/models.py`, `backend/services/conversation_id.py`.
+- Migration/manifest: `scripts/migrate_add_conversation_id_policy.py`, `deploy/prod/migrations.json`.
+- Backend tests: `tests/api/admin/test_conversation_id_policy.py`, `tests/api/admin/test_data_sources_track_c.py`, `tests/api/admin/test_system_runtime.py`, `tests/services/test_conversation_id.py`.
+- Fresh browser evidence: `output/playwright/v163-r3-wave2-admin-remediation/` (five PNGs).
+
+### Scope audit and non-actions
+
+No merge, deploy, tag/release, production migration execution, Issue closure, or new Track was performed. No #64 citation, Wiki ingestion, normal GitHub, Website, WooCommerce, or Widget serving implementation was altered beyond Admin action placement and the generic bulk-repair control. The migration file is included in the manifest but was not executed against production.
+
+### Cycle verdict
+
+`V163_R3_ADMIN_OPERATIONS_REMEDIATION = CANDIDATE READY`
+
+- old SHA: `c830f2b0b83ad24d9a071e42d22790afbb34439d`
+- implementation/evidence SHA: `edba4cf71ef3b998eb3a558529dfd99cedcbc5b7`
+- final pushed SHA: recorded after this report commit and remote verification
+- branch: `integration/v163-r3-wave2-20260914`
+- report: `reports/v163-r3-wave2-integration-20260914.md`
