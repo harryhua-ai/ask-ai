@@ -450,8 +450,8 @@ export default function Conversations() {
             </Button>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <div className="flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono" data-testid="conversation-id-detail">
-              <span title={detail.id}>Conversation ID {conversationIdLabel(detail.id)}</span>
+            <div className="flex min-w-0 max-w-full items-center gap-1 rounded border px-1.5 py-0.5 font-mono" data-testid="conversation-id-detail">
+              <span className="min-w-0 break-all" title={detail.id}>Conversation ID {detail.id}</span>
               <button
                 type="button"
                 className="rounded p-0.5 hover:bg-muted"

@@ -3,6 +3,8 @@ import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/re
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+const FULL_CONVERSATION_ID = "aaaaaaaa-0000-4000-8000-e2d000000101";
+
 vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ user: { role: "admin", email: "t@x.com" } }),
 }));
@@ -11,7 +13,7 @@ vi.mock("@/hooks/useConversations", () => ({
     data: {
       items: [
         {
-          id: "c1",
+          id: FULL_CONVERSATION_ID,
           question: "NE503 价格",
           intent_tag: "commercial",
           is_answered: true,
@@ -40,7 +42,7 @@ vi.mock("@/hooks/useConversations", () => ({
   }),
   useConversationDetail: () => ({
     data: {
-      id: "c1",
+      id: FULL_CONVERSATION_ID,
       question: "NE503 价格",
       answer: "NE503 的价格请咨询销售",
       channel: "widget",
@@ -65,7 +67,7 @@ vi.mock("@/lib/api/traces", () => ({ fetchTraces: mockFetchTraces }));
 mockFetchTraces.mockResolvedValue([
   {
     id: "t1",
-    conversation_id: "c1",
+    conversation_id: FULL_CONVERSATION_ID,
     prev_trace_id: null,
     turn_index: 0,
     type: "rag",
@@ -100,6 +102,30 @@ function renderWithProviders(ui: React.ReactElement) {
 }
 
 describe("Conversations 审查页", () => {
+  it("列表保留缩略 ID,详情显示并复制完整 Conversation ID", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    renderWithProviders(<Conversations />);
+
+    expect(await screen.findByTestId("conversation-id")).toHaveTextContent(
+      "ID aaaaaaaa…0101",
+    );
+    fireEvent.click(await screen.findByText("NE503 价格"));
+
+    const detailId = await screen.findByTestId("conversation-id-detail");
+    expect(detailId).toHaveTextContent(`Conversation ID ${FULL_CONVERSATION_ID}`);
+    expect(detailId).not.toHaveTextContent("…");
+
+    fireEvent.click(screen.getByRole("button", { name: "复制 Conversation ID" }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(FULL_CONVERSATION_ID);
+    });
+  });
+
   it("列表显示问题、意图标签、总耗时", async () => {
     renderWithProviders(<Conversations />);
     await waitFor(() => {
@@ -143,7 +169,7 @@ describe("Conversations 审查页", () => {
   it("多轮对话可切换轮次查看 trace", async () => {
     mockFetchTraces.mockResolvedValueOnce([
       {
-        id: "t1", conversation_id: "c1", turn_index: 0, type: "rag",
+        id: "t1", conversation_id: FULL_CONVERSATION_ID, turn_index: 0, type: "rag",
         stages: {
           intent: { ms: 50, category: "product" },
           retrieve: { ms: 200, hybrid_count: 10 },
@@ -154,7 +180,7 @@ describe("Conversations 审查页", () => {
         total_ms: 800, intent: "product", config_snapshot: {}, created_at: "",
       },
       {
-        id: "t2", conversation_id: "c1", turn_index: 1, type: "rag",
+        id: "t2", conversation_id: FULL_CONVERSATION_ID, turn_index: 1, type: "rag",
         stages: {
           intent: { ms: 40, category: "support" },
           retrieve: { ms: 300, hybrid_count: 5 },
