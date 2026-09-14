@@ -11,6 +11,7 @@
 - GET    /source-health           数据源健康度(viewer+)
 """
 
+import re
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
@@ -429,21 +430,60 @@ async def gap_trends(
 # 用 1~2 次运行伪造 100% 或 0% 的可靠性印象。
 MIN_SYNC_RUNS = 3
 
+# BC-2(Track A,IF-7 全冻结词表的显式起止/all 表达):from/to 为可选窗参数;
+# 既有 days 形态语义逐字保留(days 形态响应形状零变化,不新增 window 字段)。
+_DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _parse_window_bound(value: str, name: str, *, end_of_day: bool) -> datetime:
+    """解析显式窗界(YYYY-MM-DD 或 ISO 日期时间)→ aware UTC datetime。
+
+    - YYYY-MM-DD:起界=当日 00:00 UTC;止界(end_of_day)=当日 23:59:59.999999
+      UTC(结束日全天含,与 /tech/answer-gaps range: 显式起止口径一致);
+    - ISO 日期时间:naive 视为 UTC(与 /tech/performance from/to 既有语义一致),
+      aware 转换为 UTC;
+    - 非法格式 → 422(fail loud,禁静默回退)。
+    """
+    raw = value.strip()
+    try:
+        if _DATE_ONLY_RE.fullmatch(raw):
+            dt = datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=UTC)
+            if end_of_day:
+                dt = dt + timedelta(days=1) - timedelta(microseconds=1)
+            return dt
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        raise HTTPException(
+            status_code=422, detail=f"{name} 需 ISO 8601 日期(YYYY-MM-DD 或日期时间)"
+        )
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
 
 @router.get("/source-health")
 async def source_health(
     _: ViewerDep,
     request: Request,
     days: int = Query(default=30, ge=1, le=365),
+    date_from: str | None = Query(default=None, alias="from"),
+    date_to: str | None = Query(default=None, alias="to"),
 ) -> dict[str, Any]:
     """数据源健康度:当前态(最近一次同步)+ 历史可靠性(窗口内成功率)。
 
+    评估窗(Track A BC-2,IF-7 显式起止/all 参数能力):
+    - days 形态(既有,语义逐字不变):[now-days, …] 内 sync_log;
+    - 显式起止形态:from/to 必须同时提供(缺一 422,禁半开窗),评估窗 =
+      [from, to](日期形态结束日全天含);全部时间 = from 给远早锚点表达;
+      非法/倒挂窗 → 422;响应新增 ``window: {from, to}`` 权威回显
+      (=实际评估窗)与 ``days`` = 含首尾天数;window_days 同步为该值。
+      days 形态响应形状零变化(不出现 window 字段)。
+
     语义(DSH-01,产品契约"当前 vs 历史"显式化;#21 矫正补充):
-    - 历史可靠性 = 窗口 ``days``(默认 30 天)内 ``sync_log`` 中
-      ``status=success`` 的占比。``partial``(一致性校验自愈)计入分母、
-      不计入成功数——与 T28 数学口径一致,但分子/分母/窗口全部显式返回
-      (window_days / success_syncs / partial_syncs / failed_syncs),
-      不再出现无法解释的裸百分比。
+    - 历史可靠性 = 评估窗内 ``sync_log`` 中 ``status=success`` 的占比。
+      ``partial``(一致性校验自愈)计入分母、不计入成功数——与 T28 数学口径
+      一致,但分子/分母/窗口全部显式返回(window_days / success_syncs /
+      partial_syncs / failed_syncs),不再出现无法解释的裸百分比。
     - ``health`` 是**历史窗口可靠性**结论,不是当前知识健康判定:
         disabled          数据源已禁用(禁用 ≠ 不健康,不作可靠性评价);
         insufficient_data 启用但窗口内同步次数 < MIN_SYNC_RUNS,样本不足;
@@ -458,10 +498,31 @@ async def source_health(
       sync_log 中有而 data_sources 无的幽灵行保持可见(product=unknown)。
     """
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
-    cutoff = datetime.now(UTC) - timedelta(days=days)
+
+    if (date_from is None) != (date_to is None):
+        raise HTTPException(
+            status_code=422, detail="from/to 必须同时提供(显式起止评估窗)"
+        )
+
+    window_echo: dict[str, str] | None = None
+    window_end: datetime | None = None
+    if date_from is not None and date_to is not None:
+        window_start = _parse_window_bound(date_from, "from", end_of_day=False)
+        window_end = _parse_window_bound(date_to, "to", end_of_day=True)
+        if window_start > window_end:
+            raise HTTPException(status_code=422, detail="from 晚于 to(评估窗倒挂)")
+        window_echo = {"from": window_start.isoformat(), "to": window_end.isoformat()}
+        days_value = max(1, round((window_end - window_start).total_seconds() / 86400))
+        cutoff = window_start
+    else:
+        days_value = days
+        cutoff = datetime.now(UTC) - timedelta(days=days)
 
     async with factory() as session:
         # 窗口内同步聚合(口径与 T28 相同:次数、成功、失败)
+        sync_conds = [SyncLog.started_at >= cutoff]
+        if window_end is not None:
+            sync_conds.append(SyncLog.started_at <= window_end)
         sync_q = (
             select(
                 SyncLog.source_id,
@@ -470,7 +531,7 @@ async def source_health(
                 func.count().filter(SyncLog.status == "failed").label("failed_syncs"),
                 func.count().filter(SyncLog.status == "partial").label("partial_syncs"),
             )
-            .where(SyncLog.started_at >= cutoff)
+            .where(*sync_conds)
             .group_by(SyncLog.source_id)
         )
         sync_rows = (await session.execute(sync_q)).all()
@@ -570,7 +631,7 @@ async def source_health(
                 "enabled": enabled,
                 "doc_count": doc_map.get(source_id, (0, 0))[0],
                 "chunk_count": doc_map.get(source_id, (0, 0))[1],
-                "window_days": days,
+                "window_days": days_value,
                 "total_syncs": total,
                 "success_syncs": success,
                 "partial_syncs": partial,
@@ -586,4 +647,7 @@ async def source_health(
             }
         )
 
-    return {"items": items, "days": days}
+    result: dict[str, Any] = {"items": items, "days": days_value}
+    if window_echo is not None:
+        result["window"] = window_echo
+    return result

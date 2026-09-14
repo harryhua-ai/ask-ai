@@ -4,8 +4,10 @@ v1.6.3 B2 Answer Gaps 只读操作者投影(#59 / KB-OPS-V163-002 §5.2/§5.5/§
 Wave 0B 自 tech.py 拆出,逐字迁移,零语义变化。
 
 Ownership(IF-6 附录,文件内区域互斥):
-- 窗口参数面(window / ANSWER_GAP_WINDOWS)= **Track A**(BC-1,Wave 1:
-  window 表达 IF-7 全冻结词表;既有 last_seen 未知保留 + total 真值语义不变);
+- 窗口参数面(window / ANSWER_GAP_WINDOWS / WINDOW_PATTERN)= **Track A**
+  (BC-1 已落地:window 表达 IF-7 全冻结词表 today|7d|30d|all|
+  range:YYYY-MM-DD/YYYY-MM-DD;既有 last_seen 未知保留 + total 真值语义不变;
+  非法显式起止 422 fail-loud,禁静默回退);
 - 分类/cause 挂载面(cause 参数、miss_type 投影、miss_type_summary)=
   **Track D**(Wave 1:词表经 backend/services/gap_taxonomy.py 挂载,
   禁止在本文件新增词表值);
@@ -35,8 +37,48 @@ router = APIRouter()
 
 ViewerDep = Annotated[CurrentUser, Depends(require_role("admin", "editor", "viewer"))]
 
-# 时间窗词表;last_seen 未知(无归属会话证据)不因窗口被排除(不可用 ≠ 窗口外)。
+# 时间窗词表(IF-7 全冻结词表,Track A BC-1):
+# - 既有命名窗 7d/30d:语义逐字不变(now - N 天);
+# - today:UTC 日历日 [当日 00:00, now](与共享分析窗状态解析一致);
+# - range:YYYY-MM-DD/YYYY-MM-DD:显式起止(起日 00:00 起,结束日全天含);
+# - all:不过滤(既有语义);
+# last_seen 未知(无归属会话证据)不因窗口被排除(不可用 ≠ 窗口外,语义不变)。
 ANSWER_GAP_WINDOWS = {"7d": 7, "30d": 30}
+WINDOW_PATTERN = r"^(today|7d|30d|all|range:\d{4}-\d{2}-\d{2}/\d{4}-\d{2}-\d{2})$"
+
+
+def _window_bounds(window: str) -> tuple[datetime | None, datetime | None]:
+    """解析 window 参数 → (起界, 止界);None = 该侧不设界。
+
+    非法显式起止(日历日期无效 / from 晚于 to)→ 422(fail loud,禁静默回退)。
+    """
+    if window in ANSWER_GAP_WINDOWS:
+        return datetime.now(UTC) - timedelta(days=ANSWER_GAP_WINDOWS[window]), None
+    if window == "today":
+        now = datetime.now(UTC)
+        return now.replace(hour=0, minute=0, second=0, microsecond=0), None
+    if window == "all":
+        return None, None
+    if window.startswith("range:"):
+        raw_from, raw_to = window[len("range:") :].split("/", 1)
+        try:
+            w_from = datetime.strptime(raw_from, "%Y-%m-%d").replace(tzinfo=UTC)
+            w_to = (
+                datetime.strptime(raw_to, "%Y-%m-%d").replace(tzinfo=UTC)
+                + timedelta(days=1)
+                - timedelta(microseconds=1)
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail="window 显式起止无效,需 range:YYYY-MM-DD/YYYY-MM-DD",
+            )
+        if w_from.date() > w_to.date():
+            raise HTTPException(
+                status_code=422, detail="window 显式起止无效:from 晚于 to"
+            )
+        return w_from, w_to
+    return None, None
 
 
 @router.get("/answer-gaps")
@@ -46,7 +88,7 @@ async def tech_answer_gaps(
     status: str | None = Query(default=None, pattern=GAP_STATUS_PATTERN),
     cause: str | None = Query(default=None, max_length=50),
     q: str | None = Query(default=None, max_length=200),
-    window: str = Query(default="all", pattern="^(7d|30d|all)$"),
+    window: str = Query(default="all", pattern=WINDOW_PATTERN),
     order: str = Query(default="last_seen", pattern="^(last_seen|questions|impacted)$"),
     dir: str = Query(default="desc", pattern="^(asc|desc)$"),
     page: int = Query(default=1, ge=1),
@@ -67,6 +109,8 @@ async def tech_answer_gaps(
         last_seen_at          ← MAX(conversations.created_at);无会话 → None
                                 (UI 必须呈现 证据不可用,不得伪装近期)
     - 时间窗过滤只作用于 last_seen 已知的聚类;未知时间不被窗口排除。
+      窗词表 = IF-7 全冻结词表(Track A BC-1):today(UTC 日历日)/7d/30d/all/
+      range:YYYY-MM-DD/YYYY-MM-DD(显式起止,结束日全天含;非法 → 422)。
     - 搜索 q 命中 代表问题 或 样例问句(问题/主题语义);不扫描会话全文。
     - 原因过滤(cause)依赖分类结果,故在分类后、排序/分页前应用;
       total 为过滤后真值。
@@ -98,10 +142,16 @@ async def tech_answer_gaps(
                 )
             )
 
-        # 时间窗:只约束已知 last_seen;NULL(时间不可用)始终保留
-        if window in ANSWER_GAP_WINDOWS:
-            cutoff = datetime.now(UTC) - timedelta(days=ANSWER_GAP_WINDOWS[window])
-            base = base.having(last_seen_expr.is_(None) | (last_seen_expr >= cutoff))
+        # 时间窗(IF-7 全词表):只约束已知 last_seen;NULL(时间不可用)始终保留;
+        # total 为过滤后真值(既有语义不变)。
+        w_from, w_to = _window_bounds(window)
+        if w_from is not None or w_to is not None:
+            cond = last_seen_expr.is_(None)
+            if w_from is not None:
+                cond = cond | (last_seen_expr >= w_from)
+            if w_to is not None:
+                cond = cond & (last_seen_expr.is_(None) | (last_seen_expr <= w_to))
+            base = base.having(cond)
 
         rows = (await session.execute(base)).all()
 

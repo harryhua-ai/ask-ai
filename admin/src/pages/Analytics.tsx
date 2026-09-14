@@ -12,6 +12,7 @@
 
 import { useState } from "react";
 import TimeFilter from "@/components/observability/TimeFilter";
+import { useAnalysisWindow, type AnalysisWindowSerialized } from "@/lib/analysisWindow";
 import TechPerfTab from "./analytics/TechPerfTab";
 import AnswerGapsTab from "./analytics/AnswerGapsTab";
 
@@ -59,7 +60,9 @@ function ShellTab({
 
 export default function Analytics() {
   const [tab, setTab] = useState<Tab>("tech");
-  const [range, setRange] = useState<string>("7d");
+  // IF-7:局部 range 状态升级为单一共享分析窗状态(Provider 在位=共享;
+  // 隔离渲染回退局部)。TimeFilter(tech tab 控制面)改窗 → 各窗口面真实联动。
+  const { value: win, setValue: setWin } = useAnalysisWindow();
 
   return (
     <div
@@ -81,7 +84,17 @@ export default function Analytics() {
             </span>
           </div>
           {tab === "tech" && (
-            <TimeFilter onChange={(c) => setRange(c.range ?? range)} />
+            <TimeFilter
+              onChange={(c) => {
+                // 既有快选(今天/近 7 天/30 天)直传;from/to 此前被丢弃未发送(§3.5 S1)
+                // → 现以显式起止表达入共享窗(任一面改窗 → 整页窗口面真实联动)。
+                if (c.range) {
+                  setWin(c.range as AnalysisWindowSerialized);
+                } else if (c.from && c.to) {
+                  setWin(`range:${c.from}/${c.to}`);
+                }
+              }}
+            />
           )}
         </div>
 
@@ -101,7 +114,7 @@ export default function Analytics() {
         </div>
       </div>
 
-      {tab === "tech" && <TechPerfTab range={range} />}
+      {tab === "tech" && <TechPerfTab window={win} />}
       {tab === "gaps" && <AnswerGapsTab />}
     </div>
   );
