@@ -54,3 +54,18 @@
 ## 9. Deliverables
 
 分支（自冻结基线）+ 逐 commit ownership 台账 + vitest + 截图 manifest + 对照表 + 验收矩阵证据填充 + 执行报告（`docs/engineering/tasks/v163-r3-track-a-execution.md`，`git add -f`）。
+
+## 10. #67 Truth Gate Amendment（2026-09-14）
+
+依据 `docs/engineering/tasks/v163-r3-generation-truth-audit.md`，#67 选择 **B. EXISTING TRUTH SUFFICIENT WITH PRESENTATION CORRECTION**。原“Generation 区审计完成前冻结”门仅对审计前状态有效；现改为以下可实施的呈现契约，仍不授权本分支立即实施。
+
+- `健康与诊断` 保持页面下方默认折叠，不增加导航层级。
+- 健康五维显示为：`连接状态`、`同步可靠性`、`知识覆盖`、`数据新鲜度`、`检索一致性`。后端 state/evidence/as_of 原样消费，前端不重判。
+- `知识覆盖` 只表达有权威 `accepted/extracted` 分母的候选抽取比率；无分母显示“暂不可评估”并解释原因；不使用文档总数/向量数/差值。
+- `检索一致性` 明确说明是“现行 PG chunk 账本与 Weaviate 实际 chunk 投影”；不表述为 generation 完整性、全量覆盖、回答召回或引用有效性。
+- Generation 子面仅为 `SECONDARY/TECHNICAL EVIDENCE`。`*legacy*` ordinal 0 显示“迁移初始代；计数不可用于完整性判断”；`doc_count/chunk_count=0/0` 不得作为当前 serving/知识数量。
+- source-specific 空 Generation history 显示“没有该源的独立构建记录；当前服务状态请看文档/版本/检索一致性”，不得显示会让管理员理解为“该源没有索引”的短语。
+- Generation ID/history 不进入默认管理员决策面；仅在高级诊断/失败证据中保留工程关联价值。
+- #65 `items_*` 单位签收仍是前置门；签收前不渲染“新增/更新/淘汰知识”单位文案，不在前端自行换算。
+
+本附录只解冻 Generation 的呈现契约；不改变 #61/#66 的操作范围，不修改后端文件，不改变 lifecycle/sync/repair API 语义。

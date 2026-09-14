@@ -73,3 +73,13 @@ A ──────────────────────────
 - 本计划阶段（CONTRACT PREPARATION）：未实现任何产品代码、未建 r3 执行分支、未 merge main、未 deploy、未关闭任何 Issue、未建 tag/release、未宣告 v1.6.3 COMPLETE。
 - IMPLEMENTATION_AUTHORIZED = NO。
 - Forbidden shortcuts（沿 r2 冻结清单，四轨合同逐条重申）：fake counts / frontend-only state / keyword-only 分类 / 前端自算健康与业务影响 / 纯派生倒计时 / UI-only repair / 静默省略（设计所需而 backend 无真值时必须标 PRODUCT/FUNCTIONAL GAP，禁前端猜测）/ 把 UI 配置反向「对齐」错误执行行为。
+
+## 7. #67 Truth Gate Amendment（2026-09-14）
+
+审计报告 `docs/engineering/tasks/v163-r3-generation-truth-audit.md` 已将 #67 裁决为 **B. EXISTING TRUTH SUFFICIENT WITH PRESENTATION CORRECTION**。因此：
+
+- #67 审计不再是 A 的阻塞项；A 可在 Role A 另行授权后按审计附录实现健康术语、coverage unknown 解释、检索一致性边界和 Generation 技术证据呈现。
+- `*legacy*` ordinal 0 不需要本轮 migration/backfill；Generation row counters 不得当作 serving/source totals。
+- B 仍必须完成 #62 due-gate 与 #65 unit audit，以及隔离数据态的非空 generation counter 验证；这些是实现/验收证据，不是本次审计的生产写入动作。
+- A 的 #65 delta rendering 继续依赖 B 的单位签收；C/D 拓扑和合同不因本次审计改变。
+- 本附录不改变七门、Visual Gate `1536×1024 @1x`、Role B `CANDIDATE READY` / Role A `FINAL PASS` 或 `IMPLEMENTATION_AUTHORIZED=NO`。

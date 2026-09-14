@@ -70,3 +70,23 @@
 - 证据格出现自然语言「已实现/完成/OK/通过」而无指针（文件:行/测试名/截图编号/探针 id）。
 - 执行 agent 在 G4 Visual Gate 自授 FINAL PASS。
 - 用生产 mutation 换取 Runtime evidence（授权探针制度沿 r2：逐条登记，零未授权写入）。
+
+## #67 Truth Gate Amendment（2026-09-14；规范性附录）
+
+审计报告：`docs/engineering/tasks/v163-r3-generation-truth-audit.md`。以下新增要求属于合同输入；执行矩阵的 Runtime evidence / Visual evidence 仍保持 `PENDING`，审计报告本身不授予 FINAL PASS。
+
+| Issue | Req ID | Design element | Interaction | API | Backend truth | DB/runtime truth | Test | Runtime evidence | Visual evidence |
+|---|---|---|---|---|---|---|---|---|---|
+| #67 | R3-67-TRUTH | DS-R3-5-04 | Generation 仅作技术证据；`*legacy*` ordinal 0 标为迁移初始代，0/0 不作完整性判断 | 既有 generations/detail read surfaces | `IndexGeneration` counters ≠ serving/source total；current-version relation 才是 serving authority | `index_generations` 3 rows；12,000 current versions；147,999 PG chunks；147,999 Weaviate objects | pytest/API fixture：legacy sentinel、source-empty history、document detail wording | PENDING（audit report pointer + execution probe） | PENDING（⑤展开态） |
+| #67 | R3-67-GEN-EMPTY | DS-R3-5-04 | ready 0/0 不解释为当前知识为空；显示构建结果边界 | 既有 | empty prepared build can yield ready 0/0；不与 serving count 混用 | production ordinal 2 + run 3130 evidence | isolated deterministic test records empty prepared outcome and no false serving claim | PENDING | PENDING |
+| #67 | R3-67-COV-SEM | DS-R3-5-02/03 | `知识覆盖` 仅表达 accepted→extracted candidate ratio；无分母→`暂不可评估`+原因 | GET /sync-health | `_coverage_dim` only when structured accepted/extracted exists | latest SyncRun counters | unit tests for denominator-present/absent/zero states | PENDING | PENDING |
+| #67 | R3-67-CONS-SEM | DS-R3-5-02/03 | `检索一致性` 说明 PG expected chunk ↔ Weaviate actual chunk；不宣称 recall/completeness | GET /sync-health | `_consistency_dim` + `verify_source_vectors` | expected/actual/missing/orphan/stale/repair facts | unit tests for exact boundary and unknown verification | PENDING | PENDING |
+| #67 | R3-67-GEN-ISO | DS-R3-5-04 | 非空新 generation 的 counters 必须与 prepared docs/chunks、versions、objects 对齐 | 既有 generation/build path | `mark_generation_ready(doc_count=len(prepared), chunk_count=sum)` | isolated data state only; no production mutation | deterministic non-empty generation test | PENDING（本审计未创建 generation） | — |
+
+### Seven-gate and visual contract reaffirmation
+
+R3 仍必须依次保留七门：**Engineering Gate、Functional Truth Gate、Interaction Gate、Visual Gate、Regression Gate、Production Gate、User Acceptance**。Visual Gate 固定 `1536×1024 @1x`，每个状态必须提供“reference crop ↔ candidate screenshot ↔ difference ledger”；最终分类只能是 `MATCH`、`IMPLEMENTATION DEFECT`、`PRODUCT/FUNCTIONAL GAP`、`USER-APPROVED DESIGN CHANGE`。禁止以 `JUSTIFIED DIFFERENCE`、`non-material`、`close enough` 或 stylistic tolerance 通过可见偏差。Role B 只可报告 `CANDIDATE READY`，Role A 才能独立授予 `FINAL PASS`。
+
+### Traceability reaffirmation
+
+每个 requirement 必须保留：`Issue → Requirement ID → Approved design element → Interaction → API → Backend service → DB/runtime truth → Test → Runtime evidence → Visual evidence`。测试存在不等于 PASS；能力存在不等于设计元素 PASS；presentation 不得反推 backend truth。

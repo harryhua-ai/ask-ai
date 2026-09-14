@@ -97,3 +97,36 @@
 ## 4. STOP
 
 本合同为 planning 产物：零实现、零后端变更、零生产写入。元素级「Truth 状态」的最终裁决权在 Role A；执行 agent 无权变更冻结语义。
+
+## 5. #67 Truth Gate Amendment（2026-09-14；规范性附录）
+
+本附录依据 `docs/engineering/tasks/v163-r3-generation-truth-audit.md` 的只读审计结果追加。与原文冲突的 Generation/coverage/consistency 语义以本附录为准；本附录不授权产品实现。
+
+### 5.1 Generation truth 裁决
+
+- #67 product verdict = **B. EXISTING TRUTH SUFFICIENT WITH PRESENTATION CORRECTION**。
+- `index_generations` 的 `doc_count/chunk_count` 是构建行计数，不是 serving 数量、source knowledge 总量或 generation completeness 证明。
+- ordinal 0 / `source_id=*legacy*` 是迁移初始 sentinel。其 `0/0` 必须显示为“迁移初始代；计数不可用于完整性判断”，不得解释成“当前源无知识”。
+- source-specific generations 读面按 `IndexGeneration.source_id == source_id` 排除 `*legacy*` 是“该源没有独立构建记录”，不是“该源没有索引/不在服”。
+- ordinal 1 的 production failure 为 EMBED 422；ordinal 2 的 ready 0/0 为空 prepared 构建结果。两者都不得被 UI 解释成当前 serving 数量。
+- Generation 区审计冻结门已解除，但该区只允许作为 `SECONDARY/TECHNICAL EVIDENCE`；默认管理员决策不依赖 Generation ID/history。
+
+### 5.2 五维健康的精确语义
+
+- `覆盖` 的管理员词改为 `知识覆盖`，并附说明“本次全量候选抽取覆盖”。只有 latest run 具备 `accepted/extracted` 且 `accepted>0` 时才显示该候选集合比率；没有权威分母时必须显示“暂不可评估”，不得由文档总数、向量总数或差值推导。
+- `一致性` 的管理员词改为 `检索一致性`，说明固定为“现行 PG chunk 账本与 Weaviate 实际 chunk 投影的一致性”。它不表示 generation completeness、source-universe coverage、answer recall、ranking quality 或 citation validity。
+- `连接状态/同步可靠性/知识覆盖/数据新鲜度/检索一致性` 继续只做后端 status/evidence/as_of 的本地化；前端不得重判健康或组合推导业务影响。
+
+### 5.3 对现有元素的状态修订
+
+| Element | Amendment |
+|---|---|
+| DS-R3-5-02 | 将“一致性”显示为“检索一致性”，并保留 PG expected ↔ Weaviate actual 的限制说明。 |
+| DS-R3-5-03 | coverage 无 `accepted/extracted` 分母时显示“暂不可评估”+中文原因；raw evidence 仍进入“高级诊断”。 |
+| DS-R3-5-04 | 从 `FROZEN-UNTIL-AUDIT` 改为 `TECHNICAL-EVIDENCE-ONLY`；`*legacy*`/ordinal 0 显式标注迁移初始代和不可作完整性判断。 |
+| DS-R3-5-05 | 保持页面位置和折叠结构；Generation 可在审计后按本附录修正文案，不新增导航层级。 |
+| DS-R3-4-03/04 | 在 #65 单位正式签收前，不得把混合 `items_*` 计数标成“新增/更新/淘汰知识”；不得前端推断。 |
+
+### 5.4 业务主面与技术证据面
+
+管理员默认路径固定为：数据源身份/调度 → 最近同步变化 → 文档生命周期 → 检索一致性 → 修复或调查。Generation ordinal/ID/history 只用于工程关联和失败证据；服务真相固定来自 `current_version_id + lifecycle`，chunk 一致性来自持久 chunk 账本与 Weaviate 对象观察。

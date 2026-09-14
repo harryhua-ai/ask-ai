@@ -53,3 +53,17 @@ due 到期/未到期/inflight 占用/disabled 四态 × cron tick；1h/6h/24h �
 ## 9. Deliverables
 
 分支 + due-gate 实现 + pytest（时间推进）+ Generation Truth 审计报告（`docs/engineering/tasks/v163-r3-generation-truth-audit.md`，`git add -f`）+（如裁决）迁移脚本与建模变更 + 单位签收记录 + 执行报告（`v163-r3-track-b-execution.md`）。
+
+## 10. #67 Truth Gate Amendment（2026-09-14）
+
+`docs/engineering/tasks/v163-r3-generation-truth-audit.md` 已完成只读审计，裁决为 **B. EXISTING TRUTH SUFFICIENT WITH PRESENTATION CORRECTION**。
+
+- 本次不产生 GENFIX migration/backfill，不调整生产 `index_generations`，不新增 Generation subsystem。
+- `*legacy*` ordinal 0 的 0/0 被确认是迁移 sentinel 的构建计数缺省，不是当前 serving 为空；`document_versions`/`document_version_chunks`/Weaviate 才分别提供版本、持久 chunk、实际对象事实，serving 由 current-version+lifecycle 关系决定。
+- ordinal 1 的 EMBED 422 和 ordinal 2 的 empty-prepared ready 0/0 已纳入技术证据语义；不得把 generation row counter 反向当作 serving 或 source total。
+- Track B 必须在实现期用**隔离、非生产**数据态完成一个非空 generation 的确定性测试：`doc_count=len(prepared)`、`chunk_count=sum(prepared chunks)`，并与版本/对象身份对齐。该测试未在本次审计中通过生产创建 generation 完成。
+- Track B 仍独立负责 #62 due gate、`next_run_at` 执行等价性、#65 `items_*` 单位 audit-lite；这些工作不依赖 Generation presentation。
+- #65 当前不得签收：`items_new`/`items_deleted`/`items_unchanged`为文档相关量，而 `items_updated=chunks_written + metadata_docs` 为混合量。Track B 必须先定义稳定的 document/knowledge 或 chunk 单位，再允许 Track A 文案落地。
+- 禁止把 Weaviate object count 反写为 Generation bookkeeping；禁止以 UI 隐藏掩盖 `*legacy*` 语义；禁止把 coverage ratio 当作 source-universe coverage。
+
+本附录只更新 #67 审计后的 Truth/测试边界；不授权实现、迁移、生产写入或 Release。
