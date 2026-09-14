@@ -66,7 +66,7 @@ scripts/migrate_add_sync_delta_counts.py
 scripts/migrate_add_frontmatter_slug_property.py
 ```
 
-The fail-closed planner was run against the final implementation candidate SHA and exited 0. B migration is additive/idempotent `sync_log.delta_counts JSONB`; unknown legacy values remain NULL. D migration is additive/idempotent Weaviate schema property creation only; it does not backfill objects. Runtime fallback is the closure for existing objects with absent authority. No production migration was executed.
+The fail-closed planner was run against final implementation candidate `ab9e63ab7ec9fe5394b029626aa8a9a9d1125a72` and exited 0 (`PLAN SOURCE: manifest@ab9e63ab7ec9`). B migration is additive/idempotent `sync_log.delta_counts JSONB`; unknown legacy values remain NULL. D migration is additive/idempotent Weaviate schema property creation only; it does not backfill objects. Runtime fallback is the closure for existing objects with absent authority. No production migration was executed.
 
 ## Gate results
 
@@ -81,7 +81,7 @@ The fail-closed planner was run against the final implementation candidate SHA a
 
 ## Runtime evidence
 
-- Candidate backend/admin smoke used the local Postgres 16 `:5432`, Weaviate `:8080`, real auth/API, and the local seeded data-source/conversation records. The BGE model weights were unavailable with `HF_HUB_OFFLINE=1`, so only model loading was replaced with a no-op runtime stub.
+- Candidate backend/admin smoke used the local Postgres 16 `:5432`, Weaviate `:8080`, real auth/API, and the local seeded data-source/conversation records. `/health` returned `status=ok`, `git_sha=ab9e63ab7ec9fe5394b029626aa8a9a9d1125a72`, and `app_mode=development`. The BGE model weights were unavailable with `HF_HUB_OFFLINE=1`, so only model loading was replaced with a no-op runtime stub.
 - The controlled #64 fixture used UUID `b2c00000-0000-4000-8000-000000000064`, showed one canonical-slug citation and one legacy blob citation in Admin, then was deleted by exact UUID and verified absent. No other local row was deleted.
 - #67 diagnostics visibly state that generation counts are technical evidence and that the migration sentinel is not serving count truth; knowledge coverage remains unknown without a denominator.
 
@@ -111,8 +111,8 @@ Visual status is candidate-only; Role A retains final visual acceptance authorit
 - `python -m compileall -q backend scripts`: exit 0.
 - changed-path ruff: `All checks passed!` after removing one duplicate import exposed by the topology rebuild.
 - `git diff --check`: exit 0.
-- Full repo ruff remains baseline-red with 295 unrelated errors; no changed-path error remains.
-- Full pytest remains baseline/environment-exception-only: `2 failed, 2653 passed, 8 skipped, 277 warnings, 4 errors`. The failures are the unmodified stale `-rN` tag-validation assertion and offline/missing-BGE lifespan/model errors; no new candidate-caused failure was observed.
+- Full repo ruff remains baseline-red with 285 unrelated errors; no changed-path error remains.
+- Full pytest remains baseline/environment-exception-only: `2 failed, 2673 passed, 8 skipped, 277 warnings, 4 errors`. The failures are the unmodified stale `-rN` tag-validation assertion and offline/missing-BGE lifespan/model errors; no new candidate-caused failure was observed.
 
 ## Scope audit
 
@@ -125,14 +125,14 @@ Visual status is candidate-only; Role A retains final visual acceptance authorit
 
 - Role A final acceptance is still required.
 - Full pytest requires local `BAAI/bge-m3` weights or network access, and the unmodified deploy tag-validation test needs baseline maintenance.
-- Full-repo ruff baseline remains at 295 errors; candidate changed paths are clean.
+- Full-repo ruff baseline remains at 285 errors; candidate changed paths are clean.
 
 ## Verdict
 
 `WAVE2_INTEGRATION_REMEDIATION = CANDIDATE READY`
 
 - previous candidate SHA: `66695db047be2241a175bebd7930aa75a1142529`
-- final candidate SHA (implementation/evidence commit): `ca31f82a22b16361b752ef6a5b6e020a83f4d3ad`
+- final candidate SHA (implementation/evidence commit): `ab9e63ab7ec9fe5394b029626aa8a9a9d1125a72`
 - implementation/evidence predecessor: `ffc16d2edc8dc7a1690f0b119011914e0814d6ab`
 - branch: `integration/v163-r3-wave2-20260914`
 - report path: `reports/v163-r3-wave2-integration-20260914.md`
