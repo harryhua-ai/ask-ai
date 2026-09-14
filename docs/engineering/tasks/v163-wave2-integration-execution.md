@@ -243,9 +243,9 @@
 | P1-19 | MATCH | B 保存 PUT + 阶段1 vitest | 动作真实执行 |
 | P1-20 | MATCH | 01 | 异常优先排序(参考行序=板面示意,记录在案) |
 | P1-21 | MATCH | 01 | 共 N 个数据源 |
-| P1-22 | MATCH(带外) | 03 | 运行态面板为超出参考的真值呈现 |
+| P1-22 | MATCH | 03 | 运行态面板为超出参考的真值呈现 |
 | P1-23 | UADC(UADC-2) | 01 | 41px 行高(V-1) |
-| P1-24 | MATCH(带外) | vitest | 空态诚实 |
+| P1-24 | MATCH | vitest | 空态诚实 |
 
 ### DS-P2 详情(27 行)
 | ID | 终分类 | 证据 | 备注 |
@@ -280,7 +280,7 @@
 | P4-03 | **MATCH**(原 GAP,U-11) | 03「下次同步: 已到期待调度」 | scheduler 权威 next_run_at,到期诚实态,零派生倒计时 |
 | P4-07/08 | MATCH | 03 | 时间线+四色点 |
 | P4-09 | MATCH | 03 + Wave1 F1 事件链 | triggered_by 事件 |
-| P4-10 | MATCH(带内) | 03/14 | run 级恢复粒度并入 U-10 |
+| P4-10 | MATCH | 03/14 | run 级恢复粒度并入 U-10 |
 | P4-11 | MATCH | 03 同步按钮 | POST 受理 |
 
 ### DS-P5 编辑抽屉(9 行)
@@ -343,3 +343,43 @@
 - **Engineering Gate = PASS**(阶段 1:pytest 2630/0/7、PA 114/114、vitest 540/540、tsc 0、build ✓、ruff 0;见 §6,佐引)。
 - **Functional Gate = PASS**(本阶段:A/B/C/C-settings/D/E/legacy 不绕过/Export/F 九链全 PASS,三角证据齐)。
 - **Reference Design Gate = PASS**(152 行 reconcile:MATCH 146 / UADC 4 项(6 行)/ DEFECT 0 / GAP 0 / RC 0)。
+
+---
+
+# P3. RELEASE READINESS AMENDMENT（2026-09-14；Task1–6 全闭）
+
+Role A 发现 release-readiness 缺陷：`scripts/migrate_add_track_c_product.py` 为 accepted 应用树所要求但未登记 `deploy/prod/migrations.json`（发布迁移契约：schema 迁移先登记后随依赖代码发布；init_db 不替代发布迁移合同）。本修订只动：迁移清单 + 报告 + 验收记录；**产品/后端实现零变更**（`git diff 65c4ac3..HEAD -- backend/ admin/src/ = 空`，frontend 零触碰故 tsc/build 免跑如实声明）。
+
+## P3.1 Task 1 — Migration manifest closure
+- `deploy/prod/migrations.json` 登记顺序（commit `7a2ec82`）：
+  1. `scripts/migrate_add_site_launcher_presentation.py`
+  2. `scripts/migrate_p1_lifecycle_foundation.py`
+  3. **`scripts/migrate_add_track_c_product.py`**（新登记；幂等加性=init_db 新表 + ensure_track_c_columns ADD COLUMN IF NOT EXISTS + derive_content_type 仅 NULL 行回填）
+- 顺序依据：track_c 依赖 P1 foundation 在先（修复/调度语义谱系），且必须先于依赖它的应用代码发布（同一冻结树内 rollout 前执行）。
+
+## P3.2 Task 2 — Release-path migration acceptance
+- **Planner（fail-closed）**：`python3 scripts/release_migration_plan.py --tag v1.6.3 --sha 7a2ec82… --repo-root .` → exit 0，stdout 恰为上述 3 条（PLAN SOURCE: manifest@7a2ec82）。登记前对 65c4ac3 跑同命令只出 2 条（复现缺陷本体）。
+- **代表性 pre-v1.6.3 库**：`ask_ai_relpre`——以 d613e6a 树（pre-Track-C）`init_db` 引导基础 schema + 代表行（2 data_sources；4 documents：woocommerce 商品/.pdf 文档/尾斜杠页面/无信号行；admin 用户）。pre 态核验：content_type 列与 3 张 Track C 表均不存在。
+- **按 plan 顺序执行**（int2 树代码；合成库配一次性空 Weaviate :21101 使 P1 fail-closed 一致性校验 0==0 通过——验收基建，非生产路径）：launcher_presentation 幂等完成 → P1 幂等完成（验证 0/0/0+0/0）→ track_c 完成。
+- **Schema 到位核验**：documents.content_type ✓、data_sources.next_run_at/knowledge_role/freshness_hours ✓、document_repair_tasks/document_recovery_events/knowledge_settings_previews ✓、E 表 gap_observations/gap_observation_events ✓（经 create_all）。
+
+## P3.3 Task 3 — Idempotency
+完整序列重跑：三条全部成功；documents 行数与 content_type 值逐字不变（4 行 product/document/page/NULL）；回填 0 新行；零破坏性效果。判定：**IDEMPOTENT**。
+
+## P3.4 Task 4 — content_type backfill
+回填 3/4 行经权威 `content_taxonomy.derive_content_type`：relpre-doc-1(woocommerce)→**product**；relpre-doc-2(web_crawl,.pdf)→**document**；relpre-doc-3(web_crawl,尾/)→**page**；relpre-doc-4(未知源类型+无后缀)→**保持 NULL（诚实不可用，零猜测）**。与 connector/ingestion 写入链同源函数。
+
+## P3.5 Clean startup
+`POSTGRES_DB=ask_ai_relpre ASKAI_API_PORT=8131` 启动 → `/health` ok（git_sha=7a2ec82=修订提交）→ 认证登录 → `GET /api/admin/data-sources` 200 返回迁移库真实行。（startup lifespan 对空库播种默认源=应用既有行为，非迁移产物。）
+
+## P3.6 Task 6 — Narrow regression
+- `tests/scripts/test_release_migration_plan.py` → **31 passed**；
+- `tests/api/admin/test_data_sources_track_c.py + test_data_sources.py` → **26 passed**（ask_ai_test_int）；
+- 应用干净启动（P3.5）；
+- frontend 零 diff → tsc/build 免跑（如实声明）；全量 pytest/vitest 已在阶段 1 于同一树绿（本修订唯一代码 delta=迁移清单）。
+
+## P3.7 Task 5 — Reference classification cleanup
+报告中 3 处 `MATCH(带内)/MATCH(带外)` → 一律 **MATCH**（P1-22/P1-24/P4-10；底层已接受产品决定零变更，仅去除非授权修饰词）。终局词表唯二：**MATCH / USER-APPROVED DESIGN CHANGE**；ID/GAP/RC 维持 0。
+
+## P3.8 Amendment verdict
+预期代码 delta=迁移清单+报告，实际一致；零 CONTRACT DRIFT。**RELEASE READINESS AMENDMENT = CANDIDATE READY**；终局 candidate = 本提交（65c4ac3 + 清单登记 + 本附录）。
