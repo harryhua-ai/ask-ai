@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 from backend.auth.jwt import create_access_token, hash_password
 from backend.db.models import (
@@ -141,7 +142,10 @@ class TestAnalyticsAPI:
         assert resp.status_code == 403
 
     async def test_resolve_gap_normal(self, auth_headers):
-        """PATCH /gaps/{id}/resolve 正常流程:open -> resolved。"""
+        """PATCH /gaps/{id}/resolve(INT-SYS-01 收敛后):open 态直接强转
+        resolved 被拒绝(409 resolve_not_allowed),状态零变化 —— U-15 冻结:
+        RESOLVED 唯一进入路径 = 满窗无复现评估,禁止直接手动强转。
+        (原基线断言 open→resolved 直接写,即本次收敛消除的缺陷行为。)"""
         # 先在 DB 创建一个 gap 聚类
         factory = app.state.session_factory
         cluster_id = uuid.uuid4()
@@ -164,9 +168,16 @@ class TestAnalyticsAPI:
                     json={"status": "resolved"},
                     headers=auth_headers,
                 )
-            assert resp.status_code == 200
-            assert resp.json()["status"] == "resolved"
-            assert resp.json()["id"] == str(cluster_id)
+            assert resp.status_code == 409
+            assert resp.json()["detail"]["code"] == "resolve_not_allowed"
+            # 状态零变化(强转不可能)
+            async with factory() as session:
+                row = (
+                    await session.execute(
+                        select(QuestionCluster).where(QuestionCluster.id == cluster_id)
+                    )
+                ).scalar_one()
+                assert row.status == "open"
         finally:
             # 精准清理:仅删除本测试创建的聚类
             async with factory() as session:

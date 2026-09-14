@@ -4,10 +4,15 @@
  *   (Wave 0B 落位;Wave 1 各轨只消费稳定 props,不编辑本文件);
  * - 诊断结论卡(data-panel-conclusion)= **Track D** 专属文件
  *   ./analytics/DiagnosisConclusion.tsx(本文件零 D 结论实现);
- * - 历史记录 tab 内容(data-panel-history)与导出卡/观察态区域 =
- *   **Track E** 专属文件 ./analytics/PanelHistory.tsx;
- * - meta 计数区(data-panel-stats:相关提问/受影响回答/最近发生)=
- *   **Track F** 专属文件 ./analytics/PanelStats.tsx(U-17 用户聚合挂载面);
+ * - 历史记录 tab 内容(data-panel-history)= **Track E** 专属文件
+ *   ./analytics/PanelHistory.tsx(INT-E-01 收口后 = 纯流转时间线);
+ * - 观察工作流(U-15 三前置门 CTA/中止)与导出卡(U-16)= **Track E**
+ *   自包含组件 ./analytics/GapObservationSection.tsx、./analytics/GapExportCard.tsx,
+ *   经 INT-E-01(option a,Independent Review 授权)挂载于**概览 Tab
+ *   推荐操作区**(参考位置;概览与历史零重复动作);
+ * - meta 计数区(data-panel-stats:相关提问/受影响回答/涉及用户/最近发生)=
+ *   **Track F** 专属文件 ./analytics/PanelStats.tsx(U-17 用户聚合挂载面;
+ *   window prop = IF-7 接线点,壳传入共享分析窗);
  * - 相关对话 tab = S6 归属会话证据(§3.5 例外面冻结;深链 /conversations?q=)。
  * 状态徽章 = Track E 呈现组件 ./analytics/StatusBadge.tsx;
  * 诊断详情 tab 内原因分类分布呈现 = 既有落位(词表消费经 @/lib/gapCause)。
@@ -16,24 +21,44 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { fetchGapConversations, type AnswerGapItem } from "@/lib/api/techInsight";
+import {
+  fetchGapConversations,
+  type AnswerGapItem,
+} from "@/lib/api/techInsight";
+import { parseExplicitWindow, type AnalysisWindowSerialized } from "@/lib/analysisWindow";
+import type { EvidenceWindowValue } from "@/lib/api/techEvidence";
 import { gapCauseLabel } from "@/lib/gapCause";
 import { StatusBadge } from "./StatusBadge";
 import { relTime } from "./relTime";
 import { DiagnosisConclusion } from "./DiagnosisConclusion";
 import { PanelHistory } from "./PanelHistory";
 import { PanelStats } from "./PanelStats";
+import { GapObservationSection } from "./GapObservationSection";
+import { GapExportCard } from "./GapExportCard";
 
 const PANEL_TABS = ["概览", "典型问题", "相关对话", "诊断详情", "历史记录"] as const;
 type PanelTab = (typeof PANEL_TABS)[number];
 
-/** 诊断侧板。v1.6.3 边界(合同 Forbidden + §10):
- *  - 无 导出相关对话/CSV(新导出语义 NOT authorized);
- *  - 无 内容已补充，开始观察(OBSERVING/remediation 语义 NOT authorized);
- *  - 无 涉及 N 个用户(无权威用户聚合证据);
- *  - 相关数据源仅在后端存在权威 gap→source 关联时呈现(v1.6.3 无该关联 → 省略);
- *  - 诊断结论仅当权威原因分类存在,否则明确 证据不可用。 */
-export default function GapPanel({ gap, onClose }: { gap: AnswerGapItem; onClose: () => void }) {
+/** 壳分析窗序列化值 → PanelStats(U-17)窗参数(预设直通;显式起止拆参)。 */
+function toStatsWindow(value: AnalysisWindowSerialized | undefined): {
+  window?: EvidenceWindowValue;
+  from?: string;
+  to?: string;
+} {
+  if (!value) return {};
+  const explicit = parseExplicitWindow(value);
+  if (explicit) return { window: "all", from: explicit.from, to: explicit.to };
+  return { window: value as EvidenceWindowValue };
+}
+
+export interface GapPanelProps {
+  gap: AnswerGapItem;
+  onClose: () => void;
+  /** 共享分析窗(IF-7;AnswerGapsTab 队列激活窗,U-17 聚合窗继承)。 */
+  window?: AnalysisWindowSerialized;
+}
+
+export default function GapPanel({ gap, onClose, window: windowValue }: GapPanelProps) {
   const [tab, setTab] = useState<PanelTab>("概览");
 
   const convQuery = useQuery({
@@ -44,6 +69,7 @@ export default function GapPanel({ gap, onClose }: { gap: AnswerGapItem; onClose
 
   const typical = gap.sample_questions;
   const typicalPreview = typical.slice(0, 5);
+  const statsWindow = toStatsWindow(windowValue);
 
   return (
     <div
@@ -68,7 +94,7 @@ export default function GapPanel({ gap, onClose }: { gap: AnswerGapItem; onClose
             </button>
           </div>
         </div>
-        <PanelStats gap={gap} />
+        <PanelStats gap={gap} {...statsWindow} />
         <div className="mt-3 flex gap-3 border-b" style={{ borderColor: "var(--bd)" }}>
           {PANEL_TABS.map((t) => (
             <button
@@ -150,6 +176,15 @@ export default function GapPanel({ gap, onClose }: { gap: AnswerGapItem; onClose
                   在对话审查中按该主题检索原始对话证据
                 </div>
               </Link>
+              {/* INT-E-01(option a):E 观察工作流 + 导出卡挂载于概览推荐操作区
+                  (参考 PNG 侧板概览:导出相关对话卡 → 内容补充完成后段 →
+                  开始观察大按钮);历史记录 Tab 仍 = 纯流转时间线,零重复动作。 */}
+              <div className="mt-3">
+                <GapExportCard gap={gap} heading={null} />
+              </div>
+              <div className="mt-3">
+                <GapObservationSection gap={gap} />
+              </div>
             </section>
           </>
         )}

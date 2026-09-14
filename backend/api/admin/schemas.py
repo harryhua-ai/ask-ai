@@ -5,7 +5,21 @@ import os
 import socket
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from backend.services.knowledge_policy import FRESHNESS_CHOICES_HOURS
+
+
+def _validate_freshness_hours(v: int | None) -> int | None:
+    """INT-C03:新鲜度阈值写入侧收敛冻结词表(6/12/24/72/168)。
+
+    非法值 → pydantic ValidationError(422 fail-loud);禁静默接受后在
+    读取侧回落默认 24(掩盖真值)。CURRENT/HISTORICAL 语义零变化。"""
+    if v is not None and v not in FRESHNESS_CHOICES_HOURS:
+        raise ValueError(
+            f"freshness_hours 必须为冻结词表之一 {list(FRESHNESS_CHOICES_HOURS)}(小时)"
+        )
+    return v
 
 
 class LoginRequest(BaseModel):
@@ -292,12 +306,22 @@ class KnowledgeSettingsUpdate(BaseModel):
     freshness_hours: int | None = Field(default=None, ge=1, le=10000)
     preview_token: str | None = None
 
+    @field_validator("freshness_hours")
+    @classmethod
+    def _freshness_in_frozen_vocabulary(cls, v: int | None) -> int | None:
+        return _validate_freshness_hours(v)
+
 
 class KnowledgePreviewRequest(BaseModel):
     """POST /data-sources/{source_id}/knowledge-settings/preview 请求(U-13)。"""
 
     role: str = Field(..., pattern="^(current|historical)$")
     freshness_hours: int | None = Field(default=None, ge=1, le=10000)
+
+    @field_validator("freshness_hours")
+    @classmethod
+    def _freshness_in_frozen_vocabulary(cls, v: int | None) -> int | None:
+        return _validate_freshness_hours(v)
 
 
 class KnowledgePreviewResponse(BaseModel):

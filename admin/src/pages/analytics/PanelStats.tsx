@@ -31,6 +31,10 @@ export interface PanelStatsProps {
   gap: AnswerGapItem;
   /** U-17 聚合窗(IF-7 词表);Integration 接线点,默认 all。 */
   window?: EvidenceWindowValue;
+  /** 显式起止窗(Integration 接线:壳 window=range:from/to 时由壳传入;
+   * 提供时后端以 from/to 为权威评估窗,preset 仅作参数形态)。 */
+  from?: string;
+  to?: string;
 }
 
 /** 外链图标(参考 PNG 源卡外链 icon 呈现)。 */
@@ -55,10 +59,10 @@ function ExternalLinkIcon() {
   );
 }
 
-export function PanelStats({ gap, window = "all" }: PanelStatsProps) {
+export function PanelStats({ gap, window = "all", from, to }: PanelStatsProps) {
   const usersQuery = useQuery({
-    queryKey: ["gap-users", gap.id, window],
-    queryFn: () => fetchGapUsers(gap.id, window),
+    queryKey: ["gap-users", gap.id, window, from ?? null, to ?? null],
+    queryFn: () => fetchGapUsers(gap.id, window, from, to),
     retry: false,
   });
   const sourcesQuery = useQuery({

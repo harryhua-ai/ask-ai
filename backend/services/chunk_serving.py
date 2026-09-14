@@ -67,6 +67,7 @@ def chunk_serving_for_doc(
     class_name: str,
     doc_source_id: str,
     total_chunks: int,
+    generation_ordinals: tuple[int, ...] | None = None,
 ) -> ChunkServing:
     """单文档 chunk serving 投影(verify_source_vectors 同口径:迭代器全扫)。
 
@@ -75,6 +76,10 @@ def chunk_serving_for_doc(
         class_name: Document collection 名。
         doc_source_id: 复合文档身份(精确匹配,非前缀)。
         total_chunks: 期望 chunk 总数(现行版本持久 chunk 数)。
+        generation_ordinals: 可选在服代过滤(INT-C-01):提供时仅统计
+            ``generation_ordinal`` ∈ 该集合的对象;非在服代残留(legacy
+            寻址/旧代未 GC)不入服务投影、不计一致。``None`` = 既有全扫
+            口径逐字保留(U-9 既有调用方零变化)。
 
     Returns:
         ChunkServing 真值。Weaviate 不可达时异常向上传播(调用方决定
@@ -82,7 +87,9 @@ def chunk_serving_for_doc(
     """
     collection = weaviate_client.collections.get(class_name)
     present: set[int] = set()
-    for item in collection.iterator(return_properties=["source_id", "chunk_index"]):
+    for item in collection.iterator(
+        return_properties=["source_id", "chunk_index", "generation_ordinal"]
+    ):
         props = item.properties
         sid = props.get("source_id")
         idx = props.get("chunk_index")
@@ -90,6 +97,10 @@ def chunk_serving_for_doc(
             continue
         if str(sid) != doc_source_id:
             continue  # 精确匹配本文档(verify 口径:客户端侧过滤,计数才权威)
+        if generation_ordinals is not None:
+            obj_ord = props.get("generation_ordinal")
+            if obj_ord is None or int(obj_ord) not in generation_ordinals:
+                continue  # 非在服代对象(legacy/旧代残留)不入服务集
         present.add(int(idx))
     expected = set(range(max(total_chunks, 0)))
     missing = tuple(sorted(expected - present))

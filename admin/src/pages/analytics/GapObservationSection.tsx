@@ -7,8 +7,9 @@
  * ① 操作者确认修复完成(本组件 confirmed=true 请求语义);② 相关源
  * sync/reindex 成功(真实读 sync_runs);③ post-sync 验证成功。任一未过
  * → 409 gates 明细原样呈现,前端不推断、不预判、不伪造成功。
- * 观察中态:观察窗元数据 + 中止观察(OBSERVING→OPEN)。挂载面 =
- * ./analytics/PanelHistory.tsx(E 专属;Integration 壳零编辑)。
+ * 观察中态:观察窗元数据 + 中止观察(OBSERVING→OPEN)。挂载面(INT-E-01
+ * 收口)= 诊断侧板概览 Tab 推荐操作区(./analytics/GapPanel.tsx;参考 PNG:
+ * 推荐操作 导出相关对话卡 + 内容补充完成后段 + 开始观察大按钮)。
  */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";

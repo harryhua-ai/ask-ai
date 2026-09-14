@@ -39,7 +39,8 @@ ROLE_HISTORICAL = "historical"
 KNOWLEDGE_ROLES = (ROLE_CURRENT, ROLE_HISTORICAL)
 
 # 新鲜度要求词表(小时;参考语义「超过该时间没有成功更新时,系统将提醒
-# 知识更新服务」)。默认 24h(NULL = 默认)。
+# 知识更新服务」)。默认 24h(NULL = 默认)。冻结词表,写入侧必须校验
+# (INT-C-03:非法值 reject/fail-loud,禁静默回落 24)。
 FRESHNESS_CHOICES_HOURS = (6, 12, 24, 72, 168)
 DEFAULT_FRESHNESS_HOURS = 24
 
@@ -52,8 +53,19 @@ def effective_role(ds: DataSource) -> str:
 
 
 def effective_freshness_hours(ds: DataSource) -> int:
-    """源新鲜度阈值(NULL = 默认 24h)。"""
-    return ds.freshness_hours if (ds.freshness_hours or 0) in FRESHNESS_CHOICES_HOURS else DEFAULT_FRESHNESS_HOURS
+    """源新鲜度阈值(NULL = 默认 24h)。
+
+    INT-C-03:显式配置必须 ∈ 冻结词表(写入侧 schemas 已 reject);非空
+    非法值 = 数据损坏,fail-loud(禁静默回落 24 掩盖真值)。"""
+    value = ds.freshness_hours
+    if value is None:
+        return DEFAULT_FRESHNESS_HOURS
+    if value not in FRESHNESS_CHOICES_HOURS:
+        raise ValueError(
+            f"freshness_hours={value} 不在冻结词表 {FRESHNESS_CHOICES_HOURS} 内"
+            "(数据损坏;修复数据而非静默回落)"
+        )
+    return value
 
 
 def freshness_truth(
@@ -94,9 +106,18 @@ async def last_success_at(session: AsyncSession, source_id: str) -> datetime | N
     return row.scalar_one_or_none()
 
 
+def _escape_like(value: str) -> str:
+    """LIKE 通配符转义(INT-C-04:%/_/\\;配合 ``escape="\\")`` 使用)。
+
+    source_id 含 ``%``/``_`` 时未转义会扩查询(前缀域越过本源边界),
+    影响计数/指纹必须精确圈定本源文档。与 data_sources._document_scope
+    同一转义语义。"""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 async def policy_impact_counts(session: AsyncSession, source_id: str) -> dict[str, int]:
     """影响计数基础量(后端按当前账本权威计算;U-13 预览/确认同源)。"""
-    scope = Document.source_id.like(f"{source_id}/%", escape="\\")
+    scope = Document.source_id.like(f"{_escape_like(source_id)}/%", escape="\\")
     ledger_total = int(
         (
             await session.execute(select(func.count()).select_from(Document).where(scope))
@@ -154,7 +175,7 @@ def compute_policy_impact(
 
 async def ledger_fingerprint(session: AsyncSession, source_id: str) -> str:
     """账本指纹(U-13 drift 判定):文档身份+lifecycle+现行版本的确定性摘要。"""
-    scope = Document.source_id.like(f"{source_id}/%", escape="\\")
+    scope = Document.source_id.like(f"{_escape_like(source_id)}/%", escape="\\")
     rows = (
         await session.execute(
             select(Document.source_id, Document.lifecycle, Document.current_version_id)

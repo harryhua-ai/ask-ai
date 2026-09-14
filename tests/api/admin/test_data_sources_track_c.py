@@ -58,14 +58,25 @@ REPAIR_URL = f"/api/admin/data-sources/{SRC}/documents/repair"
 
 
 class _FakeCollection:
-    """weaviate v4 collection 测试替身(iterator/data.insert/fetch)。"""
+    """weaviate v4 collection 测试替身(iterator/data.insert/fetch)。
+
+    INT-C-01 收口更新:insert 存**完整 properties**(含 generation_ordinal
+    等回写 props),iterator 原样投影 —— 修复回写后按在服代过滤的复验在
+    本替身下语义同构(无 generation 语义的替身已被评审禁止)。"""
 
     def __init__(self, objects: list[dict]) -> None:
-        self.objects = objects  # [{source_id, chunk_index}]
+        self.objects: list[dict] = [dict(o) for o in objects]
         self.inserted: list[dict] = []
 
     def iterator(self, return_properties=None, **kw):
-        return iter([SimpleNamespace(properties=o) for o in self.objects])
+        def _gen():
+            for o in self.objects:
+                props = dict(o)
+                if return_properties:
+                    props = {k: props.get(k) for k in return_properties}
+                yield SimpleNamespace(properties=props)
+
+        return _gen()
 
     @property
     def data(self):
@@ -74,12 +85,7 @@ class _FakeCollection:
         class _Data:
             def insert(self, *, properties, vector, uuid):
                 coll.inserted.append(properties)
-                coll.objects.append(
-                    {
-                        "source_id": properties["source_id"],
-                        "chunk_index": properties["chunk_index"],
-                    }
-                )
+                coll.objects.append(dict(properties))
                 return uuid
 
         return _Data()
@@ -252,7 +258,14 @@ async def vector_stack():
         for k in ("weaviate_client", "embedder", "weaviate_class_name")
     }
     objects = [
-        {"source_id": DOC_PAGE, "chunk_index": i} for i in range(10)
+        {
+            "source_id": DOC_PAGE,
+            "chunk_index": i,
+            # INT-C-01:在服代语义(与 _mk_version 的代归属一致)——
+            # 无 generation props 的对象在修复 plan/verify 口径下不可见。
+            "generation_ordinal": ORDINAL,
+        }
+        for i in range(10)
     ]  # 页面文档 12 期望 chunk 中 10 个在服(10/12 真值场景)
     collection = _FakeCollection([dict(o) for o in objects])
     client = SimpleNamespace(

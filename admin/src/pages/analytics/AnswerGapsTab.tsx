@@ -12,8 +12,8 @@
  * - 队列行「问题/主题」列 = **Track F** 专属文件 ./analytics/GapTopicCell.tsx;
  * - 队列行 cause chip = Track D 呈现组件 ./analytics/CauseBadge.tsx;
  *   状态徽章 = Track E 呈现组件 ./analytics/StatusBadge.tsx(词表扩展各改
- *   自有文件);观察态 filter/导出卡 = Track E 将来区域(占位说明见
- *   ./analytics/PanelHistory.tsx 头注,本壳零 E 控件实现)。
+ *   自有文件);观察工作流/导出卡挂载面 = 侧板概览推荐操作区(INT-E-01,
+ *   GapPanel;历史记录 tab = 纯流转时间线)。
  * 结论:本文件零 A/D/E/F Wave-1 编辑面残留(纯 Integration 编排+稳定 props)。
  */
 
@@ -89,8 +89,7 @@ export default function AnswerGapsTab() {
     <div className="flex gap-4 items-start">
       <div className="min-w-0 flex-1 space-y-3">
         {/* 工具行:搜索(Integration)+ GapStatusFilter(E)+ GapCauseFilter(D)+
-            AnalyticsWindowControl(A);观察态 filter = Track E Wave 1 将来区域
-            (零占位控件,见 PanelHistory 头注) */}
+            AnalyticsWindowControl(A) */}
         <div className="flex items-center gap-2 flex-wrap" data-gap-toolbar>
           <input
             data-gap-search
@@ -308,8 +307,15 @@ export default function AnswerGapsTab() {
         )}
       </div>
 
-      {/* 诊断侧板:contextual,仅权威证据(#59 / §5.5) */}
-      {active && <GapPanel gap={active} onClose={() => setActiveId(null)} />}
+      {/* 诊断侧板:contextual,仅权威证据(#59 / §5.5);window=共享分析窗
+          (IF-7 贯通:PanelStats U-17 聚合窗继承队列激活窗) */}
+      {active && (
+        <GapPanel
+          gap={active}
+          window={window}
+          onClose={() => setActiveId(null)}
+        />
+      )}
     </div>
   );
 }

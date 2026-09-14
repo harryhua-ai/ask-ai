@@ -1,16 +1,16 @@
 /**
  * Ownership(IF-6 附录,文件内区域互斥):本文件 = **Track E**(观察与导出)
- * Wave 1 专属 —— 历史记录 tab 内容(data-panel-history)与观察/导出区域的
- * E 内组合挂载面(U-15 历史时间线 + U-16 导出卡;Integration 壳仅消费稳定
- * props=gap,零壳编辑)。
+ * Wave 1 专属 —— 历史记录 tab 内容(data-panel-history)= U-15 流转时间线。
  *
  * Wave 1(track-e-contract「历史 Tab 渲染全部流转事件」U-15):时间线数据源 =
  * GET /tech/answer-gaps/{id}/observation/events(gap_observation_events
  * append-only 持久化事件;时间戳/actor/from→to 权威投影,前端零推断)。
  * 事件词表:start(进入观察)/ recurrence(复现回待处理)/ abort(中止)/
  * resolve(满窗已解决)。无事件时诚实呈现「暂无流转记录」。
- * 观察区(U-15 CTA/中止)与导出卡(U-16)在 E 自有子组件内实现:
- * ./analytics/GapObservationSection.tsx、./analytics/GapExportCard.tsx。
+ * INT-E-01 收口(Independent Review 授权 option a):观察区(U-15 CTA/中止)
+ * 与导出卡(U-16)的挂载面 = 侧板**概览 Tab** 推荐操作区(GapPanel)——
+ * 参考位置;本文件回归纯历史只读呈现,与概览**零重复动作**。
+ * E 自有子组件:./analytics/GapObservationSection.tsx、./analytics/GapExportCard.tsx。
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -19,8 +19,6 @@ import {
   type AnswerGapItem,
   type GapObservationEventItem,
 } from "@/lib/api/techInsight";
-import { GapObservationSection } from "./GapObservationSection";
-import { GapExportCard } from "./GapExportCard";
 
 export interface PanelHistoryProps {
   /** 诊断侧板当前缺口(观察/流转历史数据挂载面)。 */
@@ -49,9 +47,6 @@ export function PanelHistory({ gap }: PanelHistoryProps) {
 
   return (
     <section data-panel-history className="space-y-4">
-      <GapObservationSection gap={gap} />
-      <GapExportCard gap={gap} />
-
       <div>
         <h3 className="mb-2 text-[13px] font-medium text-[var(--t1)]">流转历史</h3>
         {eventsQuery.isLoading ? (

@@ -3,7 +3,9 @@
 提供:
 - GET    /coverage-gaps           查询未回答问题聚类(viewer+)
 - POST   /coverage-gaps/refresh   触发重新聚类(admin/editor)
-- PATCH  /gaps/{cluster_id}/resolve  标记 gap 状态(admin/editor)
+- PATCH  /gaps/{cluster_id}/resolve  标记 gap 状态(admin/editor;INT-SYS-01
+  收敛为 U-15 观察状态机 thin-wrapper:禁直接 RESOLVED/不留悬挂 observation/
+  转移全留痕)
 - GET    /top-questions           查询全部问题聚类(viewer+)
 - POST   /top-questions/refresh   触发重新聚类(admin/editor)
 - GET    /sources                 来源点击/引用聚合(viewer+)
@@ -248,13 +250,35 @@ async def refresh_coverage_gaps(
 async def resolve_gap(
     cluster_id: uuid.UUID,
     body: dict,
-    _: EditorDep,
+    user: EditorDep,
     request: Request,
 ) -> dict[str, Any]:
-    """标记 gap 为 resolved/open(admin/editor)。"""
+    """标记 gap 状态(INT-SYS-01 收敛:U-15 观察状态机 thin-wrapper)。
+
+    基线遗留端点的直接 status 写入会绕过 U-15 冻结不变量(直接强转
+    RESOLVED / 留悬挂 observation / 转移不留痕),收敛为状态机委托:
+
+    - ``status=resolved``:**禁止直接强转**(U-15:RESOLVED 唯一进入路径 =
+      满窗无复现评估)。仅当该 gap 处于 observing 时,先触发权威窗口评估
+      (``evaluate_observation``,复现→OPEN/满窗→RESOLVED,判定持久化+留痕);
+      窗未满或非 observing → 409(指向观察状态机端点)。
+    - ``status=open``:
+        observing → 委托 ``abort_observation``(中止:关闭 observation 行 +
+        abort 事件留痕,不留悬挂 active observation);
+        resolved → 409(状态机无 resolved→open 手动路径;复现自动回开仅
+        适用于观察窗内;该转移需经权威评估,不接受直接写);
+        open → 幂等 no-op(零变化返回现状)。
+
+    全部实际转移经 backend/services/gap_observation.py 落
+    gap_observations/gap_observation_events,可审计;既有调用方对 open gap
+    的幂等读语义零回归。
+    """
     new_status = body.get("status", "resolved")
     if new_status not in ("open", "resolved"):
         raise HTTPException(status_code=422, detail="status 必须为 open 或 resolved")
+
+    from backend.services import gap_observation as obs
+    from backend.services.gap_observation import ObservationStateError
 
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
@@ -264,9 +288,59 @@ async def resolve_gap(
         cluster = cluster.scalar_one_or_none()
         if cluster is None:
             raise HTTPException(status_code=404, detail="聚类不存在")
-        cluster.status = new_status
-        await session.commit()
-        await session.refresh(cluster)
+
+        current = cluster.status
+        if new_status == "resolved":
+            if current == "observing":
+                # 权威窗口评估(lazy 评估显式触发;判定持久化+留痕):
+                # 满窗无复现 → 真实 RESOLVED;窗未满/复现 → 不强转。
+                transition = await obs.evaluate_observation(session, cluster)
+                await session.commit()
+                await session.refresh(cluster)
+                if transition is None or transition.get("to_status") != "resolved":
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "code": "resolve_not_allowed",
+                            "detail": "禁止直接标记已解决:观察窗未满或证据复现;"
+                            "RESOLVED 仅能经观察窗评估进入(/tech/answer-gaps/"
+                            "observation 语义)。",
+                        },
+                    )
+            else:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "resolve_not_allowed",
+                        "from_status": current,
+                        "detail": "禁止直接标记已解决:请先经观察状态机进入观察中"
+                        "(POST /tech/answer-gaps/{id}/observation/start,三前置门),"
+                        "满窗无复现后自动转已解决。",
+                    },
+                )
+        else:  # new_status == "open"
+            if current == "observing":
+                try:
+                    await obs.abort_observation(session, cluster, actor=user.email)
+                    await session.commit()
+                    await session.refresh(cluster)
+                except ObservationStateError:
+                    await session.rollback()
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"code": "invalid_state", "from_status": current},
+                    )
+            elif current == "resolved":
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "reopen_not_allowed",
+                        "from_status": current,
+                        "detail": "已解决态不支持直接重开:如证据复现,请重新走"
+                        "观察状态机(open→observing→评估)。",
+                    },
+                )
+            # current == "open":幂等 no-op,零变化。
 
     return _to_cluster_out(cluster)
 

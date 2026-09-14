@@ -8,9 +8,12 @@ gap-heal 路径(从 PG 持久 chunk 副本重建,零源抓取、确定性 uuid�
 
 - 计划(plan):chunk serving 投影(U-9 权威口径)得出缺失/多余 index;
 - 修复(apply):对缺失 index,从 ``document_version_chunks`` 持久副本取
-  text+props → embed → 确定性 uuid(``_deterministic_uuid``)幂等覆写回
-  Weaviate。零源抓取、只触碰本计划内对象(不整表/不做属性过滤删除);
-- 复验(verify):重算投影;在服集合 == 期望集合 → consistency=passed;
+  text+props → embed → 在服代命名空间确定性 uuid(``chunk_uuids_for_version``;
+  INT-C-01:按该文档现行版本 generation 写 generation_uuid + generation_id/
+  generation_ordinal props,与 gap-heal/generation_builder 同款语义)幂等
+  覆写回 Weaviate。零源抓取、只触碰本计划内对象(不整表/不做属性过滤删除);
+- 复验(verify):重算投影并按在服代过滤(与 plan 同口径;legacy/旧代
+  残留不计在服);在服集合 == 期望集合 → consistency=passed;
 - 任务/审计持久化:``document_repair_tasks`` 行即审计记录(status/stage/
   events 追加/result 真值);
 - 幂等:同文档存在未完结任务 → 返回同一任务;健康文档重复修复 = 真实
@@ -28,7 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.db.models import Document, DocumentRepairTask, DocumentVersion, DocumentVersionChunk
-from backend.pipeline.ingest import _deterministic_uuid
+from backend.pipeline.ingest import chunk_uuids_for_version
 from backend.services.chunk_serving import chunk_serving_for_doc
 
 logger = logging.getLogger(__name__)
@@ -182,9 +185,23 @@ async def execute_repair_task(
             if not chunks:
                 raise RuntimeError("现行版本无持久 chunk 副本,拒绝修复(诚实拒绝,不编造)")
 
+            # INT-C-01:修复回写目标 = 该文档现行版本的**在服代命名空间**
+            # (与 GenerationBuilder.repair_documents / generation_builder 同款
+            # 语义)。回写对象 UUID 与 generation props 均按现行版本代归属:
+            # ordinal=0 → legacy 寻址;ordinal>0 → generation_uuid 命名空间。
+            # plan/verify 投影同步按在服代过滤 —— legacy/旧代残留对象不计入
+            # 在服集合,绝不把非在服 chunk 计为成功修复。
+            gen_id = str(version.generation_id)
+            gen_ordinal = int(version.generation_ordinal)
+            target_uuids = chunk_uuids_for_version(doc_source_id, gen_id, gen_ordinal, len(chunks))
+
             total = version.chunk_count or len(chunks)
             projection = chunk_serving_for_doc(
-                weaviate_client, class_name, doc_source_id, total
+                weaviate_client,
+                class_name,
+                doc_source_id,
+                total,
+                generation_ordinals=(gen_ordinal,),
             )
             await _append_event(
                 session,
@@ -208,28 +225,37 @@ async def execute_repair_task(
                     raise RuntimeError("嵌入模型返回空/缺向量,拒绝写入(诚实失败)")
                 for idx, vec in zip(projection.missing_indices, vectors):
                     chunk = chunk_by_index[idx]
-                    # 身份字段以账本真值为准(防持久副本 props 缺失时写出
-                    # 无身份对象);props 仅作补充元数据 overlay。
-                    props = {
-                        "source_id": doc.source_id,
-                        "source_type": doc.source_type,
-                        "product": doc.product,
-                        "title": doc.title,
-                        "text": chunk.text,
-                        "url": doc.url,
-                        "chunk_index": chunk.chunk_index,
-                        "content_hash": version.content_hash,
-                        "branch": doc.branch or "",
-                        "channel_visibility": ["widget", "api"],
+                    # INT-C-02:持久 chunk props 为底(灌入时完整 properties
+                    # 快照;channel_visibility 等资格/呈现字段以持久真值恢复,
+                    # 不硬编码默认可见渠道、不因 overlay 跳过而丢失)。
+                    props: dict[str, Any] = {
+                        k: v for k, v in (chunk.props or {}).items() if v is not None
                     }
-                    for k, v in (chunk.props or {}).items():
-                        if k not in props and v is not None:
-                            props[k] = v
+                    # 身份字段以账本真值为准(防持久副本 props 缺失/过期时写出
+                    # 错身份对象;账本 = 权威)。
+                    props.update(
+                        {
+                            "source_id": doc.source_id,
+                            "source_type": doc.source_type,
+                            "product": doc.product,
+                            "title": doc.title,
+                            "text": chunk.text,
+                            "url": doc.url,
+                            "chunk_index": chunk.chunk_index,
+                            "content_hash": version.content_hash,
+                            "branch": doc.branch or "",
+                        }
+                    )
+                    # INT-C-01:在服代归属 props(generation_id 仅审计展示;
+                    # generation_ordinal INT = 检索在服代过滤真值)。强制后置,
+                    # 持久副本中的过期代归属不可覆盖现行代。
+                    props["generation_id"] = gen_id
+                    props["generation_ordinal"] = gen_ordinal
                     collection.data.insert(
                         properties=props,
                         # float32→python float(Weaviate REST JSON 序列化要求)
                         vector=[float(x) for x in vec],
-                        uuid=_deterministic_uuid(doc_source_id, idx),
+                        uuid=target_uuids[idx],
                     )
                     repaired_indices.append(idx)
                 await _append_event(
@@ -240,10 +266,20 @@ async def execute_repair_task(
 
             task.stage = STAGE_VERIFY
             await session.commit()
-            verify = chunk_serving_for_doc(weaviate_client, class_name, doc_source_id, total)
+            # INT-C-01:复验口径同步在服代 —— 与 plan 同一过滤(现行版本代);
+            # 一致判定只承认在服代命名空间内的完整覆盖。
+            verify = chunk_serving_for_doc(
+                weaviate_client,
+                class_name,
+                doc_source_id,
+                total,
+                generation_ordinals=(gen_ordinal,),
+            )
             passed = verify.consistent
             task.result = {
                 "version_seq": version.version_seq,
+                "generation_id": gen_id,
+                "generation_ordinal": gen_ordinal,
                 "chunks_serving": verify.serving_chunks,
                 "chunks_total": verify.total_chunks,
                 "consistency": "passed" if passed else "failed",

@@ -6,7 +6,9 @@
  * 冻结语义:admin-only(后端 RBAC 权威;403 时前端诚实呈现权限语义);
  * 范围 = 所选 gap 的权威对话集(window 继承队列激活窗词表);最小必要字段
  * 与隐私排除由后端 IF-5 契约保证(前端不生成 CSV 内容,只触发真实下载)。
- * 挂载面 = ./analytics/PanelHistory.tsx(E 专属;Integration 壳零编辑)。
+ * 挂载面(INT-E-01 收口)= 诊断侧板概览 Tab 推荐操作区(./analytics/GapPanel.tsx);
+ * 本组件自包含:`heading` 缺省渲染自带「推荐操作」标题(独立挂载),传入
+ * null 时由挂载方提供区块标题(嵌入既有推荐操作区块时避免重复)。
  */
 
 import { useState } from "react";
@@ -15,9 +17,11 @@ import type { AnswerGapItem } from "@/lib/api/techInsight";
 
 export interface GapExportCardProps {
   gap: AnswerGapItem;
+  /** 自带区块标题;嵌入既有「推荐操作」区块时传 null(避免重复标题)。 */
+  heading?: string | null;
 }
 
-export function GapExportCard({ gap }: GapExportCardProps) {
+export function GapExportCard({ gap, heading = "推荐操作" }: GapExportCardProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -60,7 +64,9 @@ export function GapExportCard({ gap }: GapExportCardProps) {
 
   return (
     <section data-gap-export-card>
-      <h3 className="mb-1 text-[13px] font-medium text-[var(--t1)]">推荐操作</h3>
+      {heading && (
+        <h3 className="mb-1 text-[13px] font-medium text-[var(--t1)]">{heading}</h3>
+      )}
       <button
         type="button"
         data-action="export-gap-conversations"

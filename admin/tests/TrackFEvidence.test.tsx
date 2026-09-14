@@ -124,13 +124,14 @@ describe("Track F PanelStats — U-17 用户聚合(TI-27)", () => {
       );
     });
     // 聚合窗透传:默认 all(IF-7 接线点为 window prop)
-    expect(mockGapUsers).toHaveBeenCalledWith("g1", "all");
+    // INT 接线收口:PanelStats 增加可选 from/to 形参(显式起止窗),默认 undefined
+    expect(mockGapUsers).toHaveBeenCalledWith("g1", "all", undefined, undefined);
   });
 
   it("window prop 透传给权威聚合端点(聚合窗=所选分析窗)", async () => {
     renderUi(<PanelStats gap={GAP} window="7d" />);
     await waitFor(() => {
-      expect(mockGapUsers).toHaveBeenCalledWith("g1", "7d");
+      expect(mockGapUsers).toHaveBeenCalledWith("g1", "7d", undefined, undefined);
     });
   });
 
@@ -252,6 +253,6 @@ describe("Track F 组件冒烟", () => {
         "/data-sources/wf-woo-ne101",
       );
     });
-    expect(mockGapUsers).toHaveBeenCalledWith("g1", "today");
+    expect(mockGapUsers).toHaveBeenCalledWith("g1", "today", undefined, undefined);
   });
 });

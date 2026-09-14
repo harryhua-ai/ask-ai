@@ -10,7 +10,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // - 技术性能 + 回答缺口 = 同一 技术洞察 域的 sibling tabs(强共享壳 + 选中态);
 // - 回答缺口 = 只读操作者投影:question/topic、counts/impact/cause/status/recency
 //   仅在权威时呈现;无权威分类 → 未分类/证据不可用,不发明 cause;
-// - 观察中/导出/开始观察/涉及用户数 在 v1.6.3 NOT authorized → 不得出现;
+// - 观察工作流(U-15)/导出卡(U-16)/涉及用户数(U-17)经 Wave 1 授权落地:
+//   概览推荐操作区挂载观察 CTA + 导出卡(INT-E-01),历史 tab = 纯流转时间线;
 // - 事件行运营可读优先,raw HTTP/内部 stage/code 为可展开证据;
 //   critical/abnormal 盖过 routine;
 // - 既有 event→source 与 gap→conversation 下钻保持。
@@ -25,6 +26,8 @@ const {
   mockGenerationEvents,
   mockAnswerGaps,
   mockGapConversations,
+  mockGapObservation,
+  mockGapObservationEvents,
 } = vi.hoisted(() => ({
   mockTechPerf: vi.fn(),
   mockCoverageGaps: vi.fn(),
@@ -34,6 +37,8 @@ const {
   mockGenerationEvents: vi.fn(),
   mockAnswerGaps: vi.fn(),
   mockGapConversations: vi.fn(),
+  mockGapObservation: vi.fn(),
+  mockGapObservationEvents: vi.fn(),
 }));
 
 vi.mock("@/lib/api/techInsight", () => ({
@@ -45,7 +50,19 @@ vi.mock("@/lib/api/techInsight", () => ({
   fetchGenerationEvents: mockGenerationEvents,
   fetchAnswerGaps: mockAnswerGaps,
   fetchGapConversations: mockGapConversations,
+  fetchGapObservation: mockGapObservation,
+  fetchGapObservationEvents: mockGapObservationEvents,
+  startGapObservation: vi.fn(),
+  abortGapObservation: vi.fn(),
 }));
+
+mockGapObservation.mockResolvedValue({
+  gap_id: "aaaaaaaa-0000-4000-8000-000000000001",
+  status: "open",
+  observation: null,
+  recurrence: null,
+});
+mockGapObservationEvents.mockResolvedValue({ items: [], total: 0 });
 
 mockGapTrends.mockResolvedValue({ trends: [] });
 mockCoverageGaps.mockResolvedValue({
@@ -327,25 +344,35 @@ describe("B2 回答缺口队列:question/topic + counts + cause + status + recen
     ).toBeNull();
   });
 
-  it("v1.6.3 未授权能力不出现:无 导出相关对话 / 开始观察 / 内容已补充;U-17 用户计数仅权威(不编造)", async () => {
+  it("Wave 1 U-15/U-16 授权能力落位(INT-E-01):概览推荐操作区含 导出卡/内容补充完成后/开始观察;历史 tab = 纯时间线零重复动作;U-17 用户计数仅权威(不编造)", async () => {
     await openGapsTab();
-    // 点击首行使侧板展开后再断言(侧板是这些元素唯一可能出现的位置)
+    // 点击首行使侧板展开(默认概览 tab)后再断言
     fireEvent.click(document.querySelector("[data-gap-row]") as HTMLElement);
     await waitFor(() => {
       expect(document.querySelector("[data-gap-panel]")).toBeTruthy();
     });
+    // INT-E-01(option a):E 观察工作流 + 导出卡挂载于概览推荐操作区
+    // (参考 PNG:导出相关对话卡 + 内容补充完成后段 + 开始观察大按钮)
+    expect(await screen.findByText(/导出相关对话/)).toBeInTheDocument();
+    expect(screen.getByText("▷ 内容已补充,开始观察")).toBeInTheDocument();
+    expect(screen.getByText("内容补充完成后")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "导出内容包含用户问题、对话上下文、当前回答及引用信息,不包含用户个人身份信息。",
+      ),
+    ).toBeInTheDocument();
+    // 历史记录 tab:纯流转时间线(U-15 History),零重复动作(无 CTA/导出)
+    fireEvent.click(screen.getByRole("tab", { name: "历史记录" }));
+    await waitFor(() => {
+      expect(document.querySelector("[data-panel-history]")).toBeTruthy();
+    });
     expect(screen.queryByText(/导出相关对话/)).not.toBeInTheDocument();
     expect(screen.queryByText(/开始观察/)).not.toBeInTheDocument();
     expect(screen.queryByText(/内容已补充/)).not.toBeInTheDocument();
-    // Wave 1 U-17 修订(原 v1.6.3 B2 断言「无 个用户」):「涉及用户」槽位已由
-    // Track F 落地,计数只能来自后端权威聚合(techEvidence);本 mock 环境无
-    // 权威聚合 mock → 槽位必须呈诚实 unavailable,不得出现任何编造数字。
+    // U-17:「涉及用户」槽位计数只能来自后端权威聚合(techEvidence);本 mock
+    // 环境无权威聚合 mock → 槽位必须呈诚实 unavailable,不得出现编造数字。
     expect(screen.queryByText(/涉及 \d+ 个用户/)).not.toBeInTheDocument();
-    await waitFor(() => {
-      expect(
-        document.querySelector("[data-panel-users]")?.textContent,
-      ).toContain("证据不可用");
-    });
+    // CSV 动作仅在导出进行中/下载后出现;历史 tab 无导出动作 → 无 CSV
     expect(screen.queryByText(/CSV/)).not.toBeInTheDocument();
   });
 

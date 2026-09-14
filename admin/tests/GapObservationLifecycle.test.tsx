@@ -4,9 +4,9 @@
  * 契约(track-e-contract.md / IF-1 / IF-5;参考 PNG 权威):
  * - status filter 含 观察中 选项(IF-1 词表;GapStatusFilter 唯一挂载点);
  * - 状态徽章 观察中 = 蓝圈形系(StatusBadge;延续圈形图标语法);
- * - 历史记录 tab:观察区(内容补充完成后 + CTA 副文案逐字「系统将验证数据
- *   同步状态，通过后进入观察中。」)+ 导出卡(隐私说明逐字)+ 流转时间线
- *   (持久化事件投影,零前端推断);
+ * - 历史记录 tab = 纯流转时间线(INT-E-01 收口;零重复动作);观察工作流
+ *   (内容补充完成后 + CTA 副文案逐字「系统将验证数据同步状态，通过后进入
+ *   观察中。」)与导出卡(隐私说明逐字)挂载于概览推荐操作区(组件直测);
  * - 开始观察点击 → confirmed=true 真实调用;409 gates 明细诚实呈现;
  * - 观察中态:观察窗元数据 + 中止观察;
  * - 导出点击 → 真实下载行为(blob + download 锚点),非前端造 CSV。
@@ -55,6 +55,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
 import { GapStatusFilter, type GapStatusFilterValue } from "@/pages/analytics/GapStatusFilter";
 import { StatusBadge } from "@/pages/analytics/StatusBadge";
 import { PanelHistory } from "@/pages/analytics/PanelHistory";
+import { GapObservationSection } from "@/pages/analytics/GapObservationSection";
+import { GapExportCard } from "@/pages/analytics/GapExportCard";
 import type { AnswerGapItem, GapObservationState } from "@/lib/api/techInsight";
 
 const GAP: AnswerGapItem = {
@@ -154,12 +156,19 @@ describe("StatusBadge:observing 蓝态", () => {
 });
 
 // --------------------------------------------------------------------------- //
-// PanelHistory:观察区 + 导出卡 + 流转时间线
+// 概览挂点组件(INT-E-01):GapObservationSection(U-15 三前置门 CTA)+
+// GapExportCard(U-16)。挂载面 = GapPanel 概览推荐操作区;PanelHistory =
+// 纯流转时间线(零重复动作)。
 // --------------------------------------------------------------------------- //
 
-describe("PanelHistory:观察区(U-15 三前置门 CTA)+ 导出卡(U-16)", () => {
+describe("GapObservationSection + GapExportCard(U-15 三前置门 CTA / U-16 导出卡)", () => {
   it("open 态:内容补充完成后 区块 + 开始观察 CTA(副文案逐字)+ 导出卡(隐私说明逐字)", async () => {
-    renderUI(<PanelHistory gap={GAP} />);
+    renderUI(
+      <>
+        <GapObservationSection gap={GAP} />
+        <GapExportCard gap={GAP} />
+      </>,
+    );
     await waitFor(() => {
       expect(screen.getByText("内容补充完成后")).toBeInTheDocument();
     });
@@ -173,13 +182,11 @@ describe("PanelHistory:观察区(U-15 三前置门 CTA)+ 导出卡(U-16)", () =>
         "导出内容包含用户问题、对话上下文、当前回答及引用信息,不包含用户个人身份信息。",
       ),
     ).toBeInTheDocument();
-    // 无流转记录 → 诚实空态(不伪造历史)
-    await screen.findByText(/暂无流转记录/);
   });
 
   it("点击 开始观察 → startGapObservation(gap.id, true) 真实调用", async () => {
     mockStartGapObservation.mockResolvedValue(observationState());
-    renderUI(<PanelHistory gap={GAP} />);
+    renderUI(<GapObservationSection gap={GAP} />);
     await waitFor(() => {
       expect(screen.getByText("▷ 内容已补充,开始观察")).toBeInTheDocument();
     });
@@ -198,7 +205,7 @@ describe("PanelHistory:观察区(U-15 三前置门 CTA)+ 导出卡(U-16)", () =>
         { code: "gate_failed", gates: { sync: { "we-src": "last_sync_not_completed" } } },
       ),
     );
-    renderUI(<PanelHistory gap={GAP} />);
+    renderUI(<GapObservationSection gap={GAP} />);
     fireEvent.click(await screen.findByText("▷ 内容已补充,开始观察"));
     await waitFor(() => {
       expect(document.querySelector("[data-observation-error]")?.textContent).toContain(
@@ -223,7 +230,7 @@ describe("PanelHistory:观察区(U-15 三前置门 CTA)+ 导出卡(U-16)", () =>
         recurrence: { recurred: false, new_evidence_count: 0 },
       }),
     );
-    renderUI(<PanelHistory gap={{ ...GAP, status: "observing" }} />);
+    renderUI(<GapObservationSection gap={{ ...GAP, status: "observing" }} />);
     await waitFor(() => {
       expect(screen.getByText("中止观察(回到待处理)")).toBeInTheDocument();
     });
@@ -234,8 +241,8 @@ describe("PanelHistory:观察区(U-15 三前置门 CTA)+ 导出卡(U-16)", () =>
   });
 });
 
-describe("PanelHistory:流转时间线(U-15 History 可见)", () => {
-  it("渲染全部持久化流转事件(时间戳/from→to/操作者),最新在前", async () => {
+describe("PanelHistory:流转时间线(U-15 History 可见;INT-E-01 后 = 纯历史零重复动作)", () => {
+  it("渲染全部持久化流转事件(时间戳/from→to/操作者),最新在前;无观察/导出动作", async () => {
     mockFetchGapObservationEvents.mockResolvedValue({
       items: [
         {
@@ -272,6 +279,10 @@ describe("PanelHistory:流转时间线(U-15 History 可见)", () => {
     expect(document.querySelector('[data-history-event="start"]')?.textContent).toContain(
       "admin@camthink.ai",
     );
+    // INT-E-01:概览与历史零重复动作 —— 历史 tab 无观察 CTA/导出卡
+    expect(screen.queryByText("▷ 内容已补充,开始观察")).not.toBeInTheDocument();
+    expect(screen.queryByText(/导出相关对话/)).not.toBeInTheDocument();
+    expect(document.querySelector("[data-gap-export-card]")).toBeNull();
   });
 });
 
@@ -279,7 +290,7 @@ describe("PanelHistory:流转时间线(U-15 History 可见)", () => {
 // 导出卡:真实下载行为(blob 下载,非前端造 CSV)
 // --------------------------------------------------------------------------- //
 
-describe("GapExportCard(经 PanelHistory):真实 CSV 下载", () => {
+describe("GapExportCard:真实 CSV 下载", () => {
   it("点击导出 → 携带认证头请求权威范围端点 → blob 下载", async () => {
     const blob = new Blob(["conversation_id\nx"], { type: "text/csv" });
     mockGlobalFetch.mockResolvedValue({
@@ -294,7 +305,7 @@ describe("GapExportCard(经 PanelHistory):真实 CSV 下载", () => {
     Object.defineProperty(URL, "revokeObjectURL", { value: revokeObjectURL, configurable: true, writable: true });
     HTMLAnchorElement.prototype.click = vi.fn();
 
-    renderUI(<PanelHistory gap={GAP} />);
+    renderUI(<GapExportCard gap={GAP} />);
     fireEvent.click(await screen.findByText(/导出相关对话/));
     await waitFor(() => {
       expect(mockGlobalFetch).toHaveBeenCalledWith(
@@ -308,7 +319,7 @@ describe("GapExportCard(经 PanelHistory):真实 CSV 下载", () => {
   it("403(非 admin)→ 权限语义诚实呈现", async () => {
     mockGlobalFetch.mockResolvedValue({ ok: false, status: 403 });
     vi.stubGlobal("fetch", mockGlobalFetch);
-    renderUI(<PanelHistory gap={GAP} />);
+    renderUI(<GapExportCard gap={GAP} />);
     fireEvent.click(await screen.findByText(/导出相关对话/));
     await waitFor(() => {
       expect(document.querySelector("[data-export-error]")?.textContent).toContain("无权限");
