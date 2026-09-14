@@ -58,6 +58,14 @@ def _sr(url: str, source_type: str = "github", text: str = "NE301 概述", score
         url=url,
         score=score,
         chunk_index=0,
+        # Canonical Wiki output represents a newly ingested object only when
+        # its Docusaurus frontmatter authority is present.
+        frontmatter_slug=(
+            "/neoeyes-ne301-series/overview"
+            if "/wiki-documents/blob/" in url
+            and "/docs/5-neoeyes-ne301-series/0-overview.md" in url
+            else None
+        ),
     )
 
 

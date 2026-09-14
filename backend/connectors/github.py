@@ -38,6 +38,7 @@ from backend.connectors.safety import (
     new_safety_stats,
     record_safety_exclusion,
 )
+from backend.pipeline.canonical_url import extract_frontmatter_slug
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +309,12 @@ class GitHubConnector(DataSourceConnector):
 
     def _make_document(self, rel: str, content: str, branch: str) -> RawDocument:
         """构造 RawDocument(``source_type='github'`` 统一类型,branch 已填)。"""
+        metadata = {"path": rel, "branch": branch, "repo_url": self._repo_url}
+        slug = extract_frontmatter_slug(content)
+        if slug is not None:
+            # Retain even an empty value so an explicit malformed authority
+            # cannot silently re-enable a guessed route downstream.
+            metadata["frontmatter_slug"] = slug
         return RawDocument(
             source_id=f"{self._config.id}/{branch}/{rel}",
             source_type="github",
@@ -315,7 +322,7 @@ class GitHubConnector(DataSourceConnector):
             title=Path(rel).stem,
             content=content,
             url=f"https://github.com/{self._owner}/{self._repo}/blob/{branch}/{rel}",
-            metadata={"path": rel, "branch": branch, "repo_url": self._repo_url},
+            metadata=metadata,
             content_hash=hashlib.sha256(content.encode()).hexdigest(),
             channel_visibility=self._channel_visibility,
             branch=branch,

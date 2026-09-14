@@ -26,6 +26,7 @@ import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from typing import Any
+from urllib.parse import urlparse
 
 from backend.pipeline.canonical_url import wiki_canonical_url
 from backend.pipeline.citation import (
@@ -108,6 +109,14 @@ OFF_TOPIC_REPLY_EN = (
     "Tell me which area you're interested in, and I'll help."
 )
 REJECT_BUSINESS = "关于商务合作或价格咨询,请联系我们的销售团队。"
+
+
+def _is_renderable_public_url(url: object) -> bool:
+    """公开来源必须有真实 HTTP(S) 目标，禁止空/伪 URL 成为 clickable source。"""
+    if not isinstance(url, str) or not url:
+        return False
+    parsed = urlparse(url)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
 def _off_topic_reply(language: str) -> str:
@@ -1178,11 +1187,13 @@ class RAGOrchestrator:
         对外展示的 source(避免内部客户工单路径外泄)。过滤不补足——若某问题召回
         的公开源不足 5 条,sources 列表就短,不强行用内部源填充。
 
-        **Citation canonical URL**(CIT-URL Contract):wiki-documents 的
-        GitHub blob URL 映射为 wiki.camthink.ai canonical 页面 URL;映射
-        成功时原 GitHub URL 保留在 ``provenance_url`` 字段(G006),映射
-        不适用时 ``url`` 原样保留且无 ``provenance_url`` 键——普通
-        GitHub / Website / WooCommerce 来源 payload 零变化(G002/G005)。
+        **Citation canonical URL**(CIT-URL Contract):只有带有效 Docusaurus
+        frontmatter slug 的 wiki-documents GitHub blob URL 才映射为
+        wiki.camthink.ai canonical 页面 URL;映射成功时原 GitHub URL 保留
+        在 ``provenance_url`` 字段。存量对象缺 slug 时保留 GitHub blob
+        作为可访问权威 fallback，不再猜 Wiki route。空/伪 public URL
+        不进入可点击 sources——普通有效 GitHub / Website / WooCommerce
+        payload 保持不变。
 
         Args:
             results: 重排后的 SearchResult 列表(rerank 降序)。
@@ -1195,9 +1206,16 @@ class RAGOrchestrator:
         sources: list[dict] = []
         for r in results:
             if r.source_type in PUBLIC_SOURCE_TYPES:
+                if not _is_renderable_public_url(r.url):
+                    continue
                 # CIT-URL Contract:wiki GitHub blob URL → canonical 页面 URL;
                 # canonical 后再走 citation 层归一化去重(翻译版折叠语义不变)。
-                citation_url = wiki_canonical_url(r.url)
+                citation_url = wiki_canonical_url(
+                    r.url,
+                    frontmatter_slug=r.frontmatter_slug,
+                )
+                if not _is_renderable_public_url(citation_url):
+                    continue
                 norm = normalize_source_path(citation_url)
                 if norm in seen:
                     continue

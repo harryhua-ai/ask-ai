@@ -258,6 +258,7 @@ COLLECTION_PROPERTIES: list[tuple[str, str]] = [
     ("title", "text"),
     ("text", "text"),
     ("url", "text"),
+    ("frontmatter_slug", "text"),
     ("chunk_index", "int"),
     ("content_hash", "text"),
     # Phase 2A 新增
@@ -330,6 +331,7 @@ def _build_props(chunk: "Any", doc: RawDocument) -> dict:
         "title": doc.title,
         "text": chunk.text,
         "url": doc.url,
+        "frontmatter_slug": (doc.metadata or {}).get("frontmatter_slug", ""),
         "chunk_index": chunk.chunk_index,
         "content_hash": doc.content_hash,
         "channel_visibility": list(chunk.channel_visibility),

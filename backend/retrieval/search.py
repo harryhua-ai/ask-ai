@@ -134,6 +134,9 @@ class SearchResult:
     evidence_sensitivity: str = "unknown"
     evidence_citation_eligibility: str = "unknown"
     evidence_origin: str = ""
+    # Docusaurus frontmatter authority; None means the object predates this
+    # additive property and callers must preserve the source URL fallback.
+    frontmatter_slug: str | None = None
 
 
 class HybridSearcher:
@@ -333,6 +336,7 @@ class HybridSearcher:
                 "product",
                 "title",
                 "url",
+                "frontmatter_slug",
                 "text",
                 "chunk_index",
                 "chunk_type",
@@ -431,6 +435,7 @@ class HybridSearcher:
                 "product",
                 "title",
                 "url",
+                "frontmatter_slug",
                 "text",
                 "chunk_index",
                 "chunk_type",
@@ -529,4 +534,5 @@ class HybridSearcher:
             evidence_sensitivity=evidence["evidence_sensitivity"],
             evidence_citation_eligibility=evidence["evidence_citation_eligibility"],
             evidence_origin=evidence["evidence_origin"],
+            frontmatter_slug=props.get("frontmatter_slug"),
         )
