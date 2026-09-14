@@ -318,3 +318,78 @@ The bulk repair running screenshot captures the existing button disabled as `一
 - implementation/evidence SHA: `600ec1485a4353d7ba8e9854a465fc47fb86c8eb`
 - final pushed SHA: recorded after this report commit and remote verification
 - report path: `reports/v163-r3-wave2-integration-20260914.md`
+
+---
+
+## Role A Visual Acceptance Remediation R2 — Conversation Review identity presentation
+
+执行日期：2026-09-14（Asia/Shanghai）
+范围：仅修复详情面板 Conversation ID 的完整展示；列表缩略、复制语义、生成策略、持久化、bulk repair、Data Source action hierarchy、migration/backfill 均未改变。不 merge、不 deploy、不关闭 Issue、不宣称 FINAL PASS。
+
+### Candidate identity
+
+- Source implementation candidate before R2: `600ec1485a4353d7ba8e9854a465fc47fb86c8eb`.
+- Source evidence tip before R2: `24fc211c8ce2acf1856f52cce129b76d26203dda`.
+- R2 implementation SHA: `8cbf498612a464c423f32c4f5327eff51b7e236d`.
+- Branch: `integration/v163-r3-wave2-20260914`.
+
+### Exact remediation
+
+The list still renders `conversationIdLabel(conv.id)` and therefore remains abbreviated (`ID aaaaaaaa…0101`). The detail panel now renders the authoritative `detail.id` verbatim, with `min-w-0 max-w-full` and `break-all` so the existing panel width is preserved and a long UUID remains readable without page overflow. The existing copy control still calls `navigator.clipboard.writeText(detail.id)`, so the visible full value and copied value use the same source string.
+
+No Conversation ID generation, uuid4/uuid7 policy, persistence, or existing IDs were changed.
+
+### Tests and results
+
+- Added frontend regression coverage with genuine UUID-length fixture `aaaaaaaa-0000-4000-8000-e2d000000101`:
+  - list remains abbreviated;
+  - detail contains the complete value and no middle ellipsis;
+  - copy action receives the exact complete value.
+- Focused frontend regression: `npm test -- --run tests/ConversationsReview.test.tsx tests/conversationId.test.ts` → `2 files, 12 tests passed`.
+- Admin build: `npm run build` → passed (`tsc -b` + Vite build; existing chunk-size warning only).
+- Full frontend test run: `65 files, 541 passed, 7 failed`. The 7 failures are the pre-existing `DataSourceDetailTrackC` mock failures (`useBulkDocumentRepair` is absent from that test mock); no Conversation Review test failed and no R2 file is in that failure path.
+- `git diff --check` → passed.
+
+### Fresh visual and browser evidence
+
+All fresh screenshots are PNG `1536×1024`, DPR 1, captured from the authenticated local Admin at `http://127.0.0.1:18230` after the R2 implementation commit:
+
+- `output/playwright/v163-r3-wave2-admin-remediation/10-conversation-review-list-abbreviated.png`
+- `output/playwright/v163-r3-wave2-admin-remediation/11-conversation-detail-full-id-copy.png`
+
+Automated browser evidence for screenshot 11:
+
+```json
+{
+  "expected": "aaaaaaaa-0000-4000-8000-e2d000000101",
+  "visible": "Conversation ID aaaaaaaa-0000-4000-8000-e2d000000101",
+  "copied": "aaaaaaaa-0000-4000-8000-e2d000000101",
+  "visibleContainsFullId": true,
+  "noMiddleEllipsis": true,
+  "copiedEqualsExpected": true,
+  "copiedEqualsVisibleValue": true,
+  "noHorizontalPageOverflow": true,
+  "innerWidth": 1536,
+  "innerHeight": 1024,
+  "devicePixelRatio": 1,
+  "documentScrollWidth": 1536,
+  "bodyScrollWidth": 1536
+}
+```
+
+### Changed files
+
+- `admin/src/pages/Conversations.tsx`
+- `admin/tests/ConversationsReview.test.tsx`
+- `output/playwright/v163-r3-wave2-admin-remediation/10-conversation-review-list-abbreviated.png`
+- `output/playwright/v163-r3-wave2-admin-remediation/11-conversation-detail-full-id-copy.png`
+- `reports/v163-r3-wave2-integration-20260914.md`
+
+### R2 verdict
+
+`V163_R3_ADMIN_OPERATIONS_REMEDIATION_FIX_R2 = CANDIDATE READY`
+
+- old SHA: `600ec1485a4353d7ba8e9854a465fc47fb86c8eb`
+- implementation SHA: `8cbf498612a464c423f32c4f5327eff51b7e236d`
+- final pushed SHA: recorded after this report/evidence commit and remote verification
+- report path: `reports/v163-r3-wave2-integration-20260914.md`
