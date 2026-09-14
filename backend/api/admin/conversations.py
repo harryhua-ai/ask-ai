@@ -101,7 +101,14 @@ async def list_conversations(
             count_q = count_q.where(Conversation.intent_tag == intent_tag)
         if q:
             pattern = f"%{q}%"
-            cond = Conversation.question.ilike(pattern) | Conversation.answer.ilike(pattern)
+            # The UUID is the administrator's canonical support handle. Keep
+            # question/answer full-text behavior and add an exact text search
+            # path without manufacturing a second display identifier.
+            cond = (
+                Conversation.question.ilike(pattern)
+                | Conversation.answer.ilike(pattern)
+                | Conversation.id.cast(Text).ilike(pattern)
+            )
             stmt = stmt.where(cond)
             count_q = count_q.where(cond)
         if date_from:
