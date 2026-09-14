@@ -7,8 +7,8 @@
   (❌ 不内插进 run 源码);严格 SSH 主机键(❌ 不出现 no/accept-new);
   flock + 仅调既有 update.sh(❌ 不重实现 docker 逻辑);Guard 在任何远端
   变更之前;成功收尾在身份双断言之后;失败收尾存在;无 main HEAD 身份;
-- 身份冻结行为(bash 级实证):合法 vX.Y.Z → 解析 40 位 SHA;latest/main/
-  分支名/SHA/缺 v 全拒;
+- 身份冻结行为(bash 级实证):合法 vX.Y.Z / vX.Y.Z-rN → 解析 40 位 SHA;
+  latest/main/分支名/SHA/缺 v 全拒;
 - recorder 分阶段:create=in_progress 在途记录;success/failure/error 追加
   到既有记录(按 sha 解析最新);无记录可追加 → 拒绝;历史原子模式
   (break-glass)载荷与 create 阶段同一证据模型;
@@ -139,7 +139,7 @@ class TestWorkflowContract:
     def test_tag_validation_before_ssh(self, workflow):
         identity = [s for s in workflow["jobs"]["deploy"]["steps"] if s.get("id") == "identity"][0]
         run = identity["run"]
-        assert "^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" in run
+        assert "^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-r(0|[1-9][0-9]*))?$" in run
         assert '"$TAG" = "latest"' in run
         # 部署步(SSH)使用身份步输出,而非原始输入
         deploy = [s for s in workflow["jobs"]["deploy"]["steps"] if s.get("id") == "deploy"][0]
@@ -419,11 +419,15 @@ def _run_identity_step(tmp_path: Path, repo: Path, tag: str):
 
 
 class TestIdentityFreezing:
-    def test_valid_tag_resolves_and_freezes(self, tmp_path: Path):
-        repo, sha = _init_tagged_repo(tmp_path)
-        proc, outputs = _run_identity_step(tmp_path, repo, "v1.2.3")
+    @pytest.mark.parametrize(
+        "tag,version",
+        [("v1.6.3", "1.6.3"), ("v1.6.3-r3", "1.6.3-r3")],
+    )
+    def test_valid_tag_resolves_and_freezes(self, tmp_path: Path, tag: str, version: str):
+        repo, sha = _init_tagged_repo(tmp_path, tag=tag)
+        proc, outputs = _run_identity_step(tmp_path, repo, tag)
         assert proc.returncode == 0, proc.stderr
-        assert outputs == {"tag": "v1.2.3", "sha": sha, "version": "1.2.3"}
+        assert outputs == {"tag": tag, "sha": sha, "version": version}
 
     @pytest.mark.parametrize("bad", ["latest", "main", "v1", "v1.2", "1.2.3", "v1.2.3-rc.1", "abc123", "v01.2.3"])
     def test_invalid_inputs_rejected_before_anything(self, tmp_path: Path, bad: str):

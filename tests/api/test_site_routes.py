@@ -60,6 +60,9 @@ def _make_site_factory(site_row: MagicMock | None) -> tuple[MagicMock, AsyncMock
     session.get = AsyncMock(return_value=site_row)
     # I-UX-001:site-config 现含 trusted-actions 查询;mock 返回空结果集
     empty_result = MagicMock()
+    # Conversation ID policy:可读 policy store,但未配置 default row;
+    # 让生产 resolver 走权威初始 uuid4,而不是把未配置的 mock 当非法策略。
+    empty_result.scalar_one_or_none.return_value = None
     empty_result.scalars.return_value.all.return_value = []
     session.execute = AsyncMock(return_value=empty_result)
     factory = MagicMock()

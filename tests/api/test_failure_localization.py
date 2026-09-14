@@ -414,6 +414,11 @@ def _make_failing_session_factory():
 
     session = AsyncMock()
     session.add = MagicMock()
+    # Policy lookup itself is readable and has no configured row;the failure
+    # under test remains the later Conversation/Trace commit failure.
+    policy_result = MagicMock()
+    policy_result.scalar_one_or_none.return_value = None
+    session.execute = AsyncMock(return_value=policy_result)
     session.commit.side_effect = RuntimeError("db down")
     factory = MagicMock()
     factory.return_value.__aenter__ = AsyncMock(return_value=session)

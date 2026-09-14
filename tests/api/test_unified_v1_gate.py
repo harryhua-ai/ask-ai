@@ -192,6 +192,11 @@ def _make_site_factory(site_row):
     session = AsyncMock()
     session.add = MagicMock()
     session.get = AsyncMock(return_value=site_row)
+    # Conversation ID policy:可读 store + no configured row;
+    # 保持该测试关注的站点/生成语义,同时显式满足 resolver 的权威默认前提。
+    policy_result = MagicMock()
+    policy_result.scalar_one_or_none.return_value = None
+    session.execute = AsyncMock(return_value=policy_result)
     factory = MagicMock()
     factory.return_value.__aenter__ = AsyncMock(return_value=session)
     factory.return_value.__aexit__ = AsyncMock(return_value=None)
