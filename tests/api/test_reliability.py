@@ -62,6 +62,9 @@ def _make_mock_session_factory() -> tuple[MagicMock, AsyncMock]:
     """构造 mock session_factory:(factory, session),session.add 为同步 MagicMock。"""
     session = AsyncMock()
     session.add = MagicMock()
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = None
+    session.execute.return_value = execute_result
     factory = MagicMock()
     factory.return_value.__aenter__ = AsyncMock(return_value=session)
     factory.return_value.__aexit__ = AsyncMock(return_value=None)

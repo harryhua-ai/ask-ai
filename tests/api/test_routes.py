@@ -20,6 +20,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from backend.main import app
+from backend.services.conversation_id import ConversationIdPolicyError
 from backend.utils.budget import BudgetConfig, BudgetLimiter
 
 # --------------------------------------------------------------------------- #
@@ -79,6 +80,9 @@ def _make_mock_session_factory() -> tuple[MagicMock, AsyncMock]:
     session = AsyncMock()
     # AsyncSession.add 是同步方法,覆写为 MagicMock 避免返回协程
     session.add = MagicMock()
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = None
+    session.execute.return_value = execute_result
     factory = MagicMock()
     factory.return_value.__aenter__ = AsyncMock(return_value=session)
     factory.return_value.__aexit__ = AsyncMock(return_value=None)
@@ -277,6 +281,34 @@ async def test_ask_persistence_failure_does_not_break_sse() -> None:
     # 持久化失败不应影响 token / done 事件
     assert "token" in event_types
     assert event_types[-1] == "done"
+
+
+@pytest.mark.unit
+async def test_ask_fails_closed_before_stream_or_persistence_when_policy_unavailable(
+    monkeypatch,
+) -> None:
+    """策略无法权威解析时返回明确失败,不创建/返回 Conversation。"""
+    rag = _make_streaming_rag(
+        [
+            {"type": "token", "content": "must not run"},
+            {"type": "complete", "answer": "must not run", "is_answered": True},
+        ]
+    )
+    factory, session = _make_mock_session_factory()
+    app.state.rag = rag
+    app.state.session_factory = factory
+
+    policy_resolver = AsyncMock(side_effect=ConversationIdPolicyError("policy store unavailable"))
+    monkeypatch.setattr("backend.api.routes.new_conversation_id", policy_resolver)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/api/ask", json={"message": "policy failure"})
+
+    assert resp.status_code == 503
+    assert "Conversation ID" in resp.json()["detail"]
+    policy_resolver.assert_awaited_once_with(factory)
+    session.add.assert_not_called()
+    session.commit.assert_not_awaited()
 
 
 # --------------------------------------------------------------------------- #

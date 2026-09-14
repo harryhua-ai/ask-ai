@@ -694,7 +694,7 @@ class ModelRuntimeSetting(Base):
 class ConversationIdPolicy(Base):
     """新建对话 ID 生成策略(全局单例配置)。
 
-    - key 固定为 ``default``;缺行时运行时安全回退到既有 uuid4 语义;
+    - key 固定为 ``default``;缺行时使用定义好的权威 uuid4 初始默认;
     - strategy 只允许由 API 词表校验的 uuid4 / uuid7;
     - 该表只描述未来生成规则,不承载也不改写既有 Conversation.id。
     """

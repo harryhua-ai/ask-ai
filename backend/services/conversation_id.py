@@ -22,6 +22,10 @@ DEFAULT_STRATEGY = "uuid4"
 SUPPORTED_STRATEGIES = ("uuid4", "uuid7")
 
 
+class ConversationIdPolicyError(RuntimeError):
+    """Conversation ID policy cannot be established authoritatively."""
+
+
 @dataclass(frozen=True)
 class ConversationIdPolicyView:
     strategy: str
@@ -96,10 +100,11 @@ async def load_strategy(session: AsyncSession) -> str:
         return DEFAULT_STRATEGY
     try:
         return validate_strategy(row.strategy)
-    except ValueError:
-        # 历史/人工异常配置不应让新对话获得不稳定身份;安全回退到原有 uuid4,
-        # 同时 API 写入侧不允许继续保存非法值。
-        return DEFAULT_STRATEGY
+    except ValueError as exc:
+        # 缺行是定义明确的初始状态;存在但非法的行不是默认状态,不能猜测。
+        raise ConversationIdPolicyError(
+            "Conversation ID 生成策略已配置但无效"
+        ) from exc
 
 
 async def new_conversation_id(
@@ -108,11 +113,13 @@ async def new_conversation_id(
     try:
         async with session_factory() as session:
             strategy = await load_strategy(session)
-    except Exception:
-        # 保持旧 uuid4 行为作为最小故障面;后续 Conversation 持久化仍决定
-        # 是否允许把该 ID 对外下发,不会把数据库不可用伪装成成功。
-        logger.warning("Conversation ID 策略读取失败,回退 uuid4", exc_info=True)
-        strategy = DEFAULT_STRATEGY
+    except ConversationIdPolicyError:
+        raise
+    except Exception as exc:
+        logger.exception("Conversation ID 策略读取失败,拒绝生成新 ID")
+        raise ConversationIdPolicyError(
+            "Conversation ID 生成策略不可读取,拒绝生成新 ID"
+        ) from exc
     return generate_conversation_id(strategy)
 
 
@@ -129,8 +136,10 @@ async def get_policy(
             return policy_view(DEFAULT_STRATEGY)
         try:
             strategy = validate_strategy(row.strategy)
-        except ValueError:
-            strategy = DEFAULT_STRATEGY
+        except ValueError as exc:
+            raise ConversationIdPolicyError(
+                "Conversation ID 生成策略已配置但无效"
+            ) from exc
         return policy_view(strategy, row.updated_at)
 
 

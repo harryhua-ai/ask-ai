@@ -43,7 +43,7 @@ from backend.services.attachments import (
     sanitize_filename,
     validate_upload_file,
 )
-from backend.services.conversation_id import new_conversation_id
+from backend.services.conversation_id import ConversationIdPolicyError, new_conversation_id
 from backend.services.lead_service import apply_lead_turn, load_lead_context
 from backend.services.site_experiences import (
     SiteDenied,
@@ -94,6 +94,20 @@ def get_budget(request: Request) -> BudgetLimiter:
 RAGDep = Annotated[RAGOrchestrator, Depends(get_rag)]
 SessionFactoryDep = Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)]
 BudgetDep = Annotated[BudgetLimiter, Depends(get_budget)]
+
+
+async def _resolve_conversation_id_or_fail(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> str:
+    """Resolve the active policy before a response can claim a new Conversation."""
+    try:
+        return str(await new_conversation_id(session_factory))
+    except ConversationIdPolicyError as exc:
+        logger.error("Conversation ID 策略无法权威确定,拒绝创建新对话")
+        raise HTTPException(
+            status_code=503,
+            detail="Conversation ID 生成策略不可用,拒绝创建新对话",
+        ) from exc
 
 
 @router.post("/ask")
@@ -176,7 +190,7 @@ async def ask(
         # (DECLINED,非 generation error),必须持久化真实 Conversation,
         # 禁止幽灵 conversation_id;文案按解析语言本地化;
         # trace type=budget_declined,不污染 generation_error taxonomy。
-        conversation_id = str(await new_conversation_id(session_factory))
+        conversation_id = await _resolve_conversation_id_or_fail(session_factory)
         busy_msg = localized_message(BUDGET_DECLINED_KEY, answer_language)
         # FINAL REVIEW Blocker A:仅当 Conversation 真实持久化成功,才允许把该 id
         # 作为 declined Conversation 身份下发;持久化失败 → 不下发任何身份
@@ -249,8 +263,9 @@ async def ask(
                     raise HTTPException(403, "Attachment access denied")
                 attachment_objs.append(att)
 
+    conversation_id = await _resolve_conversation_id_or_fail(session_factory)
+
     async def event_generator() -> Any:
-        conversation_id = str(await new_conversation_id(session_factory))
         full_answer = ""
         sources: list = []
         is_answered = False
