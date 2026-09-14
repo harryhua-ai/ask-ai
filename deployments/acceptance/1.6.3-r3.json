@@ -1,0 +1,50 @@
+{
+  "version": "1.6.3-r3",
+  "tag": "v1.6.3-r3",
+  "git_sha": "5eac2b2b84d63a5889d8cb229e40e2bb083745d5",
+  "verified_at": "2026-09-14T15:30:35Z",
+  "executor": "Codex production release/runtime acceptance, operator-authorized",
+  "report_path": "reports/v163-r3-production-runtime-acceptance-20260914.md",
+  "checks": [
+    {
+      "name": "runtime_identity",
+      "result": "PASS",
+      "detail": "/health local and public both report version=1.6.3-r3, git_sha=5eac2b2b84d63a5889d8cb229e40e2bb083745d5, app_mode=production; backend, sync-cron, and sync-executor use the exact release tag and OCI revision; restart=0"
+    },
+    {
+      "name": "release_artifact",
+      "result": "PASS",
+      "detail": "tag workflow 34858174770 succeeded; OCI index digest sha256:badce352e54b939c89dad8577bcabeb37f9facb7dcec660d10cb776bda30a89f; RELEASE.json and OCI labels match the frozen tag/SHA"
+    },
+    {
+      "name": "migrations",
+      "result": "PASS",
+      "detail": "The six ordered migrations from deploy/prod/migrations.json executed successfully from the release image; no extra or manual migration was run"
+    },
+    {
+      "name": "conversation_id_policy",
+      "result": "PASS",
+      "detail": "conversation_id_policies is readable and the active persisted strategy is uuid4; Admin release/policy surfaces load on production"
+    },
+    {
+      "name": "api_ask",
+      "result": "PASS",
+      "detail": "Normal production POST /api/ask returned HTTP 200 with SSE sources, tokens, and done; no error event; returned Conversation ID length=36"
+    },
+    {
+      "name": "admin_runtime",
+      "result": "PASS",
+      "detail": "Admin release, runtime, data-source, and Conversation Review API/UI surfaces are operational; production screenshots are retained under output/playwright/v163-r3-runtime/"
+    },
+    {
+      "name": "observability",
+      "result": "PASS",
+      "detail": "Post-deploy service log scan matched 0 ERROR/CRITICAL/Traceback/Exception/panic messages in the 15-minute window; System Information browser console had 0 messages"
+    },
+    {
+      "name": "security_hygiene",
+      "result": "BLOCKED",
+      "detail": "Production environment has no ADMIN_PASSWORD and the application retains a built-in administrator credential fallback; this is a pre-existing operational security finding, was not changed in r3, and requires Role A remediation decision"
+    }
+  ]
+}
