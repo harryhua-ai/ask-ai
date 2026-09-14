@@ -128,6 +128,7 @@ class SyncLogOut(BaseModel):
     items_updated: int
     items_deleted: int
     items_unchanged: int = 0
+    delta_counts: dict | None = None  # #65 document-level contract; NULL = legacy unit unknown
     error_detail: str | None
     triggered_by: str
 
@@ -400,9 +401,10 @@ class SyncRunLogSummary(BaseModel):
     id: str
     status: str
     items_new: int
-    chunks_written: int  # = sync_log.items_updated:写入 chunk 总数,非"更新文档数"
+    chunks_written: int  # legacy = sync_log.items_updated;非"更新文档数"
     items_deleted: int
     items_unchanged: int
+    delta_counts: dict | None = None  # #65 explicit document units; NULL = historical unknown
     error_detail: str | None = None
 
 

@@ -118,6 +118,20 @@ async def ensure_track_c_columns(engine: AsyncEngine) -> None:
             await conn.execute(text(stmt))
 
 
+async def ensure_sync_delta_columns(engine: AsyncEngine) -> None:
+    """补齐 #65 SyncLog document-delta 列(加性、幂等、零回填)。
+
+    生产发布仍须先执行 ``scripts/migrate_add_sync_delta_counts.py``；这里
+    的启动期守卫只让开发/测试中已经存在的旧表安全加载新读写代码。
+    """
+    from sqlalchemy import text
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("ALTER TABLE sync_log ADD COLUMN IF NOT EXISTS delta_counts JSONB")
+        )
+
+
 async def init_db(engine: AsyncEngine) -> None:
     """根据模型元数据创建所有表。
 
@@ -133,3 +147,4 @@ async def init_db(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await ensure_track_c_columns(engine)
+    await ensure_sync_delta_columns(engine)

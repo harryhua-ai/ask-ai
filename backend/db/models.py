@@ -329,6 +329,10 @@ class SyncLog(Base):
     items_updated: Mapped[int] = mapped_column(Integer, default=0)
     items_deleted: Mapped[int] = mapped_column(Integer, default=0)
     items_unchanged: Mapped[int] = mapped_column(Integer, default=0)
+    # #65 additive contract:document-level counts with explicit units. NULL
+    # means this historical run predates the contract; readers must not infer
+    # document updates from the legacy mixed items_updated field.
+    delta_counts: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text)
     triggered_by: Mapped[str] = mapped_column(String(20), default="cron")
 
