@@ -190,7 +190,7 @@ Investigation confirmed the previous runtime generated new IDs with direct `uuid
 - `conversation_id_policies` ORM table plus additive/idempotent `scripts/migrate_add_conversation_id_policy.py`;
 - migration manifest entry `scripts/migrate_add_conversation_id_policy.py`; table creation uses `CREATE TABLE IF NOT EXISTS`, and the fixed `default` row uses `ON CONFLICT DO NOTHING` with default `uuid4`;
 - `GET/PUT /api/admin/system/conversation-id-policy`; read access is viewer/editor/admin, write access is editor/admin, invalid strategies return 422;
-- `backend/services/conversation_id.py` with RFC 9562 UUIDv7 generation, persisted active-strategy loading, and fail-safe UUIDv4 fallback on missing/invalid/unreadable policy;
+- `backend/services/conversation_id.py` with RFC 9562 UUIDv7 generation, persisted active-strategy loading, authoritative UUIDv4 default only when the policy row is absent, and fail-closed errors for invalid/unreadable policy;
 - both new-conversation paths in `backend/api/routes.py` now use the service; ordinary attachment UUIDs are unchanged;
 - Admin System Info control with explicit “当前生效” text, v4/v7 selection, save feedback, preview, and `仅影响新建对话，已有 Conversation ID 不会改变` contract.
 
@@ -253,3 +253,68 @@ No merge, deploy, tag/release, production migration execution, Issue closure, or
 - final pushed SHA: recorded after this report commit and remote verification
 - branch: `integration/v163-r3-wave2-20260914`
 - report: `reports/v163-r3-wave2-integration-20260914.md`
+
+---
+
+## Role A Narrow Fix — Conversation ID fail-closed remediation
+
+执行日期：2026-09-14（Asia/Shanghai）
+范围：仅修复 Role A 指出的 Conversation ID 静默 fallback 阻塞缺陷；不重开 Items A/B，不改变 uuid4/uuid7 选项，不改 Admin UI，不 merge/deploy/tag，不执行 production migration，不关闭 Issue。
+
+### Candidate identity
+
+- Previous reviewed candidate SHA: `c71d7ef3a1258b88c5f38240b8c2ba93cbec1a0c`.
+- Previous implementation/evidence SHA: `edba4cf71ef3b998eb3a558529dfd99cedcbc5b7`.
+- Narrow-fix implementation/evidence SHA: `600ec1485a4353d7ba8e9854a465fc47fb86c8eb`.
+- Branch: `integration/v163-r3-wave2-20260914`.
+
+### Exact fail-closed semantics
+
+`backend/services/conversation_id.py` now distinguishes the only allowed default from all failures:
+
+- readable policy store + no `default` row → authoritative initial default `uuid4`;
+- readable store + persisted `uuid4` → UUIDv4;
+- readable store + persisted `uuid7` → UUIDv7;
+- persisted but invalid strategy → `ConversationIdPolicyError`, with no generator call;
+- policy session/query/storage failure → `ConversationIdPolicyError`, with no generator call;
+- Admin policy GET surfaces the same invalid-policy condition as explicit HTTP 503 instead of displaying a guessed default.
+
+`backend/api/routes.py` resolves the ID before constructing the SSE response in both the normal and budget-declined creation paths. A policy-resolution failure is converted to HTTP 503 (`Conversation ID 生成策略不可用,拒绝创建新对话`), before RAG execution, `Conversation`/`Trace` persistence, or any `conversation_id` event. Existing `Conversation.id` values are never read-modified-written by this path.
+
+No migration or backfill was introduced by this narrow fix; the existing policy migration remains additive/idempotent and was not executed against production.
+
+### Tests and regression results
+
+- Conversation policy/service/route affected suite: `20 passed, 4 warnings`.
+- Track C bulk repair + Conversation ID policy + UUID service suite: `31 passed, 4 warnings`.
+- Route/reliability/Admin-channel compatibility suite: `21 passed, 4 warnings`.
+- Data-source/discovery/website/system/conversation Admin regression suite: `48 passed, 4 warnings`.
+- Frontend targeted Admin suite from the same candidate: `4 files, 83 tests passed`; Admin build passed.
+- Changed-path `ruff check`: passed; backend `compileall`: passed; `git diff --check`: passed.
+
+The explicit new regression family covers valid uuid4/uuid7, readable no-row authoritative default, invalid persisted strategy, unreadable policy store, route-level no-stream/no-persist/no-return behavior, and an existing Conversation ID remaining byte-for-byte unchanged. The accepted #64 NE503 SDK/resources reproduction remains unchanged: valid frontmatter authority emits canonical Wiki URL; absent authority retains proven GitHub blob provenance and never guesses `/resources`.
+
+### Final-candidate browser evidence
+
+The real local Admin browser used backend `/health` SHA `600ec1485a4353d7ba8e9854a465fc47fb86c8eb`, local Postgres/Weaviate/auth, and seeded local records. All screenshots below are PNG `1536×1024`, DPR 1:
+
+- `output/playwright/v163-r3-wave2-admin-remediation/01-data-sources-direct-actions.png`
+- `output/playwright/v163-r3-wave2-admin-remediation/02-data-source-overflow-secondary-only.png`
+- `output/playwright/v163-r3-wave2-admin-remediation/03-data-source-detail-bulk-action.png`
+- `output/playwright/v163-r3-wave2-admin-remediation/04-bulk-repair-running-duplicate-disabled.png`
+- `output/playwright/v163-r3-wave2-admin-remediation/05-bulk-repair-result.png`
+- `output/playwright/v163-r3-wave2-admin-remediation/06-conversation-id-policy.png`
+- `output/playwright/v163-r3-wave2-admin-remediation/07-conversation-id-policy-saved.png`
+- `output/playwright/v163-r3-wave2-admin-remediation/08-conversation-review-list.png`
+- `output/playwright/v163-r3-wave2-admin-remediation/09-conversation-detail-full-id-copy.png`
+
+The bulk repair running screenshot captures the existing button disabled as `一键修复中…`; the result is the real local partial outcome `已修复 0 项，1 项仍需处理`. Conversation Review list/detail screenshots show abbreviated versus full canonical IDs and the copy control. The saved local policy was restored to uuid4 after evidence capture.
+
+### Narrow-fix verdict
+
+`V163_R3_ADMIN_OPERATIONS_REMEDIATION_FIX = CANDIDATE READY`
+
+- previous SHA: `c71d7ef3a1258b88c5f38240b8c2ba93cbec1a0c`
+- implementation/evidence SHA: `600ec1485a4353d7ba8e9854a465fc47fb86c8eb`
+- final pushed SHA: recorded after this report commit and remote verification
+- report path: `reports/v163-r3-wave2-integration-20260914.md`
