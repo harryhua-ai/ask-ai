@@ -347,7 +347,7 @@ No Conversation ID generation, uuid4/uuid7 policy, persistence, or existing IDs 
   - copy action receives the exact complete value.
 - Focused frontend regression: `npm test -- --run tests/ConversationsReview.test.tsx tests/conversationId.test.ts` → `2 files, 12 tests passed`.
 - Admin build: `npm run build` → passed (`tsc -b` + Vite build; existing chunk-size warning only).
-- Full frontend test run: `65 files, 541 passed, 7 failed`. The 7 failures are the pre-existing `DataSourceDetailTrackC` mock failures (`useBulkDocumentRepair` is absent from that test mock); no Conversation Review test failed and no R2 file is in that failure path.
+- Full frontend test run at the pre-fix R2 tip: `65 files, 541 passed, 7 failed`. Differential verification against pre-Wave-2 `origin/main` proved the affected `DataSourceDetailTrackC` baseline was `13/13`, so these were candidate-introduced mock regressions; they are fixed in the test-only remediation below.
 - `git diff --check` → passed.
 
 ### Fresh visual and browser evidence
@@ -392,4 +392,66 @@ Automated browser evidence for screenshot 11:
 - old SHA: `600ec1485a4353d7ba8e9854a465fc47fb86c8eb`
 - implementation SHA: `8cbf498612a464c423f32c4f5327eff51b7e236d`
 - final pushed SHA: recorded after this report/evidence commit and remote verification
+- report path: `reports/v163-r3-wave2-integration-20260914.md`
+
+---
+
+## V163_R3 Wave 2 Test Regression Remediation
+
+执行日期：2026-09-14（Asia/Shanghai）
+范围：仅修复 accepted candidate 引入的 Admin test mock contract regression；不改变任何生产代码、Data Source UX、bulk repair 语义、Conversation ID 行为或 Admin action hierarchy。不集成 main、不 deploy、不迁移 production、不关闭 Issue。
+
+### Candidate identity and root cause
+
+- Accepted candidate before fix: `c8336b393c74c5c9ad6c66e3beab2b4f620cd349`.
+- Branch: `integration/v163-r3-wave2-20260914`.
+- Root cause: `admin/src/pages/DataSourceDetail.tsx` in the accepted candidate calls production hook `useBulkDocumentRepair(sourceId)` during render. `admin/tests/dataSources/DataSourceDetailTrackC.test.tsx` mocked the same module but exported only `useDocumentRepair`, `useSourceSchedule`, and the knowledge-settings hooks. Vitest therefore threw `No "useBulkDocumentRepair" export is defined on the "@/hooks/useDataSourceKnowledge" mock` before the existing assertions could run.
+- Pre-fix accepted candidate result: `DataSourceDetailTrackC.test.tsx` = `6 passed / 7 failed`.
+- Pre-Wave-2 baseline result: `origin/main=d89a0d198cdc1fa9e82b5525fbbba6d3d14e286c`, same file = `13/13 passed`.
+
+### Exact delta from accepted candidate
+
+Only `admin/tests/dataSources/DataSourceDetailTrackC.test.tsx` was changed in the implementation commit:
+
+```diff
+@@
+  import {
++   useBulkDocumentRepair,
+    useDocumentRepair,
+    useKnowledgeSettings,
+    useSourceSchedule,
+  } from "@/hooks/useDataSourceKnowledge";
+@@
+  vi.mock("@/hooks/useDataSourceKnowledge", () => ({
+    useDocumentRepair: vi.fn(() => ({ mutate: vi.fn(), isPending: false, variables: null })),
++   useBulkDocumentRepair: vi.fn(() => ({ mutate: vi.fn(), isPending: false, data: undefined })),
+    useSourceSchedule: vi.fn(() => ({ data: undefined, isLoading: false, refetch: vi.fn() })),
+```
+
+The mock now represents the production mutation contract used by `DataSourceDetail`: `mutate`, `isPending`, and `data`. It does not remove or skip the bulk-repair path. The neighboring `DataSourceDetailConvergence` regression continues to exercise enabled bulk repair, pending duplicate-disabled state, and result rendering against the same explicit hook mock.
+
+### Tests and static validation
+
+- Red reproduction before fix: `npm test -- --run tests/dataSources/DataSourceDetailTrackC.test.tsx` → `7 failed, 6 passed`; exact missing-export error above.
+- Gate 1 after fix: same command → `1 file, 13 tests passed`.
+- Wave 2 focused Admin suites (Data Source detail/list/actions/bulk repair, Conversation ID policy, Conversation Review, System Information, FinalPolish): `8 files, 129 tests passed`.
+- Full Admin regression: `npm test` → `66 files, 548 tests passed`.
+- Admin build: `npm run build` → passed (`tsc -b` + Vite build; existing chunk-size warning only).
+- Admin package scripts were inspected: it provides `test`, `build`, `dev`, and `preview`; no separate lint script exists. Type/static validation is covered by `tsc -b`, and `git diff --check` passed.
+
+### Scope and integrity audit
+
+- No production files changed relative to `c8336b3`; the implementation delta is one test-support file with two added lines. The report update is documentation only.
+- No accepted production behavior was changed or weakened; no tests were skipped, xfailed, or made trivial.
+- Implementation commit: `0a22384aab78f6518136bf0cd1d5b469fc061a9e`.
+- Working tree was clean before report-only commit; branch push and remote SHA verification are recorded in the handoff below.
+
+### Test regression remediation verdict
+
+`V163_R3_WAVE2_TEST_REGRESSION_FIX = CANDIDATE READY`
+
+- previous accepted SHA: `c8336b393c74c5c9ad6c66e3beab2b4f620cd349`
+- implementation SHA: `0a22384aab78f6518136bf0cd1d5b469fc061a9e`
+- final pushed SHA: recorded after this report commit and remote verification
+- branch: `integration/v163-r3-wave2-20260914`
 - report path: `reports/v163-r3-wave2-integration-20260914.md`
