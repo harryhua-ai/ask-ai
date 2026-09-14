@@ -623,13 +623,23 @@ class GenerationBuilder:
         原子切换。旧代本文档对象(如有残留)在切换提交后按旧代命名空间
         本文档局部清除。
 
+        INC-WEB-EMBED-413 重放资格(嵌入契约 + 权威范围):
+        - 重放范围 = 版本权威 chunk 集 ``(chunk_index < chunk_count)`` ——
+          迁移回填误挂的越界行(idx ≥ chunk_count)不得重放进在服代
+          (生产:误挂 3005 字符 legacy 行 → 重放 embed 413 零激活);
+        - 任一权威 chunk 文本超 ``pipeline._max_chunk_chars`` 嵌入字符契约
+          → 该文档不可重放(送嵌入必 413,重试同败),路由 ``unrepairable``
+          由调用方回退源重建(权威内容重分块,契约安全)。混合批次中健康
+          文档照常修复,单篇超契约不得拖垮整批(生产 gens 11–15 教训)。
+
         Returns:
             (repaired, unrepairable, chunks_repaired) — unrepairable = 无持久
-            chunk 副本(迁移缺口),调用方回退源抓取补灌。
+            chunk 副本 / 权威集不完整 / 超嵌入契约,调用方回退源抓取补灌。
         """
         repaired: list[str] = []
         unrepairable: list[str] = []
         plans: list[tuple[Document, DocumentVersion, list[DocumentVersionChunk]]] = []
+        limit = self._pipeline._max_chunk_chars
         with self._session_factory() as session:
             for sid in source_ids:
                 doc_row, version = lifecycle.load_document_and_current_version(session, sid)
@@ -648,7 +658,33 @@ class GenerationBuilder:
                 if not chunks:
                     unrepairable.append(sid)
                     continue
-                plans.append((doc_row, version, list(chunks)))
+                authoritative = [c for c in chunks if c.chunk_index < int(version.chunk_count)]
+                oversize = (
+                    [c for c in authoritative if len(c.text) > limit]
+                    if limit and limit > 0
+                    else []
+                )
+                if len(authoritative) != int(version.chunk_count):
+                    logger.warning(
+                        "修复 %s:持久副本权威集不完整(%d/%d 行),不可重放 → 源重建",
+                        sid,
+                        len(authoritative),
+                        int(version.chunk_count),
+                    )
+                    unrepairable.append(sid)
+                    continue
+                if oversize:
+                    logger.warning(
+                        "修复 %s:%d 个权威 chunk 超嵌入字符契约(limit=%s,最长 %d 字符),"
+                        "重放必 413 → 路由源重建(权威内容重分块)",
+                        sid,
+                        len(oversize),
+                        limit,
+                        max(len(c.text) for c in oversize),
+                    )
+                    unrepairable.append(sid)
+                    continue
+                plans.append((doc_row, version, authoritative))
         if not plans:
             return repaired, unrepairable, 0
 

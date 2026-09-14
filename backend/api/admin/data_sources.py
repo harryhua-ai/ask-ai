@@ -1532,6 +1532,12 @@ async def repair_all_source_documents(
                         embedder=embedder,
                         class_name=request.app.state.weaviate_class_name,
                         task_id=task.id,
+                        # INC-WEB-EMBED-413:重放载荷嵌入契约预检(fail-fast)
+                        max_chunk_chars=getattr(
+                            getattr(request.app.state, "settings", None),
+                            "embedder_max_length",
+                            None,
+                        ),
                     )
                 status = str(task.status)
                 if status == "succeeded":
@@ -1594,6 +1600,10 @@ async def repair_source_document(
             embedder=embedder,
             class_name=request.app.state.weaviate_class_name,
             task_id=task_id,
+            # INC-WEB-EMBED-413:重放载荷嵌入契约预检(超限 fail-fast,不送 413)
+            max_chunk_chars=getattr(
+                getattr(request.app.state, "settings", None), "embedder_max_length", None
+            ),
         )
     return _task_out(task)
 

@@ -66,6 +66,27 @@ class _FakeEmbedder:
         return [[0.1] * self.dimension for _ in texts]
 
 
+class _ContractEmbedder(_FakeEmbedder):
+    """模拟内部嵌入端点字符契约:任一超限 text → HTTP 413 同型失败。
+
+    生产语义(internal_embeddings.py:任一 ``len(t) > EMBEDDER_MAX_LENGTH``
+    → 413 ``text exceeds max_length``;RemoteSyncEmbedder 原样上抛)。
+    """
+
+    def __init__(self, max_length: int) -> None:
+        super().__init__()
+        self.max_length = max_length
+
+    def embed(self, texts):
+        for t in texts:
+            if len(t) > self.max_length:
+                raise RuntimeError(
+                    f"internal embeddings HTTP 413: "
+                    f'{{"detail":"text exceeds max_length={self.max_length}"}}'
+                )
+        return super().embed(texts)
+
+
 def _doc(sid: str, *, content: str, content_hash: str, title: str = "probe-title") -> RawDocument:
     return RawDocument(
         source_id=PREFIX + sid,
@@ -459,3 +480,199 @@ def test_repair_documents_rebuilds_from_persisted_truth(stack):
     # 零源抓取(签名无 connector);embed 仅由存储文本再生
     flat = [t for call in stack.embedder.calls for t in call]
     assert flat == [c.text for c in persisted]
+
+
+# --------------------------------------------------------------------------- #
+# INC-WEB-EMBED-413:修复重放嵌入契约(生产 413 零激活事故回归锚)
+#
+# 生产链(2026-09-14 website-camthink):修复重放把持久 chunk 文本原样送
+# 嵌入;迁移回填把 legacy 超限行(3005/2452 字符)挂到现行版本 → 重放
+# embed 413 → 修复代零激活;小时级 sync 每轮复现(gens 11–15)。
+# 契约:修复面绝不为重放载荷越嵌入字符契约;超契约文档路由源重建
+# (unrepairable 既有回退),重放范围以版本权威 chunk 集为界。
+# --------------------------------------------------------------------------- #
+
+
+def _use_contract_embedder(stack, max_length: int = 2000) -> _ContractEmbedder:
+    embedder = _ContractEmbedder(max_length)
+    stack.embedder = embedder
+    stack.pipeline._embedder = embedder
+    return embedder
+
+
+def _oversize_persisted_chunk(sf, sid_full: str, index: int, length: int) -> None:
+    """把某现行版本指定 index 的持久 chunk 文本改为超限长度(模拟存量真值)。"""
+    with sf() as s:
+        doc = s.execute(
+            select(Document).where(Document.source_id == sid_full)
+        ).scalar_one()
+        chunk = s.execute(
+            select(DocumentVersionChunk).where(
+                DocumentVersionChunk.version_id == doc.current_version_id,
+                DocumentVersionChunk.chunk_index == index,
+            )
+        ).scalar_one()
+        chunk.text = "x" * length
+        s.commit()
+
+
+def _add_contaminated_row(sf, sid_full: str, index: int, text: str) -> None:
+    """向现行版本追加越界 chunk 行(模拟迁移回填误挂,idx ≥ chunk_count)。"""
+    with sf() as s:
+        doc = s.execute(
+            select(Document).where(Document.source_id == sid_full)
+        ).scalar_one()
+        version = s.execute(
+            select(DocumentVersion).where(DocumentVersion.id == doc.current_version_id)
+        ).scalar_one()
+        s.add(
+            DocumentVersionChunk(
+                version_id=version.id, chunk_index=index, text=text, props={}
+            )
+        )
+        s.commit()
+
+
+def test_repair_routes_oversized_persisted_chunks_to_unrepairable(stack):
+    """存量超限持久文本:重放路由 unrepairable(源重建回退),绝不送 413 载荷。"""
+    builder = stack.builder
+    sid_full = PREFIX + "d-inc1"
+    builder.build_generation([_doc("d-inc1", content=TWO_PARAS, content_hash="v1")], source_id=SRC)
+    _, v1 = _current_version(stack.sync_factory, "d-inc1")
+    assert v1.chunk_count >= 1
+    _oversize_persisted_chunk(stack.sync_factory, sid_full, 0, 2500)  # > max_chunk_chars=2000
+
+    embedder = _use_contract_embedder(stack)
+    repaired, unrepairable, chunks_repaired = builder.repair_documents(
+        [sid_full], source_id_scope=SRC
+    )
+
+    assert repaired == []
+    assert unrepairable == [sid_full]
+    assert chunks_repaired == 0
+    assert embedder.calls == []  # 嵌入零调用:413 类载荷根本不出网
+    # 零激活:版本身份与代归属分毫不动
+    _, v2 = _current_version(stack.sync_factory, "d-inc1")
+    assert v2.id == v1.id and v2.generation_id == v1.generation_id
+
+
+def test_repair_batch_with_oversized_doc_still_repairs_healthy_doc(stack):
+    """混合批次:单篇超契约不得拖垮整批(生产:整批 413 零激活连续 5 代)。"""
+    builder = stack.builder
+    healthy_sid = PREFIX + "d-inc2-ok"
+    oversize_sid = PREFIX + "d-inc2-big"
+    builder.build_generation(
+        [
+            _doc("d-inc2-ok", content=TWO_PARAS, content_hash="v1"),
+            _doc("d-inc2-big", content=TWO_PARAS, content_hash="v1"),
+        ],
+        source_id=SRC,
+    )
+    _oversize_persisted_chunk(stack.sync_factory, oversize_sid, 0, 2500)
+
+    _use_contract_embedder(stack)
+    repaired, unrepairable, _n = builder.repair_documents(
+        sorted([healthy_sid, oversize_sid]), source_id_scope=SRC
+    )
+
+    assert repaired == [healthy_sid]
+    assert unrepairable == [oversize_sid]
+    _, v_ok = _current_version(stack.sync_factory, "d-inc2-ok")
+    assert v_ok.status == "active"
+
+
+def test_repair_bounds_replay_to_authoritative_chunk_count(stack):
+    """重放范围 = 版本权威 chunk 集(0..chunk_count-1);回填误挂的越界行
+    (idx ≥ chunk_count)不得重放进在服代(生产:3005 字符误挂行 → 413)。"""
+    builder = stack.builder
+    sid_full = PREFIX + "d-inc3"
+    builder.build_generation([_doc("d-inc3", content=TWO_PARAS, content_hash="v1")], source_id=SRC)
+    _, v1 = _current_version(stack.sync_factory, "d-inc3")
+    _add_contaminated_row(
+        stack.sync_factory, sid_full, v1.chunk_count, "contaminated-legacy-tail" * 3
+    )
+
+    _use_contract_embedder(stack)
+    repaired, unrepairable, chunks_repaired = builder.repair_documents(
+        [sid_full], source_id_scope=SRC
+    )
+
+    assert repaired == [sid_full] and unrepairable == []
+    assert chunks_repaired == v1.chunk_count  # 权威范围,误挂行不计
+    # 新在服代:权威 index 集完整;越界 index 未物化
+    _, v2 = _current_version(stack.sync_factory, "d-inc3")
+    gen_uuids = generation_chunk_uuids(sid_full, str(v2.generation_id), v2.chunk_count)
+    assert _fetch_count(stack.pipeline._collection, gen_uuids) == v2.chunk_count
+    from backend.pipeline.ingest import generation_uuid
+
+    stray_uuid = generation_uuid(sid_full, str(v2.generation_id), v2.chunk_count)
+    assert _fetch_count(stack.pipeline._collection, [stray_uuid]) == 0
+
+
+def test_repair_repeat_converges_serving_projection(stack):
+    """幂等收敛:重复修复不复制在服知识(恰一个在服代;版本身份不变)。"""
+    builder = stack.builder
+    sid_full = PREFIX + "d-inc4"
+    builder.build_generation([_doc("d-inc4", content=TWO_PARAS, content_hash="v1")], source_id=SRC)
+    _, v1 = _current_version(stack.sync_factory, "d-inc4")
+
+    _use_contract_embedder(stack)
+    for _round in range(2):
+        repaired, unrepairable, _n = builder.repair_documents([sid_full], source_id_scope=SRC)
+        assert repaired == [sid_full] and unrepairable == []
+        _, ver = _current_version(stack.sync_factory, "d-inc4")
+        assert ver.id == v1.id  # 修复 ≠ 新版本
+        with stack.sync_factory() as s:
+            actives = s.execute(
+                select(DocumentVersion).where(
+                    DocumentVersion.source_id == sid_full,
+                    DocumentVersion.status == "active",
+                )
+            ).scalars().all()
+            assert len(actives) == 1
+            serving_ordinals = lifecycle.active_generation_ordinals_sync(s)
+        assert serving_ordinals == [ver.generation_ordinal]
+        gen_uuids = generation_chunk_uuids(sid_full, str(ver.generation_id), ver.chunk_count)
+        assert _fetch_count(stack.pipeline._collection, gen_uuids) == ver.chunk_count
+
+
+def test_repair_replay_preserves_provenance_props(stack):
+    """溯源回归:重放物化对象的 provenance/证据 props 与持久副本逐字段一致。"""
+    builder = stack.builder
+    sid_full = PREFIX + "d-inc5"
+    builder.build_generation([_doc("d-inc5", content=TWO_PARAS, content_hash="v1")], source_id=SRC)
+    _, v1 = _current_version(stack.sync_factory, "d-inc5")
+
+    # 投影损坏 → 修复重放
+    old_uuids = generation_chunk_uuids(sid_full, str(v1.generation_id), v1.chunk_count)
+    from weaviate.classes.query import Filter
+
+    stack.pipeline._collection.data.delete_many(where=Filter.by_id().contains_any(old_uuids))
+
+    _use_contract_embedder(stack)
+    repaired, unrepairable, _n = builder.repair_documents([sid_full], source_id_scope=SRC)
+    assert repaired == [sid_full] and unrepairable == []
+
+    _, v2 = _current_version(stack.sync_factory, "d-inc5")
+    new_uuids = generation_chunk_uuids(sid_full, str(v2.generation_id), v2.chunk_count)
+    resp = stack.pipeline._collection.query.fetch_objects(
+        filters=Filter.by_id().contains_any(new_uuids), limit=len(new_uuids)
+    )
+    by_index = {o.properties["chunk_index"]: o.properties for o in resp.objects}
+    assert len(by_index) == v2.chunk_count
+    with stack.sync_factory() as s:
+        persisted = s.execute(
+            select(DocumentVersionChunk).where(DocumentVersionChunk.version_id == v2.id)
+        ).scalars().all()
+    for c in persisted:
+        obj_props = by_index[c.chunk_index]
+        # 身份/溯源字段 = 账本真值(引用/呈现语义零回归)
+        assert obj_props["source_id"] == sid_full
+        assert obj_props["url"] == f"https://x/{PREFIX}d-inc5"
+        assert obj_props["title"] == "probe-title"
+        assert obj_props["text"] == c.text
+        assert obj_props["content_hash"] == "v1"
+        # 证据语义 props 与持久副本一致(INC-2a 快照保全)
+        for key in ("evidence_authority_class", "evidence_temporality",
+                    "evidence_sensitivity", "evidence_citation_eligibility", "evidence_origin"):
+            assert obj_props[key] == (c.props or {}).get(key)

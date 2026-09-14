@@ -631,7 +631,8 @@ async def _handle_no_change(
                 items_updated += _fb.chunks_written
                 gap_repaired_ids.update((*_fb.updated_docs, *_fb.new_docs))
                 gap_parts.append(
-                    f"无持久副本回退源重建 {len(_fb.updated_docs) + len(_fb.new_docs)} 篇"
+                    f"不可重放(无持久副本/权威集不完整/超嵌入契约)"
+                    f"回退源重建 {len(_fb.updated_docs) + len(_fb.new_docs)} 篇"
                     f"/{_fb.chunks_written} chunks"
                 )
         # v1.6.3 Track C(U-10):逐文档自动恢复事件持久化(权威账本,恢复

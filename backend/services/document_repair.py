@@ -138,11 +138,17 @@ async def execute_repair_task(
     embedder: Any,
     class_name: str,
     task_id: UUID,
+    max_chunk_chars: int | None = None,
 ) -> DocumentRepairTask:
     """执行修复任务(plan→repair→verify;任务行持久化进度/审计/结果)。
 
     向量库/嵌入模型不可用 → 任务置 failed + RepairUnavailableError
     (端点层预检同条件转 503;任务层绝不静默)。
+
+    INC-WEB-EMBED-413:``max_chunk_chars``(部署嵌入字符契约)提供时,待
+    回放缺失 chunk 的持久文本先做契约预检 —— 超限文本送嵌入必被 413 拒绝
+    (重试同败),任务 fail-fast 并如实指认契约越界,绝不发送注定被拒的
+    嵌入请求。此类文档须经 sync 源重建(权威内容重分块)恢复。
     """
     async with session_factory() as session:
         task = (
@@ -217,6 +223,19 @@ async def execute_repair_task(
             repaired_indices: list[int] = []
             if projection.missing_indices:
                 chunk_by_index = {c.chunk_index: c for c in chunks}
+                if max_chunk_chars and max_chunk_chars > 0:
+                    oversize = [
+                        (i, len(chunk_by_index[i].text))
+                        for i in projection.missing_indices
+                        if i in chunk_by_index and len(chunk_by_index[i].text) > max_chunk_chars
+                    ]
+                    if oversize:
+                        idx0, len0 = oversize[0]
+                        raise RuntimeError(
+                            f"持久 chunk 文本超嵌入字符契约(max_length={max_chunk_chars}):"
+                            f" index {idx0} 为 {len0} 字符(共 {len(oversize)} 个超限);"
+                            "修复重放不可用(送嵌入必 413),须经 sync 源重建恢复"
+                        )
                 collection = weaviate_client.collections.get(class_name)
                 vectors = embedder.embed(
                     [chunk_by_index[i].text for i in projection.missing_indices]

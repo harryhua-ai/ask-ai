@@ -216,7 +216,12 @@ def backfill_content_from_weaviate(client, class_name: str, sync_session_factory
         if pending_chunks:
             with sync_session_factory() as session:
                 for sid, idx, text_, props, n_stripped in pending_chunks:
-                    version_id = _version_id_map(session).get(sid)
+                    gen_id = props.get("generation_id")
+                    version_id = (
+                        _version_id_map(session).get((str(sid), str(gen_id)))
+                        if gen_id is not None
+                        else None
+                    )
                     if version_id is None:
                         stats["ghost_objects"] += 1
                         continue
@@ -246,17 +251,24 @@ def backfill_content_from_weaviate(client, class_name: str, sync_session_factory
                 session.commit()
         pending_chunks.clear()
 
-    version_map_cache: dict[str, Any] = {}
+    version_map_cache: dict[tuple[str, str], Any] = {}
 
     def _version_id_map(session):
+        """(source_id, generation_id) → version_id 归属解析表(INC-WEB-EMBED-413)。
+
+        旧实现按 source_id → **现行版本**无条件挂载:文档演进后重跑回填会把
+        legacy 对象的 chunk 行误挂进新现行版本(生产 2026-09-14:3005/2452
+        字符 legacy 行误挂 → 修复重放 embed 413 零激活)。chunk 行必须挂在
+        **对象自身 generation 归属**对应的版本上(激活时版本行已携带
+        generation_id;legacy 对象由补属性步骤先盖 LEGACY_GENERATION_ID)。
+        无匹配版本 = ghost,如实计数,绝不回退挂现行版本。
+        """
         cache = version_map_cache
         if not cache:
             rows = session.execute(
-                select(Document.source_id, Document.current_version_id).where(
-                    Document.current_version_id.is_not(None)
-                )
+                select(DocumentVersion.source_id, DocumentVersion.generation_id, DocumentVersion.id)
             ).all()
-            cache.update({sid: vid for sid, vid in rows})
+            cache.update({(sid, str(gid)): vid for sid, gid, vid in rows})
         return cache
 
     for item in col.iterator(return_properties=None):

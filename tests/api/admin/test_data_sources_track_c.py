@@ -450,6 +450,82 @@ async def test_u8_repair_full_workflow_with_verification(
     assert len(rows) == 1
 
 
+async def test_u8_repair_oversized_persisted_chunk_fails_fast_without_embed(
+    admin_headers, c_seed, vector_stack, monkeypatch
+):
+    """INC-WEB-EMBED-413:重放载荷越嵌入字符契约 → 任务失败、零嵌入调用。
+
+    生产事实:现行版本持久 chunk 文本超 EMBEDDER_MAX_LENGTH(迁移回填误挂
+    legacy 行)时,修复回放把超限文本送嵌入 → 413 → 任务失败。契约:预检
+    失败(fail-fast),绝不发送注定被拒的嵌入请求,错误如实指认契约越界。
+    """
+
+    class _SpyEmbedder:
+        def __init__(self) -> None:
+            self.texts: list[str] = []
+
+        def embed(self, texts):
+            self.texts.extend(texts)
+            return [[0.1, 0.2, 0.3] for _ in texts]
+
+    import dataclasses as _dc
+
+    spy = _SpyEmbedder()
+    monkeypatch.setattr(app.state, "embedder", spy)
+    monkeypatch.setattr(
+        app.state,
+        "settings",
+        _dc.replace(app.state.settings, embedder_max_length=1024),
+    )
+
+    factory = app.state.session_factory
+    async with factory() as session:
+        version_id = (
+            await session.execute(
+                select(DocumentVersion.id).where(
+                    DocumentVersion.source_id == DOC_PAGE,
+                    DocumentVersion.status == "active",
+                )
+            )
+        ).scalar_one()
+        chunk = (
+            await session.execute(
+                select(DocumentVersionChunk).where(
+                    DocumentVersionChunk.version_id == version_id,
+                    DocumentVersionChunk.chunk_index == 10,
+                )
+            )
+        ).scalar_one()
+        chunk.text = "y" * 3000  # 超契约的存量持久真值(缺失 index 10)
+        await session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        resp = await client.post(
+            REPAIR_URL,
+            json={"doc_source_id": DOC_PAGE, "idempotency_key": "inc-413"},
+            headers=admin_headers,
+        )
+    assert resp.status_code == 200
+    task = resp.json()
+    assert task["status"] == "failed"
+    assert "max_length" in (task["error"] or "")
+    assert spy.texts == []  # 零嵌入调用:超契约载荷根本不出网
+    # 审计行持久化失败事实(不静默)
+    async with factory() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(DocumentRepairTask).where(
+                        DocumentRepairTask.doc_source_id == DOC_PAGE
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(rows) == 1 and rows[0].status == "failed"
+
+
 async def test_u8_repair_idempotent_same_key_and_healthy_noop(
     admin_headers, c_seed, vector_stack
 ):

@@ -6,6 +6,7 @@
     "scripts/migrate_add_track_c_product.py",
     "scripts/migrate_add_sync_delta_counts.py",
     "scripts/migrate_add_frontmatter_slug_property.py",
-    "scripts/migrate_add_conversation_id_policy.py"
+    "scripts/migrate_add_conversation_id_policy.py",
+    "scripts/migrate_remove_contaminated_version_chunks.py"
   ]
 }
