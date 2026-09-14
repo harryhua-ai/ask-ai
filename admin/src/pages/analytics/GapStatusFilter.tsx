@@ -3,15 +3,14 @@
  * 专属 —— 队列工具栏 status filter 控件(data-filter-status;状态词表权威
  * 单一真相源 = backend/services/gap_status.py,前端呈现词经
  * @/lib/gapCause gapStatusLabel)。
- * Wave 1 扩展(IF-1「观察中」过滤选项)只改本文件——经 gap_status 词表模块
- * 挂载 observing 选项,零接触 Track D 的 ./analytics/GapCauseFilter.tsx,
- * 零接触 Integration 壳 AnswerGapsTab.tsx(仅消费稳定 props value/onChange)。
- * 当前值域 = 既有两态 ""|open|resolved(空串=全部);零 observing、
- * 零新词表值(§3.0.1)。
+ * Wave 1(IF-1「观察中」过滤选项)已在本文件挂载 observing 选项——经
+ * gap_status 词表(IF-1:open|observing|resolved),零接触 Track D 的
+ * ./analytics/GapCauseFilter.tsx,零接触 Integration 壳 AnswerGapsTab.tsx
+ * (仅消费稳定 props value/onChange)。
  */
 
-/** status filter 取值(空串=全部既有两态;值域单一来源=gap_status.py 词表)。 */
-export type GapStatusFilterValue = "" | "open" | "resolved";
+/** status filter 取值(空串=全部三态;值域单一来源=gap_status.py IF-1 词表)。 */
+export type GapStatusFilterValue = "" | "open" | "observing" | "resolved";
 
 export function GapStatusFilter({
   value,
@@ -30,6 +29,7 @@ export function GapStatusFilter({
     >
       <option value="">全部状态</option>
       <option value="open">需要处理</option>
+      <option value="observing">观察中</option>
       <option value="resolved">已解决</option>
     </select>
   );

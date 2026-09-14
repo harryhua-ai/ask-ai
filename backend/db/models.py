@@ -678,13 +678,86 @@ class QuestionCluster(Base):
     representative_question: Mapped[str] = mapped_column(Text, nullable=False)
     sample_questions: Mapped[list[Any]] = mapped_column(JSONB, default=[])
     question_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="open")  # 'open' | 'resolved' (仅 gap)
+    status: Mapped[str] = mapped_column(String(20), default="open")  # 'open' | 'observing' | 'resolved' (仅 gap;IF-1 词表见 backend/services/gap_status.py)
     period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class GapObservation(Base):
+    """缺口观察元数据(U-15 观察状态机;Ownership: Track E Wave 1 / IF-1)。
+
+    一行 = 一次观察窗生命周期(open→observing 后的权威观察事实):
+    - started_at / window_days / window_ends_at:观察窗定义(默认 7 天,
+      词表/转移语义单一来源 = backend/services/gap_observation.py);
+    - is_active=True 表示观察进行中;结束时置 False 并落 ended_at/ended_reason
+      (recurrence=复现回 OPEN / aborted=操作者中止 / window_elapsed=满窗转已解决);
+    - 满窗/复现的评估判定(lazy-on-read 或显式 evaluate)必须持久化到本表 +
+      gap_observation_events,禁止内存推导不留痕。
+    """
+
+    __tablename__ = "gap_observations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cluster_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    window_days: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
+    window_ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_reason: Mapped[str | None] = mapped_column(String(20))  # recurrence|aborted|window_elapsed
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class GapObservationEvent(Base):
+    """缺口观察流转事件(U-15;全部转移持久化/带时间戳/可审计/History 可见)。
+
+    事件词表(event_type):start(进入观察)/ recurrence(复现回 OPEN)/
+    abort(中止回 OPEN)/ resolve(满窗转已解决)。append-only,禁止改写/删除
+    —— 诊断侧板「历史记录」Tab 时间线的唯一权威数据源。
+    """
+
+    __tablename__ = "gap_observation_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cluster_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(20), nullable=False)  # start|recurrence|abort|resolve
+    from_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    to_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    actor: Mapped[str | None] = mapped_column(String(255))  # 操作者 email(系统评估为 NULL)
+    detail: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class GapExportAudit(Base):
+    """缺口对话导出审计行(U-16;Ownership: Track E Wave 1 / IF-5)。
+
+    每次 admin 导出动作一行(导出请求时落账,先于流式响应):actor/范围
+    (window)/行数真值可查。导出 CSV 内容的隐私边界见
+    backend/api/admin/tech_export.py(IF-5 冻结列集与排除清单)。
+    """
+
+    __tablename__ = "gap_export_audits"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cluster_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)  # 导出者 email
+    actor_role: Mapped[str] = mapped_column(String(20), nullable=False)
+    window: Mapped[str] = mapped_column(String(10), nullable=False, default="all")
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Attachment(Base):

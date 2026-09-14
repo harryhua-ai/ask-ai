@@ -10,8 +10,8 @@
  *   classify_gap_miss_types),前端只消费后端权威分类,零 keyword 猜测;
  * - 运营词(知识缺失/服务知识不完整/六新类参考词)只映射到语义一致的权威
  *   分类上,属忠实转述;无权威分类 → 未分类,绝不发明新 taxonomy;
- * - 状态词表 = 权威 open|resolved;OBSERVING/观察中 是 v1.6.3 NOT authorized
- *   的新状态语义,不实现、不伪造(未知状态原样透传)。
+ * - 状态词表 = 权威 open|observing|resolved(IF-1,Wave 1 Track E 经
+ *   backend/services/gap_status.py 扩展;状态呈现面归 Track E,未知状态原样透传)。
  *
  * Ownership(IF-6):本文件=前端词表单一真相源;cause 词表面=Track D
  * (本注释以下至 gapStatusLabel 之前),status 呈现面=Track E(不动)。
@@ -125,9 +125,10 @@ export const GAP_CAUSE_OPTIONS: { value: string; label: string }[] = [
   { value: "未分类", label: "未分类" },
 ];
 
-/** 权威状态(open|resolved)→ 运营状态词。观察中 NOT authorized,未知透传。 */
+/** 权威状态(IF-1:open|observing|resolved)→ 运营状态词。未知透传。 */
 export function gapStatusLabel(status: string): string {
   if (status === "open") return "需要处理";
+  if (status === "observing") return "观察中";
   if (status === "resolved") return "已解决";
   return status;
 }
