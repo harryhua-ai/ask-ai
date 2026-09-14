@@ -13,7 +13,11 @@
 
 import pytest
 
-from backend.pipeline.canonical_url import WIKI_BASE_URL, wiki_canonical_url
+from backend.pipeline.canonical_url import (
+    WIKI_BASE_URL,
+    extract_frontmatter_slug,
+    wiki_canonical_url,
+)
 
 WIKI_BLOB = "https://github.com/camthink-ai/wiki-documents/blob/main"
 
@@ -79,6 +83,34 @@ class TestWikiCanonicalMapping:
         """G003:同一文档不同 chunk(同 URL 不同 chunk_index)→ 相同 canonical。"""
         url = f"{WIKI_BLOB}/docs/6-neoeyes-ne503-series/3-software-guide/2-system-flashing.md"
         assert wiki_canonical_url(url) == wiki_canonical_url(url)
+
+    def test_frontmatter_slug_is_authoritative_over_path_guess(self):
+        """#64:实际 Docusaurus slug 覆盖目录名推导。"""
+        url = f"{WIKI_BLOB}/docs/6-neoeyes-ne503-series/3-sdk/reference.md"
+        assert wiki_canonical_url(url, frontmatter_slug="/neoeyes-ne503-series/sdk/reference") == (
+            f"{WIKI_BASE_URL}/docs/neoeyes-ne503-series/sdk/reference"
+        )
+
+    def test_frontmatter_slug_trailing_slash_is_preserved_as_route_semantics(self):
+        url = f"{WIKI_BLOB}/docs/6-neoeyes-ne503-series/4-application-guide/3-resources.md"
+        assert wiki_canonical_url(url, frontmatter_slug="/neoeyes-ne503-series/application-guide/") == (
+            f"{WIKI_BASE_URL}/docs/neoeyes-ne503-series/application-guide/"
+        )
+
+    def test_invalid_frontmatter_slug_does_not_fall_back_to_guessed_route(self):
+        url = f"{WIKI_BLOB}/docs/6-neoeyes-ne503-series/3-sdk/reference.md"
+        assert wiki_canonical_url(url, frontmatter_slug="https://evil.example/route") == url
+
+
+@pytest.mark.unit
+class TestFrontmatterExtraction:
+    def test_extracts_docusaurus_slug_only_from_frontmatter(self):
+        content = "---\ntitle: SDK\nslug: /neoeyes-ne503-series/sdk/reference\n---\n# SDK\n"
+        assert extract_frontmatter_slug(content) == "/neoeyes-ne503-series/sdk/reference"
+
+    def test_extracts_quoted_slug_and_distinguishes_absent_authority(self):
+        assert extract_frontmatter_slug("---\nslug: '/sdk/reference'\n---\n") == "/sdk/reference"
+        assert extract_frontmatter_slug("# no frontmatter\n") is None
 
 
 @pytest.mark.unit

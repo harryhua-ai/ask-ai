@@ -23,6 +23,7 @@ ingestion/provenance 源(GitHub)与用户可见 canonical URL 是两回事。
 不要求语料回灌(生产 backfill 另行立项)。
 """
 
+import ast
 import re
 
 # wiki 站点与源仓库(产品拍板的唯一映射目标;如换仓/换域,改这两个常量)
@@ -38,9 +39,46 @@ _I18N_DOCS_RE = re.compile(r"^i18n/[^/]+/docusaurus-plugin-content-docs/current/
 _NUM_PREFIX_RE = re.compile(r"^\d+-")
 _MD_SUFFIX = ".md"
 _DOCS_DIR = "docs/"
+_FRONTMATTER_RE = re.compile(
+    r"\A---[ \t]*\r?\n(?P<body>.*?)(?:\r?\n)---[ \t]*(?:\r?\n|\Z)",
+    re.DOTALL,
+)
+_SLUG_LINE_RE = re.compile(r"(?m)^[ \t]*slug[ \t]*:[ \t]*(?P<value>.*?)\s*$")
 
 
-def wiki_canonical_url(url: str) -> str:
+def extract_frontmatter_slug(content: str) -> str | None:
+    """读取 Docusaurus frontmatter 的 slug；缺少 key 与空/非法值可区分。"""
+    match = _FRONTMATTER_RE.match(content or "")
+    if match is None:
+        return None
+    slug_match = _SLUG_LINE_RE.search(match.group("body"))
+    if slug_match is None:
+        return None
+    raw = slug_match.group("value").strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {"'", '"'}:
+        try:
+            value = ast.literal_eval(raw)
+        except (SyntaxError, ValueError):
+            return raw
+        return value if isinstance(value, str) else raw
+    return raw
+
+
+def _canonical_url_from_slug(slug: str) -> str | None:
+    """将 docs plugin 的绝对 slug 安全地挂到站点 ``/docs`` base route。"""
+    if not slug or not slug.startswith("/"):
+        return None
+    if any(token in slug for token in ("?", "#", "\\", "//")):
+        return None
+    if any(ord(char) < 32 or char.isspace() for char in slug):
+        return None
+    parts = [part for part in slug.split("/") if part]
+    if any(part in {".", ".."} for part in parts):
+        return None
+    return f"{WIKI_BASE_URL}/docs{slug}"
+
+
+def wiki_canonical_url(url: str, *, frontmatter_slug: str | None = None) -> str:
     """GitHub blob URL → wiki canonical URL;不适用/不可靠时原样返回。
 
     Args:
@@ -61,6 +99,10 @@ def wiki_canonical_url(url: str) -> str:
     path = m.group("path")
     if not path.endswith(_MD_SUFFIX):
         return url
+    if frontmatter_slug is not None:
+        # An explicit authority disables the legacy path guess even when
+        # malformed; the safe fallback is the original authoritative blob.
+        return _canonical_url_from_slug(frontmatter_slug.strip()) or url
     i18n = _I18N_DOCS_RE.match(path)
     if i18n:
         rel = f"{_DOCS_DIR}{i18n.group(1)}"

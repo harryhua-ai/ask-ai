@@ -78,6 +78,28 @@ async def test_wiki_citation_uses_canonical_url_with_github_provenance():
 
 
 @pytest.mark.unit
+async def test_wiki_citation_prefers_frontmatter_slug_authority():
+    sr = SearchResult(
+        text="NE503 SDK reference",
+        source_id="wiki/main/docs/6-neoeyes-ne503-series/3-sdk/reference.md",
+        source_type="github",
+        product="ne503",
+        title="SDK reference",
+        url=f"{WIKI_BLOB}/docs/6-neoeyes-ne503-series/3-sdk/reference.md",
+        score=0.9,
+        chunk_index=0,
+        frontmatter_slug="/neoeyes-ne503-series/sdk/reference",
+    )
+    rag, _ = _build_orchestrator([sr])
+    result = await rag.answer("SDK reference", "widget")
+
+    assert result.sources[0]["url"] == (
+        "https://wiki.camthink.ai/docs/neoeyes-ne503-series/sdk/reference"
+    )
+    assert result.sources[0]["provenance_url"] == sr.url
+
+
+@pytest.mark.unit
 async def test_normal_github_citation_unchanged_no_provenance_key():
     """G002:普通 GitHub citation 仍为 GitHub URL,零回归(无 provenance 键)。"""
     github_url = "https://github.com/camthink-ai/lowpower_camera/blob/main/README.md"

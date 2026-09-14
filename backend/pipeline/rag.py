@@ -1197,7 +1197,10 @@ class RAGOrchestrator:
             if r.source_type in PUBLIC_SOURCE_TYPES:
                 # CIT-URL Contract:wiki GitHub blob URL → canonical 页面 URL;
                 # canonical 后再走 citation 层归一化去重(翻译版折叠语义不变)。
-                citation_url = wiki_canonical_url(r.url)
+                citation_url = wiki_canonical_url(
+                    r.url,
+                    frontmatter_slug=r.frontmatter_slug,
+                )
                 norm = normalize_source_path(citation_url)
                 if norm in seen:
                     continue
