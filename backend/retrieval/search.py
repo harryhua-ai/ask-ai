@@ -135,7 +135,7 @@ class SearchResult:
     evidence_citation_eligibility: str = "unknown"
     evidence_origin: str = ""
     # Docusaurus frontmatter authority; None means the object predates this
-    # additive property and callers may apply their legacy fallback policy.
+    # additive property and callers must preserve the source URL fallback.
     frontmatter_slug: str | None = None
 
 

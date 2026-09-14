@@ -55,3 +55,38 @@ def test_ingest_props_and_search_result_preserve_frontmatter_slug():
         SimpleNamespace(properties={**props}, metadata=None)
     )
     assert result.frontmatter_slug == "/sdk/reference"
+
+
+def test_ne503_sdk_resources_new_ingest_uses_extracted_slug_for_canonical_url(tmp_path):
+    """#64 new-ingest acceptance:SDK/resources 只使用文件 frontmatter authority。"""
+    from backend.connectors.github import GitHubConnector
+    from backend.connectors.registry import SourceConfig
+    from backend.pipeline.canonical_url import WIKI_BASE_URL, wiki_canonical_url
+
+    cfg = SourceConfig(
+        id="wiki",
+        type="github",
+        product="ne503",
+        enabled=True,
+        config={
+            "repo_url": "https://github.com/camthink-ai/wiki-documents",
+            "clone_path": str(tmp_path),
+        },
+        sync_interval="24h",
+    )
+    connector = GitHubConnector(cfg)
+    cases = [
+        (
+            "docs/6-neoeyes-ne503-series/3-sdk/reference.md",
+            "---\nslug: /neoeyes-ne503-series/sdk/reference\n---\n# SDK\n",
+        ),
+        (
+            "docs/6-neoeyes-ne503-series/4-application-guide/3-resources.md",
+            "---\nslug: /neoeyes-ne503-series/application-guide/\n---\n# Resources\n",
+        ),
+    ]
+
+    for path, content in cases:
+        doc = connector._make_document(path, content, "main")
+        slug = doc.metadata["frontmatter_slug"]
+        assert wiki_canonical_url(doc.url, frontmatter_slug=slug) == f"{WIKI_BASE_URL}/docs{slug}"

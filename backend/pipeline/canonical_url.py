@@ -1,26 +1,19 @@
-"""Wiki canonical citation URL 映射。
+"""Wiki citation URL 映射(CIT-URL Contract)。
 
-产品语义(CIT-URL Contract):CamThink Wiki 知识从 GitHub
-(camthink-ai/wiki-documents,Docusaurus 站点)ingestion,回答中的
-citation 应指向 wiki.camthink.ai 对应页面,而非 github.com blob 页;
-ingestion/provenance 源(GitHub)与用户可见 canonical URL 是两回事。
+Wiki 文档的 Docusaurus ``slug`` 是唯一允许生成 Wiki canonical route 的
+authority。GitHub blob URL 是 ingestion/provenance 的权威 fallback；存量
+Weaviate object 缺少 ``frontmatter_slug`` 时，不能从目录名猜 Wiki route，
+否则改名/重排目录会把 citation 变成 broken 或软 404。
 
-变换规则(对照线上 https://wiki.camthink.ai/sitemap.xml 逐条实证):
+规则:
+
 - 仅匹配 ``github.com/camthink-ai/wiki-documents/blob/<branch>/<path>``
-  的 ``.md`` 文档,其余 URL 一律原样返回(普通 GitHub citation、
-  Website / WooCommerce 行为不变)。
-- ``i18n/<locale>/docusaurus-plugin-content-docs/current/docs/…`` 翻译树
-  镜像到默认 locale 的同一 canonical 页面(与 rag 的来源去重语义一致)。
-- 逐段剥离 Docusaurus number prefix(``5-neoeyes-…`` → ``neoeyes-…``)。
-- ``index.md`` 或「剥离前缀后与父目录同名」的文件视为目录索引页,
-  折叠为目录路由。
-- 任何结构意外(docs/ 之外、非 .md、空路径等)→ 原样返回 GitHub URL,
-  不产生猜测性 broken URL(CIT-URL-G004 fallback)。
-
-已知残留失配:线上部署构建滞后于仓库 main 时,个别改名的页面可能
-404(线上为 SPA 兜底,表现为软 404)。该失配属于部署节奏问题,不在本
-模块解决;存量语料的 URL 已固化在 Weaviate,本模块在展示层做映射,
-不要求语料回灌(生产 backfill 另行立项)。
+  的 ``.md`` 文档；普通 GitHub、Website、WooCommerce 和其他 URL 原样返回。
+- 有效的绝对 frontmatter slug 才映射到 ``wiki.camthink.ai/docs``。
+- slug 缺失、为空、类型错误或格式不安全时，原样返回 GitHub blob URL，
+  不启用历史路径猜测。
+- 结构不适用或原始 URL 为空时，原样返回输入；展示层另行禁止空 URL
+  进入可点击 sources。
 """
 
 import ast
@@ -32,13 +25,7 @@ WIKI_REPO = "camthink-ai/wiki-documents"
 
 # github blob URL:严格匹配 owner/repo/blob/branch/path 四段结构
 _GITHUB_BLOB_RE = re.compile(r"^https://github\.com/[^/]+/[^/]+/blob/[^/]+/(?P<path>.+)$")
-# i18n 翻译树前缀 → docs 内容相对路径(current/ 后直接镜像 docs/ 内容,
-# 不含 docs/ 段本身;个别旧结构带 docs/ 段时兼容)
-_I18N_DOCS_RE = re.compile(r"^i18n/[^/]+/docusaurus-plugin-content-docs/current/(?:docs/)?(.+)$")
-# Docusaurus number prefix(如 ``5-`` / ``10-``)
-_NUM_PREFIX_RE = re.compile(r"^\d+-")
 _MD_SUFFIX = ".md"
-_DOCS_DIR = "docs/"
 _FRONTMATTER_RE = re.compile(
     r"\A---[ \t]*\r?\n(?P<body>.*?)(?:\r?\n)---[ \t]*(?:\r?\n|\Z)",
     re.DOTALL,
@@ -64,29 +51,35 @@ def extract_frontmatter_slug(content: str) -> str | None:
     return raw
 
 
-def _canonical_url_from_slug(slug: str) -> str | None:
+def _canonical_url_from_slug(slug: object) -> str | None:
     """将 docs plugin 的绝对 slug 安全地挂到站点 ``/docs`` base route。"""
-    if not slug or not slug.startswith("/"):
+    if not isinstance(slug, str):
         return None
-    if any(token in slug for token in ("?", "#", "\\", "//")):
+    value = slug.strip()
+    if not value or not value.startswith("/"):
         return None
-    if any(ord(char) < 32 or char.isspace() for char in slug):
+    if any(token in value for token in ("?", "#", "\\", "//")):
         return None
-    parts = [part for part in slug.split("/") if part]
+    if any(ord(char) < 32 or char.isspace() for char in value):
+        return None
+    parts = [part for part in value.split("/") if part]
     if any(part in {".", ".."} for part in parts):
         return None
-    return f"{WIKI_BASE_URL}/docs{slug}"
+    if not parts:
+        return None
+    return f"{WIKI_BASE_URL}/docs{value}"
 
 
 def wiki_canonical_url(url: str, *, frontmatter_slug: str | None = None) -> str:
-    """GitHub blob URL → wiki canonical URL;不适用/不可靠时原样返回。
+    """GitHub blob URL → Wiki route only with authoritative frontmatter slug.
 
     Args:
         url: 检索结果携带的文档 URL(可为任意来源,含空串)。
 
     Returns:
-        wiki-documents 的 .md 文档 → ``{WIKI_BASE_URL}/docs/...``;
-        其余一切(普通 GitHub 仓库、官网、WooCommerce、结构异常)→ 原样。
+        有效 frontmatter slug 的 wiki-documents .md 文档 →
+        ``{WIKI_BASE_URL}/docs/...``；slug 缺失/非法或其余一切(普通 GitHub
+        仓库、官网、WooCommerce、结构异常)→ 原样。
     """
     if not url:
         return url
@@ -99,33 +92,8 @@ def wiki_canonical_url(url: str, *, frontmatter_slug: str | None = None) -> str:
     path = m.group("path")
     if not path.endswith(_MD_SUFFIX):
         return url
-    if frontmatter_slug is not None:
-        # An explicit authority disables the legacy path guess even when
-        # malformed; the safe fallback is the original authoritative blob.
-        return _canonical_url_from_slug(frontmatter_slug.strip()) or url
-    i18n = _I18N_DOCS_RE.match(path)
-    if i18n:
-        rel = f"{_DOCS_DIR}{i18n.group(1)}"
-    else:
-        rel = path
-    if not rel.startswith(_DOCS_DIR):
+    # An explicit authority is required. Missing authority is the legacy-object
+    # case; preserve the known GitHub blob instead of guessing a Wiki route.
+    if frontmatter_slug is None:
         return url
-
-    rel = rel[len(_DOCS_DIR) :]
-    if not rel:
-        return url
-    segments = rel.split("/")
-    dirs = [_NUM_PREFIX_RE.sub("", seg) for seg in segments[:-1]]
-    if any(not seg for seg in dirs):
-        return url
-    stem = _NUM_PREFIX_RE.sub("", segments[-1][: -len(_MD_SUFFIX)])
-    if not stem:
-        return url
-    # index.md / 与父目录同名(剥前缀后)→ Docusaurus 目录索引页
-    if stem == "index" or (dirs and stem == dirs[-1]):
-        parts = dirs
-    else:
-        parts = [*dirs, stem]
-    if not parts:
-        return url
-    return f"{WIKI_BASE_URL}/docs/{'/'.join(parts)}"
+    return _canonical_url_from_slug(frontmatter_slug) or url
