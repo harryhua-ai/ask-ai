@@ -92,13 +92,44 @@ async def ensure_recovery_columns(engine: AsyncEngine) -> None:
             await conn.execute(text(stmt))
 
 
+async def ensure_track_c_columns(engine: AsyncEngine) -> None:
+    """v1.6.3 Track C 加性列幂等迁移(U-7/U-11/U-12)。
+
+    - documents.content_type(U-7 逐文档内容类型;NULL = 存量行不可用);
+    - data_sources.next_run_at(U-11 调度器权威下次执行时间);
+    - data_sources.knowledge_role / data_sources.freshness_hours
+      (U-12 证据资格政策层 + 新鲜度政策;NULL = 默认 CURRENT / 24h)。
+
+    幂等:列已存在时 ADD COLUMN IF NOT EXISTS 为 no-op;旧行安全默认
+    (全 NULL,零回填)。新表(document_repair_tasks / document_recovery_events /
+    knowledge_settings_previews)由 init_db create_all 补齐。生产执行窗口:任意。
+    """
+    from sqlalchemy import text
+
+    statements = (
+        "ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_type VARCHAR(30)",
+        "ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMPTZ",
+        "ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS knowledge_role VARCHAR(20)",
+        "ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS freshness_hours INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_documents_content_type ON documents (content_type)",
+    )
+    async with engine.begin() as conn:
+        for stmt in statements:
+            await conn.execute(text(stmt))
+
+
 async def init_db(engine: AsyncEngine) -> None:
     """根据模型元数据创建所有表。
 
     主要用于开发/测试环境;生产环境应使用 Alembic 迁移。
+
+    v1.6.3 Track C:create_all 只建缺失表、不补已有表新列,故随后幂等补齐
+    Track C 加性列(documents.content_type / data_sources.next_run_at /
+    knowledge_role / freshness_hours;ADD COLUMN IF NOT EXISTS,零回填)。
 
     Args:
         engine: 已配置好的异步引擎。
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await ensure_track_c_columns(engine)

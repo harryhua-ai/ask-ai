@@ -288,6 +288,8 @@ class WooCommerceConnector:
             content_hash=content_hash,
             channel_visibility=self._channel_visibility,
             branch="",  # 非分支源
+            # U-7:WooCommerce 源对象=商品(products API 结构化真值)
+            content_type="product",
         )
 
     def _fetch_page(self, **params: Any) -> list[dict]:

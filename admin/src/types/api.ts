@@ -197,6 +197,16 @@ export interface DataSource {
   lifecycle_state: string | null;
   lifecycle_since: string | null;
   lifecycle_error: string | null;
+  /** v1.6.3 Track C(U-11)调度器权威 next_run_at;null = 调度现实不构成倒计时(禁纯派生)。 */
+  next_run_at?: string | null;
+  /** U-11 调度现实状态词表:scheduled/syncing/paused/waiting_first/deleting。 */
+  schedule_state?: string | null;
+  /** U-12 生效证据资格角色(current/historical)。 */
+  knowledge_role?: string | null;
+  /** U-12 生效新鲜度阈值(小时)。 */
+  freshness_hours?: number | null;
+  /** U-12 后端权威超期态(Admin 可见)。 */
+  freshness_overdue?: boolean | null;
 }
 
 /** #18:删除是否在途(已受理未终态;此时禁止同步/重复删除)。 */

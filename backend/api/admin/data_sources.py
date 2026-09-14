@@ -3,6 +3,7 @@
 import logging
 import os
 import re
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
 from urllib.parse import urlparse
@@ -15,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.api.admin.schemas import (
+    ChunkServingTruth,
     DataSourceCreate,
     DataSourceDocumentItem,
     DataSourceDocumentsResponse,
@@ -24,8 +26,15 @@ from backend.api.admin.schemas import (
     DataSourceUpdate,
     DocumentCurrentVersionTruth,
     DocumentGenerationTruth,
+    DocumentRepairRequest,
+    DocumentRepairTaskOut,
+    KnowledgePreviewRequest,
+    KnowledgePreviewResponse,
+    KnowledgeSettingsOut,
+    KnowledgeSettingsUpdate,
     SourceAttentionSummaryItem,
     SourceAttentionSummaryResponse,
+    SourceScheduleTruthOut,
 )
 from backend.api.admin.source_center_schemas import (
     DiscoveryResultOut,
@@ -36,13 +45,22 @@ from backend.auth.dependencies import CurrentUser, require_role
 from backend.db.models import (
     DataSource,
     Document,
+    DocumentRepairTask,
     DocumentVersion,
     DocumentVersionChunk,
     IndexGeneration,
     SyncLog,
 )
-from backend.services import repo_discovery, source_lifecycle
+from backend.services import knowledge_policy, repo_discovery, source_lifecycle
+from backend.services import schedule_truth as schedule_truth_svc
+from backend.services.chunk_serving import chunk_serving_for_doc
 from backend.services.document_lifecycle import DocLifecycle
+from backend.services.document_repair import (
+    create_repair_task,
+    ensure_repair_stack,
+    execute_repair_task,
+)
+from backend.services.recovery_events import recovery_counts
 from backend.services.source_deletion import DeletionRequestError, request_deletion
 from backend.services.source_discovery import parse_discovery_rules
 from backend.services.source_lifecycle import DELETE_FAILED
@@ -314,8 +332,17 @@ def _to_out(
     last_sync: str | None = None,
     last_sync_status: str | None = None,
     last_sync_error: str | None = None,
+    *,
+    next_run_at: str | None = None,
+    schedule_state: str | None = None,
+    freshness_overdue: bool | None = None,
 ) -> DataSourceOut:
-    """将 DataSource ORM 对象转换为 DataSourceOut schema。"""
+    """将 DataSource ORM 对象转换为 DataSourceOut schema。
+
+    v1.6.3 Track C 加性真值(U-11/U-12):next_run_at/schedule_state 由
+    调度 reconcile 提供(调用方注入,本函数零计算);knowledge_role/
+    freshness_hours = 行上生效值(NULL 语义在 schema 层展开)。
+    """
     return DataSourceOut(
         id=ds.id,
         type=ds.type,
@@ -331,6 +358,11 @@ def _to_out(
         lifecycle_state=ds.lifecycle_state,
         lifecycle_since=ds.lifecycle_since.isoformat() if ds.lifecycle_since else None,
         lifecycle_error=ds.lifecycle_error,
+        next_run_at=next_run_at,
+        schedule_state=schedule_state,
+        knowledge_role=knowledge_policy.effective_role(ds),
+        freshness_hours=knowledge_policy.effective_freshness_hours(ds),
+        freshness_overdue=freshness_overdue,
     )
 
 
@@ -371,6 +403,19 @@ async def list_data_sources(
         latest_by_source = {
             row[0]: {"started_at": row[3], "status": row[1], "error_detail": row[2]} for row in rows
         }
+        # U-11:读面 reconcile——调度真值幂等收敛并持久化(权威列),禁止
+        # 前端从 sync_interval 派生;U-12:后端权威新鲜度超期态(Admin 可见)。
+        inflight = await schedule_truth_svc.inflight_request_map(
+            session, [s.id for s in sources]
+        )
+        for s in sources:
+            await schedule_truth_svc.reconcile_next_run_at(session, s)
+        overdue_by_source = {
+            s.id: knowledge_policy.freshness_truth(
+                s, await knowledge_policy.last_success_at(session, s.id)
+            )["overdue"]
+            for s in sources
+        }
     return [
         _to_out(
             s,
@@ -385,6 +430,9 @@ async def list_data_sources(
             last_sync_error=(
                 latest_by_source[s.id]["error_detail"] if s.id in latest_by_source else None
             ),
+            next_run_at=(s.next_run_at.isoformat() if s.next_run_at else None),
+            schedule_state=schedule_truth_svc.schedule_state_of(s, inflight.get(s.id, False)),
+            freshness_overdue=overdue_by_source.get(s.id),
         )
         for s in sources
     ]
@@ -511,6 +559,8 @@ async def update_data_source(
             # 防止前端提交的空值把同步根路径抹掉
             ds.config["root_path"] = f"data/uploads/data-sources/{source_id}"
         await session.commit()
+        # U-11:调度配置变化(sync_interval/enabled)→ 立即 reconcile 调度真值
+        await schedule_truth_svc.reconcile_next_run_at(session, ds)
         await session.refresh(ds)
     return _to_out(ds)
 
@@ -898,6 +948,8 @@ async def list_source_documents(
     bucket: str | None = Query(default=None),
     order: str = Query(default="-updated_at", pattern="^(-updated_at|title)$"),
     source_type: str | None = Query(default=None),
+    # v1.6.3 Track C(U-7):逐文档 content_type 精确匹配("none" = 不可用行)
+    content_type: str | None = Query(default=None),
     search: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
@@ -956,6 +1008,11 @@ async def list_source_documents(
                 )
         if source_type is not None:
             filters.append(Document.source_type == source_type)
+        if content_type is not None:
+            if content_type == "none":
+                filters.append(Document.content_type.is_(None))
+            else:
+                filters.append(Document.content_type == content_type)
         if search is not None and search.strip():
             term = f"%{_escape_like(search.strip())}%"
             filters.append(
@@ -1010,6 +1067,15 @@ async def list_source_documents(
             ).scalar()
             or 0
         )
+        # U-7:逐文档内容类型账本聚合(词表真实来源;NULL 不入计数)
+        content_type_rows = (
+            await session.execute(
+                select(Document.content_type, func.count())
+                .where(_document_scope(source_id), Document.content_type.is_not(None))
+                .group_by(Document.content_type)
+            )
+        ).all()
+        content_type_counts = {row[0]: int(row[1]) for row in content_type_rows if row[0]}
         rows = (
             (
                 await session.execute(
@@ -1057,6 +1123,7 @@ async def list_source_documents(
                 chunk_count=d.chunk_count,
                 created_at=_iso_or_none(d.created_at),
                 updated_at=_iso_or_none(d.updated_at),
+                content_type=d.content_type,
                 current_version_seq=(
                     version_by_id[d.current_version_id].version_seq
                     if d.current_version_id in version_by_id
@@ -1079,6 +1146,7 @@ async def list_source_documents(
         lifecycle_counts=lifecycle_counts,
         serving_count=serving_count,
         current_count=current_count,
+        content_type_counts=content_type_counts,
         items=items,
     )
 
@@ -1136,6 +1204,34 @@ async def get_source_document_truth(
         serving = (
             doc.lifecycle in DocLifecycle.SERVING and version is not None
         )
+        # ---- v1.6.3 Track C 加性真相(U-7/U-8/U-9/U-10)----
+        chunk_serving_truth: ChunkServingTruth | None = None
+        weaviate_client = getattr(request.app.state, "weaviate_client", None)
+        if version is not None and weaviate_client is not None:
+            # U-9:chunk 级 serving 投影(verify 口径);向量库不可用 → None
+            # (前端诚实呈现「不可用」,绝不伪造 12/12)
+            try:
+                chunk_serving_truth = ChunkServingTruth(
+                    **chunk_serving_for_doc(
+                        weaviate_client,
+                        request.app.state.weaviate_class_name,
+                        doc.source_id,
+                        chunks_total,
+                    ).to_dict()
+                )
+            except Exception as exc:  # noqa: BLE001 - 不可用诚实降级
+                logger.warning(
+                    "chunk serving 投影不可用(%s): %s", doc.source_id, str(exc)[:120]
+                )
+        rec_failed, rec_succeeded = await recovery_counts(session, doc.source_id)
+        latest_task = (
+            await session.execute(
+                select(DocumentRepairTask)
+                .where(DocumentRepairTask.doc_source_id == doc.source_id)
+                .order_by(DocumentRepairTask.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
         return DataSourceDocumentTruth(
             source_id=source_id,
             doc_source_id=doc.source_id,
@@ -1147,6 +1243,28 @@ async def get_source_document_truth(
             lifecycle=doc.lifecycle,
             serving=serving,
             chunk_count=doc.chunk_count,
+            content_type=doc.content_type,
+            chunk_serving=chunk_serving_truth,
+            recovery_attempts_failed=rec_failed,
+            recovery_attempts_succeeded=rec_succeeded,
+            latest_repair_task=(
+                DocumentRepairTaskOut(
+                    id=str(latest_task.id),
+                    source_id=latest_task.source_id,
+                    doc_source_id=latest_task.doc_source_id,
+                    status=latest_task.status,
+                    stage=latest_task.stage,
+                    requested_by=latest_task.requested_by,
+                    idempotency_key=latest_task.idempotency_key,
+                    result=latest_task.result,
+                    error=latest_task.error,
+                    events=latest_task.events or [],
+                    created_at=_iso_or_none(latest_task.created_at),
+                    finished_at=_iso_or_none(latest_task.finished_at),
+                )
+                if latest_task is not None
+                else None
+            ),
             created_at=_iso_or_none(doc.created_at),
             updated_at=_iso_or_none(doc.updated_at),
             superseded_by=doc.superseded_by,
@@ -1256,3 +1374,253 @@ async def list_source_generations(
                 for g in gens
             ],
         )
+
+
+# --------------------------------------------------------------------------- #
+# v1.6.3 Track C 产品域(U-6..U-13 后端真值面;所有权 Track C)
+#
+# 合同(docs/engineering/tasks/v163-reference-remediation/track-c-contract.md):
+# - U-11 调度真值:next_run_at 持久化权威(禁 sync_interval 纯派生倒计时);
+# - U-8 行级修复:RBAC(EditorDep)/ 幂等(键 + 开放任务)/ 可审计(events)/
+#   进度(stage)/ 结果(result)/ 修复后验证(chunk serving 投影复验);
+# - U-12 知识设置:CURRENT/HISTORICAL 证据资格政策层 + 新鲜度政策(后端
+#   权威、超期态 Admin 可见、检索资格消费政策真值);
+# - U-13 高风险预览:影响计数服务端权威;确认施加与预览完全一致的
+#   mutation;账本 drift → 409 失效(重算需重新预览)。
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/{source_id}/schedule", response_model=SourceScheduleTruthOut)
+async def get_source_schedule(
+    source_id: str, _: ViewerDep, request: Request
+) -> SourceScheduleTruthOut:
+    """调度真值(U-11):reconcile 并返回权威 next_run_at 与调度现实状态。
+
+    状态词表:scheduled(倒计时有效)/ syncing(进行中,无「下次」)/
+    paused(禁用)/ waiting_first(从未同步)/ deleting(删除流程)。
+    NULL 语义 = 调度现实不构成倒计时,前端诚实呈现对应状态。
+    """
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        ds = await _get_source_or_404(session, source_id)
+        await schedule_truth_svc.reconcile_next_run_at(session, ds)
+        inflight = await schedule_truth_svc.inflight_request_map(session, [source_id])
+        state = schedule_truth_svc.schedule_state_of(ds, inflight.get(source_id, False))
+        return SourceScheduleTruthOut(
+            source_id=source_id,
+            next_run_at=ds.next_run_at.isoformat() if ds.next_run_at else None,
+            state=state,
+            sync_interval=ds.sync_interval,
+            enabled=bool(ds.enabled),
+        )
+
+
+def _task_out(task: DocumentRepairTask) -> DocumentRepairTaskOut:
+    return DocumentRepairTaskOut(
+        id=str(task.id),
+        source_id=task.source_id,
+        doc_source_id=task.doc_source_id,
+        status=task.status,
+        stage=task.stage,
+        requested_by=task.requested_by,
+        idempotency_key=task.idempotency_key,
+        result=task.result,
+        error=task.error,
+        events=task.events or [],
+        created_at=_iso_or_none(task.created_at),
+        finished_at=_iso_or_none(task.finished_at),
+    )
+
+
+@router.post("/{source_id}/documents/repair", response_model=DocumentRepairTaskOut)
+async def repair_source_document(
+    source_id: str, req: DocumentRepairRequest, user: EditorDep, request: Request
+) -> DocumentRepairTaskOut:
+    """行级修复命令(U-8):受理 + 执行 + 复验,任务/审计持久化。
+
+    - RBAC:admin/editor(EditorDep;viewer 无修复授权);
+    - 幂等:同 (doc, idempotency_key) 已有任务 → 原任务;同文档存在
+      未完结任务 → 原任务;健康文档重复修复 = 真实复验 no-op;
+    - 修复语义 = 持久 chunk 副本回放(gap-heal 同源),零源抓取;
+    - 修复后验证:chunk serving 投影复验,serving/total 与一致性判定 =
+      后端真值(验证卡数据源)。
+    """
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        await _get_source_or_404(session, source_id)
+        task, _created = await create_repair_task(
+            session,
+            source_id,
+            req.doc_source_id,
+            requested_by=str(
+                getattr(user, "username", None) or getattr(user, "id", None) or ""
+            ),
+            idempotency_key=req.idempotency_key,
+        )
+    task_id = task.id
+    if task.status in ("pending",):
+        # 依赖预检(诚实 503,绝不伪造修复);执行(plan→repair→verify)
+        weaviate_client, embedder = ensure_repair_stack(
+            request.app.state, request.app.state.weaviate_class_name
+        )
+        task = await execute_repair_task(
+            factory,
+            weaviate_client=weaviate_client,
+            embedder=embedder,
+            class_name=request.app.state.weaviate_class_name,
+            task_id=task_id,
+        )
+    return _task_out(task)
+
+
+@router.get("/{source_id}/documents/repair/{task_id}", response_model=DocumentRepairTaskOut)
+async def get_repair_task(
+    source_id: str, task_id: str, _: ViewerDep, request: Request
+) -> DocumentRepairTaskOut:
+    """修复任务进度/结果/审计查询(只读;viewer 可读,与详情一致)。"""
+    from uuid import UUID as UUIDType
+
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        await _get_source_or_404(session, source_id)
+        try:
+            tid = UUIDType(task_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="后端无此记录") from exc
+        task = (
+            await session.execute(
+                select(DocumentRepairTask).where(
+                    DocumentRepairTask.id == tid,
+                    DocumentRepairTask.source_id == source_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if task is None:
+            raise HTTPException(status_code=404, detail="后端无此记录")
+        return _task_out(task)
+
+
+def _settings_out(session: AsyncSession, ds: DataSource) -> KnowledgeSettingsOut:
+    return KnowledgeSettingsOut(
+        source_id=ds.id,
+        role=knowledge_policy.effective_role(ds),
+        explicit_role=ds.knowledge_role,
+        freshness_hours=knowledge_policy.effective_freshness_hours(ds),
+        explicit_freshness_hours=ds.freshness_hours,
+        freshness={},  # 由端点填充(异步真值)
+        updated_at=_iso_or_none(ds.updated_at),
+    )
+
+
+@router.get("/{source_id}/knowledge-settings", response_model=KnowledgeSettingsOut)
+async def get_knowledge_settings(
+    source_id: str, _: ViewerDep, request: Request
+) -> KnowledgeSettingsOut:
+    """知识设置读面(U-12):生效政策 + 新鲜度真值(超期态 Admin 可见)。"""
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        ds = await _get_source_or_404(session, source_id)
+        out = _settings_out(session, ds)
+        out.freshness = knowledge_policy.freshness_truth(
+            ds, await knowledge_policy.last_success_at(session, source_id)
+        )
+        return out
+
+
+@router.post("/{source_id}/knowledge-settings/preview", response_model=KnowledgePreviewResponse)
+async def preview_knowledge_settings(
+    source_id: str, req: KnowledgePreviewRequest, _: EditorDep, request: Request
+) -> KnowledgePreviewResponse:
+    """高风险变更影响预览(U-13):影响计数服务端权威 + 快照持久化。
+
+    计数按当前账本权威计算(compute_policy_impact);token 为确认一致性锚
+    (pending_policy + ledger_fingerprint 快照);drift → 确认时 409。
+    """
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        ds = await _get_source_or_404(session, source_id)
+        pending_policy = {"role": req.role}
+        if req.freshness_hours is not None:
+            pending_policy["freshness_hours"] = req.freshness_hours
+        counts = await knowledge_policy.policy_impact_counts(session, source_id)
+        impact = knowledge_policy.compute_policy_impact(
+            from_role=knowledge_policy.effective_role(ds),
+            to_role=req.role,
+            counts=counts,
+        )
+        fingerprint = await knowledge_policy.ledger_fingerprint(session, source_id)
+        preview = await knowledge_policy.create_preview(
+            session,
+            source_id,
+            pending_policy=pending_policy,
+            impact=impact,
+            fingerprint=fingerprint,
+        )
+        return KnowledgePreviewResponse(
+            preview_token=str(preview.id),
+            source_id=source_id,
+            current_policy={
+                "role": knowledge_policy.effective_role(ds),
+                "freshness_hours": knowledge_policy.effective_freshness_hours(ds),
+            },
+            pending_policy=pending_policy,
+            impact=impact,
+            expires_at=_iso_or_none(preview.expires_at),
+        )
+
+
+@router.put("/{source_id}/knowledge-settings", response_model=KnowledgeSettingsOut)
+async def update_knowledge_settings(
+    source_id: str, req: KnowledgeSettingsUpdate, _: EditorDep, request: Request
+) -> KnowledgeSettingsOut:
+    """知识设置写入(U-12/U-13):确认一致性校验 → 施加与预览一致的 mutation。
+
+    - 高风险变更(时态角色变化)必须携带有效 preview_token;
+    - 校验:token 有效 / pending 策略与请求一致 / 账本指纹一致,
+      任一不满足 → 409(预览失效,需重新预览);
+    - 施加 = 角色/新鲜度政策列写入(政策层叠加,零 lifecycle 列语义改动);
+    - 确认后服务状态重验:重算账本聚合与调度/新鲜度真值并快照回预览行。
+    """
+    from fastapi import HTTPException
+
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    role_changed: bool
+    async with factory() as session:
+        ds = await _get_source_or_404(session, source_id)
+        role_changed = knowledge_policy.effective_role(ds) != req.role
+        pending_policy: dict = {"role": req.role}
+        if req.freshness_hours is not None:
+            pending_policy["freshness_hours"] = req.freshness_hours
+        preview = None
+        if role_changed:
+            if not req.preview_token:
+                raise HTTPException(
+                    status_code=409,
+                    detail="时态角色变更为高风险操作,必须先预览并携带 preview_token",
+                )
+            preview = await knowledge_policy.validate_confirm_token(
+                session, source_id, req.preview_token, pending_policy
+            )
+        # ---- 施加 mutation(与预览一致;政策层加性列,零 lifecycle 改动)----
+        ds.knowledge_role = req.role if req.role != knowledge_policy.ROLE_CURRENT else None
+        ds.freshness_hours = req.freshness_hours
+        await session.commit()
+        # 确认后服务状态重验(真实重算:账本聚合 + 新鲜度 + 调度真值)
+        counts = await knowledge_policy.policy_impact_counts(session, source_id)
+        freshness = knowledge_policy.freshness_truth(
+            ds, await knowledge_policy.last_success_at(session, source_id)
+        )
+        await schedule_truth_svc.reconcile_next_run_at(session, ds)
+        if preview is not None:
+            preview.status = "confirmed"
+            preview.confirmed_at = datetime.now(UTC)
+            preview.revalidation = {
+                "revalidated_at": datetime.now(UTC).isoformat(),
+                "ledger_counts": counts,
+                "freshness": freshness,
+                "retrieval_exclusion_applied": req.role == "historical",
+            }
+            await session.commit()
+        out = _settings_out(session, ds)
+        out.freshness = freshness
+        return out

@@ -565,6 +565,8 @@ async def _handle_no_change(
             repaired, unrepairable, chunks_repaired = builder.repair_documents(
                 sorted(refill_set), source_id_scope=source_id
             )
+            # U-10 记账别名(函数后段统一消费;与上行同值)
+            repaired_fb, unrepairable_fb = list(repaired), list(unrepairable)
             items_updated = chunks_repaired
             gap_parts.append(
                 f"需重灌 {refill_n} 篇(整篇缺失 {missing_n} + chunk 不一致 {mismatch_n});"
@@ -582,6 +584,39 @@ async def _handle_no_change(
                 gap_parts.append(
                     f"无持久副本回退源重建 {len(_fb.updated_docs) + len(_fb.new_docs)} 篇"
                     f"/{_fb.chunks_written} chunks"
+                )
+        # v1.6.3 Track C(U-10):逐文档自动恢复事件持久化(权威账本,恢复
+        # 注记计数的数据源)。零行为变更:仅把本次一致性缺口自愈(refill)
+        # 的逐文档结果(succeeded/failed)写入 document_recovery_events;
+        # 尽力而为,记账失败不影响同步业务(与遥测同语义)。
+        if report.refill_source_ids and not dry_run:
+            try:
+                from backend.services.recovery_events import record_recovery_events
+
+                _fb_fixed: set[str] = set()
+                if report.refill_source_ids and unrepairable_fb:
+                    _fb_fixed = {
+                        d
+                        for d in (*_fb.updated_docs, *_fb.new_docs)
+                        if d in unrepairable_fb
+                    }
+                _recover_failed = (
+                    set(unrepairable_fb) - _fb_fixed if unrepairable_fb else set()
+                )
+                _recover_ok = (set(repaired_fb) | _fb_fixed) if repaired_fb else set(_fb_fixed)
+                await record_recovery_events(
+                    session_factory,
+                    source_id,
+                    repaired=sorted(_recover_ok),
+                    unrepairable=sorted(_recover_failed),
+                    sync_run_id=getattr(telemetry, "run_id", None),
+                    detail={"mode": "gap_heal_refill"},
+                )
+            except Exception as _rev_exc:  # noqa: BLE001 - 记账失败不阻断同步
+                logger.warning(
+                    "数据源 %s 恢复事件记账失败(尽力而为): %s",
+                    source_id,
+                    str(_rev_exc)[:160],
                 )
         retired = repaired = unresolved = 0
         chunk_totals = {"retired_chunks": 0, "repaired_chunks": 0}

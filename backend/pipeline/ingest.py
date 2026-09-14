@@ -233,6 +233,20 @@ def _derived_product(doc: RawDocument) -> str:
 
     return get_taxonomy().derive_product(doc.product, doc.source_id, doc.url).slug
 
+def _document_content_type(doc: RawDocument) -> str:
+    """v1.6.3 Track C(U-7):逐文档内容类型真值(结构化,零文本语义推断)。
+
+    连接器已声明(RawDocument.content_type 非空)→ 原样采信(连接器所有);
+    否则按源类型/URL 结构化事实兜底推导;仍无信号 → ""(账本存 NULL,
+    诚实不可用,禁止编造)。
+    """
+    declared = getattr(doc, "content_type", "") or ""
+    if declared:
+        return declared
+    from backend.services.content_taxonomy import derive_content_type
+
+    return derive_content_type(doc.source_type, doc.url, doc.metadata)
+
 
 # Weaviate Document collection 全量 property 定义(INC-2a:含证据语义元数据)。
 # 单一权威定义点:_ensure_collection 建表与 migrate_add_evidence_meta_props.py
@@ -1033,6 +1047,7 @@ class IngestionPipeline:
             existing = session.execute(
                 select(Document).where(Document.source_id == doc.source_id)
             ).scalar_one_or_none()
+            content_type = _document_content_type(doc)
             if existing is None:
                 session.add(
                     Document(
@@ -1045,6 +1060,9 @@ class IngestionPipeline:
                         metadata_=doc.metadata,
                         branch=doc.branch,
                         chunk_count=chunk_count,
+                        # U-7:逐文档内容类型(connector 结构化真值,ingestion
+                        # 兜底推导;无信号 → NULL=不可用,零推断回填)
+                        content_type=content_type or None,
                     )
                 )
             else:
@@ -1056,6 +1074,7 @@ class IngestionPipeline:
                 existing.metadata_ = doc.metadata
                 existing.branch = doc.branch
                 existing.chunk_count = chunk_count
+                existing.content_type = content_type or None
             session.commit()
 
     def _delete_postgres(self, source_id: str) -> None:

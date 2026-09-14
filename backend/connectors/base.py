@@ -30,6 +30,10 @@ class RawDocument:
         branch: 文档所属的源系统分支(如 Git 仓库名分支 ``main``、``hw-v1.2``)。
             P8 多分支契约由 SourceConfig.branches 透传到 Connector,抓取时填入
             具体分支名。默认空字符串表示未指定(单分支或非 Git 源)。
+        content_type: v1.6.3 Track C(U-7)逐文档内容类型,连接器按**结构化
+            事实**填写(词表:product/page/document,见
+            backend/services/content_taxonomy.py)。空字符串 = 连接器无结构化
+            信号(ingestion 兜底推导;仍无 → 账本 NULL,诚实不可用)。
     """
 
     source_id: str
@@ -44,6 +48,8 @@ class RawDocument:
     channel_visibility: tuple[str, ...] = ("widget", "api")
     # P8 多分支契约新增字段
     branch: str = ""
+    # v1.6.3 Track C(U-7)逐文档内容类型(连接器结构化真值;默认空=推导兜底)
+    content_type: str = ""
 
 
 class DataSourceConnector(Protocol):

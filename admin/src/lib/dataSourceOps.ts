@@ -187,6 +187,27 @@ export function attentionReasonClasses(
 // 同步周期人性化(sync_interval 原文兜底,不编造)
 // --------------------------------------------------------------------------- //
 
+/**
+ * v1.6.3 Track C(U-11):「下次同步」未来时点的人类化倒计时词(后端权威
+ * next_run_at 的呈现映射;过去时点按 X 前呈现,诚实显示已过期待调度)。
+ */
+export function untilRelativeTime(iso: string | null | undefined, now: Date = new Date()): string | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return null;
+  const diffSeconds = Math.round((t - now.getTime()) / 1000);
+  if (diffSeconds <= 0) {
+    // 已到期(调度器尚未执行):诚实呈现等待调度,不伪装未来
+    return "已到期待调度";
+  }
+  if (diffSeconds < 60) return `${diffSeconds}秒后`;
+  const minutes = Math.floor(diffSeconds / 60);
+  if (minutes < 60) return `${minutes}分钟后`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}小时后`;
+  return `${Math.floor(hours / 24)}天后`;
+}
+
 export function humanizeInterval(value: string | null | undefined): string {
   if (!value) return "—";
   const m = value.match(/^(\d+)([hm])$/);

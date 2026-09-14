@@ -376,11 +376,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             with _gen_sync_session_factory() as session:
                 return active_generation_ordinals_sync(session)
 
+        # v1.6.3 Track C(U-12):知识设置证据资格政策真值 → 检索资格消费。
+        # HISTORICAL 源前缀集合(后端权威)注入 HybridSearcher;其 chunk 不进
+        # 入当前事实型回答候选(仅历史/溯源/证据链)。带短 TTL 缓存(与
+        # SourceVisibilityGuard 同量级),读路径零每查询建连。
+        from backend.services.knowledge_policy import (
+            CachedSourceExclusions,
+            excluded_source_prefixes_sync,
+        )
+
+        _policy_sync_session_factory = get_sync_session_factory(settings.postgres_dsn)
+        _knowledge_exclusions = CachedSourceExclusions(
+            lambda: excluded_source_prefixes_sync(_policy_sync_session_factory),
+            ttl=float(os.environ.get("KNOWLEDGE_POLICY_TTL", "30")),
+        )
+
+        def _knowledge_exclusion_provider() -> list[str]:
+            return _knowledge_exclusions.get()
+
         searcher = HybridSearcher(
             weaviate_client,
             embedder,
             settings.weaviate_class_name,
             generation_filter_provider=_active_generation_provider,
+            knowledge_exclusion_provider=_knowledge_exclusion_provider,
         )
         rerank_pipeline = RerankPipeline(reranker)
 

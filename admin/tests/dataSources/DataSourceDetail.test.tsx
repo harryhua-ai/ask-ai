@@ -92,6 +92,7 @@ const documentsFixture = {
   lifecycle_counts: { active: 2, missing_candidate: 1, superseded: 2, deleted: 1, discovered: 0 },
   serving_count: 3,
   current_count: 2,
+  content_type_counts: { document: 1 },
   items: [
     {
       source_id: "wiki-documents-local/main/alive.md",
@@ -107,6 +108,7 @@ const documentsFixture = {
       updated_at: "2026-09-01T00:00:00+00:00",
       current_version_seq: 1,
       generation_ordinal: 4,
+      content_type: "document",
     },
     {
       source_id: "wiki-documents-local/main/old.md",
@@ -122,6 +124,7 @@ const documentsFixture = {
       updated_at: "2026-09-02T00:00:00+00:00",
       current_version_seq: 2,
       generation_ordinal: 4,
+      content_type: null,
     },
   ],
 };
@@ -142,6 +145,11 @@ const truthFixture = {
   superseded_by: "wiki-documents-local/main/new.md",
   superseded_at: "2026-09-02T00:00:00+00:00",
   deleted_at: null,
+  content_type: null,
+  chunk_serving: { serving_chunks: 1, total_chunks: 2, missing_indices: [1], stale_indices: [], consistent: false },
+  recovery_attempts_failed: 0,
+  recovery_attempts_succeeded: 0,
+  latest_repair_task: null,
   current_version: {
     id: "0b9e6c33-0000-0000-0000-000000000001",
     version_seq: 2,
@@ -278,8 +286,13 @@ describe("DataSourceDetail 详情工作面", () => {
   it("身份/配置摘要:产品线、类型中文标签、同步间隔、来源地址可见", () => {
     renderDetail();
     expect(screen.getAllByText("wiki").length).toBeGreaterThan(0);
-    // A-P1-05(audit):运营呈现词表 github→Wiki(仅呈现映射,source_type 真值不变)
-    expect(screen.getAllByText("Wiki").length).toBeGreaterThan(0);
+    // A-P1-05(audit):运营呈现词表 github→Wiki(仅呈现映射,source_type 真值不变);
+    // v1.6.3 Track C(U-7):知识表类型列 = 逐文档 content_type(商品/页面/文档),
+    // 源级类型词仅保留于身份行(Wiki | URL),故用局部匹配。
+    expect(screen.getAllByText("Wiki", { exact: false }).length).toBeGreaterThan(0);
+    // U-7:行类型 = 后端逐文档真值;存量行(null)诚实呈现「—」,禁源级推断
+    expect(screen.getAllByText("文档").length).toBeGreaterThan(0);
+    expect(screen.getAllByTitle("类型不可用(存量行,后端无真值)").length).toBeGreaterThan(0);
     // v1.6.3 B1:同步间隔以人性化 周期 呈现(同步状态卡),原文 24h 保留于编辑抽屉
     expect(screen.getByText(/同步周期/)).toBeInTheDocument();
     expect(screen.getByText("每 24 小时")).toBeInTheDocument();
@@ -346,7 +359,7 @@ describe("DataSourceDetail 详情工作面", () => {
         refetch: vi.fn(),
       } as never);
     });
-    fireEvent.click(screen.getAllByRole("button", { name: /查看真相/ })[1]);
+    fireEvent.click(screen.getAllByTestId("doc-row-toggle")[1]);
     await waitFor(() =>
       expect(useSourceDocumentTruth).toHaveBeenCalledWith(
         "wiki-documents-local",
@@ -377,7 +390,7 @@ describe("DataSourceDetail 详情工作面", () => {
       } as never);
     });
     // A-P3-01:真相行 = 匹配 doc_source_id 的行下原地展开(fixture 真相为 old.md 行)
-    fireEvent.click(screen.getAllByRole("button", { name: /查看真相/ })[1]);
+    fireEvent.click(screen.getAllByTestId("doc-row-toggle")[1]);
     await waitFor(() =>
       expect(screen.getByText(/当前有效版本:/)).toBeInTheDocument(),
     );

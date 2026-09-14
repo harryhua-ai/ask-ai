@@ -2,9 +2,11 @@
  * v1.6.3 B1(KB-OPS-V163-002 §4.4 / #56):同步状态与活动(硬参考 panel 4)。
  *
  * 冻结语义:
- * - 最近成功 / 最近结果 / 同步可靠性 / 同步周期 全部来自后端权威读面
+ * - 最近成功 / 最近结果 / 同步可靠性 / 同步周期 / 下次同步 全部来自后端权威读面
  *   (sync_runs+sync_log / /data-sources last_sync_* / /analytics/source-health
- *   窗口成功率 / source.sync_interval);「下次同步」后端无权威时间 → 不呈现;
+ *   窗口成功率 / source.sync_interval);v1.6.3 Track C(U-11/DS-P4-03):
+ *   「下次同步」呈现调度器权威 next_run_at 持久真值(schedule 端点 reconcile),
+ *   NULL(同步进行中/禁用/从未同步)呈现对应诚实状态,禁止纯派生倒计时;
  * - 活动时间线异常优先:失败/部分成功事件视觉高于常规;常规无变更成功运行
  *   压缩为单组节点(可展开逐条核证);技术证据可展开(#56 presentation-only);
  * - 前端零健康重判:可靠性仅本地化 source-health 权威字段,样本不足不给百分比。
@@ -13,13 +15,23 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { buildSyncActivity, humanizeInterval, lastSuccessIso, relativeTime } from "@/lib/dataSourceOps";
+import { buildSyncActivity, humanizeInterval, lastSuccessIso, relativeTime, untilRelativeTime } from "@/lib/dataSourceOps";
 import { formatSyncTime } from "@/lib/sourceEditorModel";
+import type { SourceScheduleTruth } from "@/hooks/useDataSourceKnowledge";
 import type { DataSource, SyncRunList } from "@/types/api";
 import type { SourceHealthItem } from "@/lib/api/techInsight";
 
+const SCHEDULE_STATE_LABELS: Record<string, string> = {
+  syncing: "同步进行中",
+  paused: "已暂停",
+  waiting_first: "等待首次调度",
+  deleting: "删除流程中",
+};
+
 export interface SyncActivityPanelProps {
   source: DataSource;
+  /** v1.6.3 Track C(U-11):调度器权威真值(schedule 端点 reconcile 结果)。 */
+  schedule?: SourceScheduleTruth;
   runs: SyncRunList | undefined;
   runsLoading?: boolean;
   runsError?: string | null;
@@ -67,6 +79,7 @@ function reliabilityTitle(health: SourceHealthItem | undefined): string | undefi
 
 export function SyncActivityPanel({
   source,
+  schedule,
   runs,
   runsLoading,
   runsError,
@@ -114,6 +127,20 @@ export function SyncActivityPanel({
           <p>
             <span className="text-muted-foreground">同步周期:</span>{" "}
             {humanizeInterval(source.sync_interval)}
+          </p>
+          <p data-testid="next-run-at">
+            <span className="text-muted-foreground">下次同步:</span>{" "}
+            {schedule?.next_run_at ? (
+              <span title={formatSyncTime(schedule.next_run_at)}>
+                {untilRelativeTime(schedule.next_run_at)}
+              </span>
+            ) : schedule ? (
+              <span className="text-muted-foreground">
+                {SCHEDULE_STATE_LABELS[schedule.state] ?? "—"}
+              </span>
+            ) : (
+              <span className="text-muted-foreground">—</span>
+            )}
           </p>
         </div>
         {source.last_sync_status === "failed" && source.last_sync_error && (

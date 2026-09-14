@@ -151,6 +151,7 @@ class HybridSearcher:
         embedder: Embedder,
         class_name: str = "Document",
         generation_filter_provider: Callable[[], list[int]] | None = None,
+        knowledge_exclusion_provider: Callable[[], list[str]] | None = None,
     ) -> None:
         """初始化检索器。
 
@@ -171,6 +172,10 @@ class HybridSearcher:
         self._embedder = embedder
         self._class_name = class_name
         self._generation_filter_provider = generation_filter_provider
+        # v1.6.3 Track C(U-12):HISTORICAL 源前缀供给(证据资格政策真值)。
+        # 返回非空 → 检索候选过滤掉这些源(不得支撑当前事实型断言);
+        # None → 未 wiring(兼容未迁移部署,行为不变)。
+        self._knowledge_exclusion_provider = knowledge_exclusion_provider
 
     def search(
         self,
@@ -260,7 +265,9 @@ class HybridSearcher:
         # hybrid 调用失败时异常向上传播,由调用方决定重试 / 降级
         results = collection.query.hybrid(**kwargs)
 
-        return [self._to_search_result(obj) for obj in results.objects]
+        return self._apply_knowledge_exclusion(
+            [self._to_search_result(obj) for obj in results.objects]
+        )
 
     def search_symbols(
         self,
@@ -338,7 +345,9 @@ class HybridSearcher:
                 *EVIDENCE_PROPERTIES,
             ],
         )
-        return [self._to_search_result(o) for o in resp.objects]
+        return self._apply_knowledge_exclusion(
+            [self._to_search_result(o) for o in resp.objects]
+        )
 
     def search_bucket(
         self,
@@ -434,7 +443,36 @@ class HybridSearcher:
                 *EVIDENCE_PROPERTIES,
             ],
         )
-        return [self._to_search_result(o) for o in resp.objects]
+        return self._apply_knowledge_exclusion(
+            [self._to_search_result(o) for o in resp.objects]
+        )
+
+    def _knowledge_exclusions(self) -> list[str]:
+        """v1.6.3 Track C(U-12):HISTORICAL 源前缀(证据资格政策真值)。
+
+        None = provider 未 wiring(行为不变);list = 后端权威排除集合。
+        provider 失败 → 异常向上传播(fail-closed,与在服代 provider 同
+        语义;政策真值不可得时绝不无限制检索)。
+        """
+        if self._knowledge_exclusion_provider is None:
+            return []
+        return list(self._knowledge_exclusion_provider())
+
+    def _apply_knowledge_exclusion(self, results: list[SearchResult]) -> list[SearchResult]:
+        """U-12 检索资格消费:HISTORICAL 源知识不进入当前事实型回答候选。
+
+        政策语义:HISTORICAL = 仅历史问题/溯源/证据链,不得支撑当前价格/
+        规格/可用性/运行状态断言 → 其 chunk 从检索候选中过滤(后端权威
+        集合;前端/上层零参与)。
+        """
+        excluded = self._knowledge_exclusions()
+        if not excluded:
+            return results
+        return [
+            r
+            for r in results
+            if not any(r.source_id == p or r.source_id.startswith(f"{p}/") for p in excluded)
+        ]
 
     def _active_generation_ordinals(self) -> list[int] | None:
         """在服代序集合(P1 服务选择;fail-closed 契约,Role A REVIEW FIX)。
