@@ -25,7 +25,9 @@
 # 触发设计:
 #   - 仅 workflow_dispatch(人工发起,production Environment 人工审批;
 #     ❌ 无 push/workflow_call 触发 —— 部署永不自动发生);
-#   - 输入仅接受仓库中存在的精确不可变 tag vX.Y.Z(拒 latest/分支/SHA);
+#   - 输入仅接受仓库中存在的精确不可变 tag vX.Y.Z 或 vX.Y.Z-rN(-rN = 同一
+#     iteration 的发布重转标记,如 v1.6.3-r2;原 vX.Y.Z tag 不可变、绝不复用;
+#     拒 latest/分支/SHA/其他变体);
 #   - main HEAD 与发布身份无关:身份只来自 tag 的 git 解析。
 #
 # 失败语义(fail-closed,与硬化守卫一致):
@@ -90,8 +92,8 @@ jobs:
             echo "❌ 拒绝 '$TAG':只接受精确不可变 tag vX.Y.Z(latest/分支不是发布身份)" >&2
             exit 2
           fi
-          if ! [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "❌ 拒绝 '$TAG':tag 必须是精确 vX.Y.Z(拒 latest/分支/SHA/带前缀变体)" >&2
+          if ! [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-r(0|[1-9][0-9]*))?$ ]]; then
+            echo "❌ 拒绝 '$TAG':tag 必须是 vX.Y.Z 或 vX.Y.Z-rN(重转后缀;拒 latest/分支/SHA/其他变体)" >&2
             exit 2
           fi
           SHA="$(git rev-parse --verify --quiet "${TAG}^{commit}" || true)"

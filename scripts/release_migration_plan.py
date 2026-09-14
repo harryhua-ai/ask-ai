@@ -61,7 +61,13 @@ import sys
 
 MANIFEST_PATH = "deploy/prod/migrations.json"
 
-TAG_RE = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+# 冻结发布 tag:vX.Y.Z,或 vX.Y.Z-rN(N 为整数,同一 product iteration 的
+# 发布重转/respin 标记,如 v1.6.3-r2 取代更早的 v1.6.3 生产实现 —— 原 tag
+# 不可变,重转以新 tag 表达)。全链按精确 tag 字符串绑定镜像/清单,后缀不参与
+# 版本比较;除 -rN 外的任何变体(rc/beta/裸连字符)一律拒绝。
+TAG_RE = re.compile(
+    r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-r(0|[1-9][0-9]*))?$"
+)
 SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 # 迁移条目白名单:仅 scripts/ 下的 .py 相对路径;单字符集防注入(进 SSH env 前缀
 # 与远端命令前还有 workflow 侧身份校验,这里保证解析器输出本身即安全数据)。
@@ -245,7 +251,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if not TAG_RE.match(args.tag):
-        print(f"❌ --tag 必须是精确 vX.Y.Z,得到 {args.tag!r}", file=sys.stderr)
+        print(f"❌ --tag 必须是 vX.Y.Z 或 vX.Y.Z-rN,得到 {args.tag!r}", file=sys.stderr)
         return 2
     if not SHA_RE.match(args.sha):
         print(f"❌ --sha 必须是 40 位 commit SHA,得到 {args.sha!r}", file=sys.stderr)

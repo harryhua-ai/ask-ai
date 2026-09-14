@@ -264,6 +264,26 @@ class TestCli:
         assert proc.stdout.strip() == "NONE"
 
 
+# ---------------------------------------------------------------- tag 词法(-rN 重转后缀)
+
+
+class TestTagLexicon:
+    """冻结 tag = vX.Y.Z 或 vX.Y.Z-rN(-rN = 同一 iteration 的发布重转标记,
+    如 v1.6.3-r2 取代更早的 v1.6.3 生产实现;原 tag 不可变故以新 tag 表达)。
+    除 -rN 外的变体(rc/beta/裸连字符/空 N/双前缀)一律仍被拒。"""
+
+    def test_exact_and_respin_tags_accepted(self):
+        for good in ("v1.4.0", "v1.6.3-r2", "v1.4.0-r1", "v10.20.30-r7"):
+            assert plan_mod.TAG_RE.match(good), good
+
+    def test_non_respin_variants_still_rejected(self):
+        for bad in (
+            "latest", "v1.4", "v1.4.0-rc1", "v1.4.0-beta", "v1.4.0-r",
+            "v1.4.0-", "v1.4.0-r2-x", "vv1.4.0", "1.4.0", "v1.4.0-R2",
+        ):
+            assert not plan_mod.TAG_RE.match(bad), bad
+
+
 # ---------------------------------------------------------------- 契约时代边界(Role A 阻断项②)
 
 
