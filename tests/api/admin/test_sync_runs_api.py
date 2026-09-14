@@ -258,6 +258,18 @@ async def test_8_runs_history_contract(env):
         items_updated=42,
         items_deleted=1,
         items_unchanged=7,
+        delta_counts={
+            "schema_version": 1,
+            "unit": "document",
+            "new_count": 2,
+            "new_unit": "document",
+            "updated_count": 3,
+            "updated_unit": "document",
+            "retired_count": 1,
+            "retired_unit": "document",
+            "unchanged_count": 7,
+            "unchanged_unit": "document",
+        },
         triggered_by="cron",
     )
     run = _run(
@@ -288,6 +300,8 @@ async def test_8_runs_history_contract(env):
     assert data["total"] >= 1
     item = data["items"][0]
     assert item["request_id"] is None  # cron 合法
+    assert item["sync_log"]["delta_counts"]["updated_unit"] == "document"
+    assert item["sync_log"]["delta_counts"]["updated_count"] == 3
     assert item["attempt"] == 3 and item["recovery"] is True
     assert item["status"] == "completed"
     assert item["duration_seconds"] == 90.0  # 读侧计算

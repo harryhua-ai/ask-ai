@@ -53,6 +53,7 @@ async def list_sync_logs(
             items_updated=log.items_updated,
             items_deleted=log.items_deleted,
             items_unchanged=log.items_unchanged or 0,
+            delta_counts=log.delta_counts,
             error_detail=log.error_detail,
             triggered_by=log.triggered_by,
         )

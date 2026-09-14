@@ -82,6 +82,8 @@ from backend.pipeline.generation_builder import GenerationBuilder
 from backend.pipeline.ingest import IngestionPipeline
 from backend.services import document_lifecycle as lifecycle
 from backend.services.source_lifecycle import sync_eligible_condition
+from backend.services import schedule_truth
+from backend.services.sync_delta import build_document_delta
 from backend.services.sync_runs import (
     STAGE_CHUNK,
     STAGE_CONSISTENCY,
@@ -143,7 +145,12 @@ def _parse_weaviate_endpoint(weaviate_url: str) -> tuple[str, int]:
     return parsed.hostname or "localhost", parsed.port or 8080
 
 
-async def _load_configs_from_db(session_factory: Any) -> list[SourceConfig]:
+async def _load_configs_from_db(
+    session_factory: Any,
+    *,
+    due_only: bool = False,
+    now: datetime | None = None,
+) -> list[SourceConfig]:
     """从 ``data_sources`` 表读 enabled 配置,转 SourceConfig。
 
     替代 Task 7 之前从 YAML 加载的逻辑:数据源配置现在持久化在 Postgres
@@ -152,8 +159,14 @@ async def _load_configs_from_db(session_factory: Any) -> list[SourceConfig]:
     Args:
         session_factory: 异步 SQLAlchemy 会话工厂(``async_sessionmaker``)。
 
+    Args:
+        due_only: 自动调度时只返回 ``next_run_at`` 已到期或等待首次调度的源。
+            手动触发不得使用此过滤；调用方负责选择该模式。
+        now: 测试可注入当前时间；缺省使用 UTC 当前时间。
+
     Returns:
-        按 ``id`` 升序排列的 :class:`SourceConfig` 列表(仅含 enabled=True)。
+        按 ``id`` 升序排列的 :class:`SourceConfig` 列表(仅含 enabled=True，
+        可选再经过 due gate)。
     """
     async with session_factory() as session:
         result = await session.execute(
@@ -167,7 +180,32 @@ async def _load_configs_from_db(session_factory: Any) -> list[SourceConfig]:
             .order_by(DataSource.id)
         )
         rows = result.scalars().all()
+    if due_only:
+        clock = now or datetime.now(UTC)
+        rows = [
+            ds
+            for ds in rows
+            if schedule_truth.should_run_source(
+                next_run_at=ds.next_run_at,
+                now=clock,
+                triggered_by="cron",
+            )
+        ]
     return [to_source_config(ds) for ds in rows]
+
+
+async def _reconcile_source_schedule(session_factory: Any, source_id: str) -> None:
+    """同步日志落库后刷新该源的持久化 next_run_at；不可证明则不写。"""
+    try:
+        async with session_factory() as session:
+            row = await session.execute(select(DataSource).where(DataSource.id == source_id))
+            source = row.scalar_one_or_none()
+            # Unit tests and degraded callers may use a lightweight session
+            # double; only a real ORM row is allowed to alter schedule truth.
+            if isinstance(source, DataSource):
+                await schedule_truth.reconcile_next_run_at(session, source)
+    except Exception as exc:  # noqa: BLE001 - schedule read/write cannot falsify sync result
+        logger.warning("数据源 %s 调度真值刷新失败: %s", source_id, str(exc)[:160])
 
 
 async def _count_documents(session_factory: Any, source_id_prefix: str) -> int:
@@ -514,6 +552,10 @@ async def _handle_no_change(
         # dry-run 原语义:无变更时也只列举,不做任何校验/写库副作用
         log_entry.items_new = 0
         log_entry.items_unchanged = existing
+        log_entry.delta_counts = build_document_delta(
+            unchanged_count=existing,
+            reason="dry_run",
+        )
         log_entry.finished_at = datetime.now(UTC)
         log_entry.duration_ms = int((time.monotonic() - start) * 1000)
         return
@@ -526,6 +568,10 @@ async def _handle_no_change(
         log_entry.items_new = 0
         log_entry.items_updated = 0
         log_entry.items_unchanged = existing
+        log_entry.delta_counts = build_document_delta(
+            unchanged_count=existing,
+            reason="no_change",
+        )
         if telemetry is not None:
             # ⑫ short-circuit 机器事实(run-local 可证明):本轮无上游变更、
             # 零灌入——UI 据此呈现「无上游变更,跳过灌入」,绝不暗示完整
@@ -558,6 +604,7 @@ async def _handle_no_change(
         )
         gap_parts: list[str] = []
         items_updated = 0
+        gap_repaired_ids: set[str] = set()
         if report.refill_source_ids:
             refill_set = set(report.refill_source_ids)
             # P1 gap-heal:优先从 PG 持久 chunk 副本重建(零源抓取;真值驱动);
@@ -567,6 +614,7 @@ async def _handle_no_change(
             )
             # U-10 记账别名(函数后段统一消费;与上行同值)
             repaired_fb, unrepairable_fb = list(repaired), list(unrepairable)
+            gap_repaired_ids.update(repaired_fb)
             items_updated = chunks_repaired
             gap_parts.append(
                 f"需重灌 {refill_n} 篇(整篇缺失 {missing_n} + chunk 不一致 {mismatch_n});"
@@ -581,6 +629,7 @@ async def _handle_no_change(
                 docs = [d for d in connector.fetch_all() if d.source_id in set(unrepairable)]
                 _fb = builder.build_generation(docs, source_id=source_id, force_rebuild=True)
                 items_updated += _fb.chunks_written
+                gap_repaired_ids.update((*_fb.updated_docs, *_fb.new_docs))
                 gap_parts.append(
                     f"无持久副本回退源重建 {len(_fb.updated_docs) + len(_fb.new_docs)} 篇"
                     f"/{_fb.chunks_written} chunks"
@@ -618,11 +667,11 @@ async def _handle_no_change(
                     source_id,
                     str(_rev_exc)[:160],
                 )
-        retired = repaired = unresolved = 0
+        retired = orphan_repaired = unresolved = 0
         chunk_totals = {"retired_chunks": 0, "repaired_chunks": 0}
         if report.orphan_chunks:
             try:
-                retired, repaired, unresolved = _reconcile_orphan_vectors(
+                retired, orphan_repaired, unresolved = _reconcile_orphan_vectors(
                     source_id, connector, pipeline, report, chunk_totals=chunk_totals
                 )
             except Exception as exc:  # noqa: BLE001 - reconciliation 失败绝不删除
@@ -632,10 +681,10 @@ async def _handle_no_change(
                     str(exc)[:200],
                 )
                 unresolved = report.orphan_count
-        if report.orphan_chunks or retired or repaired or unresolved:
+        if report.orphan_chunks or retired or orphan_repaired or unresolved:
             gap_parts.append(
                 f"孤儿处置:EXTRA_CONFIRMED_RETIRED={retired}(精确删除),"
-                f"账本重建={repaired}(零 embedding),"
+                f"账本重建={orphan_repaired}(零 embedding),"
                 f"EXTRA_UNRESOLVED_ORPHAN={unresolved}(保留待人工裁决)"
             )
         # 处置后复验:以真实账本↔向量状态判定 success / partial
@@ -656,7 +705,7 @@ async def _handle_no_change(
                     report2,
                     identity_facts=identity_facts,
                     retired_chunks=chunk_totals["retired_chunks"],
-                    repaired_ledger_rows=repaired,
+                    repaired_ledger_rows=orphan_repaired,
                 ),
             )
         if report2.is_healthy:
@@ -664,9 +713,18 @@ async def _handle_no_change(
             log_entry.items_unchanged = existing
         else:
             log_entry.status = "partial"
-        log_entry.items_new = repaired
+        log_entry.items_new = orphan_repaired
         log_entry.items_deleted = retired
         log_entry.items_updated = items_updated
+        log_entry.delta_counts = build_document_delta(
+            # Repaired documents already existed; they are updates to the
+            # serving projection, never new documents.  The fallback set is
+            # included once, avoiding chunk/document double counting.
+            updated_count=len(gap_repaired_ids),
+            retired_count=retired,
+            unchanged_count=max(existing - len(gap_repaired_ids), 0),
+            reason="consistency_repair",
+        )
         gap_parts.append(
             f"复验:{report2.actual_chunks}/{report2.expected_chunks} chunks,"
             f"MISSING_LEGITIMATE={len(report2.refill_source_ids)},"
@@ -1156,6 +1214,16 @@ async def _sync_one(
         log_entry.items_updated = accounting.chunks_written + len(accounting.metadata_docs)
         log_entry.items_deleted = tombstoned
         log_entry.items_unchanged = len(accounting.unchanged_docs)
+        # #65 additive truth:all administrator deltas are document counts.
+        # ``items_updated`` above intentionally remains the historical mixed
+        # chunk/document field for old consumers and is never reinterpreted.
+        log_entry.delta_counts = build_document_delta(
+            new_count=len(accounting.new_docs),
+            updated_count=len(accounting.updated_docs) + len(accounting.metadata_docs),
+            retired_count=tombstoned,
+            unchanged_count=len(accounting.unchanged_docs),
+            reason="source_changes",
+        )
 
         # WEB 合同#6/#7:全量抓取覆盖记账 —— coverage 行始终写入 error_detail
         # (成功也留痕),完整性不足时降级 status,绝不让「85 页只活 2 页」
@@ -1233,6 +1301,9 @@ async def _sync_one(
                     await session.commit()
             except Exception as exc:  # noqa: BLE001 - SyncLog 写入失败不中断批次
                 logger.error("SyncLog 写入失败 %s: %s", cfg.id, exc)
+            # #62:the persisted schedule advances from the latest successful
+            # SyncLog only; failures therefore leave the previous due point.
+            await _reconcile_source_schedule(session_factory, cfg.id)
             await _record_runtime_facts()
             # Wave-0:SyncRun 终局(业务成败归 sync_log;completed=attempt 跑完)
             _run_status = "failed" if log_entry.status == "failed" else "completed"
@@ -1332,7 +1403,13 @@ async def run_sync(
             await init_db(engine)
 
         session_factory = get_session_factory(engine)
-        configs = await _load_configs_from_db(session_factory)
+        marker = _resolve_triggered_by(source_id, triggered_by)
+        # The cron executor may wake frequently, but only due sources are
+        # eligible.  Manual runs intentionally bypass this source-level gate.
+        configs = await _load_configs_from_db(
+            session_factory,
+            due_only=marker == "cron",
+        )
         sync_session_factory = get_sync_session_factory(settings.postgres_dsn)
         try:
             embedder = build_sync_embedder(settings)
@@ -1353,7 +1430,6 @@ async def run_sync(
         )
         builder = GenerationBuilder(pipeline, sync_session_factory)
 
-        marker = _resolve_triggered_by(source_id, triggered_by)
         if force_replay:
             _inject_recovery_replay(configs)
         for cfg in configs:

@@ -48,6 +48,26 @@ def parse_interval_seconds(interval: str | None) -> int | None:
     return n * 3600 if m.group(2) == "h" else n * 60
 
 
+def is_due(next_run_at: datetime | None, now: datetime) -> bool:
+    """判断自动调度资格；NULL 表示等待首次调度，因此可执行。"""
+    if next_run_at is None:
+        return True
+    if next_run_at.tzinfo is None and now.tzinfo is not None:
+        now = now.replace(tzinfo=None)
+    elif next_run_at.tzinfo is not None and now.tzinfo is None:
+        now = now.replace(tzinfo=next_run_at.tzinfo)
+    return next_run_at <= now
+
+
+def should_run_source(
+    *, next_run_at: datetime | None, now: datetime, triggered_by: str
+) -> bool:
+    """手动触发绕过 due gate；cron/其它自动触发必须到期。"""
+    if triggered_by == "manual":
+        return True
+    return is_due(next_run_at, now)
+
+
 async def _has_inflight_request(session: AsyncSession, source_id: str) -> bool:
     """是否存在未完结交接请求(pending/running = 同步进行中的调度现实)。"""
     row = await session.execute(
@@ -62,10 +82,10 @@ async def _has_inflight_request(session: AsyncSession, source_id: str) -> bool:
 
 
 async def _last_sync_finished_at(session: AsyncSession, source_id: str) -> datetime | None:
-    """最近一次同步完成时点(finished_at 优先,回退 started_at)。"""
+    """最近一次成功同步完成时点(finished_at 优先,回退 started_at)。"""
     row = await session.execute(
         select(SyncLog.finished_at, SyncLog.started_at)
-        .where(SyncLog.source_id == source_id)
+        .where(SyncLog.source_id == source_id, SyncLog.status == "success")
         .order_by(SyncLog.started_at.desc())
         .limit(1)
     )

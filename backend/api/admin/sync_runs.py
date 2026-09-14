@@ -215,7 +215,7 @@ async def list_sync_runs(
 
 
 def _log_summary(log: SyncLog) -> SyncRunLogSummary:
-    """业务结局摘要;**真实语义命名**:items_updated 是写入 chunk 总数。"""
+    """业务结局摘要;legacy chunk 字段与 #65 document delta 并列透传。"""
     return SyncRunLogSummary(
         id=str(log.id),
         status=log.status,
@@ -223,6 +223,7 @@ def _log_summary(log: SyncLog) -> SyncRunLogSummary:
         chunks_written=log.items_updated or 0,
         items_deleted=log.items_deleted or 0,
         items_unchanged=log.items_unchanged or 0,
+        delta_counts=log.delta_counts,
         error_detail=log.error_detail,
     )
 
