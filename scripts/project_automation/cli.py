@@ -20,10 +20,16 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from project_automation.errors import ProjectAutoError  # noqa: E402
-from project_automation.service import (bootstrap, create_iteration, ensure_labels,  # noqa: E402
-                                        reconcile, settings_from, sync_issue)
-from project_automation.transport import GhCliTransport  # noqa: E402
+from project_automation.errors import ProjectAutoError
+from project_automation.service import (
+    bootstrap,
+    create_iteration,
+    ensure_labels,
+    reconcile,
+    settings_from,
+    sync_issue,
+)
+from project_automation.transport import GhCliTransport
 
 DEFAULT_OWNER = os.environ.get("ASKAI_PROJECT_OWNER", "harryhua-ai")
 DEFAULT_NUMBER = int(os.environ.get("ASKAI_PROJECT_NUMBER", "2"))
@@ -111,7 +117,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     _emit(report)
-    if report.get("findings") or report.get("needs_attention"):
+    if (report.get("result", "").startswith("FAILED_")
+            or report.get("findings") or report.get("needs_attention")):
         return 2
     return 0
 

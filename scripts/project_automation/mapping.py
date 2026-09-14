@@ -6,10 +6,11 @@ reopening recomputes from labels and can never silently stay Done.
 """
 from __future__ import annotations
 
+import datetime as _dt
 from dataclasses import dataclass
 
-from .labels import ControlLabels, parse_control_labels
-from .model import IssueAuthority, iteration_slug
+from .labels import ControlLabels, MetadataConflict, parse_control_labels
+from .model import FieldConfig, IssueAuthority, IterationDef, iteration_slug
 
 PRIORITY_MAP = {"p0": "P0", "p1": "P1", "p2": "P2"}
 STATUS_MAP = {
@@ -28,10 +29,94 @@ def resolve_iteration(config_iterations, key: str | None):
     if key is None:
         return None
     slug = iteration_slug(key)
-    for it in config_iterations:
-        if it.slug == slug:
-            return it
-    return None
+    matches = [it for it in config_iterations if it.slug == slug]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _iteration_candidates(config_iterations, key: str | None) -> list[IterationDef]:
+    if key is None:
+        return []
+    slug = iteration_slug(key)
+    return [it for it in config_iterations if it.slug == slug]
+
+
+def _schedule_candidates(config: FieldConfig, schedule: str, today: _dt.date) -> list[IterationDef]:
+    """Resolve legacy schedule aliases using the live Iteration timeline."""
+    iterations = sorted(config.iterations, key=lambda it: (it.start_date, it.id))
+    if schedule == "backlog" or not iterations:
+        return []
+
+    def starts(it: IterationDef) -> _dt.date:
+        return _dt.date.fromisoformat(it.start_date)
+
+    active = [it for it in iterations
+              if starts(it) <= today < starts(it) + _dt.timedelta(days=it.duration)]
+    if not active:
+        started = [it for it in iterations if starts(it) <= today]
+        active = [max(started, key=starts)] if started else [iterations[0]]
+    if schedule == "current":
+        return active
+    if len(active) != 1:
+        return active
+    return [it for it in iterations if starts(it) > starts(active[0])][:1]
+
+
+def resolve_live_control_labels(labels: list[str], config: FieldConfig,
+                                *, today: _dt.date | None = None) -> ControlLabels:
+    """Resolve explicit namespaces plus exact names from live Project fields.
+
+    A bare label is control metadata only when it exactly equals one live
+    Iteration title.  This preserves ordinary labels while allowing future
+    Project-created Iterations without source-code changes.
+    """
+    control = parse_control_labels(labels)
+    today = today or _dt.datetime.now(_dt.UTC).date()
+
+    exact = [it for label in labels for it in config.iterations if label == it.title]
+    if len(exact) > 1:
+        control.has_iteration_label = True
+        control.conflicts.append(MetadataConflict("iteration", sorted({it.title for it in exact})))
+
+    explicit_candidates = _iteration_candidates(config.iterations, control.iteration_key)
+    if len(explicit_candidates) > 1:
+        control.conflicts.append(MetadataConflict("iteration",
+                                                  sorted(it.title for it in explicit_candidates)))
+
+    chosen = exact[0] if len(exact) == 1 else None
+    if chosen is None and len(explicit_candidates) == 1:
+        chosen = explicit_candidates[0]
+
+    schedule_target: IterationDef | None = None
+    if control.has_schedule_label and control.schedule is not None:
+        candidates = _schedule_candidates(config, control.schedule, today)
+        if len(candidates) > 1:
+            control.conflicts.append(MetadataConflict("iteration",
+                                                      sorted(it.title for it in candidates)))
+        elif control.schedule != "backlog" and not candidates:
+            control.unknown.append(f"schedule:{control.schedule}")
+        elif candidates:
+            schedule_target = candidates[0]
+
+    if control.has_schedule_label and control.schedule == "backlog":
+        control.iteration_clear_override = True
+        if chosen is not None:
+            control.conflicts.append(MetadataConflict("iteration", [chosen.title, "<backlog>"]))
+    elif schedule_target is not None:
+        if chosen is not None and chosen.id != schedule_target.id:
+            control.conflicts.append(MetadataConflict("iteration", [chosen.title, schedule_target.title]))
+        elif chosen is None:
+            chosen = schedule_target
+
+    if chosen is not None and not any(c.field == "iteration" for c in control.conflicts):
+        control.has_iteration_label = True
+        control.iteration_key = chosen.title if exact else control.iteration_key or chosen.title
+        control.iteration_clear_override = False
+    elif control.has_schedule_label and control.schedule == "backlog" and not any(
+            c.field == "iteration" for c in control.conflicts):
+        control.has_iteration_label = True
+        control.iteration_key = None
+
+    return control
 
 
 @dataclass
@@ -65,8 +150,11 @@ def resolve_desired(issue: IssueAuthority, control: ControlLabels | None = None)
     # Status: closure overrides everything; labels next; open default Backlog.
     if closed:
         status_option: str | None = DONE
-    elif control.status is not None:
-        status_option = STATUS_MAP[control.status]
+    elif control.status_reserved:
+        status_option = None
+    elif control.status is not None or control.status_value is not None:
+        status_value = control.status or control.status_value
+        status_option = STATUS_MAP.get(status_value, status_value.replace("-", " ").title())
     elif control.has_status_label:
         status_option = None  # status labels present but unmappable/conflicting → fail safe
     else:
@@ -75,13 +163,16 @@ def resolve_desired(issue: IssueAuthority, control: ControlLabels | None = None)
     # Priority: absent label = clear authority; unmappable/conflicting = fail safe.
     if not control.has_priority_label:
         priority_option, priority_clear = None, True
-    elif control.priority is not None:
-        priority_option, priority_clear = PRIORITY_MAP[control.priority], False
+    elif control.priority is not None or control.priority_value is not None:
+        priority_value = control.priority or control.priority_value
+        priority_option, priority_clear = priority_value.upper(), False
     else:
         priority_option, priority_clear = None, False
 
     # Iteration: absent label = clear authority; unmappable/conflicting = fail safe.
-    if not control.has_iteration_label:
+    if control.iteration_clear_override is not None:
+        iteration_key, iteration_clear = control.iteration_key, control.iteration_clear_override
+    elif not control.has_iteration_label:
         iteration_key, iteration_clear = None, True
     elif control.iteration_key is not None:
         iteration_key, iteration_clear = control.iteration_key, False

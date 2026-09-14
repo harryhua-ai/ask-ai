@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from .labels import ControlLabels
 from .mapping import DONE, resolve_desired
 from .model import FieldConfig, IssueAuthority, ItemState
-from .planner import Finding, SyncPlan, plan_sync
+from .planner import SyncPlan, plan_sync
 
 
 @dataclass

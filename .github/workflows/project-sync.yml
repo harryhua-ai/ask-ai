@@ -58,4 +58,5 @@ jobs:
           ASKAI_PROJECT_NUMBER: "2"
           ASKAI_REPO: harryhua-ai/ask-ai
         run: |
+          set -euo pipefail
           python3 scripts/project_automation/cli.py sync --issue "${{ steps.issue.outputs.number }}" --apply

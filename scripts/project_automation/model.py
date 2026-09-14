@@ -74,8 +74,10 @@ class FieldConfig:
 
     @staticmethod
     def _opt(options: list[OptionDef], name: str) -> OptionDef | None:
+        wanted = name.strip().casefold().replace("-", " ")
         for o in options:
-            if o.name == name:
+            actual = o.name.strip().casefold().replace("-", " ")
+            if actual == wanted:
                 return o
         return None
 
@@ -96,3 +98,5 @@ class ItemState:
     priority: str | None
     status: str | None
     sprint_slug: str | None = None
+    iteration_id: str | None = None
+    iteration_title: str | None = None

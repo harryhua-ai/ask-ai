@@ -100,7 +100,7 @@ class TestSyncNonMemberConvergence:
         s = Settings(owner="harryhua-ai", repo="ask-ai", project_number=2, token="x")
         ft = _NonMemberFakeTransport(labels=["iteration:i-000"])
         report = sync_issue(ft, s, 11, dry_run=False)
-        assert report["result"] == "CONVERGED"
+        assert report["result"] == "APPLIED"
         assert ft.item_added is True
         assert report["after"]["iteration"] == "i-000"
 

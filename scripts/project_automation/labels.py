@@ -12,6 +12,7 @@ PRIORITY_PREFIX = "priority:"
 STATUS_PREFIX = "status:"
 ITERATION_PREFIX = "iteration:"
 SPRINT_PREFIX = "sprint:"
+SCHEDULE_PREFIX = "schedule:"
 
 PRIORITY_VALUES = ("p0", "p1", "p2")
 STATUS_VALUES = ("backlog", "in-progress", "in-review")
@@ -19,6 +20,7 @@ STATUS_VALUES = ("backlog", "in-progress", "in-review")
 # 'Ready' Status option. Using it yields a visible finding and NO Status mutation
 # until the option is authorized (never add it via singleSelectOptions full-replace).
 STATUS_RESERVED = ("ready",)
+SCHEDULE_VALUES = ("current", "next", "backlog")
 
 # iteration keys are slugs: short, lowercase, no shell metacharacters, no whitespace
 ITERATION_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -34,12 +36,17 @@ class MetadataConflict:
 class ControlLabels:
     iteration_key: str | None = None
     priority: str | None = None
+    priority_value: str | None = None
     status: str | None = None
+    status_value: str | None = None
     sprint_key: str | None = None
+    schedule: str | None = None
     has_iteration_label: bool = False
     has_priority_label: bool = False
     has_status_label: bool = False
     has_sprint_label: bool = False
+    has_schedule_label: bool = False
+    iteration_clear_override: bool | None = None
     status_reserved: bool = False
     conflicts: list[MetadataConflict] = field(default_factory=list)
     unknown: list[str] = field(default_factory=list)
@@ -47,7 +54,7 @@ class ControlLabels:
     @property
     def has_any(self) -> bool:
         return self.has_iteration_label or self.has_priority_label or self.has_status_label \
-            or self.has_sprint_label
+            or self.has_sprint_label or self.has_schedule_label
 
 
 def normalize_control_value(raw: str) -> str:
@@ -56,27 +63,29 @@ def normalize_control_value(raw: str) -> str:
 
 def parse_control_labels(labels: list[str]) -> ControlLabels:
     cl = ControlLabels()
-    found: dict[str, set[str]] = {"iteration": set(), "priority": set(), "status": set(), "sprint": set()}
+    found: dict[str, set[str]] = {
+        "iteration": set(), "priority": set(), "status": set(), "sprint": set(), "schedule": set(),
+    }
     for label in labels:
         for prefix, key in ((ITERATION_PREFIX, "iteration"), (PRIORITY_PREFIX, "priority"),
-                            (STATUS_PREFIX, "status"), (SPRINT_PREFIX, "sprint")):
+                            (STATUS_PREFIX, "status"), (SPRINT_PREFIX, "sprint"),
+                            (SCHEDULE_PREFIX, "schedule")):
             if label.lower().startswith(prefix):
                 cl.has_iteration_label |= key == "iteration"
                 cl.has_priority_label |= key == "priority"
                 cl.has_status_label |= key == "status"
                 cl.has_sprint_label |= key == "sprint"
+                cl.has_schedule_label |= key == "schedule"
                 value = normalize_control_value(label[len(prefix):])
                 found[key].add(value)
-                if key == "iteration" and not ITERATION_KEY_RE.match(value):
-                    cl.unknown.append(label)
-                elif key == "priority" and value not in PRIORITY_VALUES:
+                if key == "iteration" and not ITERATION_KEY_RE.match(value) or key == "priority" and value not in PRIORITY_VALUES:
                     cl.unknown.append(label)
                 elif key == "status" and value not in STATUS_VALUES:
                     if value in STATUS_RESERVED:
                         cl.status_reserved = True
                     else:
                         cl.unknown.append(label)
-                elif key == "sprint" and not ITERATION_KEY_RE.match(value):
+                elif key == "sprint" and not ITERATION_KEY_RE.match(value) or key == "schedule" and value not in SCHEDULE_VALUES:
                     cl.unknown.append(label)
 
     single = {k: next(iter(v)) if len(v) == 1 else None for k, v in found.items()}
@@ -84,10 +93,16 @@ def parse_control_labels(labels: list[str]) -> ControlLabels:
         cl.iteration_key = single["iteration"]
     if len(found["priority"]) == 1 and single["priority"] in PRIORITY_VALUES:
         cl.priority = single["priority"]
+    if len(found["priority"]) == 1:
+        cl.priority_value = single["priority"]
     if len(found["status"]) == 1 and single["status"] in STATUS_VALUES:
         cl.status = single["status"]
+    if len(found["status"]) == 1:
+        cl.status_value = single["status"]
     if len(found["sprint"]) == 1 and ITERATION_KEY_RE.match(single["sprint"]):
         cl.sprint_key = single["sprint"]
+    if len(found["schedule"]) == 1 and single["schedule"] in SCHEDULE_VALUES:
+        cl.schedule = single["schedule"]
 
     for key, values in found.items():
         if len(values) > 1:
