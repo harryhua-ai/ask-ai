@@ -267,9 +267,9 @@ Track B remains responsible for:
 
 ## 20. Planning branch + exact candidate SHA
 
-Candidate branch: `audit/v163-r3-truth-gate-20260914`.
+Candidate worktree branch: `audit/v163-r3-truth-gate-20260914`.
 
-The planning baseline remains `planning/v163-r3-20260914@c1ffd83`; it was not rewritten from its existing worktree. After the documentation-only commit, this candidate branch will be pushed as the reviewable planning candidate and its exact SHA will be recorded in the handoff response. No product source commit is included.
+The planning baseline remains `planning/v163-r3-20260914@c1ffd83` in its existing worktree; that local branch was not rewritten. The documentation-only candidate from this audit worktree was fast-forwarded to the remote `planning/v163-r3-20260914` ref at `225dd01`; the final handoff records the exact current candidate SHA. No product source commit is included.
 
 ## 21. Product-source diff audit
 
