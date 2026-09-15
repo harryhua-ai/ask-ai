@@ -16,8 +16,10 @@ import pytest
 from sqlalchemy import select
 
 from backend.db.models import Document
+from backend.connectors.exclusion import ExclusionPolicy
 from backend.pipeline.ingest import _deterministic_uuid
 from backend.services.corpus_repair import (
+    ACTION_RETIRE_DELETED_DOCUMENT,
     ACTION_RETIRE_UNSAFE_ARTIFACT,
     CorpusRepairTool,
 )
@@ -279,3 +281,73 @@ async def test_j_apply_retry_idempotent(async_factory, sync_factory, deleted_uui
     # 全新扫描:artifact 行已退休 → 无 RETIRE 条目(幂等收敛)
     fresh = await tool.plan(SRC, orphan_chunks={})
     assert all(e.action != ACTION_RETIRE_UNSAFE_ARTIFACT for e in fresh.entries)
+
+
+# --------------------------------------------------------------------------- #
+# Issue #77(G-04):已服务 fixture 的既有机制矫正路径
+# --------------------------------------------------------------------------- #
+
+_FIXTURE = "neomind-local/main/eval/fixtures/scenario-agriculture-solution.json"
+_NEIGHBOR = "neomind-local/main/src/lib.rs"
+SRC_NEOMIND = "neomind-local"
+
+
+def test_issue77_eval_boundary_via_existing_exclude_dirs():
+    """既有 exclude_dirs 机制(任意层级 part 匹配)可圈定 eval/**,
+    相邻正常内容不受影响 —— 零新分类器/零词汇。"""
+    policy = ExclusionPolicy({"exclude_dirs": [".github", "docs", "eval"]})
+    assert policy.should_exclude("eval/fixtures/scenario-agriculture-solution.json", 0)
+    assert policy.should_exclude("eval/cases/zh/scenario/deploy.json", 0)
+    assert not policy.should_exclude("main/src/lib.rs", 0)
+    assert not policy.should_exclude("README.md", 0)
+
+
+async def test_issue77_membership_retire_removes_serving_fixture_keeps_neighbor(
+    db_engine, async_factory, deleted_uuids
+):
+    """矫正契约(既有 membership-retire 机制):权威成员集不含的已入库
+    eval fixture → RETIRE_DELETED_DOCUMENT → apply 删账本行 + 按 UUID 点删
+    向量;相邻合法内容零触碰。
+
+    运营顺序(r4,生产配置变更由运维执行,本任务不触生产):
+      1. neomind-local 配置 exclude_dirs += ["eval"]
+      2. 连接器全量枚举 = 权威成员集(不含 eval/**)
+      3. plan(source, membership=成员集) → RETIRE_DELETED_DOCUMENT(eval/**)
+      4. apply(plan) → 退出服务真相;GC 物理清理
+    """
+    await _seed_rows(
+        async_factory,
+        _seed_kwargs(_FIXTURE, "fx1", chunk_count=2),
+        _seed_kwargs(_NEIGHBOR, "nb1", chunk_count=3),
+    )
+    # 同步会话工厂:自 db_engine 派生(避免依赖外部 TEST_DATABASE_URL 注入)
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    sync_engine = create_engine(str(db_engine.url).replace("+asyncpg", ""))
+    sync_factory = sessionmaker(bind=sync_engine)
+    tool, _pipeline, _collection = _tool(async_factory, sync_factory)
+
+    membership = {_NEIGHBOR}  # 授权重同步后的权威枚举(exclude_dirs+=["eval"])
+    plan = await tool.plan(SRC_NEOMIND, membership=membership, orphan_chunks={})
+
+    retire = [e for e in plan.entries if e.action == ACTION_RETIRE_DELETED_DOCUMENT]
+    assert [e.path for e in retire] == [_FIXTURE]
+    assert not any(e.path == _NEIGHBOR for e in plan.entries)
+
+    result = await tool.apply(plan)
+    assert any("ledger-row" in a for a in result.applied)
+    assert _FIXTURE in deleted_uuids or any(
+        _FIXTURE in tag for tag in result.applied
+    )
+    # 点删 UUID = fixture 的 2 个确定性 chunk UUID
+    expected = {str(_deterministic_uuid(_FIXTURE, i)) for i in range(2)}
+    assert expected.issubset(set(deleted_uuids))
+    # 相邻内容账本行保留
+    async with async_factory() as session:
+        remaining = set(
+            (await session.execute(select(Document.source_id))).scalars().all()
+        )
+    assert _NEIGHBOR in remaining
+    assert _FIXTURE not in remaining
+    sync_engine.dispose()

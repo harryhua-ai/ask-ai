@@ -288,3 +288,52 @@ async def test_control4_recall_path_unchanged_by_issue77():
     assert (
         len(searcher.bucket_calls) == 1
     ), f"#77 must not alter recall configuration (calls={len(searcher.bucket_calls)})"
+
+
+# --------------------------------------------------------------------------- #
+# R2 RED-B1:显式 code-oriented 查询 —— code 保持竞争序(不得被类组合重排)
+# --------------------------------------------------------------------------- #
+@pytest.mark.unit
+async def test_red_b1_code_oriented_query_keeps_relevance_order():
+    """显式 SDK/API/firmware 查询 + 混合池:code 按既有相关序竞争,
+    组合不得把非 code 自动前置(复用既有 _is_code_oriented_* 判定)。"""
+    code_query = "How do I integrate the SDK API in firmware driver code?"
+    rag = _make_rag(official_score=0.25)
+    result = await rag.answer(code_query, channel="widget")
+
+    evidence = result.reranked_results
+    assert evidence, "evidence must exist"
+    # B 语义:#77 组合在 code-oriented 查询上恒等(证据面 = 既有相关序)。
+    # 证据中 code 块必须连续、按池序、零丢失(10/10);唯一可能的非 code 前置
+    # 来自既有 INC-5 required 槽前置(类真实匹配后的既有策略),至多 1 席。
+    code_positions = [i for i, r in enumerate(evidence) if r.chunk_type == "code"]
+    code_in_pool_order = [
+        (r.source_id, r.chunk_index) for r in evidence if r.chunk_type == "code"
+    ] == [(_code_chunk(i).source_id, 0) for i in range(len(code_positions))]
+    assert len(code_positions) == 10 and code_in_pool_order, (
+        "code must retain all 10 positions in existing relevance order "
+        f"(positions={code_positions})"
+    )
+    assert code_positions == list(
+        range(min(code_positions), min(code_positions) + 10)
+    ), f"code block must be contiguous (positions={code_positions})"
+    assert len(code_positions) == len(evidence) - (
+        1 if len(evidence) > 10 else 0
+    ) or len(evidence) == 10
+
+
+# --------------------------------------------------------------------------- #
+# R2 RED-B2:code-oriented 兜底 —— 兜底证据面保持竞争序
+# --------------------------------------------------------------------------- #
+@pytest.mark.unit
+async def test_red_b2_code_oriented_fallback_keeps_raw_order():
+    code_query = "How do I integrate the SDK API in firmware driver code?"
+    rag = _make_rag(official_score=0.1, code_score=0.2)
+    result = await rag.answer(code_query, channel="widget")
+
+    assert result.is_answered
+    evidence = result.reranked_results
+    assert evidence[0].chunk_type == "code", (
+        "code-oriented fallback must keep raw competitive order "
+        f"(first evidence = {evidence[0].chunk_type})"
+    )

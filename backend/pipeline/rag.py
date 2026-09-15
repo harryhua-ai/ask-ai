@@ -377,6 +377,10 @@ def _is_code_oriented_comparison(text: str) -> bool:
     return any(phrase in bigrams for phrase in _CODE_PHRASES)
 
 
+# Issue #77:普通路径复用同一确定性 code-oriented 判定(词表单一来源,零新分类器)。
+_is_code_oriented_query = _is_code_oriented_comparison
+
+
 def _comparison_dimension(query: str, taxonomy: Any, targets: tuple[str, ...]) -> str:
     """Rev1 Blocker 1:从比较查询中合成「用户请求的比较维度」(确定性,零 LLM)。
 
@@ -1776,9 +1780,16 @@ class RAGOrchestrator:
             # 降级用 fused top-N 作上下文继续生成,而非直接拒答。
             # 场景:Q98(DeepInspect)/Q104(纺织检测)等场景术语召回命中,
             # 但 reranker 给分 < 0.3 被滤光。真无召回(fused 也空)才拒答。
-            # Issue #77(D 兜底资格):类组合作用于整个兜底候选集(fused),
-            # 而非先截断再定序 —— 用户面证据不因原始融合顺序被埋没。
-            fallback = _compose_user_facing_evidence(fused, None, self._top_k, None) if fused else []
+            # Issue #77(D 兜底资格+B1):兜底证据面服从同一类组合边界,
+            # 但 code-oriented 查询保持竞争序(与比较管线 Rev2 同语义)。
+            if _is_code_oriented_query(query):
+                fallback = fused[: self._top_k] if fused else []
+            else:
+                fallback = (
+                    _compose_user_facing_evidence(fused, None, self._top_k, None)
+                    if fused
+                    else []
+                )
             if not fallback:
                 elapsed = int((time.monotonic() - start) * 1000)
                 # Issue #5 契约 §8/§14:目标产品在库但证据不足 → 产品化不足
@@ -1860,7 +1871,8 @@ class RAGOrchestrator:
         # Issue #77(G-01/B 类真实证据组合):阈上用户面(非 code)证据优先占
         # 证据面,code 按既有次序回填;阈值/分数/top_k 不变;无用户面阈上候选
         # 时恒等。仅普通路径 —— 比较路径已有逐目标 tier 配额(C1/C2)。
-        if cmp_stage_info is None:
+        code_oriented = _is_code_oriented_query(query)
+        if cmp_stage_info is None and not code_oriented:
             reranked = _compose_user_facing_evidence(
                 reranked,
                 pool_scores,
@@ -2584,9 +2596,16 @@ class RAGOrchestrator:
 
         if len(reranked) < effective_min:
             # P1 兜底:rerank 滤光但 fused 非空时降级用 fused top-N(与 answer 同策略)
-            # Issue #77(D 兜底资格):类组合作用于整个兜底候选集(fused),
-            # 而非先截断再定序 —— 用户面证据不因原始融合顺序被埋没。
-            fallback = _compose_user_facing_evidence(fused, None, self._top_k, None) if fused else []
+            # Issue #77(D 兜底资格+B1):兜底证据面服从同一类组合边界,
+            # 但 code-oriented 查询保持竞争序(与比较管线 Rev2 同语义)。
+            if _is_code_oriented_query(query):
+                fallback = fused[: self._top_k] if fused else []
+            else:
+                fallback = (
+                    _compose_user_facing_evidence(fused, None, self._top_k, None)
+                    if fused
+                    else []
+                )
             if not fallback:
                 # 拒答前收敛 lead 判定任务:qualified 信号不因检索为空而丢失
                 # (invited=False:本轮没有生成回答,未展示邀请)
@@ -2777,7 +2796,8 @@ class RAGOrchestrator:
             }
 
         # Issue #77(G-01/B 类真实证据组合):与 answer 同位同语义(parity)。
-        if cmp_stage_info is None:
+        code_oriented = _is_code_oriented_query(query)
+        if cmp_stage_info is None and not code_oriented:
             reranked = _compose_user_facing_evidence(
                 reranked,
                 pool_scores,
