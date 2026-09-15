@@ -391,6 +391,9 @@ async def test_sync_one_uses_last_success_as_window():
         with sync_factory() as s:
             s.execute(delete(SyncLog).where(SyncLog.source_id == sid))
             s.execute(delete(Document).where(Document.source_id.like(f"{sid}/%")))
+            # integration r4:与 SyncLog/Document 同款种子清理 —— #71 起本测试
+            # 需要数据源行,残留行会使下次种子唯一键冲突。
+            s.execute(delete(DataSource).where(DataSource.id == sid))
             s.add(
                 Document(
                     content_hash="w" * 64,
@@ -438,7 +441,16 @@ async def test_sync_one_uses_last_success_as_window():
         orig_create = ConnectorRegistry.create
         ConnectorRegistry.create = staticmethod(lambda c: _RecordingConnector())
         # 校验器(迭代器口径,D4-ACC)需读到与 pg 一致的向量:种子文档 1 chunk
-        _wv_item = MagicMock(properties={"source_id": f"{sid}/main/x.py", "chunk_index": 0})
+        # integration r4:#75 INT-C-01 在服判定按现行代过滤,对象须携带
+        # generation_ordinal=0(种子文档无 current_version,coalesce 缺省 0)
+        # 才算在服;否则被当作 legacy 残留 → 整篇缺失误触发 refill。
+        _wv_item = MagicMock(
+            properties={
+                "source_id": f"{sid}/main/x.py",
+                "chunk_index": 0,
+                "generation_ordinal": 0,
+            }
+        )
         _wv_collection = MagicMock()
         _wv_collection.iterator.return_value = [_wv_item]
         _wv_client = MagicMock()
