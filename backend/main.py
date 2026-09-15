@@ -187,7 +187,12 @@ async def _build_llm_state(
 
 
 async def _ensure_admin_user(session: AsyncSession) -> str:
-    """Admin 用户引导:已存在 → 原样保留;缺失 → 以 ADMIN_PASSWORD 创建。
+    """Admin 用户引导(fail-closed,#76):已存在 → 原样保留;缺失 → 创建。
+
+    ADMIN_PASSWORD 是引导密钥:仅当配置的 Admin 身份尚不存在时必需。
+    - 已存在 Admin → 保留现状(password_hash 不动,不要求 ADMIN_PASSWORD);
+    - 缺失 Admin 且 ADMIN_PASSWORD 未配置/为空 → RuntimeError 拒绝启动,
+      绝不回退任何固定/默认口令(基线缺陷:缺失密钥时静默创建可预测凭证)。
 
     返回动作("preserved"/"created")供调用方记录启动诊断。
     """
@@ -201,14 +206,16 @@ async def _ensure_admin_user(session: AsyncSession) -> str:
         await session.execute(sa_select(User).where(User.email == admin_email))
     ).scalar_one_or_none()
     if existing_admin:
+        logger.info("admin 用户已存在,保留现状(不重置凭证): %s", admin_email)
         return "preserved"
-    session.add(
-        User(
-            email=admin_email,
-            role="admin",
-            password_hash=hash_password(os.environ.get("ADMIN_PASSWORD", "admin123")),
+    password = os.environ.get("ADMIN_PASSWORD")
+    if not password:
+        raise RuntimeError(
+            "ADMIN_PASSWORD 未配置:创建初始 Admin 用户需要该引导密钥"
+            f"(目标账号: {admin_email})。拒绝回退到任何默认口令;"
+            "请显式设置 ADMIN_PASSWORD 后重启(Admin 已存在时无需该变量)。"
         )
-    )
+    session.add(User(email=admin_email, role="admin", password_hash=hash_password(password)))
     logger.info("已创建 admin 用户: %s", admin_email)
     return "created"
 

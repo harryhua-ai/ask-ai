@@ -146,7 +146,7 @@ def test_lifespan_does_not_reference_undefined_db_config():
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_lifespan_starts_and_wires_llm_state():
+async def test_lifespan_starts_and_wires_llm_state(monkeypatch):
     """运行时冒烟：lifespan 完整启动，app.state.llm/rag 非 None。
 
     mock weaviate + BGE（GPU/模型下载依赖），DB 连测试库（seed 幂等，
@@ -158,6 +158,10 @@ async def test_lifespan_starts_and_wires_llm_state():
     test_dsn = os.environ.get("TEST_DATABASE_URL")
     if not test_dsn:
         pytest.skip("需 TEST_DATABASE_URL 才能跑 lifespan 运行时冒烟测试")
+
+    # #76:Admin 引导 fail-closed 后,空测试库首次启动必须显式提供引导密钥
+    # (基线缺陷期此处静默依赖固定回退凭证建号)。仅作用于本测试进程环境。
+    monkeypatch.setenv("ADMIN_PASSWORD", "lifespan-smoke-bootstrap-only")
 
     mock_weaviate = MagicMock()
     mock_embedder = MagicMock()
