@@ -44,7 +44,6 @@ def plan_for(labels, *, iteration=None, priority=None, status="Backlog"):
         desired_iteration_key=desired.iteration_key,
         desired_iteration_clear=desired.iteration_clear,
         config=CONFIG,
-        desired_sprint_key=desired.sprint_key, desired_sprint_touch=desired.sprint_touch,
     )
     return plan, desired, control
 

@@ -129,7 +129,6 @@ class _SyncTransport:
                         {"id": "i-next", "title": "v9.99.99-test",
                          "startDate": "2026-09-21", "duration": 14},
                     ], "completedIterations": []}},
-                "sprint": None,
             }, "repository": {"id": "R_1"}}}
         if "issue(number:" in query:
             return {"repository": {"issue": {
@@ -145,7 +144,7 @@ class _SyncTransport:
                                                                   "state": "OPEN"},
                            "iteration": ({"iterationId": "i-next", "title": actual}
                                          if actual else None),
-                           "sprint": None, "priority": None, "status": {"name": self.item_status}}]
+                           "priority": None, "status": {"name": self.item_status}}]
             }}}}
         if "updateProjectV2ItemFieldValue" in query:
             if self.fail_mutation:

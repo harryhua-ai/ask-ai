@@ -28,7 +28,6 @@ from .model import (
     IterationDef,
     OptionDef,
     iteration_slug,
-    sprint_title_slug,
 )
 from .planner import Finding, Mutation, SyncPlan, plan_sync
 from .reconcile import detect_drift
@@ -104,26 +103,14 @@ def fetch_context(t: GhCliTransport, s: Settings) -> Context:
         for i in [*cfg.get("iterations", []), *cfg.get("completedIterations", [])]
     ]
     anchors = sorted(i["startDate"] for i in cfg.get("iterations", []))
-    sprint_f = pv.get("sprint")
-    sprints: list[IterationDef] = []
-    sprint_field_id = None
-    if sprint_f:
-        sprint_field_id = sprint_f["id"]
-        sprint_cfg = sprint_f.get("configuration") or {}
-        sprints = [
-            IterationDef(id=i["id"], title=i["title"], start_date=i["startDate"], duration=i["duration"])
-            for i in sprint_cfg.get("iterations", []) + sprint_cfg.get("completedIterations", [])
-        ]
     return Context(
         project_id=pv["id"],
         config=FieldConfig(
             status_options=[OptionDef(o["id"], o["name"]) for o in status_f["options"]],
             priority_options=[OptionDef(o["id"], o["name"]) for o in prio_f["options"]],
             iterations=iterations,
-            sprints=sprints,
         ),
-        field_ids={"status": status_f["id"], "priority": prio_f["id"], "iteration": iter_f["id"],
-                   "sprint": sprint_field_id},
+        field_ids={"status": status_f["id"], "priority": prio_f["id"], "iteration": iter_f["id"]},
         config_anchor=anchors[0] if anchors else "2026-09-07",
         config_duration=cfg.get("duration", 14),
     )
@@ -146,7 +133,6 @@ def fetch_items(t: GhCliTransport, s: Settings) -> list[ItemState]:
         content = n.get("content") or {}
         is_draft = content.get("__typename") == "DraftIssue"
         it = n.get("iteration")
-        sp = n.get("sprint")
         items.append(ItemState(
             item_id=n["id"],
             issue_number=content.get("number") if not is_draft else None,
@@ -154,7 +140,6 @@ def fetch_items(t: GhCliTransport, s: Settings) -> list[ItemState]:
             iteration_slug=iteration_slug(it["title"]) if it else None,
             priority=(n.get("priority") or {}).get("name"),
             status=(n.get("status") or {}).get("name"),
-            sprint_slug=sprint_title_slug(sp["title"]) if sp else None,
             iteration_id=it.get("iterationId") if it else None,
             iteration_title=it.get("title") if it else None,
         ))
@@ -186,9 +171,6 @@ def apply_plan(t: GhCliTransport, ctx: Context, item_id: str, plan: SyncPlan) ->
         elif m.kind == "clear_priority":
             t.graphql(q.build_query(q.CLEAR_FIELD, projectId=ctx.project_id, itemId=item_id,
                                     fieldId=ctx.field_ids["priority"]))
-        elif m.kind == "set_sprint":
-            t.graphql(q.build_query(q.SET_ITERATION, projectId=ctx.project_id, itemId=item_id,
-                                    fieldId=ctx.field_ids["sprint"], iterationId=m.payload["sprint_id"]))
         elif m.kind == "set_iteration":
             t.graphql(q.build_query(q.SET_ITERATION, projectId=ctx.project_id, itemId=item_id,
                                     fieldId=ctx.field_ids["iteration"], iterationId=m.payload["iteration_id"]))
@@ -223,9 +205,6 @@ def _append_control_findings(plan: SyncPlan, control, desired, config: FieldConf
         elif lowered.startswith("iteration:"):
             code, field = "UNKNOWN_ITERATION", "iteration"
             message = f"malformed or unresolved Iteration control label '{label}'"
-        elif lowered.startswith("sprint:"):
-            code, field = "UNKNOWN_SPRINT", "sprint"
-            message = f"malformed or unresolved Sprint control label '{label}'"
         elif lowered.startswith("schedule:"):
             code, field = "UNKNOWN_SCHEDULE", "iteration"
             message = f"unsupported schedule control label '{label}'"
@@ -270,8 +249,7 @@ def sync_issue(t: GhCliTransport, s: Settings, number: int, dry_run: bool) -> di
     plan = plan_sync(item=item, desired_status=desired.status_option,
                      desired_priority=desired.priority_option, desired_priority_clear=desired.priority_clear,
                      desired_iteration_key=desired.iteration_key, desired_iteration_clear=desired.iteration_clear,
-                     config=ctx.config,
-                     desired_sprint_key=desired.sprint_key, desired_sprint_touch=desired.sprint_touch)
+                     config=ctx.config)
     for c in control.conflicts:
         plan.findings.append(Finding(
             "METADATA_CONFLICT",
@@ -339,10 +317,6 @@ def sync_issue(t: GhCliTransport, s: Settings, number: int, dry_run: bool) -> di
             problems.append(f"iteration: expected id {expected.id!r}, got {after.iteration_id!r}")
         elif after.iteration_slug != expected_slug:
             problems.append(f"iteration: expected {expected_slug!r}, got {after.iteration_slug!r}")
-    if desired.sprint_touch and "sprint" not in blocked:
-        expected_sprint = iteration_slug(desired.sprint_key)
-        if after.sprint_slug != expected_sprint:
-            problems.append(f"sprint: expected {expected_sprint!r}, got {after.sprint_slug!r}")
     if problems:
         raise VerificationFailure(f"issue #{number} did not converge: " + "; ".join(problems))
 
@@ -433,10 +407,6 @@ def reconcile(t: GhCliTransport, s: Settings, dry_run: bool) -> dict:
                         problems.append(f"iteration expected {expected!r}, got {item.iteration_slug!r}")
                 elif mutation.kind == "clear_iteration" and item.iteration_slug is not None:
                     problems.append(f"iteration expected cleared, got {item.iteration_slug!r}")
-                elif mutation.kind == "set_sprint":
-                    expected = sprint_title_slug(mutation.payload["sprint_title"])
-                    if item.sprint_slug != expected:
-                        problems.append(f"sprint expected {expected!r}, got {item.sprint_slug!r}")
             if problems:
                 raise VerificationFailure(f"reconcile issue #{number} did not converge: " + "; ".join(problems))
 
@@ -454,8 +424,6 @@ def derive_labels_for_item(item: ItemState, state: str) -> tuple[list[str], list
     review: list[str] = []
     if item.iteration_slug:
         labels.append(f"iteration:{item.iteration_slug}")
-    if item.sprint_slug:
-        labels.append(f"sprint:{item.sprint_slug}")
     if item.priority:
         labels.append(f"priority:{item.priority.strip().lower().replace(' ', '-')}")
     if state != "CLOSED":  # closure owns Done; no status label required
@@ -484,7 +452,7 @@ def bootstrap(t: GhCliTransport, s: Settings, dry_run: bool) -> dict:
         additions = [l for l in labels if l not in current]
         contradicting = sorted(
             l for l in current
-            if l.split(":")[0] in ("iteration", "priority", "status", "sprint") and l not in labels
+            if l.split(":")[0] in ("iteration", "priority", "status") and l not in labels
         )
         if contradicting:
             conflicts.append({"issue": number, "labels": contradicting})
@@ -515,8 +483,7 @@ def canonical_labels(config: FieldConfig) -> list[str]:
                        for o in config.priority_options]
     return priority_labels + \
            [f"status:{v}" for v in sorted(STATUS_MAP)] + \
-           [f"iteration:{i.slug}" for i in config.iterations] + \
-           [f"sprint:{sprint_title_slug(sp.title)}" for sp in config.sprints]
+           [f"iteration:{i.slug}" for i in config.iterations]
 
 
 def ensure_labels(t: GhCliTransport, s: Settings) -> dict:

@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 PRIORITY_PREFIX = "priority:"
 STATUS_PREFIX = "status:"
 ITERATION_PREFIX = "iteration:"
-SPRINT_PREFIX = "sprint:"
 SCHEDULE_PREFIX = "schedule:"
 
 PRIORITY_VALUES = ("p0", "p1", "p2")
@@ -39,12 +38,10 @@ class ControlLabels:
     priority_value: str | None = None
     status: str | None = None
     status_value: str | None = None
-    sprint_key: str | None = None
     schedule: str | None = None
     has_iteration_label: bool = False
     has_priority_label: bool = False
     has_status_label: bool = False
-    has_sprint_label: bool = False
     has_schedule_label: bool = False
     # SCHEDULE ≠ PRODUCT ITERATION: a valid schedule:* label suspends Iteration
     # convergence entirely — the automation must neither write nor clear the
@@ -57,7 +54,7 @@ class ControlLabels:
     @property
     def has_any(self) -> bool:
         return self.has_iteration_label or self.has_priority_label or self.has_status_label \
-            or self.has_sprint_label or self.has_schedule_label
+            or self.has_schedule_label
 
 
 def normalize_control_value(raw: str) -> str:
@@ -67,17 +64,16 @@ def normalize_control_value(raw: str) -> str:
 def parse_control_labels(labels: list[str]) -> ControlLabels:
     cl = ControlLabels()
     found: dict[str, set[str]] = {
-        "iteration": set(), "priority": set(), "status": set(), "sprint": set(), "schedule": set(),
+        "iteration": set(), "priority": set(), "status": set(), "schedule": set(),
     }
     for label in labels:
         for prefix, key in ((ITERATION_PREFIX, "iteration"), (PRIORITY_PREFIX, "priority"),
-                            (STATUS_PREFIX, "status"), (SPRINT_PREFIX, "sprint"),
+                            (STATUS_PREFIX, "status"),
                             (SCHEDULE_PREFIX, "schedule")):
             if label.lower().startswith(prefix):
                 cl.has_iteration_label |= key == "iteration"
                 cl.has_priority_label |= key == "priority"
                 cl.has_status_label |= key == "status"
-                cl.has_sprint_label |= key == "sprint"
                 cl.has_schedule_label |= key == "schedule"
                 value = normalize_control_value(label[len(prefix):])
                 found[key].add(value)
@@ -88,7 +84,7 @@ def parse_control_labels(labels: list[str]) -> ControlLabels:
                         cl.status_reserved = True
                     else:
                         cl.unknown.append(label)
-                elif key == "sprint" and not ITERATION_KEY_RE.match(value) or key == "schedule" and value not in SCHEDULE_VALUES:
+                elif key == "schedule" and value not in SCHEDULE_VALUES:
                     cl.unknown.append(label)
 
     single = {k: next(iter(v)) if len(v) == 1 else None for k, v in found.items()}
@@ -102,8 +98,6 @@ def parse_control_labels(labels: list[str]) -> ControlLabels:
         cl.status = single["status"]
     if len(found["status"]) == 1:
         cl.status_value = single["status"]
-    if len(found["sprint"]) == 1 and ITERATION_KEY_RE.match(single["sprint"]):
-        cl.sprint_key = single["sprint"]
     if len(found["schedule"]) == 1 and single["schedule"] in SCHEDULE_VALUES:
         cl.schedule = single["schedule"]
         # Scheduling intent never claims Iteration authority; suspension applies
