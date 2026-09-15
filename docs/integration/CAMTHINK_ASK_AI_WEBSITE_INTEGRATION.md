@@ -4,11 +4,12 @@
 
 **本文档是网站接入的唯一权威指南。** 不需要阅读 Ask AI 源码即可完成官方 Widget 或 Headless 集成。
 
-- 文档版本：**3.0（2026-09-10）**
-- 对应生产版本：**ASK-AI v1.3.0**
+- 文档版本：**3.1（2026-09-15）**（上一版 3.0，2026-09-10）
+- 对应生产版本：**ASK-AI v1.3.0**（v3.0 所载基线；v3.1 新行为的发布状态见下）
 - 对应生产源码：`8bec1c0251d25630b5e2d461a9a5671cb2841b34`
 - 生产 API 基址：`https://wiki-data.camthink.ai`
 - v3.0 重点：同步 I-UX-001 新 UX——Entry A/B/C、Contextual Greeting、Trusted Actions、桌面 proactive mini-entry、移动端 nudge、主题/Launcher 配置以及新的接入验收要求。
+- v3.1 重点（Issue #80）：四大 Widget 入口（FAB / Launcher Pill / Minimal Pill / Contextual Nudge）向宿主暴露可观测语义标注 `data-track="contact"`、`data-type="ask_ai"`（语义见 1.6 节）。**该行为随 v1.6.3-r4 提供；当前生产（v1.6.3-r3）尚未包含。**
 
 > **核心结论：基础嵌入方式没有被推翻。** 仍然是 CSS + `widget.js` + `site_id`。
 > 但 v1.3.0 后，**Page Context 从“推荐的问答辅助信息”升级为新 UX 的关键集成输入**：它同时影响 contextual greeting、Trusted Actions 是否安全显示以及 action query 的目标绑定。因此产品页、文档页、Store 商品页应按本文档提供结构化 Page Context。
@@ -614,6 +615,11 @@ Fail generic rather than wrong-specific.
 ---
 
 ## Change Log
+
+### v3.1 — 2026-09-15
+
+- Issue #80：官方 Widget 全部 4 个入口表面（FAB / Launcher Pill / Minimal Pill / Contextual Nudge）暴露宿主可观测语义标注 `data-track="contact"`、`data-type="ask_ai"`；宿主侧事件语义 = `element_click` / `contact` / `ask_ai` / `ask_ai`（新增 1.6 节）。宿主不得新建 `ask_ai_click` 或按 Website/Wiki/Store 拆分事件名；ASK-AI 不代发宿主 Analytics、不要求宿主源码。
+- **发布状态：该行为包含于即将发布的 v1.6.3-r4；当前生产（v1.6.3-r3）尚未包含。** 其余 v1.3.0 行为描述不变。
 
 ### v3.0 — 2026-09-10
 
