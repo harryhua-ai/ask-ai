@@ -25,6 +25,7 @@ def _make_cfg(source_id: str = "website-x") -> MagicMock:
 def _make_pipeline(chunks: int = 1) -> MagicMock:
     pipeline = MagicMock()
     pipeline.ingest_all.return_value = {f"doc-{i}": chunks for i in range(8)}
+    pipeline._session_factory = None  # #71:本套件不覆盖成员对账面(账本面缺席=如实跳过)
     return pipeline
 
 

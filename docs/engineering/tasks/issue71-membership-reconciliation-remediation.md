@@ -114,10 +114,91 @@ Acceptance-scenario coverage map (authorization list → test):
 - **filesystem**: trivial to cover (`os.walk` on `root_path` with the same exclusion filters). **woocommerce**: feasible (API list-all with pagination). Both would move from `unsupported` to real currency truth. Flagged for a future authorized track; zero code changed here.
 - **Non-goals kept**: no citation filtering, no URL liveness probing, no NE503 special-casing, no `set_successor`/rename-lineage wiring (P2).
 
+
+
+---
+
+## R2 REVIEW REMEDIATION (ROLE A: CHANGES REQUIRED — both blockers corrected)
+
+Role A verdict on R1 (`c556652`): root cause + core design ACCEPTED; two release blockers. No redesign performed; deltas are exactly the two blockers + their regression guards.
+
+### BLOCKER 1 — production migration was not registered — FIXED (commit `e4f7913`)
+
+- **Manifest delta (exact)**: `deploy/prod/migrations.json` `migrations[]` — appended `"scripts/migrate_add_membership_currency.py"` after `scripts/migrate_add_conversation_id_policy.py`. The 6 existing entries are unchanged and in original order. The membership migration is included **exactly once**.
+- **Migration planner evidence** (fail-closed parser `scripts/release_migration_plan.py`, run against the FINAL candidate SHA `84173d3`):
+  - command: `python3 scripts/release_migration_plan.py --tag v1.6.3-r4 --sha 84173d3… --repo-root .`
+  - result: **exit 0**, `PLAN SOURCE: manifest@84173d30e18a`, plan lines = the 6 existing entries + `scripts/migrate_add_membership_currency.py` (last, exactly once).
+- **Idempotency + legacy-NULL proof** (scratch database `ask_ai_m71_proof`, dropped afterwards; production untouched):
+  1. pre-migration `data_sources` (no membership columns) created; 2 legacy rows inserted;
+  2. `migrate(engine)` run **twice** — both runs exit OK ("data_sources membership currency columns present");
+  3. after: exactly the 5 membership columns present; both legacy rows retain `membership_status=NULL` and all membership fields NULL (**legacy rows remain NULL/unknown as designed; no backfill**); row count unchanged (2).
+- **Regression guard (RED-1)**: `tests/scripts/test_membership_migration_manifest.py`
+  - M1: manifest registers `scripts/migrate_add_membership_currency.py` exactly once and every entry exists in-tree — **failed on the R1 candidate** (count 0 == 1 assertion) and passes after registration;
+  - M2: the migration's `_EXPECTED_COLUMNS` must equal exactly the `membership_*` columns on the `DataSource` model — a future candidate adding/removing these schema-dependent fields without updating migration+manifest goes red at test time instead of at deploy time.
+
+### BLOCKER 2 — truth persistence was best-effort — FIXED (commit `84173d3`)
+
+Frozen semantics implemented exactly as specified (A–D); no best-effort telemetry remains:
+
+- `persist_membership_truth` now raises the dedicated **`MembershipTruthPersistenceError`** for **every** failure mode (DB write outage; source-row missing). Nothing is swallowed.
+- (A) reconcile OK + persist OK → normal result; `current`/`stale` per residual drift (unchanged — S1/S7/R8 stay green).
+- (B) retirement committed + truth write fails → round `partial`; `error_detail` contains a deterministic `membership truth persistence failed: …`; `delta_counts` carries **no** `membership_status` claim (no false current); committed tombstones are NOT rolled back; the next round re-derives truth and persists it (convergence proven).
+- (C) reconciliation failure → previously accepted fail-closed behavior preserved; if the additional `failed`-truth write also fails, both facts are surfaced in `error_detail` and no membership_status claim is made.
+- (D) unsupported connectors: a failed `unsupported`-truth write is equally visible (round `partial`, deterministic error_detail, no fabricated persisted truth).
+
+**RED evidence** — DB-commit-level injection (`_truth_commit_failing_factory`: commit raises only when the session holds a dirty DataSource with `membership_status` set, so SyncLog/SyncRun/schedule writes are unaffected) on the R1 candidate:
+- `test_t1_truth_persistence_failure_is_never_success_or_current` — FAILED on R1 with `assert 'success' == 'partial'` (the exact blocker: round reported success/current while truth was not persisted);
+- `test_t2_tombstones_survive_failure_then_next_round_establishes_truth` — FAILED on R1 (same root);
+- `test_t3_unsupported_truth_persistence_failure_is_visible` — FAILED on R1 (same root).
+
+**GREEN** (post-fix):
+- T1: round `partial`; error_detail names truth persistence; delta has no `current`; persisted `membership_status` stays NULL (nothing fabricated);
+- T2: tombstones remain `deleted` after the failed-truth round (round `partial`); round 2 (healthy persistence) ⇒ `success`, `membership_status=current`, `stale_detected=0` — next-run re-establishment proven;
+- T3: unsupported truth-write failure ⇒ `partial` + visible error, no fabricated `unsupported`;
+- R11 updated: missing source row now raises `MembershipTruthPersistenceError` (never silent);
+- C4 (new, correction CLI): `apply_plan` under truth-write outage raises the dedicated error; tombstones remain committed; CLI exits 1 with an explicit error;
+- RED-5: normal success paths unchanged (S1/S7/R8 green).
+
+### R2 changed files (delta on top of R1)
+
+| File | Change |
+|---|---|
+| `deploy/prod/migrations.json` | + `scripts/migrate_add_membership_currency.py` (additive position) |
+| `backend/services/membership_currency.py` | `MembershipTruthPersistenceError`; `persist_membership_truth` never swallows (row-missing also raises) |
+| `scripts/sync.py` | `_membership_truth_persist_failed` unified handling; dedicated-error handling on all three paths (unsupported / reconcile-success / reconcile-failure) |
+| `scripts/reconcile_membership.py` | CLI surfaces truth-persistence failure (exit 1; tombstones remain) |
+| `tests/scripts/test_membership_migration_manifest.py` | NEW: M1/M2 release-contract guards |
+| `tests/pipeline/test_sync_membership.py` | NEW T1/T2/T3 + `_truth_commit_failing_factory` injection helper |
+| `tests/services/test_membership_currency.py` | R11 updated to explicit-failure contract |
+| `tests/scripts/test_reconcile_membership_script.py` | NEW C4 |
+
+### Harness findings caught by the R2 full-suite run (disclosed, fixed, re-run)
+
+The first R2 full-suite run surfaced **4 candidate-caused failures** in mock-based legacy sync harnesses (tests/scripts/test_sync_coverage.py ×2, test_sync_db.py ×1, test_sync_gap_heal.py ×1) — NOT flakes, and exactly why the full regression was re-run rather than dismissed:
+
+- MagicMock connectors auto-sprout a `membership_source_ids` attribute → the capability check admitted them → reconciliation exploded against mock sessions → rounds downgraded to `partial` against legacy `success` assertions;
+- test_sync_db's window test additionally never seeded a `data_sources` row — under the R2 semantics the unsupported-truth write now fails loudly on a missing row (which is the mandated behavior, demonstrated for real against a live DB).
+
+Fixes (commit `b60cba3`, harness-scope only, production code untouched): legacy harnesses declare membership-scope insulation (`pipeline._session_factory = None`, mirroring sibling cases) / seed the DataSource row where the real truth-write path is exercised. The dedicated membership suites (real DB) remain the authority for the new semantics.
+
+### Scope audit (R2)
+
+Untouched as ordered: `membership_source_ids` design, set-difference semantics, tombstone semantics, GitHub-only scope, Admin UX design, #72/#75/#77/#78, production data. No merge, no deploy, no production migration, no production reconciliation, #71 open, no tag created.
+
 ## 8. Run record
 
 - Worktree: `ask-ai/.worktrees/issue71-membership-20260915` (branch `remediation/issue71-membership-reconciliation-20260915`, base `origin/main f4e6751`)
-- Candidate full suite: 2720 passed / 4 failed (order-flakes, disjoint from candidate surface) / 8 skipped — 3807s
-- Main baseline full suite (same day): 2689 passed / 4 failed (disjoint flake set: recovery_semantics) / 7 skipped — 3574s
-- vitest: 549/549 · admin `tsc -b`: clean · ruff: 284=284 parity with main
-- Implementation + tests + reports force-added under `/docs/` (gitignored path, per report dual-landing protocol) in commit `2472720` on the candidate branch.
+- R1 full suite (contended by an accidental concurrent run — timing not comparable): 2720 passed / 4 failed / 8 skipped — 3807s.
+- Main baseline full suite (same day, contended): 2689 passed / 4 failed (disjoint flake set: recovery_semantics) / 7 skipped — 3574s.
+- **R2 full suite #1** (`84173d3`, uncontended, 151s): **2726 passed / 4 failed / 8 skipped** — all 4 candidate-caused mock-harness failures (detailed in the harness-findings section) → fixed in `b60cba3`.
+- **R2 final full suite** (uncontended, 140s): **2721 passed / 7 failed / 3 errors / 7 skipped**. Classification (review bar: independently reproduced on main under equivalent conditions):
+  - `test_recovery_semantics` A3/B1/B2/B3 ×4 — reproduced on main full suite, both runs;
+  - `test_sync_executor_loop::…bounded_retry` ×1 — reproduced on main, isolation and full-suite;
+  - `test_v140_existing_db_upgrade_path` ×1 — failed on MAIN's own uncontended run, absent on candidate (flake-set membership varies run-to-run on main itself);
+  - `test_documents_pk` ×3 setup errors, `test_generation_builder`, `test_projection_rebuild` ×2 — shared-test-DB order-churn class; ALL pass in isolation on the candidate;
+  - **zero candidate-area failures**; the 4 candidate-caused failures from R2 run #1 are FIXED and absent from the re-run.
+- **Main full suite under identical conditions** (f4e6751, uncontended, 130s): **2704 passed / 6 failed / 7 skipped** (recovery ×4 + executor ×1 + v140 ×1) — main carries the same flake class with varying membership.
+- vitest: 549/549 · admin `tsc -b`: clean · ruff: parity with main.
+- Revision lineage: R1 candidate `c556652` (superseded) · R2 BLOCKER 1 `e4f7913` · R2 BLOCKER 2 `84173d3` · R2 harness insulation `b60cba3` · FINAL `92c1439` (report finalization).
+- Migration planner on FINAL SHA `92c1439`: **exit 0**, PLAN SOURCE manifest@92c1439, 7 entries — the 6 prior entries intact and in original order + `scripts/migrate_add_membership_currency.py` last, exactly once.
+- Reports force-added under `/docs/` (gitignored path, per dual-landing protocol).
