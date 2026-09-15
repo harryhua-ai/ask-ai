@@ -40,7 +40,9 @@
   "evidence": "Track C C-1..C-8 + \u8c03\u67e5\u56db\u7f3a\u9677\u9762(widget badge \u65e0\u5b88\u536b\u3001github \u79c1\u5e93\u65e0\u53ef\u8fbe\u6027\u72b6\u6001\u3001branch-ref \u9648\u65e7\u65e0\u72b6\u6001\u3001local_git \u672a\u663e\u5f0f\u5173\u95ed)",
   "justifications": {}
  },
- "scope_justifications": {},
+ "scope_justifications": {
+  "tests/**": "\u56de\u5f52\u4e0e C-7 \u8de8\u6e90\u94fe\u8def\u5957\u4ef6(\u91cd\u5efa\u8c03\u67e5\u5206\u652f RED \u6d4b\u8bd5 + \u65b0\u589e chain \u5957\u4ef6)"
+ },
  "candidate": null,
  "investigation_artifact": null,
  "change_budget_established_at": "2026-09-15T23:18:46Z"
