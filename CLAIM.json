@@ -56,7 +56,7 @@
   }
  },
  "scope_justifications": {
-  "tests/project_automation/**": "Regression tests for vocabulary mapping drift required by RCA"
+  "tests/project_automation/**": "Regression + contract tests for the status vocabulary drift (RED reproduces run #321 UNKNOWN_OPTION on status:backlog; legacy fixtures renamed to the live open/In progress/Done vocabulary with intent preserved) per RCA acceptance criterion 11"
  },
  "candidate": null,
  "investigation_artifact": null
