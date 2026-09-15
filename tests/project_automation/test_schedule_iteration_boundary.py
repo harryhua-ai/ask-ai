@@ -111,3 +111,63 @@ def test_bare_exact_title_authority_still_wins_over_schedule():
     assert desired.iteration_key == "v1.6.3"
     assert [m for m in plan.mutations if m.kind == "set_iteration"] != []
     assert not any(c.field == "iteration" for c in control.conflicts)
+
+
+# ---------------------------------------------------------------------------
+# R2 (Role A review): PRODUCT ITERATION IS PERSISTENT PROJECT TRUTH.
+# Absence of Iteration control metadata means UNMANAGED/PRESERVE — never clear,
+# regardless of schedule state. Only explicit Iteration authority may mutate.
+# ---------------------------------------------------------------------------
+
+def test_r2a_no_iteration_authority_preserves_existing_v163():
+    plan, desired, _ = plan_for(["priority:p1"], iteration="v1.6.3", priority="P1")
+    assert iteration_mutations(plan) == []
+    assert desired.iteration_clear is False
+
+
+def test_r2b_no_iteration_authority_preserves_existing_v164():
+    plan, desired, _ = plan_for(["status:backlog"], iteration="v1.6.4", status="Backlog")
+    assert iteration_mutations(plan) == []
+    assert desired.iteration_clear is False
+
+
+def test_r2c_no_authority_and_no_existing_iteration_stays_unset():
+    plan, desired, _ = plan_for(["priority:p1"], iteration=None, priority="P1")
+    assert iteration_mutations(plan) == []
+    assert desired.iteration_key is None
+    assert desired.iteration_clear is False
+
+
+def test_r2d_removing_schedule_label_preserves_iteration():
+    # An issue was at v1.6.3 carrying schedule:current; the schedule label was
+    # removed. The remaining labels carry no Iteration authority → preserve.
+    plan, desired, _ = plan_for(["priority:p1"], iteration="v1.6.3", priority="P1")
+    assert iteration_mutations(plan) == []
+    assert desired.iteration_clear is False
+
+
+def test_r2e_closed_issue_preserves_iteration():
+    item = ItemState(item_id="ITEM_1", issue_number=61, is_draft=False,
+                     iteration_slug="v1.6.3", priority="P1", status="open")
+    labels = ["priority:p1"]
+    control = resolve_live_control_labels(labels, CONFIG)
+    desired = resolve_desired(IssueAuthority(61, "CLOSED", labels), control)
+    plan = plan_sync(item=item, desired_status=desired.status_option,
+                     desired_priority=desired.priority_option,
+                     desired_priority_clear=desired.priority_clear,
+                     desired_iteration_key=desired.iteration_key,
+                     desired_iteration_clear=desired.iteration_clear,
+                     config=CONFIG)
+    assert desired.status_option == "Done"  # closure semantics intact
+    assert iteration_mutations(plan) == []
+
+
+def test_r2f_weekly_reconcile_yields_zero_iteration_drift_without_authority():
+    from project_automation.reconcile import detect_drift
+
+    item = ItemState(item_id="ITEM_1", issue_number=71, is_draft=False,
+                     iteration_slug="v1.6.3", priority="P1", status="Backlog")
+    issue = IssueAuthority(71, "OPEN", ["priority:p1"])
+    control = resolve_live_control_labels(issue.labels, CONFIG)
+    drifts, _ = detect_drift([(issue, control)], {71: item}, CONFIG)
+    assert drifts == []
