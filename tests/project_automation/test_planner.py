@@ -45,7 +45,10 @@ class TestClearSemantics:
         kinds = [m.kind for m in d.mutations]
         assert kinds == ["clear_priority"]
 
-    def test_absent_iteration_label_clears_existing_iteration(self):
+    def test_planner_honors_explicit_clear_request(self):
+        # Mechanism capability only: plan_sync executes a clear when the desired
+        # projection requests one. Since R2 (2026-09-15) no authority path
+        # produces that request — absence of Iteration metadata preserves.
         member = ItemState(item_id="item-1", issue_number=30, is_draft=False, iteration_slug="i-002", priority=None, status="Backlog")
         d = plan_sync(item=member, desired_priority=None, desired_priority_clear=True,
                       desired_status="Backlog", desired_iteration_key=None, desired_iteration_clear=True, config=STATUS)

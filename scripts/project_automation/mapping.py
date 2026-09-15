@@ -82,6 +82,9 @@ class DesiredProjection:
     priority_option: str | None  # None = do not set a value
     priority_clear: bool  # True = absence of authority clears the field
     iteration_key: str | None
+    # True requests clearing the Iteration. No authority path produces this since
+    # R2 (2026-09-15): absence of Iteration metadata preserves the field; an
+    # explicit automated clear would require a separate product decision.
     iteration_clear: bool
     # Sprint is ADDITIVE in v1: an absent sprint label leaves Sprint untouched
     # (bootstrap could not derive sprint labels before this capability existed;
@@ -126,13 +129,13 @@ def resolve_desired(issue: IssueAuthority, control: ControlLabels | None = None)
     else:
         priority_option, priority_clear = None, False
 
-    # Iteration: a schedule:* label suspends convergence (SCHEDULE ≠ PRODUCT
-    # ITERATION — never write/clear on its behalf); absent iteration label =
-    # clear authority; unmappable/conflicting = fail safe.
-    if control.iteration_suspended:
+    # Iteration (R2, frozen invariant: PRODUCT ITERATION IS PERSISTENT PROJECT
+    # TRUTH): only explicit authority — `iteration:<key>` or a bare label exactly
+    # equal to a live Iteration title — may mutate the Iteration. Absence of
+    # Iteration control metadata means UNMANAGED/PRESERVE, never clear;
+    # schedule:* labels suspend convergence (SCHEDULE ≠ PRODUCT ITERATION).
+    if control.iteration_suspended or not control.has_iteration_label:
         iteration_key, iteration_clear = None, False
-    elif not control.has_iteration_label:
-        iteration_key, iteration_clear = None, True
     elif control.iteration_key is not None:
         iteration_key, iteration_clear = control.iteration_key, False
     else:

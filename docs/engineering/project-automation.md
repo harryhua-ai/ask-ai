@@ -18,7 +18,7 @@ Routine planning = edit the Issue only. Add/remove canonical labels; the Project
 | Put in v1.6.0 | `iteration:v1.6.0` |
 | Put in any existing iteration | `iteration:i-001` / `iteration:i-ux-001` (key = iteration title's code token, lowercased) |
 | Put in a Sprint | `sprint:bug-fix-2026-09` (key = Sprint title normalized, minus the redundant word "sprint"; **additive**: removing the label leaves Sprint unchanged) |
-| Take out of any iteration | remove the `iteration:*` label |
+| (Iteration unmanaged / preserve) | **Absence of Iteration authority is PRESERVE, not clear (R2, 2026-09-15):** an Issue with no `iteration:*`/bare-Iteration-title label keeps whatever Iteration its Project item already holds — removing an `iteration:*` label does NOT clear the Project value, and no automated clear command exists (one would require a separate product decision) |
 | Set priority | `priority:p0` · `priority:p1` · `priority:p2` (remove to clear) |
 | Backlog / In Progress / In Review | `status:backlog` · `status:in-progress` · `status:in-review` |
 | Done | close the Issue (closure always wins; stale status labels are ignored) |
@@ -58,9 +58,12 @@ mutation can never race reconciliation or sync.
 **Scheduling labels — SCHEDULE ≠ PRODUCT ITERATION (frozen invariant, 2026-09-15 drift fix):** `schedule:current`,
 `schedule:next`, and `schedule:backlog` express execution-scheduling intent only. They **never write, clear, or
 conflict with the product Iteration** — in particular, `schedule:current` does NOT mean "assign the calendar-current
-iteration" (that defect moved #61-#67 and #71-#76 from v1.6.3 to I-001). With a schedule label and no
-`iteration:*` label, Iteration convergence is suspended: an existing Iteration value is left untouched, and none is
-guessed. Product Iteration authority remains `iteration:<key>` (or a bare label exactly equal to a live Iteration title).
+iteration" (that defect moved #61-#67 and #71-#76 from v1.6.3 to I-001).
+
+**Iteration persistence (R2, frozen invariant: PRODUCT ITERATION IS PERSISTENT PROJECT TRUTH):** only explicit
+authority — `iteration:<key>` or a bare label exactly equal to a live Iteration title — may mutate the product
+Iteration. Absence of Iteration control metadata means **UNMANAGED/PRESERVE**, regardless of schedule state:
+an existing Iteration value is never overwritten, never cleared, and never guessed from the calendar.
 
 **Reserved / unsupported:** `status:ready` — the Project has no `Ready` Status option. The label is recognized as
 explicit control intent and yields a visible `UNSUPPORTED_STATUS_RESERVED` finding with **no Status mutation** until
@@ -75,6 +78,7 @@ forbidden without a snapshot/restore plan).
 | `priority:p0/p1/p2` | Priority option P0/P1/P2 |
 | `status:backlog/in-progress/in-review` | Status option Backlog/In progress/In review |
 | `sprint:<key>` | Sprint value whose normalized full title equals `<key>` (additive: absent label = untouched) |
+| (no `iteration:*` / bare-Iteration-title label) | **UNMANAGED/PRESERVE** — existing Iteration untouched; never cleared, never calendar-guessed |
 | `schedule:current/next/backlog` | **No Project field write** — scheduling intent only; Iteration convergence suspended (existing Iteration preserved, none guessed) |
 
 **Transitional Sprint authority:** additive semantics are a MIGRATION-COMPATIBLE bridge, not the final model — the
