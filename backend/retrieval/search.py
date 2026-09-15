@@ -362,6 +362,8 @@ class HybridSearcher:
         product_filter: str | None = None,
         channel: str | None = None,
         product_labels: list[str] | None = None,
+        use_hybrid: bool = False,
+        alpha: float = 0.5,
     ) -> list[SearchResult]:
         """BM25 召回(对 text 字段),按 source_type / chunk_type 过滤(boost 桶)。
 
@@ -424,30 +426,53 @@ class HybridSearcher:
 
         filters = filters_list[0] if len(filters_list) == 1 else Filter.all_of(filters_list)
 
-        resp = collection.query.bm25(
-            query=query,
-            query_properties=["text"],
-            limit=limit,
-            filters=filters,
-            return_properties=[
-                "source_id",
-                "source_type",
-                "product",
-                "title",
-                "url",
-                "frontmatter_slug",
-                "text",
-                "chunk_index",
-                "chunk_type",
-                "doc_section",
-                "channel_visibility",
-                "symbol_name",
-                "symbol_signature",
-                "branch",
-                # INC-2a 证据语义(与 evidence_meta.EVIDENCE_PROPERTIES 同源)
-                *EVIDENCE_PROPERTIES,
-            ],
-        )
+        return_properties = [
+            "source_id",
+            "source_type",
+            "product",
+            "title",
+            "url",
+            "frontmatter_slug",
+            "text",
+            "chunk_index",
+            "chunk_type",
+            "doc_section",
+            "channel_visibility",
+            "symbol_name",
+            "symbol_signature",
+            "branch",
+            # INC-2a 证据语义(与 evidence_meta.EVIDENCE_PROPERTIES 同源)
+            *EVIDENCE_PROPERTIES,
+        ]
+
+        # Issue #78(类范围 hybrid 桶):use_hybrid=True 时在同一类过滤内改用
+        # hybrid(dense+BM25)—— 让词法上与 query 无重叠、但语义相关的权威
+        # chunk(如公司/政策页)在类内竞争中凭 dense 入池;过滤器组合与
+        # 主 search() 的 hybrid 调用完全同构。False 时保持既有 BM25 语义
+        # (既有调用方/测试逐字节不变)。
+        if use_hybrid:
+            vectors = self._embedder.embed([query])
+            if not vectors:
+                raise RuntimeError("embedder 返回空向量列表,无法执行 hybrid 桶检索")
+            from weaviate.classes.query import MetadataQuery
+
+            resp = collection.query.hybrid(
+                query=query,
+                vector=vectors[0].tolist(),
+                alpha=alpha,
+                limit=limit,
+                filters=filters,
+                return_metadata=MetadataQuery(distance=True),
+                return_properties=return_properties,
+            )
+        else:
+            resp = collection.query.bm25(
+                query=query,
+                query_properties=["text"],
+                limit=limit,
+                filters=filters,
+                return_properties=return_properties,
+            )
         return self._apply_knowledge_exclusion(
             [self._to_search_result(o) for o in resp.objects]
         )

@@ -800,9 +800,18 @@ async def test_rag_support_intent_triggers_search_bucket():
         ]
     )
     await rag.answer("NE101 蜂窝网络注册失败", channel="widget")
-    searcher.search_bucket.assert_called_once()
-    kwargs = searcher.search_bucket.call_args.kwargs
-    assert kwargs.get("source_types") == ["filesystem"]
+    # Issue #78:support 追加「用户面内容桶」→ 共两桶;首桶(filesystem)语义保持。
+    assert searcher.search_bucket.call_count == 2
+    first_call, second_call = searcher.search_bucket.call_args_list
+    assert first_call.kwargs.get("source_types") == ["filesystem"]
+    assert second_call.kwargs.get("chunk_types") == [
+        "paragraph",
+        "heading",
+        "list",
+        "table",
+    ]
+    assert second_call.kwargs.get("use_hybrid") is True
+    assert second_call.kwargs.get("limit") == 20
 
 
 @pytest.mark.unit

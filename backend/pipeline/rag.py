@@ -444,11 +444,30 @@ class EmptyGenerationError(RuntimeError):
 # - support:故障案例/排查文档多 ingest 为 source_type="filesystem",提升其召回权重。
 # - product:产品功能/参数文档多分布于正文 chunk(paragraph/heading/list/table)。
 # - commercial:P1#5 接 WooCommerce 后启用 source_type="woocommerce"。
-INTENT_BOOST_FILTERS: dict[str, dict] = {
-    "support": {"source_types": ["filesystem"]},
-    "product": {"chunk_types": ["paragraph", "heading", "list", "table"]},
-    "commercial": {"source_types": ["woocommerce"]},
+# Issue #78(权威召回):support/commercial 追加「用户面内容桶」—— chunk_type
+# 非 code 的文档集(与比较管线 tier1 同谓词)在类过滤内做 hybrid 语义匹配,
+# 使公司/支持/政策类权威内容获得独立召回路径,不再仅靠 class-blind 主 hybrid
+# 的全局词法竞争入池;code 由 chunk_type 过滤天然排除(代码导向查询的
+# hybrid+symbol 主路不受影响)。值兼容历史单 dict(_bucket_specs 归一)。
+_USER_FACING_BUCKET: dict = {
+    "chunk_types": ["paragraph", "heading", "list", "table"],
+    "use_hybrid": True,
+    "limit": 20,
 }
+INTENT_BOOST_FILTERS: dict[str, list[dict]] = {
+    "support": [{"source_types": ["filesystem"]}, dict(_USER_FACING_BUCKET)],
+    "product": [{"chunk_types": ["paragraph", "heading", "list", "table"]}],
+    "commercial": [{"source_types": ["woocommerce"]}, dict(_USER_FACING_BUCKET)],
+}
+
+
+def _bucket_specs(cfg: "dict | list[dict] | None") -> list[dict]:
+    """桶配置归一:历史单 dict 值 → 单元素列表(单桶调用语义逐字节保留)。"""
+    if cfg is None:
+        return []
+    if isinstance(cfg, dict):
+        return [cfg]
+    return list(cfg)
 
 
 @dataclass(frozen=True)
@@ -775,7 +794,7 @@ class RAGOrchestrator:
         product_filter: str | None,
         channel: str,
         product_labels: list[str] | None = None,
-    ) -> tuple[list[SearchResult], dict[str, int]]:
+    ) -> tuple[list[SearchResult], dict[str, int], list[dict], list[dict]]:
         """统一检索 + 三路 RRF 融合(answer / stream_answer 共用,保证 parity)。
 
         主 hybrid(search_query) + 符号 BM25(extracted) + intent boost 桶(extracted)
@@ -786,7 +805,9 @@ class RAGOrchestrator:
         兜底 / boost 桶没有任何一路能把 sibling 塞回来。
 
         Returns:
-            (融合去重后的 SearchResult 列表, 各路命中数 dict)
+            (融合去重后的 SearchResult 列表, 各路命中数 dict, 有序候选身份表,
+             桶归因列表 —— 每桶规格(name/source_types/chunk_types/use_hybrid/
+             limit/hits;Issue #78 权威召回路径出账))
         """
         results = self._searcher.search(
             query=search_query,
@@ -810,20 +831,40 @@ class RAGOrchestrator:
             logger.warning("符号召回失败,降级:%s", str(exc)[:200])
 
         bucket_results: list[SearchResult] = []
-        bucket_cfg = INTENT_BOOST_FILTERS.get(intent_category)
-        if bucket_cfg:
-            try:
-                # support 案例存为 product="knowledge"(跨产品设计),但知识桶
-                # 同样受资格标签约束(§9:support intent 不得成为跨产品后门)
-                bucket_results = self._searcher.search_bucket(
-                    query=extracted,
-                    limit=self._recall_limit,
-                    channel=channel,
-                    product_labels=product_labels,
-                    **bucket_cfg,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("boost 桶召回失败,降级:%s", str(exc)[:200])
+        bucket_result_groups: list[tuple[str, list[SearchResult]]] = []
+        bucket_attrition: list[dict] = []
+        bucket_specs = _bucket_specs(INTENT_BOOST_FILTERS.get(intent_category))
+        if bucket_specs:
+            _multi = len(bucket_specs) > 1
+            for _spec_idx, bucket_cfg in enumerate(bucket_specs):
+                _spec_name = f"boost:{_spec_idx}" if _multi else "boost"
+                _spec_limit = int(bucket_cfg.get("limit", self._recall_limit))
+                _spec_kw = {k: v for k, v in bucket_cfg.items() if k != "limit"}
+                try:
+                    # support 案例存为 product="knowledge"(跨产品设计),但知识桶
+                    # 同样受资格标签约束(§9:support intent 不得成为跨产品后门)
+                    from_bucket = self._searcher.search_bucket(
+                        query=extracted,
+                        limit=_spec_limit,
+                        channel=channel,
+                        product_labels=product_labels,
+                        **_spec_kw,
+                    )
+                    bucket_results.extend(from_bucket)
+                    bucket_result_groups.append((_spec_name, from_bucket))
+                    bucket_attrition.append(
+                        {
+                            "name": _spec_name,
+                            "source_types": bucket_cfg.get("source_types"),
+                            "chunk_types": bucket_cfg.get("chunk_types"),
+                            "use_hybrid": bool(bucket_cfg.get("use_hybrid", False)),
+                            "limit": _spec_limit,
+                            "hits": len(from_bucket),
+                        }
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("boost 桶召回失败,降级:%s", str(exc)[:200])
+                    bucket_attrition.append({"name": _spec_name, "error": str(exc)[:120]})
 
         from backend.retrieval.rrf import rrf_fuse
 
@@ -851,7 +892,7 @@ class RAGOrchestrator:
         for _pname, _plist in (
             ("hybrid", results),
             ("symbol", symbol_results),
-            ("boost", bucket_results),
+            *bucket_result_groups,
         ):
             for _r in _plist:
                 path_of.setdefault((_r.source_id, _r.chunk_index), []).append(_pname)
@@ -865,7 +906,9 @@ class RAGOrchestrator:
             }
             for i, r in enumerate(fused)
         ]
-        return fused, path_counts, candidates
+        # Issue #78 桶归因:每桶规格(类过滤/hybrid/limit/hits)随检索阶段出账,
+        # 证明权威内容经由哪个召回路径入池(单桶意图 paths 名保持 "boost")。
+        return fused, path_counts, candidates, bucket_attrition
 
     async def _apply_visibility_guard(
         self,
@@ -923,7 +966,7 @@ class RAGOrchestrator:
         fused_per_target: list[list[Any]] = []
         path_counts: dict[str, int] = {}
         for target in resolution.targets:
-            results, pc, _ = await self._retrieve_and_fuse(
+            results, pc, _, _ = await self._retrieve_and_fuse(
                 extracted,
                 search_query,
                 intent_category,
@@ -1549,6 +1592,7 @@ class RAGOrchestrator:
         t_ret = time.monotonic()
         cmp_stage_info: dict[str, Any] | None = None
         pool_scores: list[tuple[Any, float]] = []
+        bucket_attrition: list[dict] = []
         pre_prune_count = 0
         pruned_count = 0
         if resolution.mode == MODE_COMPARISON and scope_labels:
@@ -1589,7 +1633,7 @@ class RAGOrchestrator:
             # Rev4:局部计数与管线真相同步 —— 公共终态不得把比较剪枝数覆盖为 0
             pruned_count = cmp_stage_info["pruned_count"]
         else:
-            fused, path_counts, fuse_candidates = await self._retrieve_and_fuse(
+            fused, path_counts, fuse_candidates, bucket_attrition = await self._retrieve_and_fuse(
                 extracted,
                 search_query,
                 intent.category,
@@ -1604,6 +1648,7 @@ class RAGOrchestrator:
                 "effective_min": effective_min,
                 "path_counts": path_counts,
                 "candidates": fuse_candidates,
+                "buckets": bucket_attrition,
             }
 
             t_rr = time.monotonic()
@@ -2308,6 +2353,7 @@ class RAGOrchestrator:
         t1 = time.monotonic()
         cmp_stage_info: dict[str, Any] | None = None
         pool_scores: list[tuple[Any, float]] = []
+        bucket_attrition: list[dict] = []
         # INC-1 血统修订:融合候选有序身份表(仅元数据);比较路径保持 None,
         # 其候选身份由 per-target diag(rerank.candidates)承载
         fuse_candidates: list[dict[str, Any]] | None = None
@@ -2332,7 +2378,7 @@ class RAGOrchestrator:
             pre_prune_count = len(reranked)
             pruned_count = cmp_stage_info["pruned_count"]
         else:
-            fused, path_counts, fuse_candidates = await self._retrieve_and_fuse(
+            fused, path_counts, fuse_candidates, bucket_attrition = await self._retrieve_and_fuse(
                 extracted,
                 search_query,
                 intent.category,
@@ -2401,6 +2447,7 @@ class RAGOrchestrator:
             "effective_min": effective_min,
             "path_counts": path_counts,
             "candidates": fuse_candidates,
+            "buckets": bucket_attrition,
         }
         rerank_stage: dict[str, Any] = {
             "ms": rerank_ms,
