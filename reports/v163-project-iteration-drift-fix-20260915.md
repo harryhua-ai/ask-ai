@@ -1,7 +1,39 @@
 # V163_PROJECT_ITERATION_DRIFT_FIX — Delivery Report (2026-09-15)
 
-**Verdict: CANDIDATE READY** — branch `fix/project-iteration-drift-20260915`, candidate SHA `09356e3` (+ report commit on top).
+**Verdict: CANDIDATE READY (R2)** — branch `fix/project-iteration-drift-20260915`.
+R1 candidate `09356e3` (schedule guard) → **R2 candidate `ddeda4c`** (absence-of-authority preserves; Role A review correction) → report commit on top.
 **Scope: project-governance automation only. No application/runtime/backend/frontend change, no release/tag, no deployment, no merge.**
+
+---
+
+## R2 ADDENDUM (Role A review: CHANGES REQUIRED → resolved)
+
+**Finding accepted**: R1 still contained the documented "absent label = clear authority" rule — an Issue with NO
+`iteration:*` AND NO `schedule:*` label produced `iteration_clear=True` → `clear_iteration`, violating
+**PRODUCT ITERATION IS PERSISTENT PROJECT TRUTH**.
+
+**R2 correction** (`mapping.py::resolve_desired`): only explicit Iteration authority — `iteration:<key>` or a bare
+label exactly equal to a live Iteration title — may mutate the product Iteration. Absence of Iteration control
+metadata means **UNMANAGED/PRESERVE** regardless of schedule state; label removal never clears; no automated clear
+command is introduced (the planner's clear capability remains, producer-less, for a future explicit product decision).
+
+Required RED→GREEN evidence (commit `9085334` RED: **6/6 failed** → `ddeda4c` GREEN):
+
+| Case | Scenario | Result |
+|---|---|---|
+| A | Iteration=v1.6.3, no `iteration:*`, no `schedule:*` → zero Iteration mutation | RED fail → GREEN pass |
+| B | Iteration=v1.6.4, same → zero Iteration mutation | RED fail → GREEN pass |
+| C | No existing Iteration, no `iteration:*` → remain unset, zero mutation (`iteration_clear=False`) | RED fail → GREEN pass |
+| D | `schedule:current` removed from an Issue at v1.6.3 → v1.6.3 unchanged | RED fail → GREEN pass |
+| E | Closed Issue at v1.6.3, no schedule label → Iteration remains v1.6.3 (closure→Done semantics intact) | RED fail → GREEN pass |
+| F | Weekly reconcile, no explicit Iteration authority → **zero drift at all** | RED fail → GREEN pass |
+
+Legacy expectations re-based on the invariant: `test_mapping.py` absent→**preserve** (was clear),
+`test_release_iteration_boundary.py` absence→`iteration_clear is False`, `test_planner.py` clear test renamed to a
+producer-less mechanism-capability test. Docs updated: "Take out of any iteration → remove the label" row replaced
+by **UNMANAGED/PRESERVE** semantics; Iteration persistence invariant documented alongside SCHEDULE ≠ PRODUCT ITERATION.
+
+**Full project_automation suite after R2: `150 passed, 0 failed`** (144 R1 + 6 R2).
 
 ---
 
@@ -150,5 +182,6 @@ doc lines. NOT touched: backend/frontend/RAG/migrations, Status/Priority design,
 ## 10. Candidate
 
 - Branch: `fix/project-iteration-drift-20260915` (base `origin/main` = `f4e6751`)
-- Commits: `8b8a71b` (RED tests) → `09356e3` (fix + green) → report commit (this file)
+- Commits: `8b8a71b` (R1 RED) → `09356e3` (R1 fix) → `b0d4167` (R1 report) → `9085334` (R2 RED, 6/6 fail) →
+  `ddeda4c` (**R2 fix — CANDIDATE**) → report R2 addendum commit
 - Merge to `main`: **NOT performed** — awaiting Role A authorization.
