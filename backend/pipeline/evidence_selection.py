@@ -52,6 +52,10 @@ from backend.pipeline.evidence_planning import (
     EvidenceSlot,
 )
 
+#: Issue #77(E 类真实覆盖):code/固件 chunk 的持久化 chunk_type(与比较管线
+#: tier2、rerank type_weights 同一结构事实)。
+_CODE_CHUNK_TYPE = "code"
+
 # --------------------------------------------------------------------------- #
 # 冻结参数
 # --------------------------------------------------------------------------- #
@@ -178,6 +182,16 @@ def evidence_matches_slot(
         (不虚假覆盖),绝不抛错。
     """
     source_type = candidate.source_type or ""
+
+    # Issue #77(E 类真实覆盖):PRODUCT_SPEC / SOLUTION_GUIDE 语义 = 面向
+    # 用户的官方文档证据 —— code/固件候选无论主题多相关,都不得冒充该类槽
+    # (一般类规则,只依赖持久化 chunk_type;无词表/无样例特判;与比较管线
+    # tier1/tier2 的非 code/code 划分同一结构事实)。生产实证:4823df8b…
+    # 固件 .c chunk 曾以满足 PRODUCT_SPEC 的方式顶替 quick-start 文档。
+    if slot.role in (ROLE_PRODUCT_SPEC, ROLE_SOLUTION_GUIDE) and (
+        (getattr(candidate, "chunk_type", "") or "") == _CODE_CHUNK_TYPE
+    ):
+        return False
 
     # 角色谓词(仅持久化结构事实)
     if slot.role == ROLE_PRODUCT_SPEC:

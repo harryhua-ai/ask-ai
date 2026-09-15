@@ -377,6 +377,10 @@ def _is_code_oriented_comparison(text: str) -> bool:
     return any(phrase in bigrams for phrase in _CODE_PHRASES)
 
 
+# Issue #77:普通路径复用同一确定性 code-oriented 判定(词表单一来源,零新分类器)。
+_is_code_oriented_query = _is_code_oriented_comparison
+
+
 def _comparison_dimension(query: str, taxonomy: Any, targets: tuple[str, ...]) -> str:
     """Rev1 Blocker 1:从比较查询中合成「用户请求的比较维度」(确定性,零 LLM)。
 
@@ -554,6 +558,54 @@ def apply_page_context_boost(
         return r.score
 
     return [replace(r, score=_boosted(r)) for r in sorted(results, key=_boosted, reverse=True)]
+
+
+def _compose_user_facing_evidence(
+    evidence: list[SearchResult],
+    pool_scores: list[tuple[SearchResult, float]] | None,
+    top_k: int,
+    rerank_threshold: float | None,
+) -> list[SearchResult]:
+    """Issue #77(G-01/B 类真实证据组合,普通路径;纯函数)。
+
+    语义:阈上「用户面」证据(chunk_type != "code" 的非代码文档类)优先占
+    证据面,code 按既有次序回填 —— code 不得凭竞争分数把合格的官方/用户面
+    证据挤出证据集;反之亦无全局 code 抑制(无用户面候选时恒等)。
+
+    - 资格线 = 重排阈值(只读,不改阈值/分数/top_k);
+    - ``pool_scores`` 为 rerank_scored 的全量加权表(降序);其中高于截断线、
+      阈值合格的用户面候选借此进入证据面(有界:证据总量仍 ≤ top_k);
+    - 不在 ``pool_scores`` 内的证据项(如 F-1' R3b 聚焦晋升)按现有相对次序
+      保留在 tier 判定中,绝不丢失;
+    - ``pool_scores``/阈值不可得(兜底路径/测试桩)时仅做证据面类内稳定定序;
+    - 恒等条件:组合结果与输入身份序列一致(无用户面阈上候选时必然恒等)。
+    """
+    if not evidence or top_k <= 0:
+        return list(evidence)
+    if rerank_threshold is not None and not isinstance(rerank_threshold, (int, float)):
+        # 非数值阈值(MagicMock/异常桩)→ 降级为保守类内定序(不晋升)
+        rerank_threshold = None
+
+    def _user_facing(r: SearchResult) -> bool:
+        return (getattr(r, "chunk_type", "") or "") != "code"
+
+    eligible = list(pool_scores or [])
+    if rerank_threshold is not None:
+        eligible = [(r, s) for (r, s) in eligible if s >= rerank_threshold]
+    seen = {(r.source_id, r.chunk_index) for r in evidence}
+    extra_user_facing = [
+        r
+        for (r, _s) in eligible
+        if _user_facing(r) and (r.source_id, r.chunk_index) not in seen
+    ]
+    tier_user_facing = [r for r in evidence if _user_facing(r)] + extra_user_facing
+    tier_code = [r for r in evidence if not _user_facing(r)]
+    composed = (tier_user_facing + tier_code)[:top_k]
+    if [(r.source_id, r.chunk_index) for r in composed] == [
+        (r.source_id, r.chunk_index) for r in evidence
+    ]:
+        return list(evidence)
+    return composed
 
 
 def page_hint_text(page_context: dict | None, site_name: str | None) -> str:
@@ -1773,7 +1825,16 @@ class RAGOrchestrator:
             # 降级用 fused top-N 作上下文继续生成,而非直接拒答。
             # 场景:Q98(DeepInspect)/Q104(纺织检测)等场景术语召回命中,
             # 但 reranker 给分 < 0.3 被滤光。真无召回(fused 也空)才拒答。
-            fallback = fused[: self._top_k] if fused else []
+            # Issue #77(D 兜底资格+B1):兜底证据面服从同一类组合边界,
+            # 但 code-oriented 查询保持竞争序(与比较管线 Rev2 同语义)。
+            if _is_code_oriented_query(query):
+                fallback = fused[: self._top_k] if fused else []
+            else:
+                fallback = (
+                    _compose_user_facing_evidence(fused, None, self._top_k, None)
+                    if fused
+                    else []
+                )
             if not fallback:
                 elapsed = int((time.monotonic() - start) * 1000)
                 # Issue #5 契约 §8/§14:目标产品在库但证据不足 → 产品化不足
@@ -1811,6 +1872,7 @@ class RAGOrchestrator:
                     result_key=reject_key,
                 )
             # 降级:用 fused top-N 作上下文,标记 fallback 供 trace 追踪
+            # (兜底证据面已按 Issue #77(D) 类组合边界生成。)
             reranked = fallback
             stages["rerank"]["fallback"] = True
             stages["rerank"]["fallback_count"] = len(fallback)
@@ -1850,6 +1912,18 @@ class RAGOrchestrator:
                 reranked = reranked + _reserved
             if res_info.get("promotions"):
                 stages["evidence_reservation"] = res_info
+
+        # Issue #77(G-01/B 类真实证据组合):阈上用户面(非 code)证据优先占
+        # 证据面,code 按既有次序回填;阈值/分数/top_k 不变;无用户面阈上候选
+        # 时恒等。仅普通路径 —— 比较路径已有逐目标 tier 配额(C1/C2)。
+        code_oriented = _is_code_oriented_query(query)
+        if cmp_stage_info is None and not code_oriented:
+            reranked = _compose_user_facing_evidence(
+                reranked,
+                pool_scores,
+                self._top_k,
+                getattr(self._reranker, "threshold", 0.3),
+            )
 
         # INC-5:确定性证据选择/组合——required 槽命中证据稳定前置
         # (纯函数,零 LLM;不增删证据只定序,既有排名/剪枝/上下文安全约束保持;
@@ -2569,7 +2643,16 @@ class RAGOrchestrator:
 
         if len(reranked) < effective_min:
             # P1 兜底:rerank 滤光但 fused 非空时降级用 fused top-N(与 answer 同策略)
-            fallback = fused[: self._top_k] if fused else []
+            # Issue #77(D 兜底资格+B1):兜底证据面服从同一类组合边界,
+            # 但 code-oriented 查询保持竞争序(与比较管线 Rev2 同语义)。
+            if _is_code_oriented_query(query):
+                fallback = fused[: self._top_k] if fused else []
+            else:
+                fallback = (
+                    _compose_user_facing_evidence(fused, None, self._top_k, None)
+                    if fused
+                    else []
+                )
             if not fallback:
                 # 拒答前收敛 lead 判定任务:qualified 信号不因检索为空而丢失
                 # (invited=False:本轮没有生成回答,未展示邀请)
@@ -2677,6 +2760,7 @@ class RAGOrchestrator:
                 )
                 return
             # 降级:用 fused top-N 作上下文
+            # (兜底证据面已按 Issue #77(D) 类组合边界生成。)
             reranked = fallback
             logger.info(
                 "stream rerank 滤光但 fused 非空(%d),降级用 fused top-N",
@@ -2757,6 +2841,16 @@ class RAGOrchestrator:
                 "summary": lead_qual.summary if lead_qual else "",
                 "ms": lead_ms,
             }
+
+        # Issue #77(G-01/B 类真实证据组合):与 answer 同位同语义(parity)。
+        code_oriented = _is_code_oriented_query(query)
+        if cmp_stage_info is None and not code_oriented:
+            reranked = _compose_user_facing_evidence(
+                reranked,
+                pool_scores,
+                self._top_k,
+                getattr(self._reranker, "threshold", 0.3),
+            )
 
         # INC-5:确定性证据选择/组合(与 answer 同位同语义,parity)——
         # required 槽命中证据稳定前置;定序决定可见源截断预算归属,
