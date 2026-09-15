@@ -293,6 +293,7 @@ export default function DataSourceDetail() {
         attentionCount: bucketCounts ? bucketCounts.attention : null,
         syncHealthOverall: healthItem?.overall ?? null,
         lifecycleState: source.lifecycle_state,
+        membershipStatus: source.membership_status ?? null,
       })
     : null;
   const attentionCount = bucketCounts?.attention ?? 0;

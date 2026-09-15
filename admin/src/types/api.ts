@@ -148,6 +148,8 @@ export interface SyncHealthItem {
   coverage: SyncHealthDimension;
   freshness: SyncHealthDimension;
   consistency: SyncHealthDimension;
+  /** #71 权威成员货币(持久真值直读;与 consistency 严格分维)。 */
+  currency: SyncHealthDimension;
 }
 
 export interface SyncHealthResponse {
@@ -207,6 +209,17 @@ export interface DataSource {
   freshness_hours?: number | null;
   /** U-12 后端权威超期态(Admin 可见)。 */
   freshness_overdue?: boolean | null;
+  /**
+   * #71 权威成员货币真值(持久列直读;渲染端禁止实时枚举)。
+   * current/stale/failed/unsupported;null = 尚未对账(legacy)。
+   */
+  membership_status?: string | null;
+  /** #71 最近一次权威对账完成时间。 */
+  membership_checked_at?: string | null;
+  /** #71 最近一次对账发现的陈旧成员数(文档)。 */
+  membership_stale_detected?: number | null;
+  /** #71 最近一次对账实际退休数(文档)。 */
+  membership_stale_retired?: number | null;
 }
 
 /** #18:删除是否在途(已受理未终态;此时禁止同步/重复删除)。 */

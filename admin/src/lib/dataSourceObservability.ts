@@ -41,6 +41,8 @@ const HEALTH_STATE_LABELS: Record<string, string> = {
   partial: "部分覆盖",
   unknown: "未知",
   insufficient_data: "证据不足",
+  // #71 权威成员货币维度(connector 无成员枚举能力 = 中性)
+  unsupported: "不适用",
   // overall(W2 _overall_health 词表)
   HEALTHY: "健康",
   RECOVERING: "恢复中",

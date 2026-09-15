@@ -390,6 +390,53 @@ def _expected_state_of(source: DataSource) -> str:
     return "REQUIRED" if source.enabled else "EXCLUDED"
 
 
+def _currency_dim(source: DataSource) -> "HealthDimension":
+    """#71 权威成员货币维度:只读持久真值,绝不为此做实时上游枚举。
+
+    - current    → ok
+    - stale/failed → degraded(已知漂移未解决 / 对账失败,参与 worst-of)
+    - unsupported  → unsupported(.connector 无成员枚举能力,中性不降级)
+    - NULL       → unknown(尚未对账的 legacy 行;不参与 worst-of)
+    """
+    from backend.api.admin.schemas import HealthDimension
+
+    status = source.membership_status
+    if status is None:
+        return HealthDimension(
+            state="unknown",
+            evidence="membership reconciliation not run yet",
+        )
+    if status == "current":
+        return HealthDimension(
+            state="ok",
+            evidence="membership reconciled without unresolved drift",
+            as_of=source.membership_checked_at.isoformat()
+            if source.membership_checked_at
+            else None,
+        )
+    if status in ("stale", "failed"):
+        detail = source.membership_detail or {}
+        sample = detail.get("residual_sample") or detail.get("error")
+        evidence = f"membership_status={status}"
+        if sample:
+            evidence += f": {str(sample)[:160]}"
+        return HealthDimension(
+            state="degraded",
+            evidence=evidence,
+            as_of=source.membership_checked_at.isoformat()
+            if source.membership_checked_at
+            else None,
+        )
+    # unsupported / 未来词表扩展:如实呈现,不降级
+    return HealthDimension(
+        state="unsupported" if status == "unsupported" else "unknown",
+        evidence=f"membership_status={status}",
+        as_of=source.membership_checked_at.isoformat()
+        if source.membership_checked_at
+        else None,
+    )
+
+
 def _overall_health(
     *,
     expected_state: str,
@@ -401,6 +448,7 @@ def _overall_health(
     coverage: str,
     freshness: str,
     consistency: str,
+    currency: str = "unknown",
 ) -> str:
     """聚合:EXCLUDED → RECOVERING overlay → EMPTY_* → worst-of(unknown 不拖低)。
 
@@ -413,6 +461,9 @@ def _overall_health(
       「数据已恢复、最新运行成功」的源不得仅因历史失败记录保持 Severe;
       GPU→CPU 成功回退的业务成功运行同理不影响当前健康。当前性失败仍由
       connectivity(latest run)与 consistency(latest facts)如实呈现。
+    - Issue #71:currency=degraded(权威成员漂移未解决/对账失败)与
+      connectivity/consistency 同级驱动 ACTION_REQUIRED —— 已知陈旧在服
+      是最高级正确性缺陷,健康面绝不呈现 HEALTHY。
     """
     if expected_state == "EXCLUDED":
         return "EXCLUDED"
@@ -422,7 +473,7 @@ def _overall_health(
         return "EMPTY_UNEXPECTED"
     if expected_state in ("OPTIONAL", "DISCOVERY") and document_count == 0:
         return "EMPTY_EXPECTED"
-    if connectivity == "failed" or consistency == "degraded":
+    if connectivity == "failed" or consistency == "degraded" or currency == "degraded":
         return "ACTION_REQUIRED"
     if freshness == "stale":
         return "STALE"
@@ -520,6 +571,7 @@ async def get_source_health(
             source.enabled, source.sync_interval, last_success.get(source.id), now
         )
         consistency = _consistency_dim(latest)
+        currency = _currency_dim(source)
         expected_state = _expected_state_of(source)
         overall = _overall_health(
             expected_state=expected_state,
@@ -531,6 +583,7 @@ async def get_source_health(
             coverage=coverage.state,
             freshness=freshness.state,
             consistency=consistency.state,
+            currency=currency.state,
         )
         items.append(
             SourceHealthItem(
@@ -546,6 +599,7 @@ async def get_source_health(
                 coverage=coverage,
                 freshness=freshness,
                 consistency=consistency,
+                currency=currency,
             )
         )
     return SourceHealthResponse(items=items)

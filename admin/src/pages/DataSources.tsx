@@ -189,6 +189,7 @@ export default function DataSources() {
       attentionCount: summaryMap.get(ds.id)?.attention_count ?? null,
       syncHealthOverall: syncHealthMap.get(ds.id)?.overall ?? null,
       lifecycleState: ds.lifecycle_state,
+      membershipStatus: ds.membership_status ?? null,
     });
 
   const visibleSources = useMemo(() => {

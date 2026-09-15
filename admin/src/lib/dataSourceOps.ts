@@ -94,6 +94,8 @@ export function operatorStateOf(input: {
   attentionCount: number | null | undefined;
   syncHealthOverall: string | null | undefined;
   lifecycleState?: string | null;
+  /** #71 权威成员货币真值(后端持久列直读;渲染端零重判)。 */
+  membershipStatus?: string | null;
 }): OperatorState {
   const {
     enabled,
@@ -101,14 +103,27 @@ export function operatorStateOf(input: {
     attentionCount,
     syncHealthOverall,
     lifecycleState,
+    membershipStatus,
   } = input;
-  // 优先级:删除失败 > 禁用 > 同步失败 > 需处理 > 中间态 > 待分类 > 正常
+  // 优先级:删除失败 > 禁用 > 同步失败 > 成员漂移/对账失败 > 需处理 > 中间态 > 待分类 > 正常
   if (lifecycleState === "delete_failed") {
     return { key: "delete_failed", label: "删除失败", tone: "failed" };
   }
   if (!enabled) return { key: "disabled", label: "已禁用", tone: "disabled" };
   if (lastSyncStatus === "failed") {
     return { key: "sync_failed", label: "同步失败", tone: "failed" };
+  }
+  // #71:已知权威成员漂移未解决(stale)/对账失败(failed)→ 绝不呈现正常。
+  // 只消费后端持久真值;unsupported/NULL(未对账 legacy)不改变既有呈现。
+  if (membershipStatus === "stale") {
+    return { key: "membership_drift", label: "成员漂移", tone: "attention" };
+  }
+  if (membershipStatus === "failed") {
+    return {
+      key: "membership_reconciliation_failed",
+      label: "对账失败",
+      tone: "attention",
+    };
   }
   if ((attentionCount ?? 0) > 0 || syncHealthOverall === "ACTION_REQUIRED") {
     return { key: "attention", label: "需处理", tone: "attention" };

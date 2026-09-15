@@ -49,6 +49,10 @@ async def _setup_app_state():
     dsn = os.environ.get("TEST_DATABASE_URL", settings.postgres_dsn)
     engine = get_engine(dsn)
     await init_db(engine)
+    # 共享测试库的既有表需要补加性列(幂等迁移;create_all 不加列,#71)
+    from scripts.migrate_add_membership_currency import migrate as _migrate_membership
+
+    await _migrate_membership(engine)
     factory = get_session_factory(engine)
     app.state.session_factory = factory
 

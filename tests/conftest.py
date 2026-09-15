@@ -103,6 +103,10 @@ async def db_engine():
     engine = get_engine(dsn)
     try:
         await init_db(engine)
+        # 共享测试库的既有表需要补加性列(幂等迁移;create_all 不加列)
+        from scripts.migrate_add_membership_currency import migrate as _migrate_membership
+
+        await _migrate_membership(engine)
         yield engine
     finally:
         # 测试结束后清理所有表,避免跨测试数据污染
