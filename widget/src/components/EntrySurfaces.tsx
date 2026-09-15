@@ -12,7 +12,14 @@ import type { UiStrings } from "../i18n";
 
 export function EntryPill({ label, onOpen }: { label: string; onOpen: () => void }) {
   return (
-    <button type="button" className="ask-ai-pill" onClick={onOpen} aria-haspopup="dialog">
+    <button
+      type="button"
+      className="ask-ai-pill"
+      data-track="contact"
+      data-type="ask_ai"
+      onClick={onOpen}
+      aria-haspopup="dialog"
+    >
       <svg
         className="ask-ai-pill-glyph"
         viewBox="0 0 24 24"
@@ -47,7 +54,14 @@ export function ContextualNudge({
 }) {
   return (
     <div className="ask-ai-nudge" role="status">
-      <button type="button" className="ask-ai-nudge-body" onClick={onOpen} aria-haspopup="dialog">
+      <button
+        type="button"
+        className="ask-ai-nudge-body"
+        data-track="contact"
+        data-type="ask_ai"
+        onClick={onOpen}
+        aria-haspopup="dialog"
+      >
         <span className="ask-ai-nudge-identity">Ask AI</span>
         <span className="ask-ai-nudge-greeting">{greeting}</span>
       </button>

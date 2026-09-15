@@ -222,6 +222,39 @@ window.AskAIConfig.pageContext = undefined;
 
 ---
 
+## 1.6 Ask AI 点击追踪契约（Issue #80）
+
+宿主如果需要识别 Ask AI 入口点击，应在实际的入口交互元素上保留以下语义属性：
+
+```html
+<a href="/ask-ai/" data-track="contact" data-type="ask_ai">Ask AI</a>
+```
+
+`<a>` 只是示例；按钮、launcher 或其它等价入口同样适用。关键是属性必须位于实际被点击元素（或其可观察的交互容器）上：
+
+```html
+<button type="button" data-track="contact" data-type="ask_ai">
+  Ask AI
+</button>
+```
+
+使用官方 Widget 时，Widget 自有的 FAB、品牌胶囊、Minimal Pill 和 contextual nudge 打开按钮会暴露同一组属性。它们在宿主文档中以普通 DOM 挂载，点击事件继续冒泡；宿主的 delegated tracker 可以观察该公开边界。Widget 不调用宿主 Analytics，也不要求 GA4、GTM 或 Analytics 凭据才能完成集成。
+
+宿主侧既有 tracker 应将这组语义记录为现有标准事件：
+
+```text
+event_name     = element_click
+track_category = contact
+track_type     = ask_ai
+track_name     = ask_ai
+```
+
+这表示 Ask AI 入口/打开意图，不表示对话成功、生成线索或购买。宿主负责按自身 Analytics 能力查询总点击、distinct visitor、页面路径、宿主/表面归因和时间范围；不要新建 `ask_ai_click` 或按 Website/Wiki/Store 拆分的事件名，也不要把 GA4 与 CamThink custom collector 的同一动作相加。
+
+只给真正打开或展开 Ask AI 的入口加上这组属性。关闭、最小化、发送问题和 Trusted Action 控件不应因此被误分类为 Ask AI 入口点击。不要通过 `preventDefault()`、`stopPropagation()`、iframe 或 Shadow DOM 隔离该公开点击信号；导航/打开行为仍由宿主和 Widget 原有实现负责。
+
+---
+
 # Part 2 — v1.3.0 Widget Experience
 
 ## 2.1 Entry Modes
