@@ -198,3 +198,61 @@ async def test_c3_apply_persists_currency_truth(db_engine, sync_factory):
         ).scalar_one()
     assert ds.membership_status == "current"
     assert ds.membership_stale_retired == 1
+
+
+async def test_c4_truth_persistence_failure_is_explicit_not_fabricated(
+    db_engine, sync_factory
+):
+    """R2 BLOCKER 2: apply with failing truth persistence → dedicated error,
+    tombstones remain committed, CLI contract = non-success (no fake result)."""
+    from contextlib import asynccontextmanager
+
+    from backend.services.membership_currency import MembershipTruthPersistenceError
+
+    await _seed(db_engine)
+    factory = get_session_factory(db_engine)
+    connector = _Connector({HEALTHY})
+
+    fail_state = {"fail": True}
+
+    def _failing_factory():
+        real = factory
+        ds_cls = DataSource
+
+        @asynccontextmanager
+        async def _ctx():
+            async with real() as session:
+                original_commit = session.commit
+
+                async def _commit():
+                    pending = any(
+                        isinstance(o, ds_cls) and o.membership_status is not None
+                        for o in session.dirty
+                    )
+                    if pending and fail_state["fail"]:
+                        raise RuntimeError("simulated truth outage")
+                    await original_commit()
+
+                session.commit = _commit  # type: ignore[method-assign]
+                yield session
+
+        return _ctx()
+
+    with pytest.raises(MembershipTruthPersistenceError):
+        await script.apply_plan(
+            _failing_factory(),
+            sync_factory,
+            connector,
+            SRC,
+            reason="authorized-correction",
+        )
+
+    async with factory() as session:
+        doc = (
+            await session.execute(select(Document).where(Document.source_id == STALE))
+        ).scalar_one()
+        assert doc.lifecycle == DocLifecycle.DELETED  # tombstones remain committed
+        ds = (
+            await session.execute(select(DataSource).where(DataSource.id == SRC))
+        ).scalar_one()
+        assert ds.membership_status is None  # no fabricated persisted truth

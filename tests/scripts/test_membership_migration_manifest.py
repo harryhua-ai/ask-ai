@@ -10,8 +10,8 @@ fail-closed 解析器在发布期拦截。
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -37,8 +37,9 @@ def test_m1_membership_truth_migration_is_registered_exactly_once():
 def test_m2_migration_covers_exactly_the_membership_model_columns():
     """列面 ↔ 迁移覆盖面逐字对齐:模型新增/删除 membership_* 列而未同步迁移
     (或反向)时即红 —— schema 依赖应用代码先于登记进入发布树的防线。"""
-    from backend.db.models import DataSource
     import importlib
+
+    from backend.db.models import DataSource
 
     model_columns = {
         c.name for c in DataSource.__table__.columns if c.name.startswith("membership_")

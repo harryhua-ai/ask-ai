@@ -51,6 +51,7 @@ from backend.db.session import get_engine, get_session_factory
 from backend.services.membership_currency import (
     MEMBERSHIP_STATUS_CURRENT,
     MEMBERSHIP_STATUS_STALE,
+    MembershipTruthPersistenceError,
     ledger_active_membership,
     persist_membership_truth,
     reconcile_membership,
@@ -118,6 +119,10 @@ async def apply_plan(
     返回可审计结果(本次 detected/retired + 复核残余)。执行时重算总体,
     不依赖任何历史计划数字。retire 走同步账本面单事务原子提交;真值持久化
     在其后(异步面)—— kill-safety 排序。
+
+    失败语义(R2 BLOCKER 2):真值持久化失败以
+    :class:`MembershipTruthPersistenceError` 显式上抛 —— 已提交墓碑不回滚,
+    CLI 必须如实报告失败(退出码非 0),绝不伪造成功。
     """
     result = reconcile_membership(sync_session_factory, connector, source_id, reason=reason)
     status = MEMBERSHIP_STATUS_CURRENT if not result.unresolved else MEMBERSHIP_STATUS_STALE
@@ -194,13 +199,22 @@ async def main_async(argv: list[str] | None = None) -> int:
             )
             return 0
 
-        result = await apply_plan(
-            session_factory,
-            sync_session_factory,
-            connector,
-            args.source,
-            reason=f"authorized-correction:{args.source}",
-        )
+        try:
+            result = await apply_plan(
+                session_factory,
+                sync_session_factory,
+                connector,
+                args.source,
+                reason=f"authorized-correction:{args.source}",
+            )
+        except MembershipTruthPersistenceError as exc:
+            print(
+                "ERROR: 矫正退休已提交,但货币真值持久化失败(绝不伪造成功;"
+                "下一轮/重试将重新建立真值):\n"
+                f"  {exc}",
+                file=sys.stderr,
+            )
+            return 1
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if result["status"] != "completed" or result["residual"]:
             print("ERROR: reconciliation 未完全收敛(见 residual)", file=sys.stderr)

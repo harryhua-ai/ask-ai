@@ -87,6 +87,7 @@ from backend.services.membership_currency import (
     MEMBERSHIP_STATUS_FAILED,
     MEMBERSHIP_STATUS_STALE,
     MEMBERSHIP_STATUS_UNSUPPORTED,
+    MembershipTruthPersistenceError,
     persist_membership_truth,
     reconcile_membership,
     truth_detail_of,
@@ -518,6 +519,25 @@ async def _last_success_at(session_factory: Any, source_id: str) -> datetime | N
     return finished_at or started_at
 
 
+def _membership_truth_persist_failed(
+    log_entry: SyncLog, exc: MembershipTruthPersistenceError
+) -> tuple[bool, dict[str, Any]]:
+    """真值持久化失败的统一处置(R2 BLOCKER 2 冻结语义)。
+
+    本轮降级 partial(绝不 success)、error_detail 确定性指明真值持久化
+    失败、delta 不携带 membership_status 声明(不伪造已持久真值);
+    已提交墓碑不回滚,下一轮重试。
+    """
+    logger.error("数据源 %s 成员真值持久化失败: %s", log_entry.source_id, str(exc)[:200])
+    if log_entry.status == "success":
+        log_entry.status = "partial"
+    log_entry.error_detail = (
+        f"{log_entry.error_detail or ''};"
+        f"membership truth persistence failed: {str(exc)[:200]}"
+    ).lstrip(";")
+    return False, {}
+
+
 async def _reconcile_membership_for_source(
     cfg: SourceConfig,
     connector: Any,
@@ -538,10 +558,17 @@ async def _reconcile_membership_for_source(
     对账失败如实记 failed 并把本轮 SyncLog 降级 partial —— 绝不在已知名义
     漂移未解决时宣称 success。
 
+    真值持久化失败(R2 BLOCKER 2 冻结语义):**绝不 best-effort** ——
+    :class:`MembershipTruthPersistenceError` 由本函数显式处置:本轮降级
+    partial、error_detail 指明真值持久化失败、delta 不携带任何
+    membership_status 声明(不伪造已持久真值);已提交墓碑不回滚,
+    下一轮重试对账与真值建立。
+
     Returns:
-        (resolved, delta_merge):resolved=False 表示漂移未解决(调用方
-        不得记 success);delta_merge 需并入本轮 delta_counts(键:
-        membership_status / stale_detected / stale_retired,文档单位)。
+        (resolved, delta_merge):resolved=False 表示漂移未解决或真值未
+        建立(调用方不得记 success);delta_merge 需并入本轮 delta_counts
+        (键:membership_status / stale_detected / stale_retired,文档单位;
+        仅在真值确已持久化时携带 membership_status)。
     """
     if dry_run:
         # dry-run 原语义:零写副作用,不枚举权威真值、不持久化
@@ -554,9 +581,13 @@ async def _reconcile_membership_for_source(
     if getattr(connector, "membership_source_ids", None) is None:
         # 无成员枚举能力的 connector(filesystem/woocommerce/web_crawl 等):
         # 如实持久化 unsupported(中性,不降级健康);#71 授权范围第 18 条。
-        await persist_membership_truth(
-            session_factory, cfg.id, status=MEMBERSHIP_STATUS_UNSUPPORTED
-        )
+        # 真值写失败 ⇒ 不支持态也绝不静默(R2 BLOCKER 2/D)。
+        try:
+            await persist_membership_truth(
+                session_factory, cfg.id, status=MEMBERSHIP_STATUS_UNSUPPORTED
+            )
+        except MembershipTruthPersistenceError as exc:
+            return _membership_truth_persist_failed(log_entry, exc)
         return True, {"membership_status": MEMBERSHIP_STATUS_UNSUPPORTED}
     try:
         result = reconcile_membership(
@@ -568,28 +599,45 @@ async def _reconcile_membership_for_source(
             cfg.id,
             str(exc)[:200],
         )
-        await persist_membership_truth(
-            session_factory,
-            cfg.id,
-            status=MEMBERSHIP_STATUS_FAILED,
-            detail={"error": str(exc)[:300]},
-        )
+        truth_delta: dict[str, Any] = {}
+        detail_note = ""
+        try:
+            await persist_membership_truth(
+                session_factory,
+                cfg.id,
+                status=MEMBERSHIP_STATUS_FAILED,
+                detail={"error": str(exc)[:300]},
+            )
+            truth_delta = {"membership_status": MEMBERSHIP_STATUS_FAILED}
+        except MembershipTruthPersistenceError as pexc:
+            # 对账已失败、真值又写不进:两段事实都如实呈现,绝不掩盖
+            detail_note = f";membership truth persistence failed: {pexc}"
+            logger.error(
+                "数据源 %s 真值持久化亦失败(failed 态未落库): %s",
+                cfg.id,
+                str(pexc)[:200],
+            )
         if log_entry.status == "success":
             log_entry.status = "partial"
         log_entry.error_detail = (
             f"{log_entry.error_detail or ''};"
-            f"membership reconciliation failed: {str(exc)[:200]}"
+            f"membership reconciliation failed: {str(exc)[:200]}{detail_note}"
         ).lstrip(";")
-        return False, {"membership_status": MEMBERSHIP_STATUS_FAILED}
+        return False, truth_delta
     status = MEMBERSHIP_STATUS_CURRENT if not result.unresolved else MEMBERSHIP_STATUS_STALE
-    await persist_membership_truth(
-        session_factory,
-        cfg.id,
-        status=status,
-        stale_detected=len(result.stale_ids),
-        stale_retired=result.retired,
-        detail=truth_detail_of(result),
-    )
+    try:
+        await persist_membership_truth(
+            session_factory,
+            cfg.id,
+            status=status,
+            stale_detected=len(result.stale_ids),
+            stale_retired=result.retired,
+            detail=truth_detail_of(result),
+        )
+    except MembershipTruthPersistenceError as exc:
+        # B:退休墓碑已提交(不回滚);但真值未建立 ⇒ 本轮绝不记 success,
+        # 也绝不携带 current/stale 声明;下一轮重试对账与真值建立。
+        return _membership_truth_persist_failed(log_entry, exc)
     delta = {
         "membership_status": status,
         "stale_detected": len(result.stale_ids),

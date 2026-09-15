@@ -51,6 +51,16 @@ MEMBERSHIP_STATUS_UNSUPPORTED = "unsupported"
 _DETAIL_SAMPLE = 20
 
 
+class MembershipTruthPersistenceError(RuntimeError):
+    """成员货币真值持久化失败(#71 R2 BLOCKER 2)。
+
+    语义冻结:真值持久化**绝不 best-effort** —— 任何失败(写库故障/源行
+    缺失)都以本错误显式上抛,由调用方裁决轮次状态(partial)与错误呈现;
+    已提交的退休墓碑不受影响(不回滚),下一轮重试对账与真值建立。绝不允许
+    「对账成功但真值写失败仍宣称 current/健康」。
+    """
+
+
 @dataclass(frozen=True)
 class MembershipReconciliation:
     """一次成员对账的完整事实(调用方据此持久化真值)。"""
@@ -156,7 +166,14 @@ async def persist_membership_truth(
     """持久化数据源货币真值(加性列;Admin 只读本真值,不做实时枚举)。
 
     调用方排序契约:必须在对账事务成功完成后调用(kill-safety,#71 授权
-    契约第 8 条)。源行缺失时容忍跳过(源可能在轮内被删除),绝不抛出。
+    契约第 8 条)。
+
+    失败语义(R2 BLOCKER 2 冻结):**绝不静默** —— 写库故障或源行缺失一律
+    抛出 :class:`MembershipTruthPersistenceError`,由调用方把本轮降级为
+    未解决(partial)并如实呈现;已提交的墓碑不回滚,下一轮重试真值建立。
+
+    Raises:
+        MembershipTruthPersistenceError: 真值未能持久化(任何原因)。
     """
     ts = checked_at or datetime.now(UTC)
     try:
@@ -167,18 +184,21 @@ async def persist_membership_truth(
                 )
             ).scalar_one_or_none()
             if ds is None:
-                logger.warning("货币真值持久化跳过(源行不存在) %s", source_id)
-                return
+                raise MembershipTruthPersistenceError(
+                    f"membership truth not persisted: source row missing: {source_id}"
+                )
             ds.membership_status = status
             ds.membership_checked_at = ts
             ds.membership_stale_detected = int(stale_detected)
             ds.membership_stale_retired = int(stale_retired)
             ds.membership_detail = detail
             await session.commit()
-    except Exception as exc:  # noqa: BLE001 - 记账失败不阻断同步业务(如实告警)
-        logger.error(
-            "货币真值持久化失败 %s: %s", source_id, str(exc)[:200]
-        )
+    except MembershipTruthPersistenceError:
+        raise
+    except Exception as exc:
+        raise MembershipTruthPersistenceError(
+            f"membership truth not persisted for {source_id}: {str(exc)[:200]}"
+        ) from exc
 
 
 def truth_detail_of(result: MembershipReconciliation) -> dict[str, Any]:

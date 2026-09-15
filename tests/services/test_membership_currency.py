@@ -342,9 +342,14 @@ async def test_r10_persist_membership_truth_failed_and_unsupported(factory):
     assert ds.membership_status == MEMBERSHIP_STATUS_UNSUPPORTED
 
 
-async def test_r11_persist_membership_truth_missing_source_is_tolerated(factory):
-    """Sync of a source whose row vanished mid-flight must not crash the round."""
-    await persist_membership_truth(factory, "vanished-source-r11", status=MEMBERSHIP_STATUS_CURRENT)
+async def test_r11_missing_source_row_is_an_explicit_truth_failure(factory):
+    """R2 BLOCKER 2: truth establishment failure is NEVER silent (row missing)."""
+    from backend.services.membership_currency import MembershipTruthPersistenceError
+
+    with pytest.raises(MembershipTruthPersistenceError, match="source row missing"):
+        await persist_membership_truth(
+            factory, "vanished-source-r11", status=MEMBERSHIP_STATUS_CURRENT
+        )
 
 
 async def test_r12_status_vocabulary_is_frozen():

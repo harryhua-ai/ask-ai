@@ -307,6 +307,139 @@ def sync_factory(db_engine):
         engine.dispose()
 
 
+def _truth_commit_failing_factory(real_factory, fail_state: dict):
+    """真值持久化注入面:仅当会话持有已置 membership_status 的脏 DataSource
+    (即成员货币真值写)时令 commit 失败;SyncLog/SyncRun/调度写不受影响 ——
+    在持久层故障注入,使「吞错 best-effort」实现与「显式失败」契约可分辨。
+    """
+    from contextlib import asynccontextmanager
+
+    from backend.db.models import DataSource as _DS
+
+    @asynccontextmanager
+    async def _ctx():
+        async with real_factory() as session:
+            original_commit = session.commit
+
+            async def _commit():
+                truth_write_pending = any(
+                    isinstance(obj, _DS) and obj.membership_status is not None
+                    for obj in session.dirty
+                )
+                if truth_write_pending and fail_state["fail"]:
+                    raise RuntimeError("simulated truth persistence outage")
+                await original_commit()
+
+            session.commit = _commit  # type: ignore[method-assign]
+            yield session
+
+    return _ctx
+
+
+# --------------------------------------------------------------------------- #
+# R2 BLOCKER 2: truth persistence is NOT best-effort
+# --------------------------------------------------------------------------- #
+
+
+async def test_t1_truth_persistence_failure_is_never_success_or_current(
+    db_engine, sync_factory, monkeypatch, healthy_report
+):
+    """RED-2: reconcile succeeds + truth commit raises ⇒ partial, no current claim."""
+    factory = get_session_factory(db_engine)
+    await _seed(db_engine, {OLD: 0, HEALTHY: 0})
+    connector = _Connector(members={HEALTHY})
+    _register(connector)
+    fail_state = {"fail": True}
+    failing_factory = _truth_commit_failing_factory(factory, fail_state)
+
+    await sync_mod._sync_one(
+        _cfg(),
+        _Pipeline(sync_factory),
+        failing_factory,
+        triggered_by="cron",
+        builder=_StubBuilder(),
+    )
+
+    log = await _latest_sync_log(factory)
+    assert log.status == "partial"
+    assert "truth persistence" in (log.error_detail or "").lower()
+    membership_status = log.delta_counts.get("membership_status")
+    assert membership_status != "current"  # no false current claim
+    ds = await _datasource(factory)
+    assert ds.membership_status is None  # nothing persisted — no fabricated truth
+
+
+async def test_t2_tombstones_survive_failure_then_next_round_establishes_truth(
+    db_engine, sync_factory, monkeypatch, healthy_report
+):
+    """RED-3: committed tombstones are not undone; next round re-establishes truth."""
+    factory = get_session_factory(db_engine)
+    await _seed(db_engine, {OLD: 0, HEALTHY: 0})
+    connector = _Connector(members={HEALTHY})
+    _register(connector)
+    fail_state = {"fail": True}
+    failing_factory = _truth_commit_failing_factory(factory, fail_state)
+
+    await sync_mod._sync_one(
+        _cfg(),
+        _Pipeline(sync_factory),
+        failing_factory,
+        triggered_by="cron",
+        builder=_StubBuilder(),
+    )
+
+    stale = await _doc(factory, OLD)
+    assert stale.lifecycle == DocLifecycle.DELETED  # retirement NOT rolled back
+    ds = await _datasource(factory)
+    assert ds.membership_status is None
+
+    log1 = await _latest_sync_log(factory)
+    assert log1.status == "partial"  # truth not established ⇒ never success
+
+    # Round 2 with healthy persistence: converges and establishes truth.
+    fail_state["fail"] = False
+    await sync_mod._sync_one(
+        _cfg(),
+        _Pipeline(sync_factory),
+        factory,
+        triggered_by="cron",
+        builder=_StubBuilder(),
+    )
+    log2 = await _latest_sync_log(factory)
+    assert log2.status == "success"
+    assert log2.delta_counts["membership_status"] == "current"
+    assert log2.delta_counts["stale_detected"] == 0
+    ds2 = await _datasource(factory)
+    assert ds2.membership_status == "current"
+
+
+async def test_t3_unsupported_truth_persistence_failure_is_visible(
+    db_engine, sync_factory, monkeypatch, healthy_report
+):
+    """RED-4: unsupported truth write failing must not pass as successful."""
+    factory = get_session_factory(db_engine)
+    await _seed(db_engine, {HEALTHY: 0})
+    connector = _Connector(with_membership=False)
+    _register(connector)
+    fail_state = {"fail": True}
+    failing_factory = _truth_commit_failing_factory(factory, fail_state)
+
+    await sync_mod._sync_one(
+        _cfg(),
+        _Pipeline(sync_factory),
+        failing_factory,
+        triggered_by="cron",
+        builder=_StubBuilder(),
+    )
+
+    log = await _latest_sync_log(factory)
+    assert log.status == "partial"
+    assert "truth persistence" in (log.error_detail or "").lower()
+    assert log.delta_counts.get("membership_status") != "unsupported"
+    ds = await _datasource(factory)
+    assert ds.membership_status is None  # no fabricated persisted truth
+
+
 def _async_return(value):
     from unittest.mock import AsyncMock
 
