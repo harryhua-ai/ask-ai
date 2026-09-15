@@ -302,6 +302,28 @@ async def active_generation_ordinals_async_session(session: Any) -> list[int]:
     return sorted(int(o) for o in result.scalars().all())
 
 
+def withdrawn_document_source_ids_sync(session: Session) -> list[str]:
+    """同步会话版:withdrawn(非在服)文档 identity 权威集合(Issue #84)。
+
+    同一权威关系(服务选择唯一权威:documents.lifecycle)的互补面:凡
+    ``lifecycle NOT IN SERVING``(墓碑/被接替等已撤出服务集的生命期,含
+    尚未入服的 discovered)的文档 source_id 不得具检索资格 —— 这些文档的
+    向量对象常物理保留于仍被其他在服文档共享的 legacy 初始代
+    (generation_ordinal=0),全局在服代过滤放行它们,故检索面必须按
+    per-document identity 排除(与 U-12 ``_apply_knowledge_exclusion``
+    同一消费模式)。
+
+    只读查询;词表与转换原语零触碰(不新增生命周期语义)。fail-closed:
+    查询失败异常向上传播,绝不静默回落空集(空集会让墓碑知识复活)。
+    """
+    rows = session.execute(
+        select(Document.source_id).where(
+            Document.lifecycle.notin_(DocLifecycle.SERVING)
+        )
+    ).scalars().all()
+    return sorted({str(r) for r in rows})
+
+
 # --------------------------------------------------------------------------- #
 # 转换原语(带前置条件;P2 将直接消费,不得要求新存储语义)
 # --------------------------------------------------------------------------- #

@@ -913,6 +913,9 @@ async def test_u12_u13_preview_confirm_chain_and_retrieval_eligibility(
 
     stub = SimpleNamespace(
         _knowledge_exclusions=lambda: excluded,
+        # Issue #84:消费面叠加 per-document withdrawn 排除;本测试聚焦
+        # U-12 面,stub 的 withdrawn 权威供给为空集(未 wiring 语义)。
+        _withdrawn_identities=lambda: [],
     )
 
     results = [
