@@ -21,8 +21,23 @@
   "implementation_authorized": true
  },
  "workflow": "high-risk",
- "change_budget": null,
+ "change_budget": {
+  "expected": [
+   "backend/retrieval/search.py",
+   "backend/main.py",
+   "backend/services/document_lifecycle.py"
+  ],
+  "conditional": [
+   "tests/**"
+  ],
+  "forbidden": [
+   "deploy/**"
+  ],
+  "evidence": "RCA: STALE_RETRIEVAL_ELIGIBILITY_CONFIRMED. \u4fee\u590d\u9762=RESTORATION_CANDIDATE: (1) backend/retrieval/search.py \u4e09\u6761\u68c0\u7d22\u8def\u5f84(search/search_symbols/search_bucket)\u5728\u65e2\u6709 U-12 _apply_knowledge_exclusion \u540c\u4e00\u6d88\u8d39\u9762\u53e0\u52a0 per-document withdrawn identity \u6392\u9664(\u590d\u7528 exact-or-prefix \u5339\u914d,\u96f6\u65b0\u673a\u5236); (2) backend/services/document_lifecycle.py \u65b0\u589e\u53ea\u8bfb\u6743\u5a01\u67e5\u8be2 withdrawn_document_source_ids_sync(lifecycle NOT IN SERVING,\u4e0e active_generation_ordinals_sync \u540c\u6784,\u4e0d\u6539\u4efb\u4f55 ledger/membership/generation \u5199\u8bed\u4e49); (3) backend/main.py lifespan \u6ce8\u5165 withdrawn-identity \u6743\u5a01\u4f9b\u7ed9(fail-closed,CachedSourceExclusions \u540c\u6a21\u5f0f). \u65e0\u65b0\u4ea7\u54c1\u8bed\u4e49:DocLifecycle.WITHDRAWN=(SUPERSEDED,DELETED) \u8bcd\u8868\u5df2\u5b58\u5728,\u4ec5\u6d88\u8d39.",
+  "justifications": {}
+ },
  "scope_justifications": {},
  "candidate": null,
- "investigation_artifact": null
+ "investigation_artifact": null,
+ "change_budget_established_at": "2026-09-15T17:09:55Z"
 }
