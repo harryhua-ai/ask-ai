@@ -40,10 +40,14 @@ STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
 STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
+# INC-WEB-EMBED-413 REMEDIATION:任务自身工作已完结(裁决 = 不可回放,已把
+# 权威源重建交接给既有 sync 路径);终态呈现,不入 _OPEN_STATUSES。
+STATUS_REBUILD_REQUESTED = "rebuild_requested"
 
 STAGE_PLAN = "plan"
 STAGE_REPAIR = "repair"
 STAGE_VERIFY = "verify"
+STAGE_REBUILD_REQUEST = "rebuild_request"
 
 _OPEN_STATUSES = (STATUS_PENDING, STATUS_RUNNING)
 
@@ -58,6 +62,54 @@ def _now() -> datetime:
 
 async def _append_event(session: AsyncSession, task: DocumentRepairTask, event: str, **detail: Any) -> None:
     task.events = [*(task.events or []), {"at": _now().isoformat(), "event": event, **detail}]
+
+
+async def _request_source_rebuild(
+    session_factory: "async_sessionmaker[AsyncSession]",
+    session: AsyncSession,
+    task: DocumentRepairTask,
+    *,
+    reason: str,
+    detail: str,
+) -> None:
+    """REBUILD_REQUIRED 裁决:经既有 sync_requests 交接缝请求权威源重建。
+
+    冻结产品真(REMEDIATION):管理员只选「修复此知识 / 一键修复全部」,
+    机制由系统裁决 —— 不可回放(超嵌入契约 / 持久副本缺失 / 无现行版本)
+    的合格知识问题路由到既有 sync 源重建路径(``sync --reindex --source``,
+    P1-E 全量生成重建,经 ``_enforce_char_limit`` 的已验收摄取路径),本进程
+    **不复制**任何 connector/重建逻辑,不绕过执行面串行/去重/有界重试。
+    去重键 = (source_id, kind):在途同键请求共用(already-running,幂等,
+    不重复入队);异键(在途普通同步)互不阻塞。
+
+    交接写库失败 → SyncRequestSubmitError 上抛(调用方按真实失败落账)。
+    """
+    from backend.services.sync_requests import submit_sync_request
+
+    async with session_factory() as submit_session:
+        submit = await submit_sync_request(
+            submit_session, task.source_id, triggered_by="manual", kind="rebuild"
+        )
+    task.status = STATUS_REBUILD_REQUESTED
+    task.stage = STAGE_REBUILD_REQUEST
+    task.result = {
+        "repair_mode": "source_rebuild_requested",
+        "reason": reason,
+        "detail": detail,
+        "sync_request_id": submit.request_id,
+        "sync_request_state": submit.state,
+        "rebuild_path": "sync --reindex --source " + task.source_id,
+    }
+    task.error = None
+    task.finished_at = _now()
+    await _append_event(
+        session,
+        task,
+        "rebuild_requested",
+        reason=reason,
+        sync_request_id=submit.request_id,
+        state=submit.state,
+    )
 
 
 async def create_repair_task(
@@ -138,11 +190,22 @@ async def execute_repair_task(
     embedder: Any,
     class_name: str,
     task_id: UUID,
+    max_chunk_chars: int | None = None,
 ) -> DocumentRepairTask:
     """执行修复任务(plan→repair→verify;任务行持久化进度/审计/结果)。
 
     向量库/嵌入模型不可用 → 任务置 failed + RepairUnavailableError
     (端点层预检同条件转 503;任务层绝不静默)。
+
+    INC-WEB-EMBED-413 REMEDIATION(冻结产品真:系统自选恢复机制):
+    - REPLAYABLE(现行版本 + 持久副本完整 + 待回放文本尽在嵌入字符契约内)
+      → 持久副本回放(廉价路径,语义不变);
+    - REBUILD_REQUIRED(无现行版本 / 无持久副本 / 权威集缺行 / 文本超
+      ``max_chunk_chars``)→ 经既有 sync_requests 交接缝请求权威源重建
+      (``sync --reindex --source``,P1-E 路径,_enforce_char_limit 生效),
+      任务终态 rebuild_requested 如实呈现;绝不把注定 413 的载荷发给嵌入。
+    - 真实上游失败(嵌入失败/写库失败/复验不一致/交接写库失败)→ 任务
+      如实 failed,绝不伪造成功。
     """
     async with session_factory() as session:
         task = (
@@ -170,7 +233,18 @@ async def execute_repair_task(
                     )
                 ).scalar_one_or_none()
             if doc is None or version is None:
-                raise RuntimeError("后端无现行版本记录,无法修复(诚实拒绝,不编造)")
+                # REMEDIATION:系统自选机制 —— 无现行版本 = REBUILD_REQUIRED
+                # (既有 sync 源重建路径可为源内存在的文档重建),不再终态拒绝。
+                await _request_source_rebuild(
+                    session_factory,
+                    session,
+                    task,
+                    reason="no_current_version",
+                    detail="无现行版本记录,持久副本回放不可用 → 权威源重建交接",
+                )
+                await session.commit()
+                await session.refresh(task)
+                return task
             chunks = (
                 (
                     await session.execute(
@@ -183,7 +257,16 @@ async def execute_repair_task(
                 .all()
             )
             if not chunks:
-                raise RuntimeError("现行版本无持久 chunk 副本,拒绝修复(诚实拒绝,不编造)")
+                await _request_source_rebuild(
+                    session_factory,
+                    session,
+                    task,
+                    reason="no_persisted_chunks",
+                    detail="现行版本无持久 chunk 副本,回放不可用 → 权威源重建交接",
+                )
+                await session.commit()
+                await session.refresh(task)
+                return task
 
             # INT-C-01:修复回写目标 = 该文档现行版本的**在服代命名空间**
             # (与 GenerationBuilder.repair_documents / generation_builder 同款
@@ -217,6 +300,44 @@ async def execute_repair_task(
             repaired_indices: list[int] = []
             if projection.missing_indices:
                 chunk_by_index = {c.chunk_index: c for c in chunks}
+                missing_rows = [
+                    i for i in projection.missing_indices if i not in chunk_by_index
+                ]
+                oversize: list[tuple[int, int]] = []
+                if max_chunk_chars and max_chunk_chars > 0:
+                    oversize = [
+                        (i, len(chunk_by_index[i].text))
+                        for i in projection.missing_indices
+                        if i in chunk_by_index and len(chunk_by_index[i].text) > max_chunk_chars
+                    ]
+                if missing_rows or oversize:
+                    # REMEDIATION:REPLAYABLE 判定失败 = REBUILD_REQUIRED。
+                    # 超契约文本送嵌入必被 413 拒绝(重试同败);权威集缺行
+                    # 则该 index 无文本可回放。二者经既有 sync 源重建路径恢复,
+                    # 绝不把注定失败的请求发给嵌入(零嵌入调用)。
+                    if oversize:
+                        idx0, len0 = oversize[0]
+                        detail = (
+                            f"持久 chunk 文本超嵌入字符契约(max_length={max_chunk_chars}):"
+                            f" index {idx0} 为 {len0} 字符(共 {len(oversize)} 个超限)"
+                        )
+                        reason = "persisted_text_over_contract"
+                    else:
+                        detail = (
+                            "权威 chunk 集缺行(在服缺失 index 无持久副本): "
+                            f"{missing_rows[:10]}"
+                        )
+                        reason = "persisted_copy_incomplete"
+                    await _request_source_rebuild(
+                        session_factory,
+                        session,
+                        task,
+                        reason=reason,
+                        detail=detail,
+                    )
+                    await session.commit()
+                    await session.refresh(task)
+                    return task
                 collection = weaviate_client.collections.get(class_name)
                 vectors = embedder.embed(
                     [chunk_by_index[i].text for i in projection.missing_indices]

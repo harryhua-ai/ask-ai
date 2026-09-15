@@ -406,6 +406,10 @@ class SyncRequest(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     source_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     triggered_by: Mapped[str] = mapped_column(String(20), default="manual")
+    # INC-WEB-EMBED-413 REMEDIATION:请求 flavor(NULL = 既有增量同步语义;
+    # "rebuild" = 源全量生成重建,执行面透传 --reindex)。加性演进,存量行
+    # NULL 不受影响;去重键 = (source_id, kind)。
+    kind: Mapped[str | None] = mapped_column(String(20), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     picked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

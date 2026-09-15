@@ -16,14 +16,16 @@ import os
 import pathlib
 import uuid
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import weaviate
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from backend.db.models import Base, Document, DocumentVersion, DocumentVersionChunk, IndexGeneration
+from backend.pipeline.ingest import generation_uuid
 from backend.services import document_lifecycle as lifecycle
 
 TEST_DSN = os.environ.get(
@@ -382,3 +384,167 @@ def test_migration_module_has_no_embedder_dependency():
     # 使用它;红线针对 Weaviate 对象替换写(data.replace)。
     assert "data.update" in source
     assert "data.replace" not in source
+
+
+# --------------------------------------------------------------------------- #
+# INC-WEB-EMBED-413:回填按对象代归属挂载(生产 413 事故根因 1 回归锚)
+#
+# 生产事实(2026-09-14):r2 部署重跑 backfill_content_from_weaviate,
+# 旧实现把每个对象的 chunk 行无条件挂到该文档**现行版本**
+# (_version_id_map = current_version_id),文档演进后 legacy 超限行
+# (3005/2452 字符)被误挂进现行版本 → 修复重放 embed 413 零激活。
+# 契约:chunk 行必须挂在**对象自身 generation 归属**对应的版本上;
+# 无匹配版本的归属 = ghost(如实计数,绝不回退现行版本)。
+# --------------------------------------------------------------------------- #
+
+
+def _evolve_doc_with_new_generation(mig, sid: str) -> tuple[Any, Any]:
+    """模拟文档演进:新代构建已激活(seq 2,gen2),旧 seq1 = legacy 版本。"""
+    import weaviate.classes.data as wd
+
+    from backend.pipeline.ingest import generation_uuid
+
+    gen2_id = uuid.uuid5(uuid.NAMESPACE_URL, f"ask-ai:test:{sid}:gen2")
+    with mig.sync_factory() as s:
+        gen2 = IndexGeneration(
+            id=gen2_id, ordinal=2, source_id=f"mig-src-{sid}", status="ready"
+        )
+        s.add(gen2)
+        doc = s.query(Document).filter(Document.source_id == sid).one()
+        v2 = DocumentVersion(
+            source_id=sid,
+            version_seq=2,
+            content_hash=f"h-{sid}-v2",
+            metadata_hash="m2",
+            generation_id=gen2_id,
+            generation_ordinal=2,
+            status="active",
+            title=sid,
+            url=f"https://x/{sid}",
+            chunk_count=1,
+        )
+        s.add(v2)
+        s.flush()
+        s.add(
+            DocumentVersionChunk(
+                version_id=v2.id, chunk_index=0, text=f"text-{sid}-v2-0", props={}
+            )
+        )
+        doc.current_version_id = v2.id
+        s.commit()
+    col = mig.client.collections.get(CLASS_NAME)
+    col.data.insert_many(
+        [
+            wd.DataObject(
+                properties={
+                    "source_id": sid,
+                    "chunk_index": 0,
+                    "text": f"text-{sid}-v2-0",
+                    "content_hash": f"h-{sid}-v2",
+                    "generation_ordinal": 2,
+                    "generation_id": str(gen2_id),
+                },
+                vector=[0.1] * 4,
+                uuid=generation_uuid(sid, str(gen2_id), 0),
+            )
+        ]
+    )
+    return gen2_id, v2
+
+
+def test_backfill_rerun_attaches_by_object_generation_not_current(mig):
+    """重跑回填:legacy 对象挂 legacy 版本,gen2 对象挂 gen2 版本;现行版本
+    绝不被误挂他代行(生产:3005 字符 legacy 行误挂 → 修复 413)。"""
+    import scripts.migrate_p1_lifecycle_foundation as m
+
+    _seed_legacy_rows(mig.sync_factory)
+    asyncio.run(_ensure_schema(mig))
+    m.backfill_versions(mig.sync_factory)
+    m.ensure_weaviate_schema(mig.client, CLASS_NAME)
+    _seed_legacy_objects(mig.client)
+    m.backfill_content_from_weaviate(mig.client, CLASS_NAME, mig.sync_factory)
+    # 文档演进(mig-doc-a:seq2/gen2 激活,自带 1 chunk)
+    _evolve_doc_with_new_generation(mig, "mig-doc-a")
+
+    # r2 型重跑:全对象再扫一遍
+    stats = m.backfill_content_from_weaviate(mig.client, CLASS_NAME, mig.sync_factory)
+
+    with mig.sync_factory() as s:
+        v2 = (
+            s.query(DocumentVersion)
+            .filter(DocumentVersion.source_id == "mig-doc-a", DocumentVersion.version_seq == 2)
+            .one()
+        )
+        current_rows = s.execute(
+            select(DocumentVersionChunk.chunk_index, DocumentVersionChunk.text)
+            .where(DocumentVersionChunk.version_id == v2.id)
+            .order_by(DocumentVersionChunk.chunk_index)
+        ).all()
+        v1 = (
+            s.query(DocumentVersion)
+            .filter(DocumentVersion.source_id == "mig-doc-a", DocumentVersion.version_seq == 1)
+            .one()
+        )
+        legacy_rows = s.execute(
+            select(DocumentVersionChunk.chunk_index, DocumentVersionChunk.text)
+            .where(DocumentVersionChunk.version_id == v1.id)
+            .order_by(DocumentVersionChunk.chunk_index)
+        ).all()
+
+    # 现行版本 = 恰其自身权威集(1 行,gen2 文本);绝无误挂 legacy 行
+    assert current_rows == [(0, "text-mig-doc-a-v2-0")]
+    # legacy 版本保留其 1:1 拷贝行
+    assert legacy_rows == [(0, "text-mig-doc-a-0"), (1, "text-mig-doc-a-1")]
+    # 重跑零新增(全对象已按归属在位)
+    assert stats["chunks_inserted"] == 0
+
+
+def test_backfill_object_with_unknown_generation_is_ghost_not_current(mig):
+    """对象携带无匹配版本的 generation 归属 → ghost 计数,绝不回退挂现行。"""
+    import weaviate.classes.data as wd
+
+    import scripts.migrate_p1_lifecycle_foundation as m
+
+    _seed_legacy_rows(mig.sync_factory)
+    asyncio.run(_ensure_schema(mig))
+    m.backfill_versions(mig.sync_factory)
+    m.ensure_weaviate_schema(mig.client, CLASS_NAME)
+    _seed_legacy_objects(mig.client)
+    m.backfill_content_from_weaviate(mig.client, CLASS_NAME, mig.sync_factory)
+
+    rogue_gen = uuid.uuid5(uuid.NAMESPACE_URL, "ask-ai:test:rogue-gen")
+    col = mig.client.collections.get(CLASS_NAME)
+    col.data.insert_many(
+        [
+            wd.DataObject(
+                properties={
+                    "source_id": "mig-doc-b",
+                    "chunk_index": 0,
+                    "text": "rogue-generation-text",
+                    "generation_ordinal": 9,
+                    "generation_id": str(rogue_gen),
+                },
+                vector=[0.1] * 4,
+                uuid=generation_uuid("mig-doc-b", str(rogue_gen), 0),
+            )
+        ]
+    )
+
+    stats = m.backfill_content_from_weaviate(mig.client, CLASS_NAME, mig.sync_factory)
+
+    assert stats["ghost_objects"] >= 1
+    with mig.sync_factory() as s:
+        v_current = (
+            s.query(DocumentVersion)
+            .filter(DocumentVersion.source_id == "mig-doc-b", DocumentVersion.version_seq == 1)
+            .one()
+        )
+        texts = [
+            r[0]
+            for r in s.execute(
+                select(DocumentVersionChunk.text).where(
+                    DocumentVersionChunk.version_id == v_current.id
+                )
+            ).all()
+        ]
+    assert "rogue-generation-text" not in texts

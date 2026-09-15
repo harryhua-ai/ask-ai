@@ -1522,6 +1522,7 @@ async def repair_all_source_documents(
             )
             items: list[BulkDocumentRepairItem] = []
             succeeded = 0
+            rebuild_requested = 0
             for doc in docs:
                 async with factory() as task_session:
                     task, _created = await create_repair_task(
@@ -1538,23 +1539,35 @@ async def repair_all_source_documents(
                         embedder=embedder,
                         class_name=request.app.state.weaviate_class_name,
                         task_id=task.id,
+                        # INC-WEB-EMBED-413:重放载荷嵌入契约预检(超契约路由
+                        # 权威源重建交接,见 document_repair)
+                        max_chunk_chars=getattr(
+                            getattr(request.app.state, "settings", None),
+                            "embedder_max_length",
+                            None,
+                        ),
                     )
                 status = str(task.status)
+                sync_request_id = (task.result or {}).get("sync_request_id")
                 if status == "succeeded":
                     succeeded += 1
+                elif status == "rebuild_requested":
+                    rebuild_requested += 1
                 items.append(
                     BulkDocumentRepairItem(
                         doc_source_id=doc.source_id,
                         status=status,
                         task_id=str(task.id) if task.id else None,
                         error=(task.error or ("已有修复任务正在执行" if status in {"pending", "running"} else None)),
+                        sync_request_id=int(sync_request_id) if sync_request_id else None,
                     )
                 )
             return BulkDocumentRepairOut(
                 source_id=source_id,
                 eligible=len(docs),
                 succeeded=succeeded,
-                failed=len(docs) - succeeded,
+                failed=len(docs) - succeeded - rebuild_requested,
+                rebuild_requested=rebuild_requested,
                 items=items,
             )
     finally:
@@ -1600,6 +1613,10 @@ async def repair_source_document(
             embedder=embedder,
             class_name=request.app.state.weaviate_class_name,
             task_id=task_id,
+            # INC-WEB-EMBED-413:重放载荷嵌入契约预检(超限 fail-fast,不送 413)
+            max_chunk_chars=getattr(
+                getattr(request.app.state, "settings", None), "embedder_max_length", None
+            ),
         )
     return _task_out(task)
 

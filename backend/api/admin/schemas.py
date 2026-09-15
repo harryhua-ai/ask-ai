@@ -252,7 +252,7 @@ class DocumentRepairTaskOut(BaseModel):
     id: str
     source_id: str
     doc_source_id: str
-    status: str  # pending/running/succeeded/failed
+    status: str  # pending/running/succeeded/failed/rebuild_requested
     stage: str | None = None
     requested_by: str | None = None
     idempotency_key: str | None = None
@@ -264,12 +264,17 @@ class DocumentRepairTaskOut(BaseModel):
 
 
 class BulkDocumentRepairItem(BaseModel):
-    """单个批量修复项的权威结果(不把未执行伪装成成功)。"""
+    """单个批量修复项的权威结果(不把未执行伪装成成功)。
+
+    INC-WEB-EMBED-413 REMEDIATION:status 增 "rebuild_requested"(系统自选
+    权威源重建交接);``sync_request_id`` 携带交接行 id 供审计追溯。
+    """
 
     doc_source_id: str
     status: str
     task_id: str | None = None
     error: str | None = None
+    sync_request_id: int | None = None
 
 
 class BulkDocumentRepairOut(BaseModel):
@@ -279,6 +284,8 @@ class BulkDocumentRepairOut(BaseModel):
     eligible: int
     succeeded: int
     failed: int
+    # REMEDIATION:系统自选源重建交接的项数(succeeded/failed 均不含)。
+    rebuild_requested: int = 0
     items: list[BulkDocumentRepairItem] = Field(default_factory=list)
 
 

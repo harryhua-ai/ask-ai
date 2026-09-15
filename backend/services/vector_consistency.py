@@ -7,6 +7,13 @@
      chunk_index 集合 vs Postgres chunk_count,整篇缺失与 chunk 集合不一致的
      doc 一并进重灌清单。
 只读、不修改任何数据（孤儿向量仅 warning,不删）。
+
+INC-WEB-EMBED-413 口径矫正:在服集合按**现行版本代**过滤
+(``generation_ordinal == 现行版本代``,chunk_serving INT-C-01 同款;
+无代属性对象不入在服)。旧代/legacy 残留 = 保留窗内预期存在(物理清除仅经
+retire/GC),不入在服、不产生 refill —— 旧代无关计数曾使 chunk 集合永不
+一致,refill 每轮复现并把修复重放拖入必败循环(生产 website-camthink
+2026-09-14 实证:2 篇永久 partial → 混入超契约行后连续 5 代 413 零激活)。
 """
 
 import logging
@@ -15,7 +22,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.db.models import Document
+from backend.db.models import Document, DocumentVersion
 from backend.services.document_lifecycle import DocLifecycle
 
 logger = logging.getLogger(__name__)
@@ -84,22 +91,29 @@ async def verify_source_vectors(
         )
         expected = int(result.scalar() or 0)
 
-    # 3) 精确级:chunk 级差集 —— 先取 PG 侧 (source_id, chunk_count, lifecycle),
-    #    供迭代器统计口径拆分(SERVING 对象 vs 撤出文档待 GC 残留)
+    # 3) 精确级:chunk 级差集 —— 先取 PG 侧 (source_id, chunk_count, lifecycle,
+    #    现行版本 generation_ordinal),供迭代器按在服代过滤(INT-C-01 同款)
     async with session_factory() as session:
         result = await session.execute(
-            select(Document.source_id, Document.chunk_count, Document.lifecycle).where(
-                Document.source_id.like(f"{source_prefix}/%")
+            select(
+                Document.source_id,
+                Document.chunk_count,
+                Document.lifecycle,
+                func.coalesce(DocumentVersion.generation_ordinal, 0),
             )
+            .outerjoin(DocumentVersion, DocumentVersion.id == Document.current_version_id)
+            .where(Document.source_id.like(f"{source_prefix}/%"))
         )
         pg_rows = result.all()
         pg_chunks: dict[str, int] = {}
         withdrawn_docs: set[str] = set()
-        for sid, cc, lc in pg_rows:
+        current_ordinal: dict[str, int] = {}
+        for sid, cc, lc, ordinal in pg_rows:
             if lc in DocLifecycle.WITHDRAWN:
                 withdrawn_docs.add(sid)
                 continue  # 墓碑/被接替:对象为待 GC 残留,不计期望
             pg_chunks[sid] = int(cc)
+            current_ordinal[sid] = int(ordinal)
 
     collection = pipeline._client.collections.get(pipeline._class_name)
 
@@ -108,10 +122,18 @@ async def verify_source_vectors(
     #    实证:`neomind-local/*` 聚合计数把整个家族对象都算进来),聚合口径
     #    不可用于计数;一切以迭代器可见对象为准(D4-ACC)。
     #    v4 限制(v4.22 实测):iterator() 不支持 filters 参数。
-    wv_chunks: dict[str, set[int]] = {}
+    #    INC-WEB-EMBED-413:在服判定按现行版本代过滤(chunk_serving INT-C-01
+    #    同款;无 generation 属性对象不入在服)。旧代/legacy 残留是保留窗内
+    #    预期存在(物理清除仅经 retire/GC),不再计入在服集合 —— 否则残留
+    #    使 chunk 集合永不一致,refill 每轮复现(生产 website-camthink 实证)
+    #    且把修复重放拖入必败循环。
+    wv_chunks: dict[str, set[int]] = {}  # 全代对象(孤儿判定,保持代无关)
+    serving_chunks: dict[str, set[int]] = {}  # 现行版本代在服对象
     prefix = f"{source_prefix}/"
     actual = 0
-    for item in collection.iterator(return_properties=["source_id", "chunk_index"]):
+    for item in collection.iterator(
+        return_properties=["source_id", "chunk_index", "generation_ordinal"]
+    ):
         props = item.properties
         sid = props.get("source_id")
         idx = props.get("chunk_index")
@@ -121,16 +143,25 @@ async def verify_source_vectors(
         if not sid.startswith(prefix):
             continue  # 客户端前缀过滤
         wv_chunks.setdefault(sid, set()).add(int(idx))
-        if sid not in withdrawn_docs:
-            actual += 1  # 撤出文档的待 GC 残留不进服务口径统计
+        if sid in withdrawn_docs:
+            continue  # 撤出文档的待 GC 残留不进服务口径统计
+        obj_ordinal = props.get("generation_ordinal")
+        if obj_ordinal is None:
+            continue  # 无代属性对象不入在服(INT-C-01 同款)
+        if sid not in current_ordinal:
+            continue  # 孤儿 doc(无账本行):不入在服计数
+        if int(obj_ordinal) != current_ordinal[sid]:
+            continue  # 非现行版本代:保留窗残留,不入在服
+        serving_chunks.setdefault(sid, set()).add(int(idx))
+        actual += 1
 
-    # 整篇缺失:pg 有、Weaviate 完全没有
-    missing = sorted(sid for sid in pg_chunks if sid not in wv_chunks)
-    # chunk 集合不一致:doc 在 Weaviate 但实际 index 集合 != 期望的 0..chunk_count-1
+    # 整篇缺失:pg 有、在服集为空(含仅有旧代残留 —— 服务面等价缺失)
+    missing = sorted(sid for sid in pg_chunks if not serving_chunks.get(sid))
+    # chunk 集合不一致:在服 index 集合 != 期望的 0..chunk_count-1
     refill: set[str] = set(missing)
     stale_total = 0
     for sid, chunk_count in pg_chunks.items():
-        actual_indices = wv_chunks.get(sid)
+        actual_indices = serving_chunks.get(sid)
         if actual_indices is None:
             continue  # 整篇缺失,上面已入 refill
         expected_indices = set(range(chunk_count))
