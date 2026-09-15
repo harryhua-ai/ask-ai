@@ -1,0 +1,214 @@
+{
+ "issue": 78,
+ "date": "2026-09-15",
+ "mode": "INVESTIGATION ONLY — no fix, no production mutation, no resync/reindex, no deployment",
+ "production_identity": {
+  "version": "1.6.3-r3",
+  "git_sha": "5eac2b2b84d63a5889d8cb229e40e2bb083745d5"
+ },
+ "repo_code_inspected": "main worktree f4e6751 (read-only)",
+ "source_topology": {
+  "sources_enabled": 15,
+  "website_camthink": {
+   "type": "web_crawl",
+   "created": "2026-08-30",
+   "discovery": "robots Sitemap: -> sitemap_index.xml -> post/page/product sub-sitemaps + BFS (max 150 extra)",
+   "exclude_patterns_production": [
+    "/account",
+    "/archive",
+    "/author/",
+    "/cart",
+    "/category/",
+    "/checkout",
+    "/cookie",
+    "/feed",
+    "/login",
+    "/my-account",
+    "/privacy",
+    "/register",
+    "/search",
+    "/signin",
+    "/signup",
+    "/store/",
+    "/tag/",
+    "/tags/",
+    "/terms",
+    "/wp-admin",
+    "/wp-json",
+    "/wp-login"
+   ],
+   "documents_ledger": 130,
+   "all_active_with_version": true,
+   "key_pages_ledger_created": {
+    "business-inquiry": "2026-08-30",
+    "company/about-us": "2026-09-02T01:25:31",
+    "company/contact-us": "2026-09-02T01:25:31",
+    "shipping-policy": "2026-09-02T01:25:33",
+    "payment-methods": "2026-09-02T01:25:33",
+    "developer-center": "2026-09-02T01:25:31",
+    "tools": "2026-09-03",
+    "solutions": "in ledger",
+    "campaign": "in ledger"
+   }
+  },
+  "page_sitemap_diff": {
+   "sitemap_urls": 32,
+   "excluded_by_config_intentional": [
+    "cookie-policy",
+    "terms-of-service",
+    "store/",
+    "login"
+   ],
+   "drift": [
+    "register ingested despite /register exclude (config added after first crawl)"
+   ],
+   "unintentional_page_level_gaps": "NONE PROVEN in company/support domain"
+  }
+ },
+ "weaviate_serving_verification": {
+  "shipping-policy": {
+   "chunks": 3,
+   "generation_ordinal": 0,
+   "chunk_types": [
+    "heading",
+    "list",
+    "paragraph"
+   ]
+  },
+  "company/contact-us": {
+   "chunks": 1,
+   "generation_ordinal": 0,
+   "chunk_type": "heading",
+   "chars": 814,
+   "contains": [
+    "Headquarters",
+    "Software Park Phase III, Xiamen 361024, Fujian, China",
+    "Part of Milesight Group",
+    "sales@camthink.ai",
+    "+86-592-5023062"
+   ]
+  },
+  "company/about-us": {
+   "chunks": 1,
+   "chars": 2260,
+   "generation_ordinal": "inferred 0 (same ingest batch as contact-us)"
+  }
+ },
+ "anchors": [
+  {
+   "conv": "cbafab32",
+   "q": "where is your head office",
+   "asked": "2026-09-14T22:51Z",
+   "verdict": "PROVEN_RECALL_FAILURE"
+  },
+  {
+   "conv": "654f74b8",
+   "q": "Do you ship internationally?",
+   "asked": "2026-09-03T11:46Z",
+   "verdict": "PROVEN_RECALL_FAILURE"
+  },
+  {
+   "conv": "2de09754",
+   "q": "What is camthink and who are the owners?",
+   "verdict": "LIKELY_RECALL_FAILURE"
+  },
+  {
+   "conv": "6ecdff55",
+   "verdict": "OTHER (off_topic reject pre-retrieval)"
+  },
+  {
+   "conv": "5f771583",
+   "verdict": "OTHER (task_clarify pre-retrieval)"
+  },
+  {
+   "conv": "afd6cad9",
+   "verdict": "OTHER (task_clarify pre-retrieval)"
+  },
+  {
+   "conv": "f1b0a018",
+   "q": "ne302在哪里购买？",
+   "verdict": "OTHER (coverage lag: woo product 5883 ingested 2026-09-11T05:09, asked 09-10; resolved)"
+  },
+  {
+   "conv": "40076034",
+   "verdict": "UNPROVEN (upstream cert-report existence)"
+  },
+  {
+   "conv": "93379bc3",
+   "verdict": "UNPROVEN (neomind-local exclude_dirs=['.github','docs'] is a PROVEN config fact; needed-doc location UNPROVEN)"
+  }
+ ],
+ "failure_trace_cbafab32": {
+  "rewrite": {
+   "extracted": "where is your head office",
+   "rewritten": "same (no-op)"
+  },
+  "intent": "commercial (conf 0.85)",
+  "language": "en",
+  "effective_min": 1,
+  "paths": {
+   "hybrid": "30 = 28 code + 2 blog",
+   "symbol": "21 code (code-only field symbol_tokens)",
+   "commercial_bucket": "30 woocommerce (bucket cfg source_types=[woocommerce])"
+  },
+  "fused_pool": "79 = 47 code + 30 store + 2 blog + 0 company/support",
+  "rerank": "all < 0.3 (top 0.029) -> survivors 0 -> fallback fused[:10] (RRF order; trace top score 1/61)",
+  "stream_fallback_flag": "not written on stream path (sole write rag.py L1770 = answer path)"
+ },
+ "control_trace_34ba7159": {
+  "q": "zh mining-case description",
+  "paths": {
+   "hybrid": 30,
+   "boost": 0,
+   "symbol": 0
+  },
+  "contact_us_pool_rank": 29,
+  "rerank_survivor_score": 0.705,
+  "meaning": "identical chunk enters pool and wins rerank when code-pollution paths are idle"
+ },
+ "sync_history_website_camthink": {
+  "runs_since_2026_08_30": 369,
+  "success": 232,
+  "partial": 52,
+  "failed": 85,
+  "runs_with_items_new": [
+   [
+    "2026-08-30T23:43",
+    131
+   ],
+   [
+    "2026-09-01T17:10",
+    2
+   ],
+   [
+    "2026-09-11T05:08",
+    2
+   ],
+   [
+    "2026-09-11T16:29",
+    1
+   ]
+  ],
+  "live_wedge": "all 6 most-recent runs (09-14 15:20 .. 09-15 02:13) FAIL: 修复代 N embed 失败(零激活): internal embeddings HTTP 413 text exceeds max_length=1024 -> owned by #75"
+ },
+ "observability_gaps": [
+  "web_crawl run_stats (discovered/accepted/extracted/rejected+URLs) computed but NOT persisted: sync_log.delta_counts empty on all sampled rows (docstring contract claims SyncLog persistence)",
+  "no sitemap-membership vs ledger diff surface -> ingested-and-serving pages appear 'not in KB' via citation inventories (12-day false belief)",
+  "trace lacks per-path boundary/score lists and filter-drop counters (knowledge exclusion, visibility guard silent)",
+  "rerank pool_scores computed (rerank_scored) but not persisted; fallback flag missing on stream path",
+  "generation_error + generate stage exist (state 5 observable)"
+ ],
+ "classification": {
+  "RECALL_FAILURE": "PROVEN (both anchors)",
+  "SOURCE_COVERAGE_GAP": "DISPROVEN for audited shipping example; residual = config-intentional excludes + register drift + latent lastmod mechanism + live #75 wedge (dependency)"
+ },
+ "remediation_direction": "R1 recall seam (extend INTENT_BOOST_FILTERS bucket coverage for company/support class, existing machinery) + R2 observability (persist run_stats/pool_scores/fallback flag, sitemap-vs-ledger diff). Code changes A; no content addition C; no config change B required for anchors.",
+ "dependencies": {
+  "75": "blocks live coverage changes/validation (sync wedge)",
+  "77": "downstream composition/eligibility; land together",
+  "73": "K02 reclassification needed (shipping NOT missing knowledge)",
+  "74": "G-06 premise corrected",
+  "71": "orthogonal"
+ },
+ "privacy": "read-only SQL/GraphQL against production; no credentials reproduced; woocommerce consumer keys observed in source config but redacted here"
+}
