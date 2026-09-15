@@ -121,5 +121,5 @@ C. **交互(413 修复 × 422 切批)**:force-rebuild / repair 路径 >16 chunks
 
 - TAG_CREATED = NO;RELEASE_CREATED = NO;DEPLOYED = NO;PRODUCTION_MUTATION = NO
 - 生产仅只读 SSH SELECT 与容器状态查看;GitHub Project 仅 field-list 读取
-- 本报告提交为 main 上唯一的后续 commit(docs-only);**MAIN_AFTER_REPORT 见下**(若与本节上方 tip 不同)
-- 不为报告 commit 创建任何 tag
+- 报告提交(main 上报告 commit):`c23c788bcd13f360fcb9fca8c32853a8c9b30865` = **MAIN_AFTER_REPORT**;相对 f643977 的 delta 恰为本报告文件(docs-only,1 file added,零生产代码变更)
+- 本行由后续 bookkeeping commit 修正记录(同 docs-only);不为任何报告 commit 创建 tag
