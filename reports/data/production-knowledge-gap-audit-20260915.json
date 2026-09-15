@@ -1,0 +1,397 @@
+{
+ "audit": "production-knowledge-gap-governance-audit",
+ "date": "2026-09-15",
+ "role": "Senior Knowledge Quality Investigator — AUDIT/ANALYSIS ONLY (no code/production/content changes)",
+ "production_identity": {
+  "api_origin": "https://wiki-data.camthink.ai",
+  "version": "1.6.3-r3",
+  "git_sha": "5eac2b2b84d63a5889d8cb229e40e2bb083745d5"
+ },
+ "population": {
+  "total_conversations": 1427,
+  "customer_candidate": 119,
+  "test_internal": 1308,
+  "customer_candidate_definition": "No strong test/internal signal detected; NOT proven verified external customers.",
+  "window": "2026-08-31..2026-09-15",
+  "trace_types_customer": {
+   "rag": 87,
+   "task_clarify": 14,
+   "reject_short": 4,
+   "product_clarify": 3,
+   "social_reply": 8,
+   "override": 2,
+   "generation_error": 1
+  },
+  "languages_customer": {
+   "zh": 35,
+   "en": 82,
+   "zh-cn": 2
+  }
+ },
+ "method": {
+  "unit": "semantic need-clusters (not per-row)",
+  "clusters_total": 52,
+  "manual_semantic_review": "all 119 customer_candidate records individually reviewed (question, answer, sources, rerank trace where relevant)",
+  "fact_verification": "authoritative pages re-checked read-only on 2026-09-15 (wiki-documents repo main via raw GitHub, live camthink.ai pages, KB URL inventory in link_checks.json)",
+  "primary_classification_rule": "exactly one of MISSING/INCOMPLETE/FRAGMENTED/STALE_KNOWLEDGE, RETRIEVAL_FAILURE, ANSWER_FAILURE, NOT_KNOWLEDGE_PROBLEM per cluster",
+  "record_cluster_coverage": "119/119 records mapped to exactly one cluster"
+ },
+ "classification_totals": {
+  "by_cluster": {
+   "NOT_KNOWLEDGE_PROBLEM": 39,
+   "FRAGMENTED_KNOWLEDGE": 2,
+   "MISSING_KNOWLEDGE": 4,
+   "INCOMPLETE_KNOWLEDGE": 4,
+   "RETRIEVAL_FAILURE": 2,
+   "ANSWER_FAILURE": 1
+  },
+  "by_record": {
+   "NOT_KNOWLEDGE_PROBLEM": 91,
+   "FRAGMENTED_KNOWLEDGE": 10,
+   "MISSING_KNOWLEDGE": 4,
+   "INCOMPLETE_KNOWLEDGE": 4,
+   "RETRIEVAL_FAILURE": 9,
+   "ANSWER_FAILURE": 1
+  },
+  "stale_knowledge_note": "No STALE_KNOWLEDGE cluster found in the customer-candidate population. The stale-adjacent findings (marketing price figures, 404 provenance URLs, possible NE301 FAQ serving drift) are recorded under FRAGMENTED_KNOWLEDGE K01, governance G-05, and the #71 linkage note respectively."
+ },
+ "content_backlog": [
+  {
+   "id": "K01",
+   "title": "NE503 price & per-configuration pricing (store vs marketing-blog conflict)",
+   "gap_type": "FRAGMENTED_KNOWLEDGE",
+   "count": 9,
+   "conversation_ids": [
+    "59118000-c264-4c16-96b5-c9152004b10b",
+    "42287e78-2dfd-44de-a504-0d96c2ad3a62",
+    "60075b1a-2049-431c-9df6-6b4be2aa07eb",
+    "6aa85e98-6329-43b5-853d-[电话号码已脱敏]",
+    "a606c715-a426-4af4-b735-b468e51f7782",
+    "7a95a01d-ad18-458b-87e9-9fa91e7fc81c",
+    "e0543e04-0aaa-4ab9-92a8-7c38cefd3080",
+    "45151501-016e-444e-ac95-bda26ce651ea",
+    "0642d020-2255-4997-9f5b-9ce1934ab304"
+   ],
+   "action": "CONSOLIDATE_CANONICAL_SOURCE",
+   "priority": "P0",
+   "owner": "Commerce/store ops (store page variant pricing) + marketing (blog price figures)",
+   "evidence_level": "PROVEN",
+   "customer_candidate_frequency": 9,
+   "test_internal_supporting_frequency": 0,
+   "test_note": "No test record asks NE503 price; related test question 'price of NE301 + how to order + shipping options' appears 4x."
+  },
+  {
+   "id": "K02",
+   "title": "International shipping / ordering policy",
+   "gap_type": "MISSING_KNOWLEDGE",
+   "count": 1,
+   "conversation_ids": [
+    "cc89849e-0a07-49cd-9b87-f78b72afeaf9"
+   ],
+   "action": "NEW_DOCUMENT",
+   "priority": "P1",
+   "owner": "Commerce ops (page exists) + KB ingestion scope owner",
+   "evidence_level": "PROVEN",
+   "customer_candidate_frequency": 1,
+   "test_internal_supporting_frequency": 4,
+   "test_note": "Test question 'What is the price of NE301, how to order and shipping options' x4; answers cover price only."
+  },
+  {
+   "id": "K03",
+   "title": "Third-party VMS/NVR integration guidance (Frigate etc.)",
+   "gap_type": "MISSING_KNOWLEDGE",
+   "count": 1,
+   "conversation_ids": [
+    "f2334bcc-c189-44cf-aa36-fb32024f59f1"
+   ],
+   "action": "NEW_DOCUMENT",
+   "priority": "P1",
+   "owner": "Wiki product docs (application guides)",
+   "evidence_level": "PROVEN",
+   "customer_candidate_frequency": 1,
+   "test_internal_supporting_frequency": 9,
+   "test_note": "9 test records ask NG4500 AI-IPC integration with Frigate/DeepStream/Scrypted/Nx; answers can only offer DeepStream."
+  },
+  {
+   "id": "K04",
+   "title": "NE503 firmware release/download entries missing from release-notes page",
+   "gap_type": "FRAGMENTED_KNOWLEDGE",
+   "count": 1,
+   "conversation_ids": [
+    "31174ba4-bbd3-4eda-ac59-05b15ce9fff0"
+   ],
+   "action": "UPDATE_EXISTING",
+   "priority": "P1",
+   "owner": "Wiki docs owners (release notes)",
+   "evidence_level": "PROVEN",
+   "customer_candidate_frequency": 1,
+   "test_internal_supporting_frequency": 1,
+   "test_note": "1 test record on NE301 firmware flashing (different line, but same firmware-download need family)."
+  },
+  {
+   "id": "K05",
+   "title": "NE302 weight/mass specification absent",
+   "gap_type": "INCOMPLETE_KNOWLEDGE",
+   "count": 1,
+   "conversation_ids": [
+    "012a35dd-700b-4192-b664-f140ff8773e6"
+   ],
+   "action": "UPDATE_EXISTING",
+   "priority": "P2",
+   "owner": "Product/wiki docs",
+   "evidence_level": "PROVEN",
+   "customer_candidate_frequency": 1,
+   "test_internal_supporting_frequency": 0,
+   "test_note": ""
+  },
+  {
+   "id": "K06",
+   "title": "NE302 factory-reset procedure absent from user docs",
+   "gap_type": "INCOMPLETE_KNOWLEDGE",
+   "count": 1,
+   "conversation_ids": [
+    "1ba6518e-6ad7-475f-bdf5-066dba4acf0b"
+   ],
+   "action": "UPDATE_EXISTING",
+   "priority": "P2",
+   "owner": "Product/wiki docs (confirm hardware behavior first)",
+   "evidence_level": "UNPROVEN",
+   "customer_candidate_frequency": 1,
+   "test_internal_supporting_frequency": 0,
+   "test_note": ""
+  },
+  {
+   "id": "K07",
+   "title": "Fine-grained electrical/interface specs (camera-module pinout, alarm-pin electricals, PoE class)",
+   "gap_type": "INCOMPLETE_KNOWLEDGE",
+   "count": 1,
+   "conversation_ids": [
+    "e2425b02-c856-4165-8010-13a49a411339"
+   ],
+   "action": "UPDATE_EXISTING",
+   "priority": "P2",
+   "owner": "Hardware docs / module vendor datasheets",
+   "evidence_level": "INFERRED",
+   "customer_candidate_frequency": 1,
+   "test_internal_supporting_frequency": 10,
+   "test_note": "10 test records mention OV5640 (module integration issues); corroboration of integration-depth demand."
+  },
+  {
+   "id": "K08",
+   "title": "Certification/compliance reports (IP67 test report etc.)",
+   "gap_type": "MISSING_KNOWLEDGE",
+   "count": 1,
+   "conversation_ids": [
+    "40076034-8f23-4da7-ba46-26a1032f9d06"
+   ],
+   "action": "NEW_DOCUMENT",
+   "priority": "P2",
+   "owner": "Compliance/quality (publication decision) + wiki docs",
+   "evidence_level": "PROVEN",
+   "customer_candidate_frequency": 1,
+   "test_internal_supporting_frequency": 0,
+   "test_note": "TELEC cert theme present in knowledge cases (internal)."
+  },
+  {
+   "id": "K09",
+   "title": "Solution-level public content (smart agriculture) — currently only internal eval fixtures",
+   "gap_type": "MISSING_KNOWLEDGE",
+   "count": 1,
+   "conversation_ids": [
+    "1e43a7a7-0118-4962-ac1e-77666d6345d6"
+   ],
+   "action": "NEW_DOCUMENT",
+   "priority": "P2",
+   "owner": "Solutions/marketing + NeoMind docs",
+   "evidence_level": "INFERRED",
+   "customer_candidate_frequency": 1,
+   "test_internal_supporting_frequency": 10,
+   "test_note": "10 test records mention agriculture (mostly internal case simulations)."
+  },
+  {
+   "id": "K10",
+   "title": "NeoMind first-login/default credential flow undocumented",
+   "gap_type": "INCOMPLETE_KNOWLEDGE",
+   "count": 1,
+   "conversation_ids": [
+    "802134a1-583d-43bf-822e-267907e907d7"
+   ],
+   "action": "UPDATE_EXISTING",
+   "priority": "P2",
+   "owner": "NeoMind docs (security review before publishing defaults)",
+   "evidence_level": "INFERRED",
+   "customer_candidate_frequency": 1,
+   "test_internal_supporting_frequency": 12,
+   "test_note": "12 test records mention password/default credentials (incl. masked default-credential failure cases)."
+  }
+ ],
+ "governance_backlog": [
+  {
+   "id": "G-01",
+   "from_cluster": "K13",
+   "cause": "RETRIEVAL_FAILURE (source-type eligibility/ranking)",
+   "belongs": "ASK_AI_ENGINEERING",
+   "evidence_level": "PROVEN",
+   "customer_records": 7,
+   "conversation_ids": [
+    "4823df8b-7528-4ae0-8cb3-5c1acc5a39ff",
+    "f885642e-81ad-4413-9d62-5604742d68ab",
+    "8f773f36-42e5-4aaa-9b12-7faad5819f1e",
+    "f1b0a018-cd01-4e1f-9322-e6f9edbe7d75",
+    "c9221bc8-a659-41e2-81b5-293d7d8e2f50",
+    "a985d69a-3b73-477e-a5fb-c20683da7ab3",
+    "1f4a3c4b-0de3-4c08-a33c-10ab079297b3"
+   ],
+   "minimum_correction": "Narrow eligibility/ranking correction: source-type awareness for intent families (user docs & commerce > source code/eval fixtures); verify against the 7 listed conversations; no new platform/framework.",
+   "existing_issue_cover": "not covered by #71/#413/#422 or open UA issues; F-1' corrective did not fully resolve"
+  },
+  {
+   "id": "G-02",
+   "from_cluster": "K12",
+   "cause": "RETRIEVAL_FAILURE (company/intent routing) + secondary AUTHORITATIVE_SOURCE_MISSING (no dedicated About source)",
+   "belongs": "ASK_AI_ENGINEERING",
+   "evidence_level": "PROVEN",
+   "customer_records": 1,
+   "conversation_ids": [
+    "cbafab32-1abf-466a-a409-4032be8a9460",
+    "2de09754-9a77-4e36-b51f-13d9bb1a1cf3"
+   ],
+   "minimum_correction": "Narrow retrieval correction: intent/entity-aware source boosting or a company-facts source slot; NOT a content-writing task (facts already indexed).",
+   "existing_issue_cover": "none"
+  },
+  {
+   "id": "G-03",
+   "from_cluster": "K01",
+   "cause": "AUTHORITY_AMBIGUOUS + ELIGIBILITY_FAILURE (marketing blog as price authority; no store-canonical rule)",
+   "belongs": "BOTH",
+   "evidence_level": "PROVEN",
+   "customer_records": 9,
+   "conversation_ids": [
+    "59118000-c264-4c16-96b5-c9152004b10b",
+    "42287e78-2dfd-44de-a504-0d96c2ad3a62",
+    "60075b1a-2049-431c-9df6-6b4be2aa07eb",
+    "6aa85e98-6329-43b5-853d-[电话号码已脱敏]",
+    "a606c715-a426-4af4-b735-b468e51f7782",
+    "7a95a01d-ad18-458b-87e9-9fa91e7fc81c",
+    "e0543e04-0aaa-4ab9-92a8-7c38cefd3080",
+    "45151501-016e-444e-ac95-bda26ce651ea",
+    "0642d020-2255-4997-9f5b-9ce1934ab304"
+   ],
+   "minimum_correction": "Declare store page canonical for price; refresh ingested store snapshot to variant-level; update/de-contextualize blog figures; retrieval should prefer commerce source for price intent.",
+   "existing_issue_cover": "none"
+  },
+  {
+   "id": "G-04",
+   "from_cluster": "K09 (+K12 corroboration)",
+   "cause": "ELIGIBILITY_FAILURE (internal eval fixtures /eval/fixtures/*.json retrievable and cited as solution authority)",
+   "belongs": "ASK_AI_ENGINEERING",
+   "evidence_level": "PROVEN",
+   "customer_records": 2,
+   "conversation_ids": [
+    "1e43a7a7-0118-4962-ac1e-77666d6345d6",
+    "cbafab32-1abf-466a-a409-4032be8a9460"
+   ],
+   "minimum_correction": "Exclude /eval/ paths from the citation-eligible corpus or demote to background-only.",
+   "existing_issue_cover": "none"
+  },
+  {
+   "id": "G-05",
+   "from_cluster": "citation mechanics (cross-cutting)",
+   "cause": "LIFECYCLE/CITATION (provenance URL rot after wiki-documents repo restructure: 9 unique GitHub blob URLs 404, 40+ citation occurrences; served wiki URLs fine; old NE503 4-application-guide/1-app-development paths no longer exist — content moved to 2-cookbook/4-verified-apps/5-troubleshooting)",
+   "belongs": "BOTH",
+   "evidence_level": "PROVEN",
+   "customer_records": null,
+   "minimum_correction": "Rebuild provenance URL mapping on source restructure (re-sync refresh); distinct mechanism from #71 (serving-content staleness) but same source-vs-serving family.",
+   "existing_issue_cover": "not #71; not otherwise covered"
+  },
+  {
+   "id": "G-06",
+   "from_cluster": "K02",
+   "cause": "AUTHORITATIVE_SOURCE_MISSING (commerce policy pages outside ingestion scope while warranty page is ingested — selective scoping)",
+   "belongs": "KNOWLEDGE_PROCESS",
+   "evidence_level": "PROVEN",
+   "customer_records": 1,
+   "conversation_ids": [
+    "cc89849e-0a07-49cd-9b87-f78b72afeaf9"
+   ],
+   "minimum_correction": "Add shipping policy (and other public /policies/ pages) to ingestion scope.",
+   "existing_issue_cover": "none"
+  }
+ ],
+ "issue_mapping": {
+  "#71 stale serving": "No customer-candidate conversation attributed. Weak corroboration only (UNPROVEN): NE301 FAQ (docs/5-neoeyes-ne301-series/3-faq.md) absent from wiki-documents repo main while an i18n variant path exists in the KB inventory and the serving URL was inventoried; serving state not verified (client-side rendered site, probe inconclusive).",
+  "INC_WEB_EMBED_413": "No customer-candidate conversation attributable (defect is in repair/rebuild path, not answer serving).",
+  "Embedding 422 (batch 78>16)": "No customer-candidate conversation attributable; 1 transient generation_error record (2026-09-02) is consistent with the 5 generation_error records in the full population but not evidence of the 422 path.",
+  "Admin credential remediation": "Out of scope for conversation content; no interaction observed.",
+  "F-1' rerank corrective (merged 09-11, deployed v1.6.2)": "Relevant prior art for G-01; records 14 (09-13) and 7 (09-14) occurred after deployment — pattern not fully resolved."
+ },
+ "new_issue_recommendations": [
+  {
+   "recommend": "ONE new engineering issue covering source-eligibility/ranking for retrieval (G-01 + G-04 as one fix surface): 'Retrieval/citation eligibility: user-doc & commerce sources must outrank source code and internal eval artifacts for how-to/commercial intents' with the 8 PROVEN conversation IDs as acceptance evidence.",
+   "rationale": "Distinct, recurring (8+ conversations across 13 days, 2 post-F-1'), engineering-actionable, not covered by #71/#413/#422 or open UA issues. Do NOT split per-cluster; the fix surface is shared."
+  }
+ ],
+ "verification_checks": [
+  {
+   "claim": "Authoritative company/contact page with HQ address exists in KB",
+   "method": "link_checks inventory (contact-us cited as sources[].url by 9 test records) + live fetch 2026-09-15",
+   "result": "PROVEN — page contains 'Software Park Phase III, Xiamen 361024, Fujian, China', sales@camthink.ai, +86-592-5023062, 'A Milesight sub-brand'"
+  },
+  {
+   "claim": "NE302 overview lacks weight/mass",
+   "method": "raw GitHub 0-overview.md grep (weight/重量/g)",
+   "result": "PROVEN — zero matches"
+  },
+  {
+   "claim": "NE301 factory reset documented in wiki quick-start",
+   "method": "raw GitHub 1-quick-start.md",
+   "result": "PROVEN — '出厂重置（Factory Reset）' section: double-press capture key + ~10s long-press; password resets to default"
+  },
+  {
+   "claim": "release-notes/firmware omits NE503",
+   "method": "raw GitHub 7-release-notes/0-firmware.md grep",
+   "result": "PROVEN — zero NE503 matches; covers NE101/NE301/NG4500"
+  },
+  {
+   "claim": "NE503 firmware download documented elsewhere",
+   "method": "raw GitHub 3-software-guide/2-system-flashing.md",
+   "result": "PROVEN — links meta-hailo-os Releases (hailo15-ne503 firmware)"
+  },
+  {
+   "claim": "NE503 troubleshooting/flash-recovery content exists",
+   "method": "raw GitHub 5-troubleshooting.md + 2-system-flashing.md",
+   "result": "PROVEN — symptom-driven troubleshooting incl. 烧录 sections; boot-chain/MCU recovery guide"
+  },
+  {
+   "claim": "NG4500 deepseek-r1 doc in KB",
+   "method": "record 58 retrieval + link_checks inventory (both URL variants)",
+   "result": "PROVEN"
+  },
+  {
+   "claim": "Live NE503 store price is a variant range",
+   "method": "live fetch 2026-09-15",
+   "result": "PROVEN — '$1,049.00 – $1,199.00' (lens AF/zoom x 4GB/8GB), no per-variant breakdown on page, no volume pricing"
+  },
+  {
+   "claim": "Shipping policy page exists but is not ingested",
+   "method": "HTTP probe (200) + link_checks inventory (0 /policies/ URLs among 574)",
+   "result": "PROVEN"
+  },
+  {
+   "claim": "wiki-documents restructure explains 9 404 provenance URLs",
+   "method": "gh api docs/6-neoeyes-ne503-series tree",
+   "result": "PROVEN — 4-application-guide no longer contains 1-app-development/; content moved to 2-cookbook/4-verified-apps/5-troubleshooting"
+  },
+  {
+   "claim": "NE301 FAQ absent from repo main docs tree",
+   "method": "gh api docs/5-neoeyes-ne301-series tree + raw 404",
+   "result": "PROVEN at repo level; serving state UNPROVEN (SPA fetch inconclusive)"
+  },
+  {
+   "claim": "NE301 default credential documented",
+   "method": "raw GitHub quick-start",
+   "result": "PROVEN — reset restores password to documented default"
+  }
+ ],
+ "privacy": "Conversation IDs are opaque UUIDs from the de-identified export; no emails/phones/names included (the one de-identified email reference in record 116 is excluded)."
+}
