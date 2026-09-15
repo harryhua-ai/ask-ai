@@ -32,6 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -185,6 +186,40 @@ async def _build_llm_state(
     return providers, routing_dict, skipped, True
 
 
+async def _ensure_admin_user(session: AsyncSession) -> str:
+    """Admin 用户引导(fail-closed,#76):已存在 → 原样保留;缺失 → 创建。
+
+    ADMIN_PASSWORD 是引导密钥:仅当配置的 Admin 身份尚不存在时必需。
+    - 已存在 Admin → 保留现状(password_hash 不动,不要求 ADMIN_PASSWORD);
+    - 缺失 Admin 且 ADMIN_PASSWORD 未配置/为空 → RuntimeError 拒绝启动,
+      绝不回退任何固定/默认口令(基线缺陷:缺失密钥时静默创建可预测凭证)。
+
+    返回动作("preserved"/"created")供调用方记录启动诊断。
+    """
+    from sqlalchemy import select as sa_select
+
+    from backend.auth.jwt import hash_password
+    from backend.db.models import User
+
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@camthink.ai")
+    existing_admin = (
+        await session.execute(sa_select(User).where(User.email == admin_email))
+    ).scalar_one_or_none()
+    if existing_admin:
+        logger.info("admin 用户已存在,保留现状(不重置凭证): %s", admin_email)
+        return "preserved"
+    password = os.environ.get("ADMIN_PASSWORD")
+    if not password:
+        raise RuntimeError(
+            "ADMIN_PASSWORD 未配置:创建初始 Admin 用户需要该引导密钥"
+            f"(目标账号: {admin_email})。拒绝回退到任何默认口令;"
+            "请显式设置 ADMIN_PASSWORD 后重启(Admin 已存在时无需该变量)。"
+        )
+    session.add(User(email=admin_email, role="admin", password_hash=hash_password(password)))
+    logger.info("已创建 admin 用户: %s", admin_email)
+    return "created"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """应用生命周期:启动时接线,关闭时释放资源。"""
@@ -208,17 +243,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.session_factory = get_session_factory(engine)
 
         # Seed: 确保 default customization + widget 绑定存在
-        from sqlalchemy import select as sa_select
-
         from backend.auth.crypto import encrypt_api_key
-        from backend.auth.jwt import hash_password
         from backend.db.models import (
             Customization,
             CustomizationBinding,
             DataSource,
             LLMProviderModel,
             LLMRouting,
-            User,
         )
 
         prompt_cfg = load_yaml_config(settings.config_dir / "system_prompt.yaml")
@@ -240,20 +271,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 )
                 logger.info("已创建官网爬取数据源: website-camthink")
 
-            # Admin 用户
-            admin_email = os.environ.get("ADMIN_EMAIL", "admin@camthink.ai")
-            existing_admin = (
-                await session.execute(sa_select(User).where(User.email == admin_email))
-            ).scalar_one_or_none()
-            if not existing_admin:
-                session.add(
-                    User(
-                        email=admin_email,
-                        role="admin",
-                        password_hash=hash_password(os.environ.get("ADMIN_PASSWORD", "admin123")),
-                    )
-                )
-                logger.info("已创建 admin 用户: %s", admin_email)
+            # Admin 用户(引导语义见 _ensure_admin_user)
+            await _ensure_admin_user(session)
 
             # Default customization + widget 绑定
             if not await session.get(Customization, "default"):
