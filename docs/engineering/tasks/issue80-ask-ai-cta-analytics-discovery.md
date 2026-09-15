@@ -394,3 +394,120 @@ Observed public endpoints and references:
 - Analytics dashboard: https://analytics.camthink.ai/ → authenticated login
 
 Sensitive public project-key values and all event/visitor/session identifiers are intentionally redacted.
+
+## ROLE A EVIDENCE-GATE FOLLOW-UP
+
+**Follow-up date:** 2026-09-15 (Asia/Shanghai)
+
+This section appends the evidence-gate completion results to the original discovery record. The original evidence and its limitations are retained above.
+
+### Gate A — remote artifact verification
+
+| Item | Result |
+|---|---|
+| LOCAL SHA | 57aba0457ac6e4a4423072cc87cd6bf87e395f33 |
+| REMOTE SHA | 57aba0457ac6e4a4423072cc87cd6bf87e395f33 |
+| BRANCH | codex/issue-80-cta-analytics-discovery-20260915 |
+| BASE SHA | f4e67515af810840aa10fa800f0203c2ba290df0 |
+| AHEAD/BEHIND vs origin/main | ahead 10, behind 0 |
+| REPORT PATH | docs/engineering/tasks/issue80-ask-ai-cta-analytics-discovery.md |
+| REMOTE VERIFICATION | PASS — git ls-remote resolved the branch to the same SHA |
+
+The local SHA was recovered without rewriting or recreating the original discovery history. The branch was initially absent from origin; it was subsequently pushed as the existing branch. The original commit remains the report’s first commit. This follow-up is an appended report update and will have its own later commit.
+
+### Gate B — analytics evidence
+
+~~~text
+ANALYTICS_EVIDENCE_GATE = BLOCKED
+~~~
+
+Read-only checks performed:
+
+- The dashboard at https://analytics.camthink.ai/ is an authenticated SPA and redirects users to the login surface.
+- Known protected read-only routes such as /api/admin/overview/stats, /api/admin/visitors, and /api/admin/identities returned Unauthorized without authentication.
+- Environment variable names and the Ask AI repository .env key names were inspected without reading values; no Analytics/GA4 credential variable was available.
+- No login was attempted with guessed credentials, and no collector/GA4 endpoint was called with a write method.
+
+Historical evidence was not obtained. The following exact query/report outputs remain required from an authorized read-only Analytics role or an equivalent export:
+
+1. **Canonical event identity and earliest date:** filter custom collector records by event_name = element_click and properties track_category = contact, properties track_type = ask_ai, properties track_name = ask_ai; return the minimum event timestamp and the event count. Run the same date-bounded query without the three property filters to show whether other element_click records exist.
+2. **GA4 relationship:** for the same UTC date range, query event_name = contact_click and return contact_type, track_group, target_url, page_path, page_url, and lead_type. Compare, do not add, this result to the custom collector result.
+3. **Historical total:** for the exact Role A-selected half-open UTC range [start, end), return canonical custom event count grouped by event date.
+4. **Distinct visitors:** for the same range and canonical event filter, return distinct global_visitor_id where present, plus the documented fallback behavior for visitor_id when global_visitor_id is absent. Report this as analytics visitor UV, not customer count.
+5. **Surface breakdown:** for the same range, group the canonical event by existing page hostname and page path/page URL. Validate Wiki by wiki.camthink.ai, Store by www.camthink.ai plus /store/ path, and Website by www.camthink.ai excluding /store/. No new dimension is requested.
+6. **Routing identity:** report the observed project/property/stream/application identity for each source without exposing project keys or user identifiers, and confirm whether the common GA4 Measurement ID maps to one property/stream or only reflects common routing configuration.
+7. **Continuity check:** compare any pre- and post-migration records around the Umami-to-CamThinkTracker change and report whether the frozen canonical fields are historically queryable. If no canonical records exist, return zero rows rather than infer continuity.
+
+An exported report is sufficient if it contains the query date range, event filters, counts, distinct-visitor definition, existing attribution fields, and the source/property identity needed to prevent cross-source double counting. It must not contain credentials, project-key values, PII, prompts, or conversation text.
+
+Remaining acceptance criteria blocked by this gate: historical total, earliest trustworthy Ask AI event date, historical Website/Wiki/Store split, historical analytics distinct-visitor count, and historical continuity. Current runtime topology and SDK mapping are not substitutes for these historical results.
+
+### Gate C — narrow CTA inventory confirmation
+
+| SURFACE | Ask AI entry exists? | DOM type | destination | data-track | data-type | tracker listener applicable? | GTM applicable? | canonical CTA already present? |
+|---|---|---|---|---|---|---|---|---|
+| Website | YES — Widget only | button.ask-ai-launcher-pill | no /ask-ai/ navigation; opens Widget UI | absent | absent | YES — existing SDK captures the button | YES — container loaded, but current button lacks canonical attributes | NO |
+| Wiki | YES — Widget mini entry only | section.ask-ai-mini with controls | no /ask-ai/ navigation observed | absent | absent | YES when consent permits SDK injection; otherwise consent-gated | YES — container/config path exists, but current mini entry lacks canonical attributes | NO |
+| Store | YES — Widget only | button.ask-ai-launcher-pill | no /ask-ai/ navigation; opens Widget UI | absent | absent | YES — existing SDK captures the button | YES — container loaded, but current button lacks canonical attributes | NO |
+
+The public Store page also has data-track = contact anchors for WhatsApp and email. Those are not Ask AI entries. The Widget launcher/mini entry and the frozen anchor are separate semantic objects; none of the current Widget controls satisfy the canonical CTA contract.
+
+### Gate D — duplication analysis without production writes
+
+| Surface | Existing duplication mechanism | Effect on page_view | Effect on canonical element_click/contact analytics | Classification |
+|---|---|---|---|---|
+| Store | WordPress public HTML contains an inline GTM bootstrap and a second GTM bootstrap from the visible GTM plugin/theme integration; two matching noscript containers are also present | PROVEN — two blocked GA4 page-view POSTs were observed in controlled reloads | LIKELY for the GA4 mirror if a future canonical anchor is present: two GTM container instances can independently evaluate the same gtm.linkClick and fire the existing contact_click tag. Duplicate custom collector element_click is UNPROVEN because only one Tracker script/listener was observed and no real canonical CTA exists to test. | PROVEN page-view duplication; LIKELY GA4 CTA duplication; custom event duplication UNPROVEN |
+| Wiki | SDK auto page_view plus explicit Root.js CamthinkTracker.page() on location effect | PROVEN — two custom collector page_view events and two blocked GA4 page-view requests were observed on initial load | NOT APPLICABLE to element_click for this mechanism: page() emits page_view and does not register a second click listener. Broader duplicate SDK injection is UNPROVEN, but the inspected Root.js init is guarded and no second click listener was established. | PROVEN page-view duplication; element_click duplication NOT APPLICABLE from this cause |
+| Website | No equivalent duplicate Tracker/GTM bootstrap was observed in the inspected public runtime; exact source repository is unavailable | UNPROVEN end-to-end; no duplicate page-view evidence was observed in the controlled runtime available | UNPROVEN — no real canonical CTA exists to test and source ownership is unavailable | UNPROVEN |
+
+The Store conclusion is deliberately split: duplicate GTM processing is a real likely risk for the noncanonical GA4 contact_click mirror, but it is not evidence that the custom collector currently emits duplicate canonical element_click events. No additional production probe was run.
+
+### Historical continuity and attribution
+
+~~~text
+HISTORICAL_CONTINUITY = UNPROVEN
+SURFACE_ATTRIBUTION = CURRENT ROUTE DERIVATION PROVEN; HISTORICAL VALIDATION BLOCKED
+~~~
+
+Current route derivation is stable and already available in existing page fields:
+
+- Wiki: hostname wiki.camthink.ai.
+- Store: hostname www.camthink.ai with path prefix /store/.
+- Website: hostname www.camthink.ai with no /store/ prefix.
+
+The current custom collector payload does not expose an explicit surface/site_id property on element_click. No new dimension is proposed. Historical attribution still requires the authorized query in Gate B. The common GA4 Measurement ID was observed on all three surfaces, but property/stream identity and historical routing were not accessible. The Umami-to-CamThinkTracker migration further prevents an unverified continuity claim.
+
+### Change surface matrix
+
+| Surface/configuration | Discovery disposition | Smallest future topology |
+|---|---|---|
+| Website | CHANGE REQUIRED | Add the frozen canonical anchor in the approved Website template/layout; exact source repository is still unavailable |
+| Wiki | CHANGE REQUIRED | Add the frozen canonical anchor in the approved Docusaurus layout/theme location |
+| Store | CHANGE REQUIRED | Add the frozen canonical anchor in the approved WordPress/WooCommerce template |
+| Shared CamThink Tracker | NO CHANGE | Existing 0.4.0 SDK already maps the frozen attributes |
+| GTM/GA4 | UNPROVEN / supporting review required | Do not change during Discovery; separately reconcile GA4 contact_click reporting and Store duplicate bootstrap if authorized |
+| ASK-AI repo | NO CHANGE | Current repository owns integration/widget/backend configuration, not the missing surface CTA markup |
+
+No row above authorizes implementation. The first three rows identify where the smallest future implementation would belong; the supporting rows identify evidence/cleanup gates, not approved changes.
+
+### Final Role B verdict
+
+~~~text
+ISSUE_80_DISCOVERY = PARTIAL / BLOCKED
+IMPLEMENTATION_AUTHORIZED = NO
+~~~
+
+Remaining blockers:
+
+1. No qualifying canonical CTA is currently present on Website, Wiki, or Store.
+2. Website and Store source repositories/templates are unavailable for source-level ownership confirmation.
+3. Analytics historical evidence is blocked by authentication: no earliest date, total, surface split, distinct visitor UV, or continuity result is proven.
+4. Exact GA4 property/stream identity and the historical relationship between custom element_click and GA4 contact_click remain unverified.
+5. Store duplicate GTM bootstrap requires an authorized cleanup/acceptance decision before GA4 CTA reporting can be trusted.
+
+Recommended next gate:
+
+1. Provide read-only Analytics access or a redacted export satisfying the seven queries in Gate B.
+2. Have Role A freeze CTA placement and the one-source-of-truth reporting rule without changing the frozen markup contract.
+3. Obtain surface-owner source access, add only the frozen anchor after explicit implementation authorization, and validate in staging with all analytics transports blocked/observed.
+4. Re-run the RED → GREEN probes in Section 17, then perform any separately authorized production verification.
