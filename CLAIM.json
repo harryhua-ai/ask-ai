@@ -1,0 +1,63 @@
+{
+ "v": 2,
+ "task": 85,
+ "claim_id": "harryhua-ai-20260915T182854-24f731ed",
+ "agent": "harryhua-ai",
+ "claimed_at": "2026-09-15T18:28:54Z",
+ "lease_expires_at": "2026-09-15T19:13:54Z",
+ "baseline_commit": "b338c3c7eeafec9f57176aa82dd743b9f195153d",
+ "status": "active",
+ "branch": "agent/85/24f731ed",
+ "heartbeat_at": "2026-09-15T18:28:54Z",
+ "note": null,
+ "supersedes": null,
+ "mode": "implementation",
+ "policy_digest": "138fbe0ba46d978799b1a7dd67b50ae02a6d77b5d9b0d4884586c810b4ed5bd5",
+ "execution_context": "orchestrated",
+ "assignment": {
+  "issue_type": "bug",
+  "workflow": "normal-risk",
+  "lane": "lane-1",
+  "implementation_authorized": true,
+  "change_budget": {
+   "expected": [
+    "scripts/project_automation/**"
+   ],
+   "conditional": [
+    "tests/project_automation/**"
+   ],
+   "forbidden": [
+    "backend/**",
+    "admin/**",
+    "deploy/**"
+   ],
+   "evidence": "P0 automation failure is the status vocabulary mapping in scripts/project_automation (mapping.py STATUS_MAP/DEFAULT_OPEN_STATUS vs live Project Status options); product code untouched",
+   "justifications": {
+    "tests/project_automation/**": "Regression tests for vocabulary mapping drift required by RCA"
+   }
+  }
+ },
+ "workflow": "normal-risk",
+ "change_budget": {
+  "expected": [
+   "scripts/project_automation/**"
+  ],
+  "conditional": [
+   "tests/project_automation/**"
+  ],
+  "forbidden": [
+   "backend/**",
+   "admin/**",
+   "deploy/**"
+  ],
+  "evidence": "P0 automation failure is the status vocabulary mapping in scripts/project_automation (mapping.py STATUS_MAP/DEFAULT_OPEN_STATUS vs live Project Status options); product code untouched",
+  "justifications": {
+   "tests/project_automation/**": "Regression tests for vocabulary mapping drift required by RCA"
+  }
+ },
+ "scope_justifications": {
+  "tests/project_automation/**": "Regression tests for vocabulary mapping drift required by RCA"
+ },
+ "candidate": null,
+ "investigation_artifact": null
+}
