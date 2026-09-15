@@ -46,7 +46,10 @@ class ControlLabels:
     has_status_label: bool = False
     has_sprint_label: bool = False
     has_schedule_label: bool = False
-    iteration_clear_override: bool | None = None
+    # SCHEDULE ≠ PRODUCT ITERATION: a valid schedule:* label suspends Iteration
+    # convergence entirely — the automation must neither write nor clear the
+    # product Iteration on its behalf (2026-09-15 drift fix).
+    iteration_suspended: bool = False
     status_reserved: bool = False
     conflicts: list[MetadataConflict] = field(default_factory=list)
     unknown: list[str] = field(default_factory=list)
@@ -103,6 +106,9 @@ def parse_control_labels(labels: list[str]) -> ControlLabels:
         cl.sprint_key = single["sprint"]
     if len(found["schedule"]) == 1 and single["schedule"] in SCHEDULE_VALUES:
         cl.schedule = single["schedule"]
+        # Scheduling intent never claims Iteration authority; suspension applies
+        # unless an explicit iteration:* label is also present.
+        cl.iteration_suspended = not cl.has_iteration_label
 
     for key, values in found.items():
         if len(values) > 1:

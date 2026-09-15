@@ -55,6 +55,13 @@ mutation can never race reconciliation or sync.
 
 `iteration:<key>` (key = slug of iteration title code token) · `priority:p0|p1|p2` · `status:backlog|in-progress|in-review` · `sprint:<key>` (key = full Sprint title normalized, redundant "sprint" word dropped; Sprint and Iteration are independent dimensions)
 
+**Scheduling labels — SCHEDULE ≠ PRODUCT ITERATION (frozen invariant, 2026-09-15 drift fix):** `schedule:current`,
+`schedule:next`, and `schedule:backlog` express execution-scheduling intent only. They **never write, clear, or
+conflict with the product Iteration** — in particular, `schedule:current` does NOT mean "assign the calendar-current
+iteration" (that defect moved #61-#67 and #71-#76 from v1.6.3 to I-001). With a schedule label and no
+`iteration:*` label, Iteration convergence is suspended: an existing Iteration value is left untouched, and none is
+guessed. Product Iteration authority remains `iteration:<key>` (or a bare label exactly equal to a live Iteration title).
+
 **Reserved / unsupported:** `status:ready` — the Project has no `Ready` Status option. The label is recognized as
 explicit control intent and yields a visible `UNSUPPORTED_STATUS_RESERVED` finding with **no Status mutation** until
 the option is authorized by a separate decision (adding it via `singleSelectOptions` is a full-replace hazard and is
@@ -68,6 +75,7 @@ forbidden without a snapshot/restore plan).
 | `priority:p0/p1/p2` | Priority option P0/P1/P2 |
 | `status:backlog/in-progress/in-review` | Status option Backlog/In progress/In review |
 | `sprint:<key>` | Sprint value whose normalized full title equals `<key>` (additive: absent label = untouched) |
+| `schedule:current/next/backlog` | **No Project field write** — scheduling intent only; Iteration convergence suspended (existing Iteration preserved, none guessed) |
 
 **Transitional Sprint authority:** additive semantics are a MIGRATION-COMPATIBLE bridge, not the final model — the
 live Project holds historical Sprint assignments whose Issues have no sprint metadata yet, and absent→clear before

@@ -3,8 +3,6 @@
 These tests intentionally describe the live-schema behavior before the
 implementation is changed.  They are the RED gate for the remediation.
 """
-import datetime as dt
-
 import pytest
 from project_automation.errors import ProjectMutationFailure, VerificationFailure
 from project_automation.mapping import resolve_desired, resolve_live_control_labels
@@ -24,7 +22,7 @@ CONFIG = FieldConfig(
 
 
 def test_bare_label_exactly_matching_live_iteration_is_authoritative():
-    control = resolve_live_control_labels(["v9.99.99-test"], CONFIG, today=dt.date(2026, 9, 14))
+    control = resolve_live_control_labels(["v9.99.99-test"], CONFIG)
     desired = resolve_desired(IssueAuthority(1, "OPEN", ["v9.99.99-test"]), control)
 
     assert control.has_any is True
@@ -54,19 +52,25 @@ def test_multiple_exact_iteration_labels_fail_closed():
     assert any(conflict.field == "iteration" for conflict in control.conflicts)
 
 
-def test_explicit_iteration_and_schedule_same_target_are_deterministic():
-    control = resolve_live_control_labels(["iteration:i-001", "schedule:current"], CONFIG,
-                                          today=dt.date(2026, 9, 14))
+def test_schedule_current_never_claims_iteration_authority():
+    # SCHEDULE ≠ PRODUCT ITERATION (2026-09-15 drift fix): schedule:current is
+    # scheduling intent only; the explicit iteration label alone decides.
+    labels = ["iteration:i-001", "schedule:current"]
+    control = resolve_live_control_labels(labels, CONFIG)
+    desired = resolve_desired(IssueAuthority(1, "OPEN", labels), control)
 
     assert control.iteration_key == "i-001"
+    assert desired.iteration_key == "i-001"
     assert not any(conflict.field == "iteration" for conflict in control.conflicts)
 
 
-def test_explicit_iteration_and_schedule_conflict():
-    control = resolve_live_control_labels(["iteration:v9.99.99-test", "schedule:current"], CONFIG,
-                                          today=dt.date(2026, 9, 14))
+def test_schedule_current_does_not_override_explicit_iteration():
+    labels = ["iteration:v9.99.99-test", "schedule:current"]
+    control = resolve_live_control_labels(labels, CONFIG)
+    desired = resolve_desired(IssueAuthority(1, "OPEN", labels), control)
 
-    assert any(conflict.field == "iteration" for conflict in control.conflicts)
+    assert desired.iteration_key == "v9.99.99-test"
+    assert not any(conflict.field == "iteration" for conflict in control.conflicts)
 
 
 def test_priority_is_validated_against_live_options_not_source_whitelist():
@@ -173,6 +177,20 @@ def test_already_converged_is_verified_noop():
     assert report["result"] == "ALREADY_CONVERGED"
     assert report["mutations"] == []
     assert report["read_back"]["verified"] is True
+
+
+def test_sync_schedule_label_never_rewrites_iteration():
+    # The live-incident regression: an issue carrying only schedule:current whose
+    # Project item already holds an Iteration must converge with ZERO mutations —
+    # the calendar-current iteration is never written (Actions run 34926050556
+    # rewrote v1.6.3 → I-001 exactly here before the fix).
+    transport = _SyncTransport(["schedule:current"], iteration="I-001 — Current")
+
+    report = sync_issue(transport, _settings(), 68, dry_run=False)
+
+    assert report["result"] == "ALREADY_CONVERGED"
+    assert report["mutations"] == []
+    assert transport.mutations == []
 
 
 def test_read_back_mismatch_is_failure():
