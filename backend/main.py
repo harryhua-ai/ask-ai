@@ -32,6 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -185,6 +186,33 @@ async def _build_llm_state(
     return providers, routing_dict, skipped, True
 
 
+async def _ensure_admin_user(session: AsyncSession) -> str:
+    """Admin 用户引导:已存在 → 原样保留;缺失 → 以 ADMIN_PASSWORD 创建。
+
+    返回动作("preserved"/"created")供调用方记录启动诊断。
+    """
+    from sqlalchemy import select as sa_select
+
+    from backend.auth.jwt import hash_password
+    from backend.db.models import User
+
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@camthink.ai")
+    existing_admin = (
+        await session.execute(sa_select(User).where(User.email == admin_email))
+    ).scalar_one_or_none()
+    if existing_admin:
+        return "preserved"
+    session.add(
+        User(
+            email=admin_email,
+            role="admin",
+            password_hash=hash_password(os.environ.get("ADMIN_PASSWORD", "admin123")),
+        )
+    )
+    logger.info("已创建 admin 用户: %s", admin_email)
+    return "created"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """应用生命周期:启动时接线,关闭时释放资源。"""
@@ -208,17 +236,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.session_factory = get_session_factory(engine)
 
         # Seed: 确保 default customization + widget 绑定存在
-        from sqlalchemy import select as sa_select
-
         from backend.auth.crypto import encrypt_api_key
-        from backend.auth.jwt import hash_password
         from backend.db.models import (
             Customization,
             CustomizationBinding,
             DataSource,
             LLMProviderModel,
             LLMRouting,
-            User,
         )
 
         prompt_cfg = load_yaml_config(settings.config_dir / "system_prompt.yaml")
@@ -240,20 +264,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 )
                 logger.info("已创建官网爬取数据源: website-camthink")
 
-            # Admin 用户
-            admin_email = os.environ.get("ADMIN_EMAIL", "admin@camthink.ai")
-            existing_admin = (
-                await session.execute(sa_select(User).where(User.email == admin_email))
-            ).scalar_one_or_none()
-            if not existing_admin:
-                session.add(
-                    User(
-                        email=admin_email,
-                        role="admin",
-                        password_hash=hash_password(os.environ.get("ADMIN_PASSWORD", "admin123")),
-                    )
-                )
-                logger.info("已创建 admin 用户: %s", admin_email)
+            # Admin 用户(引导语义见 _ensure_admin_user)
+            await _ensure_admin_user(session)
 
             # Default customization + widget 绑定
             if not await session.get(Customization, "default"):
