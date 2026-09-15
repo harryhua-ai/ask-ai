@@ -41,7 +41,8 @@
   "justifications": {}
  },
  "scope_justifications": {
-  "tests/**": "\u56de\u5f52\u4e0e C-7 \u8de8\u6e90\u94fe\u8def\u5957\u4ef6(\u91cd\u5efa\u8c03\u67e5\u5206\u652f RED \u6d4b\u8bd5 + \u65b0\u589e chain \u5957\u4ef6)"
+  "tests/**": "\u56de\u5f52\u4e0e C-7 \u8de8\u6e90\u94fe\u8def\u5957\u4ef6(\u91cd\u5efa\u8c03\u67e5\u5206\u652f RED \u6d4b\u8bd5 + \u65b0\u589e chain \u5957\u4ef6)",
+  "widget/src/**": "C-2/C-3 widget \u72b6\u6001\u6e32\u67d3\u5b88\u536b(sanitize \u5fbd\u6807\u95e8 + LinkState \u7c7b\u578b + \u9759\u6001\u5fbd\u6807\u6837\u5f0f + vitest)"
  },
  "candidate": null,
  "investigation_artifact": null,
