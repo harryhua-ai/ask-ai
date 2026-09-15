@@ -21,7 +21,7 @@ from project_automation.planner import plan_sync
 # v1.6.3 / v1.6.4 both start later. The code under test must not read the
 # calendar at all — these dates exist to prove the old behavior was date-driven.
 CONFIG = FieldConfig(
-    status_options=[OptionDef("s-backlog", "Backlog"), OptionDef("s-done", "Done")],
+    status_options=[OptionDef("s-open", "open"), OptionDef("s-done", "Done")],
     priority_options=[OptionDef("p1", "P1")],
     iterations=[
         IterationDef("i-001", "I-001 — Answer Intelligence Foundation", "2026-09-07", 14),
@@ -31,7 +31,7 @@ CONFIG = FieldConfig(
 )
 
 
-def plan_for(labels, *, iteration=None, priority=None, status="Backlog"):
+def plan_for(labels, *, iteration=None, priority=None, status="open"):
     """Full pipeline: live control resolution → desired projection → mutations."""
     item = ItemState(item_id="ITEM_1", issue_number=71, is_draft=False,
                      iteration_slug=iteration, priority=priority, status=status)
@@ -89,7 +89,7 @@ def test_red6_repeated_runs_are_idempotent():
 def test_red7_converged_schedule_issue_plans_zero_mutations():
     # Status/Priority already at their converged values: a schedule-only issue
     # must produce no mutation at all (guard does not disturb unrelated fields).
-    plan, _, _ = plan_for(["schedule:current"], iteration="v1.6.3", priority=None, status="Backlog")
+    plan, _, _ = plan_for(["schedule:current"], iteration="v1.6.3", priority=None, status="open")
     assert plan.mutations == []
     assert plan.findings == []
 
@@ -125,7 +125,7 @@ def test_r2a_no_iteration_authority_preserves_existing_v163():
 
 
 def test_r2b_no_iteration_authority_preserves_existing_v164():
-    plan, desired, _ = plan_for(["status:backlog"], iteration="v1.6.4", status="Backlog")
+    plan, desired, _ = plan_for(["status:backlog"], iteration="v1.6.4", status="open")
     assert iteration_mutations(plan) == []
     assert desired.iteration_clear is False
 
@@ -165,7 +165,7 @@ def test_r2f_weekly_reconcile_yields_zero_iteration_drift_without_authority():
     from project_automation.reconcile import detect_drift
 
     item = ItemState(item_id="ITEM_1", issue_number=71, is_draft=False,
-                     iteration_slug="v1.6.3", priority="P1", status="Backlog")
+                     iteration_slug="v1.6.3", priority="P1", status="open")
     issue = IssueAuthority(71, "OPEN", ["priority:p1"])
     control = resolve_live_control_labels(issue.labels, CONFIG)
     drifts, _ = detect_drift([(issue, control)], {71: item}, CONFIG)

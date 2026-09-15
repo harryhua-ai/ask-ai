@@ -14,11 +14,16 @@ ITERATION_PREFIX = "iteration:"
 SCHEDULE_PREFIX = "schedule:"
 
 PRIORITY_VALUES = ("p0", "p1", "p2")
-STATUS_VALUES = ("backlog", "in-progress", "in-review")
-# RESERVED/UNSUPPORTED: recognized as explicit control intent, but the Project has no
-# 'Ready' Status option. Using it yields a visible finding and NO Status mutation
-# until the option is authorized (never add it via singleSelectOptions full-replace).
-STATUS_RESERVED = ("ready",)
+# Mappable status values: exactly those with a live Project Status option
+# (open / In progress / Done, probed 2026-09-15 — #85 vocabulary realignment).
+STATUS_VALUES = ("backlog", "in-progress")
+# RESERVED/UNSUPPORTED: recognized as explicit control intent, but the Project has
+# no matching Status option ('Ready' never existed; 'In review' was removed when
+# the live Status field became open/In progress/Done). Using one yields a visible
+# finding and NO Status mutation until the option is authorized (never add it via
+# singleSelectOptions full-replace), and it is never mapped to a guessed nearest
+# option.
+STATUS_RESERVED = ("ready", "in-review")
 SCHEDULE_VALUES = ("current", "next", "backlog")
 
 # iteration keys are slugs: short, lowercase, no shell metacharacters, no whitespace

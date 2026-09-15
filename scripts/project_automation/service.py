@@ -237,10 +237,11 @@ def sync_issue(t: GhCliTransport, s: Settings, number: int, dry_run: bool) -> di
         raise VerificationFailure(f"issue #{number} is a Project member but its item could not be resolved")
 
     desired = resolve_desired(authority, control)
-    # The current live Project uses the built-in ``open`` Status option while
-    # older automation fixtures call the same default ``Backlog``.  Preserve
-    # the legacy mapping, but let the live schema supply its equivalent when
-    # no explicit status label is present.
+    # Drift safety net (#85 realignment): DEFAULT_OPEN_STATUS is the live-anchored
+    # "open" option, so this only fires if the Project option is renamed AGAIN —
+    # then UNLABELED open issues fall back to a live option literally named
+    # "open". Explicit status labels always follow the frozen vocabulary mapping
+    # and stay fail-closed.
     if (authority.state == "OPEN" and not control.has_status_label
             and ctx.config.status_option(desired.status_option or "") is None):
         live_open = ctx.config.status_option("open")

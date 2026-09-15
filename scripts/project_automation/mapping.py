@@ -12,15 +12,20 @@ from .labels import ControlLabels, MetadataConflict, parse_control_labels
 from .model import FieldConfig, IssueAuthority, IterationDef, iteration_slug
 
 PRIORITY_MAP = {"p0": "P0", "p1": "P1", "p2": "P2"}
+# Canonical Status vocabulary = the LIVE Project Status options, probed read-only
+# 2026-09-15 (user project #2 "ask-ai": open / In progress / Done). Actions run
+# #321 failed because the stale names 'Backlog' / 'In review' no longer exist.
+# A recognized control value without a live option stays RESERVED (visible
+# finding, no Status mutation, never a guessed nearest option); the planner
+# keeps rejecting any option unknown to the live schema (fail-closed).
 STATUS_MAP = {
-    "backlog": "Backlog",
+    "backlog": "open",
     "in-progress": "In progress",
-    "in-review": "In review",
 }
 DONE = "Done"
-DEFAULT_OPEN_STATUS = "Backlog"
-RESERVED_STATUS_NOTE = ("status:ready is RESERVED/UNSUPPORTED: the Project has no 'Ready' Status option; "
-                        "no Status mutation until the option is authorized")
+DEFAULT_OPEN_STATUS = "open"
+RESERVED_STATUS_NOTE = ("status value is RESERVED/UNSUPPORTED: the Project has no matching Status "
+                        "option; no Status mutation until the option is authorized")
 
 
 def resolve_iteration(config_iterations, key: str | None):

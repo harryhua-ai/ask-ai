@@ -34,7 +34,9 @@ class TestPriorityMapping:
 
 class TestStatusMapping:
     def test_backlog(self):
-        assert desired_for(1, OPEN, ["status:backlog"]).status_option == "Backlog"
+        # live Project Status option for open/not-started work is "open"
+        # (#85 vocabulary realignment; run #321 drifted here with "Backlog")
+        assert desired_for(1, OPEN, ["status:backlog"]).status_option == "open"
 
     def test_ready_is_reserved_and_produces_no_status_mutation(self):
         # Project has no 'Ready' option: status:ready is reserved/unsupported —
@@ -51,12 +53,16 @@ class TestStatusMapping:
     def test_in_progress(self):
         assert desired_for(1, OPEN, ["status:in-progress"]).status_option == "In progress"
 
-    def test_in_review(self):
-        assert desired_for(1, OPEN, ["status:in-review"]).status_option == "In review"
+    def test_in_review_is_reserved_without_status_mutation(self):
+        # live Status field has no 'In review' option: recognized intent must
+        # surface RESERVED and never be mapped to a guessed nearest option
+        d = desired_for(1, OPEN, ["status:in-review"])
+        assert d.status_option is None
+        assert any("RESERVED" in e for e in d.errors())
 
-    def test_open_without_status_label_defaults_backlog(self):
+    def test_open_without_status_label_defaults_to_live_open_option(self):
         d = desired_for(1, OPEN, ["priority:p1"])
-        assert d.status_option == "Backlog"
+        assert d.status_option == "open"
 
     def test_closed_overrides_status_label_to_done(self):
         d = desired_for(1, CLOSED, ["status:in-progress"])
@@ -70,12 +76,12 @@ class TestStatusMapping:
     def test_reopen_without_status_label_not_done(self):
         # issue reopened (state OPEN) while project says Done: desired must move off Done
         d = desired_for(1, OPEN, [])
-        assert d.status_option == "Backlog"
+        assert d.status_option == "open"
         assert d.status_option != "Done"
 
     def test_reopen_with_status_label_uses_label(self):
-        d = desired_for(1, OPEN, ["status:in-review"])
-        assert d.status_option == "In review"
+        d = desired_for(1, OPEN, ["status:in-progress"])
+        assert d.status_option == "In progress"
 
 
 class TestIterationDesired:

@@ -119,7 +119,7 @@ def test_red3_reconcile_completes_without_sprint_field(monkeypatch):
     monkeypatch.setattr(service_module, "list_repo_issues",
                         lambda s: [IssueAuthority(71, "OPEN", ["priority:p1"])])
     transport = SprintLessProjectTransport(labels=["priority:p1"], item_iteration_id="v163",
-                                           item_priority="p1", item_status="Backlog")
+                                           item_priority="p1", item_status="open")
     report = reconcile(transport, _settings(), dry_run=False)
     assert report["result"] == "NO_DRIFT"
     assert transport.mutations == []
