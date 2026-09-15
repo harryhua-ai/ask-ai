@@ -83,10 +83,12 @@ class TestIterationDesired:
         d = desired_for(1, OPEN, ["iteration:v1.6.0"])
         assert d.iteration_key == "v1.6.0"
 
-    def test_absent_iteration_label_means_clear(self):
+    def test_absent_iteration_label_means_preserve(self):
+        # R2 frozen invariant: absence of Iteration authority is UNMANAGED/PRESERVE —
+        # the persistent product Iteration is never cleared by label absence.
         d = desired_for(1, OPEN, ["status:backlog"])
         assert d.iteration_key is None
-        assert d.iteration_clear is True
+        assert d.iteration_clear is False
 
     def test_conflicting_iteration_labels(self):
         d = desired_for(1, OPEN, ["iteration:i-002", "iteration:v1.6.0"])

@@ -38,7 +38,8 @@ class TestReleaseIsNeverAnIteration:
         d = resolve_desired(IssueAuthority(number=1, state="OPEN",
                                            labels=["status:backlog"],
                                            ))
-        assert d.iteration_key is None and d.iteration_clear is True
+        # R2: absence of Iteration authority preserves the persistent product Iteration
+        assert d.iteration_key is None and d.iteration_clear is False
 
     def test_dev_timebox_keys_still_resolve(self):
         assert resolve_iteration(LIVE_CORRECTED_SET, "i-001") is not None

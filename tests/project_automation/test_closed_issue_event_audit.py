@@ -36,7 +36,7 @@ class _NonMemberFakeTransport:
     def __init__(self, labels):
         self.labels = list(labels)
         self.item_added = False
-        self.item = {"sprint": None, "priority": None, "iteration": None, "status": None}
+        self.item = {"priority": None, "iteration": None, "status": None}
 
     def graphql(self, query, **variables):
         if "clearProjectV2ItemFieldValue" in query:
@@ -55,8 +55,7 @@ class _NonMemberFakeTransport:
                      "startDate": "2026-10-05", "duration": 14}],
                     "completedIterations": [
                         {"id": "fbbcc5e7", "title": "I-000 — Pre-Iteration Foundation",
-                         "startDate": "2026-08-24", "duration": 14}]}},
-                "sprint": {"id": "F_SP", "configuration": {"iterations": [], "completedIterations": []}},
+                         "startDate": "2026-08-24", "duration": 14}]}}
             }, "repository": {"id": "R_1"}}}
         if "issue(number:" in query:
             return {"repository": {"issue": {
@@ -73,7 +72,6 @@ class _NonMemberFakeTransport:
                     "iteration": ({"iterationId": "fbbcc5e7",
                                    "title": "I-000 — Pre-Iteration Foundation"}
                                   if self.item["iteration"] == "i-000" else None),
-                    "sprint": None,
                     "priority": ({"name": "P2"} if self.item["priority"] else None),
                     "status": ({"name": "Done"} if self.item["status"] else None),
                 })

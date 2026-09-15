@@ -34,7 +34,6 @@ _FINDING_TO_DRIFT = {
     "UNKNOWN_OPTION": "UNKNOWN_PROJECT_OPTION",
     "METADATA_CONFLICT": "CONFLICTING_LABELS",
     "UNSUPPORTED_STATUS_RESERVED": "RESERVED_STATUS_LABEL",
-    "UNKNOWN_SPRINT": "UNKNOWN_SPRINT_LABEL",
 }
 
 _MUTATION_TO_DRIFT = {
@@ -42,7 +41,6 @@ _MUTATION_TO_DRIFT = {
     "clear_priority": "WRONG_PRIORITY",
     "set_iteration": "WRONG_ITERATION",
     "clear_iteration": "WRONG_ITERATION",
-    "set_sprint": "WRONG_SPRINT",
 }
 
 
@@ -83,8 +81,7 @@ def detect_drift(
             full = plan_sync(item=None, desired_status=desired.status_option,
                              desired_priority=desired.priority_option, desired_priority_clear=desired.priority_clear,
                              desired_iteration_key=desired.iteration_key, desired_iteration_clear=desired.iteration_clear,
-                             config=config,
-                             desired_sprint_key=desired.sprint_key, desired_sprint_touch=desired.sprint_touch)
+                             config=config)
             drifts.append(Drift(issue.number, "MISSING_FROM_PROJECT",
                                 "issue carries control labels but is not a Project member",
                                 fixable=True, fix=full))
@@ -105,8 +102,7 @@ def detect_drift(
         plan = plan_sync(item=item, desired_status=desired0.status_option,
                          desired_priority=desired0.priority_option, desired_priority_clear=desired0.priority_clear,
                          desired_iteration_key=desired0.iteration_key, desired_iteration_clear=desired0.iteration_clear,
-                         config=config,
-                         desired_sprint_key=desired0.sprint_key, desired_sprint_touch=desired0.sprint_touch)
+                         config=config)
         for m in plan.mutations:
             if m.kind == "add_membership":
                 continue

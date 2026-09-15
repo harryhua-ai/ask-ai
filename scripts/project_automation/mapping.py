@@ -6,7 +6,6 @@ reopening recomputes from labels and can never silently stay Done.
 """
 from __future__ import annotations
 
-import datetime as _dt
 from dataclasses import dataclass
 
 from .labels import ControlLabels, MetadataConflict, parse_control_labels
@@ -40,37 +39,20 @@ def _iteration_candidates(config_iterations, key: str | None) -> list[IterationD
     return [it for it in config_iterations if it.slug == slug]
 
 
-def _schedule_candidates(config: FieldConfig, schedule: str, today: _dt.date) -> list[IterationDef]:
-    """Resolve legacy schedule aliases using the live Iteration timeline."""
-    iterations = sorted(config.iterations, key=lambda it: (it.start_date, it.id))
-    if schedule == "backlog" or not iterations:
-        return []
-
-    def starts(it: IterationDef) -> _dt.date:
-        return _dt.date.fromisoformat(it.start_date)
-
-    active = [it for it in iterations
-              if starts(it) <= today < starts(it) + _dt.timedelta(days=it.duration)]
-    if not active:
-        started = [it for it in iterations if starts(it) <= today]
-        active = [max(started, key=starts)] if started else [iterations[0]]
-    if schedule == "current":
-        return active
-    if len(active) != 1:
-        return active
-    return [it for it in iterations if starts(it) > starts(active[0])][:1]
-
-
-def resolve_live_control_labels(labels: list[str], config: FieldConfig,
-                                *, today: _dt.date | None = None) -> ControlLabels:
+def resolve_live_control_labels(labels: list[str], config: FieldConfig) -> ControlLabels:
     """Resolve explicit namespaces plus exact names from live Project fields.
 
     A bare label is control metadata only when it exactly equals one live
     Iteration title.  This preserves ordinary labels while allowing future
     Project-created Iterations without source-code changes.
+
+    SCHEDULE ≠ PRODUCT ITERATION (frozen invariant, 2026-09-15 drift fix):
+    ``schedule:*`` labels are execution-scheduling intent only. They never
+    resolve to an iteration, never write/clear the Iteration field, and never
+    conflict with it. Without an explicit iteration authority, an existing
+    Iteration value is left untouched.
     """
     control = parse_control_labels(labels)
-    today = today or _dt.datetime.now(_dt.UTC).date()
 
     exact = [it for label in labels for it in config.iterations if label == it.title]
     if len(exact) > 1:
@@ -86,35 +68,10 @@ def resolve_live_control_labels(labels: list[str], config: FieldConfig,
     if chosen is None and len(explicit_candidates) == 1:
         chosen = explicit_candidates[0]
 
-    schedule_target: IterationDef | None = None
-    if control.has_schedule_label and control.schedule is not None:
-        candidates = _schedule_candidates(config, control.schedule, today)
-        if len(candidates) > 1:
-            control.conflicts.append(MetadataConflict("iteration",
-                                                      sorted(it.title for it in candidates)))
-        elif control.schedule != "backlog" and not candidates:
-            control.unknown.append(f"schedule:{control.schedule}")
-        elif candidates:
-            schedule_target = candidates[0]
-
-    if control.has_schedule_label and control.schedule == "backlog":
-        control.iteration_clear_override = True
-        if chosen is not None:
-            control.conflicts.append(MetadataConflict("iteration", [chosen.title, "<backlog>"]))
-    elif schedule_target is not None:
-        if chosen is not None and chosen.id != schedule_target.id:
-            control.conflicts.append(MetadataConflict("iteration", [chosen.title, schedule_target.title]))
-        elif chosen is None:
-            chosen = schedule_target
-
     if chosen is not None and not any(c.field == "iteration" for c in control.conflicts):
         control.has_iteration_label = True
         control.iteration_key = chosen.title if exact else control.iteration_key or chosen.title
-        control.iteration_clear_override = False
-    elif control.has_schedule_label and control.schedule == "backlog" and not any(
-            c.field == "iteration" for c in control.conflicts):
-        control.has_iteration_label = True
-        control.iteration_key = None
+        control.iteration_suspended = False
 
     return control
 
@@ -125,12 +82,10 @@ class DesiredProjection:
     priority_option: str | None  # None = do not set a value
     priority_clear: bool  # True = absence of authority clears the field
     iteration_key: str | None
+    # True requests clearing the Iteration. No authority path produces this since
+    # R2 (2026-09-15): absence of Iteration metadata preserves the field; an
+    # explicit automated clear would require a separate product decision.
     iteration_clear: bool
-    # Sprint is ADDITIVE in v1: an absent sprint label leaves Sprint untouched
-    # (bootstrap could not derive sprint labels before this capability existed;
-    # absent->clear would erase existing manual Sprint values un-label-ably).
-    sprint_key: str | None = None
-    sprint_touch: bool = False
     control: ControlLabels = None
 
     def errors(self) -> list[str]:
@@ -169,21 +124,17 @@ def resolve_desired(issue: IssueAuthority, control: ControlLabels | None = None)
     else:
         priority_option, priority_clear = None, False
 
-    # Iteration: absent label = clear authority; unmappable/conflicting = fail safe.
-    if control.iteration_clear_override is not None:
-        iteration_key, iteration_clear = control.iteration_key, control.iteration_clear_override
-    elif not control.has_iteration_label:
-        iteration_key, iteration_clear = None, True
+    # Iteration (R2, frozen invariant: PRODUCT ITERATION IS PERSISTENT PROJECT
+    # TRUTH): only explicit authority — `iteration:<key>` or a bare label exactly
+    # equal to a live Iteration title — may mutate the Iteration. Absence of
+    # Iteration control metadata means UNMANAGED/PRESERVE, never clear;
+    # schedule:* labels suspend convergence (SCHEDULE ≠ PRODUCT ITERATION).
+    if control.iteration_suspended or not control.has_iteration_label:
+        iteration_key, iteration_clear = None, False
     elif control.iteration_key is not None:
         iteration_key, iteration_clear = control.iteration_key, False
     else:
         iteration_key, iteration_clear = None, False
-
-    # Sprint (additive): converge only when a valid sprint label is present.
-    if control.sprint_key is not None and not any(c.field == "sprint" for c in control.conflicts):
-        sprint_key, sprint_touch = control.sprint_key, True
-    else:
-        sprint_key, sprint_touch = None, False
 
     return DesiredProjection(
         status_option=status_option,
@@ -191,7 +142,5 @@ def resolve_desired(issue: IssueAuthority, control: ControlLabels | None = None)
         priority_clear=priority_clear,
         iteration_key=iteration_key,
         iteration_clear=iteration_clear,
-        sprint_key=sprint_key,
-        sprint_touch=sprint_touch,
         control=control,
     )
