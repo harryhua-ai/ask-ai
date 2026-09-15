@@ -213,3 +213,70 @@ async def test_drain_once_processes_in_id_order_then_empty(_db, tmp_path):
     assert await drain_once(_db, argv=_stub_argv(tmp_path / "q2")) is True
     assert (await _get_request(_db, id2)).status == "done"
     assert await drain_once(_db, argv=_stub_argv(tmp_path / "q3")) is False
+
+
+# --------------------------------------------------------------------------- #
+# INC-WEB-EMBED-413 REMEDIATION:kind=rebuild 交接(源重建 flavor)
+#
+# 修复面 REBUILD_REQUIRED 裁决经既有 sync_requests 交接缝:kind=rebuild →
+# runner argv 附加 --reindex(既有 P1-E 全量生成重建路径,_enforce_char_limit
+# 生效)。去重键 = (source_id, kind):同键在途去重,异键互不阻塞;执行面
+# 既有串行/FOR UPDATE SKIP LOCKED/MAX_TOTAL_ATTEMPTS 语义零变化。
+# --------------------------------------------------------------------------- #
+
+
+async def test_build_runner_argv_rebuild_appends_reindex():
+    argv = build_runner_argv("some-src", "manual", kind="rebuild")
+    assert "--reindex" in argv
+    assert argv[argv.index("--source") + 1] == "some-src"
+
+
+async def test_build_runner_argv_default_kind_has_no_reindex():
+    argv = build_runner_argv("some-src", "manual")
+    assert "--reindex" not in argv
+
+
+async def test_submit_sync_request_dedups_by_source_and_kind(_db):
+    from backend.services.sync_requests import submit_sync_request
+
+    async with _db() as session:
+        first = await submit_sync_request(session, "src-k", triggered_by="manual", kind="rebuild")
+        assert first.state == "accepted"
+        dup = await submit_sync_request(session, "src-k", triggered_by="manual", kind="rebuild")
+        assert dup.state == "already-running"
+        assert dup.request_id == first.request_id
+        # 异键互不阻塞:plain sync(kind=None)不被在途 rebuild 阻塞
+        plain = await submit_sync_request(session, "src-k", triggered_by="manual")
+        assert plain.state == "accepted"
+        # 反向:在途 plain 不阻塞 rebuild
+        other_src_rebuild = await submit_sync_request(
+            session, "src-k2", triggered_by="manual", kind="rebuild"
+        )
+        assert other_src_rebuild.state == "accepted"
+
+
+async def test_execute_request_passes_rebuild_kind_to_runner(_db, monkeypatch):
+    """执行面把 req.kind 透传 runner(源重建 flavor 不断链)。"""
+    import scripts.sync_executor_loop as loop
+
+    async with _db() as session:
+        session.add(SyncRequest(source_id="src-r", triggered_by="manual", status="running", kind="rebuild"))
+        await session.commit()
+        req = (
+            await session.execute(
+                select(SyncRequest).where(SyncRequest.source_id == "src-r")
+            )
+        ).scalar_one()
+
+    captured = {}
+
+    async def fake_run_runner(source_id, triggered_by, *, argv=None, recovery=False,
+                              request_id=None, attempt=1, kind=None):
+        captured.update(kind=kind, source_id=source_id)
+        return 0
+
+    monkeypatch.setattr(loop, "run_runner", fake_run_runner)
+    result = await loop.execute_request(_db, req)
+    assert result == "done"
+    assert captured["kind"] == "rebuild"
+    assert captured["source_id"] == "src-r"

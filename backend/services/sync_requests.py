@@ -33,6 +33,10 @@ logger = logging.getLogger(__name__)
 # 视为"在途"的状态:阻塞同 key 重复入队
 _ACTIVE_STATES = ("pending", "running")
 
+# INC-WEB-EMBED-413 REMEDIATION:请求 flavor 词表。"rebuild" = 权威源全量
+# 生成重建(执行面透传 --reindex);None = 既有增量同步语义。
+_REQUEST_KINDS = (None, "rebuild")
+
 
 class SyncRequestSubmitError(RuntimeError):
     """交接请求写入失败(DB 不可用等)—— 调用方必须显式报错,不伪装 accepted。"""
@@ -46,14 +50,23 @@ class SyncSubmit:
     request_id: int | None
 
 
-async def find_active_request(session: AsyncSession, source_id: str | None) -> SyncRequest | None:
-    """返回同 key(source_id 或 sync-all 的 NULL)最新在途请求;无则 None。"""
+async def find_active_request(
+    session: AsyncSession, source_id: str | None, *, kind: str | None = None
+) -> SyncRequest | None:
+    """返回同 key(source_id 或 sync-all 的 NULL + 同 kind)最新在途请求。
+
+    去重键 = (source_id, kind)(REMEDIATION):同键在途去重(有界并发),
+    异键互不阻塞 —— 源重建请求不被在途普通同步吞掉(普通同步对
+    verifier-healthy 的超契约文档不产生重建效果),反之亦然;执行面本身
+    串行领用,异键请求按序执行,不产生并发同步。
+    """
     key_filter = (
         SyncRequest.source_id.is_(None) if source_id is None else SyncRequest.source_id == source_id
     )
+    kind_filter = SyncRequest.kind.is_(None) if kind is None else SyncRequest.kind == kind
     result = await session.execute(
         select(SyncRequest)
-        .where(SyncRequest.status.in_(_ACTIVE_STATES), key_filter)
+        .where(SyncRequest.status.in_(_ACTIVE_STATES), key_filter, kind_filter)
         .order_by(SyncRequest.id.desc())
         .limit(1)
     )
@@ -61,7 +74,11 @@ async def find_active_request(session: AsyncSession, source_id: str | None) -> S
 
 
 async def submit_sync_request(
-    session: AsyncSession, source_id: str | None, *, triggered_by: str = "manual"
+    session: AsyncSession,
+    source_id: str | None,
+    *,
+    triggered_by: str = "manual",
+    kind: str | None = None,
 ) -> SyncSubmit:
     """把一次手动同步持久交接给独立执行面:写 pending 行并提交。
 
@@ -69,23 +86,32 @@ async def submit_sync_request(
         session: 请求作用域的异步会话(提交失败时由调用方回滚/报错)。
         source_id: 单源同步的源 ID;``None`` 表示同步全部启用源。
         triggered_by: 记入请求行,执行面透传给 ``sync.py --triggered-by``。
+        kind: 请求 flavor(None = 增量同步;"rebuild" = 源全量生成重建,
+            执行面透传 ``--reindex``)。未知值显式拒绝(绝不静默降级成
+            普通同步 —— 那会伪造重建已被交接)。
 
     Returns:
         SyncSubmit(accepted 携带新请求 id;already-running 携带在途 id)。
 
     Raises:
         SyncRequestSubmitError: 写库失败 —— HTTP 层必须映射为明确失败。
+        ValueError: 未知 kind。
     """
-    active = await find_active_request(session, source_id)
+    if kind not in _REQUEST_KINDS:
+        raise ValueError(f"未知同步请求 kind: {kind!r}(合法: None, 'rebuild')")
+    active = await find_active_request(session, source_id, kind=kind)
     if active is not None:
         logger.warning(
-            "同步请求已在交接队列在途,跳过重复提交: key=%s request_id=%d status=%s",
+            "同步请求已在交接队列在途,跳过重复提交: key=%s kind=%s request_id=%d status=%s",
             "sync-all" if source_id is None else source_id,
+            kind or "sync",
             active.id,
             active.status,
         )
         return SyncSubmit(state="already-running", request_id=active.id)
-    req = SyncRequest(source_id=source_id, triggered_by=triggered_by, status="pending")
+    req = SyncRequest(
+        source_id=source_id, triggered_by=triggered_by, status="pending", kind=kind
+    )
     session.add(req)
     try:
         await session.commit()

@@ -92,6 +92,20 @@ async def ensure_recovery_columns(engine: AsyncEngine) -> None:
             await conn.execute(text(stmt))
 
 
+async def ensure_sync_request_kind_column(engine: AsyncEngine) -> None:
+    """INC-WEB-EMBED-413 REMEDIATION:sync_requests 补 kind 列(幂等加性)。
+
+    NULL = 既有增量同步语义;"rebuild" = 源全量生成重建(执行面透传
+    --reindex)。旧行安全默认 NULL,零回填。生产执行窗口:任意(纯加列)。
+    """
+    from sqlalchemy import text
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("ALTER TABLE sync_requests ADD COLUMN IF NOT EXISTS kind VARCHAR(20)")
+        )
+
+
 async def ensure_track_c_columns(engine: AsyncEngine) -> None:
     """v1.6.3 Track C 加性列幂等迁移(U-7/U-11/U-12)。
 
@@ -148,3 +162,4 @@ async def init_db(engine: AsyncEngine) -> None:
         await conn.run_sync(Base.metadata.create_all)
     await ensure_track_c_columns(engine)
     await ensure_sync_delta_columns(engine)
+    await ensure_sync_request_kind_column(engine)

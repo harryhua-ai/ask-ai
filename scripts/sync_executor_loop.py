@@ -92,6 +92,7 @@ def build_runner_argv(
     triggered_by: str,
     *,
     recovery: bool = False,
+    kind: str | None = None,
     request_id: int | None = None,
     attempt: int = 1,
 ) -> list[str]:
@@ -105,10 +106,17 @@ def build_runner_argv(
     ``--force-incremental-replay``:关闭 GitHub 增量的 remote-SHA 短路,
     强制按 last-success 边界重读 git 历史(F16 修复);其余 connector
     忽略该上下文。
+
+    ``kind="rebuild"``(INC-WEB-EMBED-413 REMEDIATION:修复面 REBUILD_REQUIRED
+    裁决的源重建 flavor)时附加 ``--reindex``:既有 P1-E 全量生成重建路径
+    (fetch_all → force_rebuild 新代构建 → 原子激活,_enforce_char_limit
+    生效)。未知 kind 不附加任何 flavor(降级普通同步,fail-safe)。
     """
     argv = [sys.executable, str(SYNC_SCRIPT), "--triggered-by", triggered_by]
     if recovery:
         argv.append("--force-incremental-replay")
+    if kind == "rebuild":
+        argv.append("--reindex")
     if source_id is not None:
         argv += ["--source", source_id]
     # ⑪+⑫ Wave-0:request→run 确定性链接(runner 据此写 SyncRun.request_id/
@@ -293,6 +301,7 @@ async def run_runner(
     *,
     argv: list[str] | None = None,
     recovery: bool = False,
+    kind: str | None = None,
     request_id: int | None = None,
     attempt: int = 1,
 ) -> int:
@@ -301,7 +310,12 @@ async def run_runner(
         argv
         if argv is not None
         else build_runner_argv(
-            source_id, triggered_by, recovery=recovery, request_id=request_id, attempt=attempt
+            source_id,
+            triggered_by,
+            recovery=recovery,
+            kind=kind,
+            request_id=request_id,
+            attempt=attempt,
         )
     )
     logger.warning("执行面启动 sync runner: argv=%s", " ".join(real_argv))
@@ -471,6 +485,7 @@ async def execute_request(
             req.triggered_by or "manual",
             argv=argv,
             recovery=recovery,
+            kind=getattr(req, "kind", None),
             request_id=req.id,
             attempt=attempt,
         )

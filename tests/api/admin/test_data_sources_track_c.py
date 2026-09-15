@@ -450,14 +450,16 @@ async def test_u8_repair_full_workflow_with_verification(
     assert len(rows) == 1
 
 
-async def test_u8_repair_oversized_persisted_chunk_fails_fast_without_embed(
+async def test_u8_repair_oversized_routes_to_source_rebuild_without_embed(
     admin_headers, c_seed, vector_stack, monkeypatch
 ):
-    """INC-WEB-EMBED-413:重放载荷越嵌入字符契约 → 任务失败、零嵌入调用。
+    """INC-WEB-EMBED-413 REMEDIATION:重放载荷越嵌入字符契约 → 系统自选
+    机制 = 权威源重建请求(sync_requests kind=rebuild 交接),不是终态
+    "让管理员去点 Sync"的失败;嵌入零调用(超限载荷绝不出网)。
 
-    生产事实:现行版本持久 chunk 文本超 EMBEDDER_MAX_LENGTH(迁移回填误挂
-    legacy 行)时,修复回放把超限文本送嵌入 → 413 → 任务失败。契约:预检
-    失败(fail-fast),绝不发送注定被拒的嵌入请求,错误如实指认契约越界。
+    冻结产品真值:管理员只选「修复此知识 / 一键修复全部」,机制由系统
+    裁决:REPLAYABLE → 持久副本回放;REBUILD_REQUIRED → 既有 sync 源重建
+    路径交接;UNRECOVERABLE → 如实失败。
     """
 
     class _SpyEmbedder:
@@ -507,10 +509,14 @@ async def test_u8_repair_oversized_persisted_chunk_fails_fast_without_embed(
         )
     assert resp.status_code == 200
     task = resp.json()
-    assert task["status"] == "failed"
-    assert "max_length" in (task["error"] or "")
+    assert task["status"] == "rebuild_requested"
+    assert task["stage"] == "rebuild_request"
+    assert task["result"]["repair_mode"] == "source_rebuild_requested"
+    assert task["result"]["reason"] == "persisted_text_over_contract"
+    assert "max_length" in (task["result"].get("detail") or "")
+    assert task["result"]["sync_request_id"] is not None
     assert spy.texts == []  # 零嵌入调用:超契约载荷根本不出网
-    # 审计行持久化失败事实(不静默)
+    # 审计行持久化(不静默、不伪造成功)
     async with factory() as session:
         rows = (
             (
@@ -523,7 +529,19 @@ async def test_u8_repair_oversized_persisted_chunk_fails_fast_without_embed(
             .scalars()
             .all()
         )
-    assert len(rows) == 1 and rows[0].status == "failed"
+        assert len(rows) == 1 and rows[0].status == "rebuild_requested"
+        req_rows = (
+            (
+                await session.execute(
+                    select(SyncRequest).where(SyncRequest.source_id == SRC)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(req_rows) == 1
+    assert req_rows[0].kind == "rebuild"
+    assert req_rows[0].status == "pending"
 
 
 async def test_u8_repair_idempotent_same_key_and_healthy_noop(
@@ -585,13 +603,22 @@ async def test_u14_bulk_repair_returns_authoritative_aggregate_and_excludes_heal
     assert forbidden.status_code == 403
     assert response.status_code == 200
     body = response.json()
-    # c_seed:1 missing_candidate(无现行版本,失败) + 1 healthy active + 1 healthy active
+    # c_seed:1 missing_candidate(无现行版本 → 系统自选源重建交接)
+    #        + 1 healthy active + 1 healthy active(不入 attention)
     assert body["eligible"] == 1
     assert body["succeeded"] == 0
-    assert body["failed"] == 1
+    assert body["failed"] == 0
+    assert body["rebuild_requested"] == 1
     assert body["items"][0]["doc_source_id"] == DOC_PRODUCT
-    assert body["items"][0]["status"] == "failed"
-    assert "无法修复" in body["items"][0]["error"]
+    assert body["items"][0]["status"] == "rebuild_requested"
+    assert body["items"][0]["sync_request_id"] is not None
+    async with app.state.session_factory() as session:
+        req_rows = (
+            (await session.execute(select(SyncRequest).where(SyncRequest.source_id == SRC)))
+            .scalars()
+            .all()
+        )
+    assert len(req_rows) == 1 and req_rows[0].kind == "rebuild"
 
 
 async def test_u14_bulk_repair_partial_success_excludes_retired_and_concurrent_request(
@@ -998,3 +1025,231 @@ async def test_u13_ledger_drift_invalidates_preview(admin_headers, c_seed, vecto
                 Document.__table__.delete().where(Document.source_id == f"{SRC}/main/drift.md")
             )
             await session.commit()
+
+
+# --------------------------------------------------------------------------- #
+# INC-WEB-EMBED-413 REMEDIATION:修复命令系统自选恢复机制(冻结产品真值)
+#
+# REPLAYABLE → 持久副本回放(廉价路径不变);REBUILD_REQUIRED → 既有 sync
+# 源重建路径交接(sync_requests kind=rebuild → sync --reindex --source,
+# 经 _enforce_char_limit 的已验收摄取路径);UNRECOVERABLE → 如实失败。
+# 管理员不需要理解或手动串联 repair → failed → 点 Sync。
+# --------------------------------------------------------------------------- #
+
+
+class _RecordingEmbedder:
+    """记录全部嵌入文本;对含 FAIL-ME 标记的文本真实失败(不可恢复类)。"""
+
+    def __init__(self) -> None:
+        self.texts: list[str] = []
+
+    def embed(self, texts):
+        for t in texts:
+            if "FAIL-ME" in t:
+                raise RuntimeError("嵌入模型真实失败(测试注入)")
+        self.texts.extend(texts)
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+
+async def _mk_remediation_docs(session):
+    """三篇 attention 文档:replayable / oversized / genuinely-failing。"""
+
+    docs = {}
+    for key, lifecycle in (
+        ("replay", "missing_candidate"),
+        ("oversize", "missing_candidate"),
+        ("fail", "missing_candidate"),
+    ):
+        sid = f"{SRC}/main/rem-{key}.md"
+        version = DocumentVersion(
+            source_id=sid,
+            version_seq=1,
+            content_hash="e" * 64,
+            metadata_hash="f" * 64,
+            generation_id=_mk_version.gen.id,
+            generation_ordinal=ORDINAL,
+            status="active",
+            title=key,
+            url=f"https://shop.example.com/rem-{key}",
+            chunk_count=2,
+        )
+        session.add(version)
+        await session.flush()
+        oversize_text = "O" * 3000 if key == "oversize" else f"REM-{key}-chunk-1"
+        if key == "fail":
+            oversize_text = "REM-FAIL-ME-chunk-1"
+        for i, text_ in enumerate((f"REM-{key}-chunk-0", oversize_text)):
+            session.add(
+                DocumentVersionChunk(
+                    version_id=version.id,
+                    chunk_index=i,
+                    text=text_,
+                    props={"source_id": sid, "chunk_index": i},
+                )
+            )
+        session.add(
+            Document(
+                source_id=sid,
+                content_hash="e" * 64,
+                source_type="woocommerce",
+                product="trackc",
+                title=key,
+                url=f"https://shop.example.com/rem-{key}",
+                branch="",
+                chunk_count=2,
+                lifecycle=lifecycle,
+                current_version_id=version.id,
+            )
+        )
+        docs[key] = sid
+    return docs
+
+
+async def test_u14_bulk_mixed_routes_replay_rebuild_and_truthful_failure(
+    admin_headers, c_seed, vector_stack, monkeypatch
+):
+    """混合批量:回放可修复→succeeded(廉价回放);超契约→rebuild_requested
+    (自动交接,零嵌入);真实上游失败→failed。聚合逐项如实。"""
+    import dataclasses as _dc
+
+    spy = _RecordingEmbedder()
+    monkeypatch.setattr(app.state, "embedder", spy)
+    monkeypatch.setattr(
+        app.state,
+        "settings",
+        _dc.replace(app.state.settings, embedder_max_length=1024),
+    )
+
+    factory = app.state.session_factory
+    async with factory() as session:
+        docs = await _mk_remediation_docs(session)
+        await session.commit()
+        # 在服投影:每篇恰 idx0 在服(现行代),idx1 缺失 → 修复计划=缺 idx1
+        collection = _FakeCollection(
+            [
+                {"source_id": sid, "chunk_index": 0, "generation_ordinal": ORDINAL}
+                for sid in docs.values()
+            ]
+        )
+        client_fake = SimpleNamespace(collections=SimpleNamespace(get=lambda _n: collection))
+        app.state.weaviate_client = client_fake
+    # 资格桶此时 = c_seed 的 DOC_PRODUCT(无版本→rebuild)+ 本 3 篇 = 4;
+    # 本测试聚焦新 3 篇的逐项裁决,聚合断言按 4 口径。
+    expected_eligible = 4
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+            resp = await client.post(BULK_REPAIR_URL, headers=admin_headers)
+    finally:
+        pass
+    assert resp.status_code == 200
+    body = resp.json()
+    by_doc = {i["doc_source_id"]: i for i in body["items"]}
+    assert body["eligible"] == expected_eligible
+    assert body["succeeded"] == 1
+    assert body["failed"] == 1
+    assert body["rebuild_requested"] == 2
+    assert by_doc[docs["replay"]]["status"] == "succeeded"
+    assert by_doc[docs["oversize"]]["status"] == "rebuild_requested"
+    assert by_doc[docs["oversize"]]["sync_request_id"] is not None
+    assert by_doc[docs["fail"]]["status"] == "failed"
+    assert "真实失败" in (by_doc[docs["fail"]]["error"] or "")
+    # 验收 5:超契约载荷零出网;嵌入只见到回放可修复的小文本
+    assert all(len(t) <= 1024 for t in spy.texts)
+    assert not any("REM-oversize-chunk-1" in t for t in spy.texts)
+    # 验收 10:修复操作自身已交接权威源重建(无需管理员再手动点 Sync)
+    async with factory() as session:
+        req_rows = (
+            (await session.execute(select(SyncRequest).where(SyncRequest.source_id == SRC)))
+            .scalars()
+            .all()
+        )
+    assert len(req_rows) == 1
+    assert req_rows[0].kind == "rebuild"
+    assert req_rows[0].status == "pending"
+
+
+async def test_u8_repair_no_current_version_routes_to_rebuild(
+    admin_headers, c_seed, vector_stack, monkeypatch
+):
+    """无现行版本的合格文档:系统自选源重建交接(不再终态拒绝)。"""
+    import dataclasses as _dc
+
+    monkeypatch.setattr(
+        app.state,
+        "settings",
+        _dc.replace(app.state.settings, embedder_max_length=1024),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        resp = await client.post(
+            REPAIR_URL,
+            json={"doc_source_id": DOC_PRODUCT, "idempotency_key": "rem-nover"},
+            headers=admin_headers,
+        )
+    assert resp.status_code == 200
+    task = resp.json()
+    assert task["status"] == "rebuild_requested"
+    assert task["result"]["repair_mode"] == "source_rebuild_requested"
+    assert task["result"]["sync_request_id"] is not None
+
+
+async def test_u8_repair_rebuild_submit_failure_is_honest_failure(
+    admin_headers, c_seed, vector_stack, monkeypatch
+):
+    """交接写库失败 → 任务如实 failed(绝不伪造 rebuild_requested)。"""
+    import dataclasses as _dc
+
+    from backend.services.sync_requests import SyncRequestSubmitError
+
+    monkeypatch.setattr(
+        app.state,
+        "settings",
+        _dc.replace(app.state.settings, embedder_max_length=1024),
+    )
+
+    async def _boom(session, source_id, *, triggered_by="manual", kind=None):
+        raise SyncRequestSubmitError("交接请求写入失败(测试注入)")
+
+    monkeypatch.setattr(
+        "backend.services.sync_requests.submit_sync_request", _boom
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        resp = await client.post(
+            REPAIR_URL,
+            json={"doc_source_id": DOC_PRODUCT, "idempotency_key": "rem-boom"},
+            headers=admin_headers,
+        )
+    assert resp.status_code == 200
+    task = resp.json()
+    assert task["status"] == "failed"
+    assert "写入失败" in (task["error"] or "")
+
+
+async def test_u8_repair_healthy_replay_creates_no_rebuild_request(
+    admin_headers, c_seed, vector_stack, monkeypatch
+):
+    """健康可回放文档:廉价回放路径不变,且零源重建交接(不扩权)。"""
+    import dataclasses as _dc
+
+    monkeypatch.setattr(
+        app.state,
+        "settings",
+        _dc.replace(app.state.settings, embedder_max_length=1024),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        resp = await client.post(
+            REPAIR_URL,
+            json={"doc_source_id": DOC_PAGE, "idempotency_key": "rem-healthy"},
+            headers=admin_headers,
+        )
+    assert resp.status_code == 200
+    task = resp.json()
+    assert task["status"] == "succeeded"
+    assert task["result"]["repair_mode"] == "persisted_chunk_replay"
+    async with app.state.session_factory() as session:
+        req_rows = (
+            (await session.execute(select(SyncRequest).where(SyncRequest.source_id == SRC)))
+            .scalars()
+            .all()
+        )
+    assert req_rows == []  # 健康文档零重建请求
