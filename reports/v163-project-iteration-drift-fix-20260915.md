@@ -35,6 +35,21 @@ by **UNMANAGED/PRESERVE** semantics; Iteration persistence invariant documented 
 
 **Full project_automation suite after R2: `150 passed, 0 failed`** (144 R1 + 6 R2).
 
+### R2 re-verification (second Role A review receipt — same CHANGES REQUIRED text)
+
+The review text corresponds to the R1 candidate (`09356e3`), where the `absent → iteration_clear=True →
+clear_iteration` path did exist. At the R2 tip it is **proven removed**:
+
+- Static: `grep` over `scripts/project_automation/` — `iteration_clear` is assigned `False` in **all three**
+  `resolve_desired` authority branches (`mapping.py:138/140/142`); no production code assigns `True`. The only
+  `True` occurrences are test-side explicit `plan_sync(..., desired_iteration_clear=True)` capability calls,
+  which bypass the authority layer by design; the planner clear capability remains **producer-less**.
+- Dynamic: required cases A–F pass (6/6), R1 boundary tests RED-1..7 + authority invariants pass (9/9),
+  full suite **151 passed** after adding `test_sync_without_iteration_authority_preserves_existing_iteration`
+  (commit `e5003fd`) — the review's exact scenario proven end-to-end through `sync_issue`:
+  no `iteration:*` + no `schedule:*` → `ALREADY_CONVERGED`, `requested.iteration_clear=False`, zero mutations.
+- Live: #71–#76 re-read fresh — all Iteration = v1.6.3, Status=open, labels unchanged.
+
 ---
 
 ## 1. Root cause (PROVEN at code + live-log level)
@@ -183,5 +198,5 @@ doc lines. NOT touched: backend/frontend/RAG/migrations, Status/Priority design,
 
 - Branch: `fix/project-iteration-drift-20260915` (base `origin/main` = `f4e6751`)
 - Commits: `8b8a71b` (R1 RED) → `09356e3` (R1 fix) → `b0d4167` (R1 report) → `9085334` (R2 RED, 6/6 fail) →
-  `ddeda4c` (**R2 fix — CANDIDATE**) → report R2 addendum commit
+  `ddeda4c` (**R2 fix — CANDIDATE**) → `4740cf0` (R2 report addendum) → `e5003fd` (R2 service-level regression)
 - Merge to `main`: **NOT performed** — awaiting Role A authorization.
