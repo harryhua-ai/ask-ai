@@ -676,3 +676,153 @@ def test_repair_replay_preserves_provenance_props(stack):
         for key in ("evidence_authority_class", "evidence_temporality",
                     "evidence_sensitivity", "evidence_citation_eligibility", "evidence_origin"):
             assert obj_props[key] == (c.props or {}).get(key)
+
+
+# --------------------------------------------------------------------------- #
+# Issue #72 矫正:暴露路径经远程客户端切批(生产类 >16 chunks)
+# 端点模拟强制 ≤16(同生产契约);矫正前这三条路径均 422 整代零激活。
+# --------------------------------------------------------------------------- #
+
+
+class _RemoteBatchEndpoint:
+    """内部嵌入端点模拟:强制 ≤max_batch(422,服务端同款 detail);
+    向量由文本内容 md5 确定性导出(真实 chunk 文本不可解析,顺序/完整性
+    由 tests/embedder/test_remote_batching.py 的序号方案专证)。"""
+
+    def __init__(self, dimension: int = 8, max_batch: int = 16):
+        import hashlib
+        import io
+        import urllib.error
+
+        self._hashlib = hashlib
+        self._io = io
+        self._urlerror = urllib.error
+        self.dimension = dimension
+        self.max_batch = max_batch
+        self.requests: list[list[str]] = []
+
+    def __call__(self, req, timeout=None):
+        import json
+
+        texts = json.loads(req.data.decode())["texts"]
+        self.requests.append(list(texts))
+        if len(texts) > self.max_batch:
+            raise self._urlerror.HTTPError(
+                req.full_url,
+                422,
+                "batch too large",
+                hdrs=None,
+                fp=self._io.BytesIO(
+                    json.dumps({"detail": f"batch too large: {len(texts)} > {self.max_batch}"}).encode()
+                ),
+            )
+        vectors = []
+        for t in texts:
+            head = float(int(self._hashlib.md5(t.encode()).hexdigest()[:6], 16) % 10000)
+            vectors.append([head] + [0.1] * (self.dimension - 1))
+        return _RemoteBatchEndpoint._Resp(
+            json.dumps(
+                {
+                    "vectors": vectors,
+                    "dimension": self.dimension,
+                    "execution_device": "gpu",
+                    "fallback_reason": None,
+                    "fallback_detail": None,
+                }
+            ).encode()
+        )
+
+    class _Resp:
+        def __init__(self, body: bytes):
+            self._body = body
+
+        def read(self) -> bytes:
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def sizes(self) -> list[int]:
+        return [len(r) for r in self.requests]
+
+
+def _remote_embedder(monkeypatch, endpoint):
+    from backend.embedder.remote import RemoteSyncEmbedder, _RemoteEmbedderClient
+
+    monkeypatch.setattr("urllib.request.urlopen", endpoint)
+    # 不显式传 batch_size:走 ctor 缺省(Settings 权威缺省 12)——矫正前的
+    # 旧构造签名可直接运行,使 RED 表现为真实 422 整代失败而非 API 缺参
+    return RemoteSyncEmbedder(_RemoteEmbedderClient("http://b", "tok"))
+
+
+def _bulk_doc(sid: str, *, words: int, content_hash: str) -> RawDocument:
+    return _doc(sid, content=" ".join(f"w{i}" for i in range(words)), content_hash=content_hash)
+
+
+def _expected_chunks(docs: list[RawDocument]) -> int:
+    from backend.pipeline.ingest import chunk_document_semantic
+
+    return sum(len(chunk_document_semantic(d, 40, 0)) for d in docs)
+
+
+def test_normal_build_over_16_chunks_via_remote_batching(stack, monkeypatch):
+    """A:正常生成构建(拼平 >16 chunks)经远程切批成功(矫正前 422 零激活)。"""
+    docs = [_bulk_doc(f"a{i}", words=160, content_hash=f"h{i}") for i in range(3)]
+    expected = _expected_chunks(docs)
+    assert expected > 16  # 前提:确属生产类超限轮
+    endpoint = _RemoteBatchEndpoint()
+    stack.pipeline._embedder = _remote_embedder(monkeypatch, endpoint)
+
+    accounting = stack.builder.build_generation(docs, source_id=SRC)
+
+    assert accounting.generation_status == "ready"
+    assert accounting.chunks_written == expected
+    # 切批真实发生:多片、每片 ≤16、总量 == chunk 数(无丢失/重复)
+    assert len(endpoint.sizes()) >= 2
+    assert all(s <= 16 for s in endpoint.sizes())
+    assert sum(endpoint.sizes()) == expected
+
+
+def test_repair_generation_over_16_chunks_via_remote_batching(stack, monkeypatch):
+    """B:修复代(gap-heal repair)经同一远程切批缝合成功。"""
+    builder = stack.builder
+    sids = ["b0", "b1", "b2"]
+    docs = [_bulk_doc(s, words=160, content_hash="v1") for s in sids]
+    full_sids = [PREFIX + s for s in sids]
+    builder.build_generation(docs, source_id=SRC)
+    endpoint = _RemoteBatchEndpoint()
+    stack.pipeline._embedder = _remote_embedder(monkeypatch, endpoint)
+
+    repaired, unrepairable, chunks_repaired = builder.repair_documents(
+        full_sids, source_id_scope=SRC
+    )
+
+    assert unrepairable == []
+    assert repaired == full_sids
+    expected = _expected_chunks(docs)
+    assert chunks_repaired == expected
+    assert expected > 16  # 前提:修复拼平确属生产类超限(3 docs × 8 chunks)
+    assert len(endpoint.sizes()) >= 2 and all(s <= 16 for s in endpoint.sizes())
+    assert sum(endpoint.sizes()) == expected
+
+
+def test_force_rebuild_route_over_16_chunks_via_remote_batching(stack, monkeypatch):
+    """C:强制重建路由(reindex P1-E / 413 矫正回退同路径)>16 chunks 零 422。"""
+    builder = stack.builder
+    docs = [_bulk_doc(f"c{i}", words=160, content_hash="v1") for i in range(3)]
+    builder.build_generation(docs, source_id=SRC)  # 先在服(此后 UNCHANGED)
+    expected = _expected_chunks(docs)
+    endpoint = _RemoteBatchEndpoint()
+    stack.pipeline._embedder = _remote_embedder(monkeypatch, endpoint)
+
+    accounting = builder.build_generation(docs, source_id=SRC, force_rebuild=True)
+
+    assert accounting.generation_status == "ready"
+    assert accounting.chunks_written == expected > 16
+    assert len(endpoint.sizes()) >= 2 and all(s <= 16 for s in endpoint.sizes())
+    assert sum(endpoint.sizes()) == expected
+    _, ver = _current_version(stack.sync_factory, "c0")
+    assert ver.chunk_count == expected // 3
