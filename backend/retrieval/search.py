@@ -155,6 +155,7 @@ class HybridSearcher:
         class_name: str = "Document",
         generation_filter_provider: Callable[[], list[int]] | None = None,
         knowledge_exclusion_provider: Callable[[], list[str]] | None = None,
+        withdrawn_identity_provider: Callable[[], list[str]] | None = None,
     ) -> None:
         """初始化检索器。
 
@@ -170,6 +171,14 @@ class HybridSearcher:
                 抛错 → 异常向上传播(FAIL CLOSED,绝不无限制检索——GC 前
                 已撤代对象物理残留,无限制检索会复活非现役知识)。生产 wiring
                 由 main.py lifespan 注入 Postgres 权威查询。
+            withdrawn_identity_provider: 可选的 withdrawn 文档 identity 集合
+                供给函数(Issue #84;返回墓碑/被接替等 lifecycle NOT IN
+                SERVING 的 source_id 列表)。冻结契约(fail-closed,与在服代
+                provider 同构):None → 未 wiring(兼容既有部署,行为不变);
+                返回列表(可空)→ 这些 identity 及其后代路径的 chunk 不得进入
+                三条检索路径的候选集;抛错 → 异常向上传播(FAIL CLOSED——墓碑
+                对象挂在共享在服代时,无 per-document 排除会复活已撤出知识)。
+                生产 wiring 由 main.py lifespan 注入 Postgres 权威查询。
         """
         self._client = weaviate_client
         self._embedder = embedder
@@ -179,6 +188,9 @@ class HybridSearcher:
         # 返回非空 → 检索候选过滤掉这些源(不得支撑当前事实型断言);
         # None → 未 wiring(兼容未迁移部署,行为不变)。
         self._knowledge_exclusion_provider = knowledge_exclusion_provider
+        # Issue #84(P0 serving integrity):withdrawn 文档 identity 供给
+        # (per-document lifecycle 资格;消费面与 U-12 排除同构)。
+        self._withdrawn_identity_provider = withdrawn_identity_provider
 
     def search(
         self,
@@ -488,14 +500,30 @@ class HybridSearcher:
             return []
         return list(self._knowledge_exclusion_provider())
 
-    def _apply_knowledge_exclusion(self, results: list[SearchResult]) -> list[SearchResult]:
-        """U-12 检索资格消费:HISTORICAL 源知识不进入当前事实型回答候选。
+    def _withdrawn_identities(self) -> list[str]:
+        """Issue #84:withdrawn(墓碑/被接替)文档 identity 权威集合。
 
-        政策语义:HISTORICAL = 仅历史问题/溯源/证据链,不得支撑当前价格/
-        规格/可用性/运行状态断言 → 其 chunk 从检索候选中过滤(后端权威
-        集合;前端/上层零参与)。
+        None = provider 未 wiring(legacy 行为不变);list = per-document
+        资格排除集合(可为空 = 账本无 withdrawn 文档)。provider 失败 →
+        异常向上传播(fail-closed,与在服代/U-12 provider 同构;资格真值
+        不可得时绝不无限制检索)。
         """
-        excluded = self._knowledge_exclusions()
+        if self._withdrawn_identity_provider is None:
+            return []
+        return list(self._withdrawn_identity_provider())
+
+    def _apply_knowledge_exclusion(self, results: list[SearchResult]) -> list[SearchResult]:
+        """检索资格消费(三条路径共用出口;U-12 + Issue #84 同一消费面)。
+
+        两类后端权威排除集合同面叠加(零新机制,同一 exact-or-prefix 匹配):
+        - U-12:HISTORICAL 源前缀 —— 历史知识不支撑当前事实型断言;
+        - Issue #84:withdrawn 文档 identity —— lifecycle NOT IN SERVING 的
+          墓碑/被接替文档,其向量对象即使物理保留于仍被共享的 legacy 在服代
+          (全局 generation_ordinal 过滤放行),也不得进入检索证据
+          (404 citation 事故修复:旧 identity 永不 serving)。
+        任一权威集合不可得(provider 抛错)→ 异常向上传播,绝不无限制放行。
+        """
+        excluded = self._knowledge_exclusions() + self._withdrawn_identities()
         if not excluded:
             return results
         return [

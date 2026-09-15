@@ -387,7 +387,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # 事件循环;fail-closed 契约(Role A REVIEW FIX):查询失败 → 异常
         # 向上传播(绝不无限制检索,防 GC 前已撤代对象复活);权威空集 →
         # 检索零结果。仅 provider 未 wiring 时为 legacy 无过滤行为。
-        from backend.services.document_lifecycle import active_generation_ordinals_sync
+        from backend.services.document_lifecycle import (
+            active_generation_ordinals_sync,
+            withdrawn_document_source_ids_sync,
+        )
 
         _gen_sync_session_factory = get_sync_session_factory(settings.postgres_dsn)
 
@@ -413,12 +416,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         def _knowledge_exclusion_provider() -> list[str]:
             return _knowledge_exclusions.get()
 
+        # Issue #84(P0 serving integrity):withdrawn 文档 identity 权威供给
+        # (lifecycle NOT IN SERVING:墓碑/被接替等已撤出服务集的文档)。其
+        # 向量对象常物理保留于仍被海量在服文档共享的 legacy 初始代
+        # (ordinal 0)→ 全局在服代过滤放行 → 旧 identity 持续可召回
+        # (事故:rank23 → rerank kept → citation 5 → 404 URL)。注入
+        # per-document 资格集合后,检索消费面与 U-12 HISTORICAL 前缀排除
+        # 同构(exact or startswith)。fail-closed 与在服代 provider 同构:
+        # 查询失败 → 异常向上传播(绝不无限制检索);TTL 缓存与政策真值
+        # 同量级,墓碑/接替事务提交后 ≤TTL 收敛到检索面。
+        _withdrawn_sync_session_factory = get_sync_session_factory(settings.postgres_dsn)
+        _withdrawn_identities = CachedSourceExclusions(
+            lambda: withdrawn_document_source_ids_sync(_withdrawn_sync_session_factory),
+            ttl=float(os.environ.get("WITHDRAWN_IDENTITY_TTL", "30")),
+        )
+
+        def _withdrawn_identity_provider() -> list[str]:
+            return _withdrawn_identities.get()
+
         searcher = HybridSearcher(
             weaviate_client,
             embedder,
             settings.weaviate_class_name,
             generation_filter_provider=_active_generation_provider,
             knowledge_exclusion_provider=_knowledge_exclusion_provider,
+            withdrawn_identity_provider=_withdrawn_identity_provider,
         )
         rerank_pipeline = RerankPipeline(reranker)
 
