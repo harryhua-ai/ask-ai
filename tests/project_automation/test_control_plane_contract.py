@@ -97,12 +97,14 @@ def test_missing_priority_option_is_a_planning_failure():
 class _SyncTransport:
     """Minimal live-shaped GraphQL transport with controllable verification."""
 
-    def __init__(self, labels, *, iteration=None, mismatch=False, fail_read=False, fail_mutation=False):
+    def __init__(self, labels, *, iteration=None, mismatch=False, fail_read=False, fail_mutation=False,
+                 item_status="open"):
         self.labels = labels
         self.iteration = iteration
         self.mismatch = mismatch
         self.fail_read = fail_read
         self.fail_mutation = fail_mutation
+        self.item_status = item_status
         self.mutations = []
 
     def graphql(self, query, **variables):
@@ -143,7 +145,7 @@ class _SyncTransport:
                                                                   "state": "OPEN"},
                            "iteration": ({"iterationId": "i-next", "title": actual}
                                          if actual else None),
-                           "sprint": None, "priority": None, "status": {"name": "open"}}]
+                           "sprint": None, "priority": None, "status": {"name": self.item_status}}]
             }}}}
         if "updateProjectV2ItemFieldValue" in query:
             if self.fail_mutation:
@@ -190,6 +192,21 @@ def test_sync_schedule_label_never_rewrites_iteration():
 
     assert report["result"] == "ALREADY_CONVERGED"
     assert report["mutations"] == []
+    assert transport.mutations == []
+
+
+def test_sync_without_iteration_authority_preserves_existing_iteration():
+    # R2 (Role A): the reviewer's exact scenario end-to-end — no iteration:*
+    # AND no schedule:* label. Absence of Iteration authority is
+    # UNMANAGED/PRESERVE: the item's existing Iteration is never cleared.
+    transport = _SyncTransport(["status:in-progress"], iteration="I-001 — Current",
+                               item_status="In progress")
+
+    report = sync_issue(transport, _settings(), 68, dry_run=False)
+
+    assert report["result"] == "ALREADY_CONVERGED"
+    assert report["mutations"] == []
+    assert report["requested"]["iteration_clear"] is False
     assert transport.mutations == []
 
 
