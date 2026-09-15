@@ -40,6 +40,8 @@ export function Launcher({ icon, shape, theme, label, onOpen, motion, size, bran
       data-ask-ai-theme={theme}
       data-launcher-motion={motion ?? "subtle_glow"}
       data-launcher-size={size ?? "medium"}
+      data-track="contact"
+      data-type="ask_ai"
       style={brandStyle}
       aria-label={label}
       aria-haspopup="dialog"
@@ -77,6 +79,8 @@ export function LauncherPill({ theme, label, onOpen, motion, size, brandStyle }:
       data-ask-ai-theme={theme}
       data-launcher-motion={motion ?? "subtle_glow"}
       data-launcher-size={size ?? "medium"}
+      data-track="contact"
+      data-type="ask_ai"
       style={brandStyle}
       aria-label={label}
       aria-haspopup="dialog"
