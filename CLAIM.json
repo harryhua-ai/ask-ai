@@ -36,7 +36,9 @@
   "evidence": "RCA: STALE_RETRIEVAL_ELIGIBILITY_CONFIRMED. \u4fee\u590d\u9762=RESTORATION_CANDIDATE: (1) backend/retrieval/search.py \u4e09\u6761\u68c0\u7d22\u8def\u5f84(search/search_symbols/search_bucket)\u5728\u65e2\u6709 U-12 _apply_knowledge_exclusion \u540c\u4e00\u6d88\u8d39\u9762\u53e0\u52a0 per-document withdrawn identity \u6392\u9664(\u590d\u7528 exact-or-prefix \u5339\u914d,\u96f6\u65b0\u673a\u5236); (2) backend/services/document_lifecycle.py \u65b0\u589e\u53ea\u8bfb\u6743\u5a01\u67e5\u8be2 withdrawn_document_source_ids_sync(lifecycle NOT IN SERVING,\u4e0e active_generation_ordinals_sync \u540c\u6784,\u4e0d\u6539\u4efb\u4f55 ledger/membership/generation \u5199\u8bed\u4e49); (3) backend/main.py lifespan \u6ce8\u5165 withdrawn-identity \u6743\u5a01\u4f9b\u7ed9(fail-closed,CachedSourceExclusions \u540c\u6a21\u5f0f). \u65e0\u65b0\u4ea7\u54c1\u8bed\u4e49:DocLifecycle.WITHDRAWN=(SUPERSEDED,DELETED) \u8bcd\u8868\u5df2\u5b58\u5728,\u4ec5\u6d88\u8d39.",
   "justifications": {}
  },
- "scope_justifications": {},
+ "scope_justifications": {
+  "tests/retrieval/test_issue84_stale_serving_eligibility.py": "Frozen Contract SCOPE \u660e\u786e\u8981\u6c42\u7684 RED invariants \u6587\u4ef6:\u81ea\u8c03\u67e5\u5206\u652f agent/84/84c4a499 \u539f\u6837\u91cd\u5efa(3 \u4e0d\u53d8\u91cf + \u96f6\u8bef\u4f24\u951a\u70b9);GREEN \u9636\u6bb5\u6309\u5176\u81ea\u8eab docstring \u9884\u544a\u66f4\u65b0\u524d\u63d0\u81ea\u8bc1\u951a\u70b9(_make_searcher \u6ce8\u5165\u751f\u4ea7\u540c\u6784 withdrawn provider),\u5e76\u51bb\u7ed3 fail-closed \u4e0e None(\u672a wiring)\u5951\u7ea6\u3002"
+ },
  "candidate": null,
  "investigation_artifact": null,
  "change_budget_established_at": "2026-09-15T17:09:55Z"
