@@ -251,7 +251,21 @@ Historical continuity is explicitly out of scope for v1 and is not the implement
 CANONICAL TRACKING EFFECTIVE FROM DEPLOYMENT FORWARD
 ~~~
 
-No historical counts or baseline were fabricated. Historical Analytics access remains blocked by authentication, and no claim is made that pre-deployment records are comparable to the prospective contract. The current host/path attribution rules are proven for current deployment only.
+No historical counts or baseline were fabricated. Historical Analytics access is now partially available through the authenticated account, but only the Wiki production project is exposed; no claim is made that pre-deployment records are comparable to the prospective contract. The current host/path attribution rules are proven for current deployment only.
+
+## 14.1. Authenticated Analytics follow-up
+
+The user-provided login enabled a read-only check of `https://analytics.camthink.ai/notifications` and the linked Analytics views on 2026-09-15. The account scope is still incomplete for this issue:
+
+| Check | Observed result | Evidence boundary |
+|---|---|---|
+| Visible project inventory | `GET /api/admin/projects` returned HTTP 200 with exactly one visible project: `wiki`, `production` | Project key and internal IDs were not retained in this report |
+| Current data scope | UI shows `Camthink全站（1 个项目）`; the selectable project and table rows are `wiki` | No Website or Store project is available to this account |
+| Existing event filter | User Records supports `点击页面元素（element_click）` | This confirms the existing event family is reportable |
+| Current filtered visitor records | The UI shows `共 783 条` for the current `element_click` filter; the same read-only API query returned `total = 783` | This is a visitor-record total, not Ask AI clicks and not CRM customers |
+| Canonical Ask AI historical evidence | One sampled visitor detail contained historical `element_click` records but no exact `contact / ask_ai / ask_ai` match | A single visitor sample is not a full-project zero claim |
+
+This follow-up narrows the historical limitation from `authentication unavailable` to `partial authenticated visibility`. It does not establish three-surface historical continuity, does not reconstruct a historical Ask AI count, and does not remove the implementation hard stop: the authoritative Website and Store UI repositories/templates are still unidentified or inaccessible. No Analytics configuration or production data was changed.
 
 ## 15. Exact files changed
 
