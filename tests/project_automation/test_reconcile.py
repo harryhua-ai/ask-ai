@@ -9,7 +9,7 @@ from project_automation.reconcile import detect_drift
 FIXTURE = Path(__file__).parent / "fixtures" / "project_snapshot_20260911.json"
 
 CONFIG = FieldConfig(
-    status_options=[OptionDef("s1", "Backlog"), OptionDef("s2", "In progress"), OptionDef("s3", "In review"), OptionDef("s4", "Done")],
+    status_options=[OptionDef("s1", "open"), OptionDef("s2", "In progress"), OptionDef("s4", "Done")],
     priority_options=[OptionDef("p1", "P0"), OptionDef("p2", "P1"), OptionDef("p3", "P2")],
     iterations=[],
 )

@@ -63,4 +63,6 @@ class TestNoReleaseDataPathInAutomation:
     def test_status_ready_is_reserved_vocabulary(self):
         from project_automation.labels import STATUS_RESERVED, STATUS_VALUES
         assert "ready" not in STATUS_VALUES
-        assert STATUS_RESERVED == ("ready",)
+        # #85: in-review joined the reserved set — the live Status field has no
+        # matching option (open / In progress / Done), never map it to a guess
+        assert STATUS_RESERVED == ("ready", "in-review")

@@ -18,10 +18,18 @@ class TestParseControlLabels:
         assert cl.unknown == []
 
     def test_all_three_prefixes(self):
-        cl = parse_control_labels(["iteration:v1.6.0", "priority:p1", "status:in-review"])
+        cl = parse_control_labels(["iteration:v1.6.0", "priority:p1", "status:in-progress"])
         assert cl.iteration_key == "v1.6.0"
         assert cl.priority == "p1"
-        assert cl.status == "in-review"
+        assert cl.status == "in-progress"
+
+    def test_in_review_is_reserved_not_mapped(self):
+        # #85: live Status field has no 'In review' option — the label stays
+        # recognized control intent (RESERVED), never a mappable value
+        cl = parse_control_labels(["status:in-review"])
+        assert cl.status_reserved is True
+        assert cl.status is None
+        assert cl.unknown == []
 
     def test_casing_normalized(self):
         cl = parse_control_labels(["Priority:P0", "STATUS:Backlog"])
