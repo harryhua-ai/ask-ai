@@ -58,6 +58,34 @@
  "scope_justifications": {
   "tests/project_automation/**": "Regression + contract tests for the status vocabulary drift (RED reproduces run #321 UNKNOWN_OPTION on status:backlog; legacy fixtures renamed to the live open/In progress/Done vocabulary with intent preserved) per RCA acceptance criterion 11"
  },
- "candidate": null,
+ "candidate": {
+  "sha": "2d017c0be61e1f5e31a6795e7757a62a265b16b8",
+  "branch": "agent/85/24f731ed",
+  "preserved_at": "2026-09-15T18:37:54Z",
+  "scope": {
+   "pass": true,
+   "enforcement": "strict",
+   "paths": {
+    "scripts/project_automation/labels.py": "EXPECTED",
+    "scripts/project_automation/mapping.py": "EXPECTED",
+    "scripts/project_automation/service.py": "EXPECTED",
+    "tests/project_automation/test_labels.py": "CONDITIONAL",
+    "tests/project_automation/test_mapping.py": "CONDITIONAL",
+    "tests/project_automation/test_reconcile.py": "CONDITIONAL",
+    "tests/project_automation/test_release_iteration_boundary.py": "CONDITIONAL",
+    "tests/project_automation/test_schedule_iteration_boundary.py": "CONDITIONAL",
+    "tests/project_automation/test_sprint_dependency_removed.py": "CONDITIONAL",
+    "tests/project_automation/test_status_vocabulary_contract.py": "CONDITIONAL"
+   },
+   "counts": {
+    "EXPECTED": 3,
+    "CONDITIONAL": 7,
+    "UNKNOWN": 0,
+    "FORBIDDEN": 0
+   },
+   "violations": [],
+   "budget_evidence": "P0 automation failure is the status vocabulary mapping in scripts/project_automation (mapping.py STATUS_MAP/DEFAULT_OPEN_STATUS vs live Project Status options); product code untouched"
+  }
+ },
  "investigation_artifact": null
 }
