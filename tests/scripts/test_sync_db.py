@@ -412,6 +412,9 @@ async def test_sync_one_uses_last_success_as_window():
                     finished_at=last_success,
                 )
             )
+            # #71:每轮权威对账都会持久化成员货币真值(unsupported 面),
+            # 需要数据源行存在 —— 缺行 = 真值建立失败(R2 BLOCKER 2 语义)。
+            s.add(DataSource(id=sid, type="local_git", product="ne301", config={}))
             s.commit()
 
         recorded: dict[str, object] = {}

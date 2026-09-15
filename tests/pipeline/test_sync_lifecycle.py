@@ -216,7 +216,9 @@ async def test_g003_confirmed_retirement_deletes_exact_uuids_only():
     # 退休绝不触碰兄弟文档的确定性 uuid
     assert str(_deterministic_uuid(f"{SRC}/alive", 0)) not in got
     assert log_entry.status == "success"
-    assert log_entry.items_deleted == 1
+    # #71 契约第 13 条:孤儿向量退休走 delta_counts 独立键,不再混入 items_deleted
+    assert log_entry.items_deleted == 0
+    assert log_entry.delta_counts["orphan_vectors_retired"] == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -288,7 +290,9 @@ async def test_g005_ledger_lost_active_doc_repaired_without_embedding():
     with session_factory() as s:
         row = s.query(Document).filter(Document.source_id == ghost).one_or_none()
     assert row is not None and row.chunk_count == 2  # 账本行按存量重建
-    assert log_entry.items_new == 1
+    # #71 契约第 13 条:账本重建走 delta_counts 独立键,不再混入 items_new
+    assert log_entry.items_new == 0
+    assert log_entry.delta_counts["ledger_rebuilt_count"] == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -575,7 +579,9 @@ async def test_integration_ghost_retired_exactly_on_real_weaviate():
         }
         assert survivors == {f"{SRC}/alive"}
         assert log_entry.status == "success"
-        assert log_entry.items_deleted == 1
+        # #71 契约第 13 条:向量退休独立记账
+        assert log_entry.items_deleted == 0
+        assert log_entry.delta_counts["orphan_vectors_retired"] == 1
     finally:
         client.collections.delete("ProbeP1")
         client.close()

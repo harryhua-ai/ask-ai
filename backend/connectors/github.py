@@ -347,6 +347,30 @@ class GitHubConnector(DataSourceConnector):
 
     # ---------------- DataSourceConnector 协议 ----------------
 
+    def membership_source_ids(self) -> set[str]:
+        """权威成员枚举(#71):当前远端树状态下的 in-scope 路径全集。
+
+        每分支 ``ensure_cloned + git_sync_branch``(强制 fetch+reset,与
+        ``fetch_changes`` 的 SHA 短路无关 —— 成员真值绝不受「远端看似无
+        变更」影响),然后仅做路径遍历(零内容读取),应用与灌入完全同面
+        的过滤(``_should_include_path``:file_types + ExclusionPolicy +
+        Technical Safety)。返回 ``{cfg.id}/{branch}/{rel}`` 复合键集合,
+        即 ``stale_set = ledger_serving − 本集合`` 的权威侧(#71 授权契约
+        第 1-3 条)。
+        """
+        members: set[str] = set()
+        for branch in self._branches:
+            self._ensure_cloned(branch)
+            self._git_sync_branch(branch)
+            for path in sorted(self._clone_path.rglob("*")):
+                if not path.is_file() or ".git" in path.parts:
+                    continue
+                rel = str(path.relative_to(self._clone_path))
+                if not self._should_include_path(rel):
+                    continue
+                members.add(f"{self._config.id}/{branch}/{rel}")
+        return members
+
     def fetch_all(self) -> Iterator[RawDocument]:
         """全量抓取:每分支 ensure_cloned + git_sync_branch + 遍历。"""
         for branch in self._branches:

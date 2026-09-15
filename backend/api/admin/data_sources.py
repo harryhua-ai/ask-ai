@@ -371,6 +371,12 @@ def _to_out(
         knowledge_role=knowledge_policy.effective_role(ds),
         freshness_hours=knowledge_policy.effective_freshness_hours(ds),
         freshness_overdue=freshness_overdue,
+        membership_status=ds.membership_status,
+        membership_checked_at=(
+            ds.membership_checked_at.isoformat() if ds.membership_checked_at else None
+        ),
+        membership_stale_detected=ds.membership_stale_detected,
+        membership_stale_retired=ds.membership_stale_retired,
     )
 
 

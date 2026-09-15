@@ -82,6 +82,16 @@ from backend.pipeline.generation_builder import GenerationBuilder
 from backend.pipeline.ingest import IngestionPipeline
 from backend.services import document_lifecycle as lifecycle
 from backend.services import schedule_truth
+from backend.services.membership_currency import (
+    MEMBERSHIP_STATUS_CURRENT,
+    MEMBERSHIP_STATUS_FAILED,
+    MEMBERSHIP_STATUS_STALE,
+    MEMBERSHIP_STATUS_UNSUPPORTED,
+    MembershipTruthPersistenceError,
+    persist_membership_truth,
+    reconcile_membership,
+    truth_detail_of,
+)
 from backend.services.source_lifecycle import sync_eligible_condition
 from backend.services.sync_delta import build_document_delta
 from backend.services.sync_runs import (
@@ -509,6 +519,154 @@ async def _last_success_at(session_factory: Any, source_id: str) -> datetime | N
     return finished_at or started_at
 
 
+def _membership_truth_persist_failed(
+    log_entry: SyncLog, exc: MembershipTruthPersistenceError
+) -> tuple[bool, dict[str, Any]]:
+    """真值持久化失败的统一处置(R2 BLOCKER 2 冻结语义)。
+
+    本轮降级 partial(绝不 success)、error_detail 确定性指明真值持久化
+    失败、delta 不携带 membership_status 声明(不伪造已持久真值);
+    已提交墓碑不回滚,下一轮重试。
+    """
+    logger.error("数据源 %s 成员真值持久化失败: %s", log_entry.source_id, str(exc)[:200])
+    if log_entry.status == "success":
+        log_entry.status = "partial"
+    log_entry.error_detail = (
+        f"{log_entry.error_detail or ''};"
+        f"membership truth persistence failed: {str(exc)[:200]}"
+    ).lstrip(";")
+    return False, {}
+
+
+async def _reconcile_membership_for_source(
+    cfg: SourceConfig,
+    connector: Any,
+    pipeline: IngestionPipeline,
+    session_factory: Any,
+    log_entry: SyncLog,
+    *,
+    dry_run: bool = False,
+) -> tuple[bool, dict[str, Any]]:
+    """#71 权威成员对账:每轮必跑(含无变更 / SHA 短路轮)。
+
+    stale_set = 账本在服成员 − 权威成员(connector.membership_source_ids),
+    退休走既有 ``tombstone_document`` 逻辑删除语义(同步账本面,与 fetch_deleted
+    墓碑块同一 session factory 语义)。正确性不依赖 git 事件窗口 /
+    ``fetch_deleted`` 历史 / 删除事件是否被观测(Issue #71 授权契约第 1-8 条)。
+
+    货币真值(DataSource.membership_*)只在对账事务成功完成后持久化;
+    对账失败如实记 failed 并把本轮 SyncLog 降级 partial —— 绝不在已知名义
+    漂移未解决时宣称 success。
+
+    真值持久化失败(R2 BLOCKER 2 冻结语义):**绝不 best-effort** ——
+    :class:`MembershipTruthPersistenceError` 由本函数显式处置:本轮降级
+    partial、error_detail 指明真值持久化失败、delta 不携带任何
+    membership_status 声明(不伪造已持久真值);已提交墓碑不回滚,
+    下一轮重试对账与真值建立。
+
+    Returns:
+        (resolved, delta_merge):resolved=False 表示漂移未解决或真值未
+        建立(调用方不得记 success);delta_merge 需并入本轮 delta_counts
+        (键:membership_status / stale_detected / stale_retired,文档单位;
+        仅在真值确已持久化时携带 membership_status)。
+    """
+    if dry_run:
+        # dry-run 原语义:零写副作用,不枚举权威真值、不持久化
+        return True, {}
+    ledger_factory = getattr(pipeline, "_session_factory", None)
+    if ledger_factory is None:
+        # 账本工厂缺省(无 Postgres 部署/纯投影运行)时墓碑不可能成立(与
+        # fetch_deleted 墓碑块同一纪律):如实跳过,绝不伪造对账事实。
+        return True, {}
+    if getattr(connector, "membership_source_ids", None) is None:
+        # 无成员枚举能力的 connector(filesystem/woocommerce/web_crawl 等):
+        # 如实持久化 unsupported(中性,不降级健康);#71 授权范围第 18 条。
+        # 真值写失败 ⇒ 不支持态也绝不静默(R2 BLOCKER 2/D)。
+        try:
+            await persist_membership_truth(
+                session_factory, cfg.id, status=MEMBERSHIP_STATUS_UNSUPPORTED
+            )
+        except MembershipTruthPersistenceError as exc:
+            return _membership_truth_persist_failed(log_entry, exc)
+        return True, {"membership_status": MEMBERSHIP_STATUS_UNSUPPORTED}
+    try:
+        result = reconcile_membership(
+            ledger_factory, connector, cfg.id, reason=f"membership:{cfg.id}"
+        )
+    except Exception as exc:  # noqa: BLE001 - 对账失败不中断轮次业务,如实降级
+        logger.error(
+            "数据源 %s 成员对账失败(账本零改动,真值记 failed): %s",
+            cfg.id,
+            str(exc)[:200],
+        )
+        truth_delta: dict[str, Any] = {}
+        detail_note = ""
+        try:
+            await persist_membership_truth(
+                session_factory,
+                cfg.id,
+                status=MEMBERSHIP_STATUS_FAILED,
+                detail={"error": str(exc)[:300]},
+            )
+            truth_delta = {"membership_status": MEMBERSHIP_STATUS_FAILED}
+        except MembershipTruthPersistenceError as pexc:
+            # 对账已失败、真值又写不进:两段事实都如实呈现,绝不掩盖
+            detail_note = f";membership truth persistence failed: {pexc}"
+            logger.error(
+                "数据源 %s 真值持久化亦失败(failed 态未落库): %s",
+                cfg.id,
+                str(pexc)[:200],
+            )
+        if log_entry.status == "success":
+            log_entry.status = "partial"
+        log_entry.error_detail = (
+            f"{log_entry.error_detail or ''};"
+            f"membership reconciliation failed: {str(exc)[:200]}{detail_note}"
+        ).lstrip(";")
+        return False, truth_delta
+    status = MEMBERSHIP_STATUS_CURRENT if not result.unresolved else MEMBERSHIP_STATUS_STALE
+    try:
+        await persist_membership_truth(
+            session_factory,
+            cfg.id,
+            status=status,
+            stale_detected=len(result.stale_ids),
+            stale_retired=result.retired,
+            detail=truth_detail_of(result),
+        )
+    except MembershipTruthPersistenceError as exc:
+        # B:退休墓碑已提交(不回滚);但真值未建立 ⇒ 本轮绝不记 success,
+        # 也绝不携带 current/stale 声明;下一轮重试对账与真值建立。
+        return _membership_truth_persist_failed(log_entry, exc)
+    delta = {
+        "membership_status": status,
+        "stale_detected": len(result.stale_ids),
+        "stale_detected_unit": "document",
+        "stale_retired": result.retired,
+        "stale_retired_unit": "document",
+    }
+    if result.unresolved:
+        if log_entry.status == "success":
+            log_entry.status = "partial"
+        log_entry.error_detail = (
+            f"{log_entry.error_detail or ''};"
+            f"membership drift unresolved: {len(result.residual_ids)} document(s)"
+        ).lstrip(";")
+        logger.error(
+            "数据源 %s 成员对账后仍有未解决漂移 %d 篇(真值记 stale,轮次 partial)",
+            cfg.id,
+            len(result.residual_ids),
+        )
+        return False, delta
+    if result.stale_ids:
+        logger.info(
+            "数据源 %s 成员对账退休陈旧文档 %d 篇(逻辑删除,物理清除仅经 GC)",
+            cfg.id,
+            result.retired,
+        )
+    return True, delta
+
+
 async def _handle_no_change(
     source_id: str,
     existing: int,
@@ -713,17 +871,21 @@ async def _handle_no_change(
             log_entry.items_unchanged = existing
         else:
             log_entry.status = "partial"
-        log_entry.items_new = orphan_repaired
-        log_entry.items_deleted = retired
+        # #71 授权契约第 13 条:items_* 只承载文档增量语义;孤儿向量退休与
+        # 账本重建走 delta_counts 独立键,不再混入 items_new/items_deleted。
+        log_entry.items_new = 0
+        log_entry.items_deleted = 0
         log_entry.items_updated = items_updated
         log_entry.delta_counts = build_document_delta(
             # Repaired documents already existed; they are updates to the
             # serving projection, never new documents.  The fallback set is
             # included once, avoiding chunk/document double counting.
             updated_count=len(gap_repaired_ids),
-            retired_count=retired,
+            retired_count=0,
             unchanged_count=max(existing - len(gap_repaired_ids), 0),
             reason="consistency_repair",
+            ledger_rebuilt_count=orphan_repaired,
+            orphan_vectors_retired=retired,
         )
         gap_parts.append(
             f"复验:{report2.actual_chunks}/{report2.expected_chunks} chunks,"
@@ -1063,6 +1225,18 @@ async def _sync_one(
                 # 区分首次(无 documents 记录)vs 无变更(已有记录)
                 existing = await _count_documents(session_factory, cfg.id)
                 if existing > 0:
+                    # #71:权威成员对账每轮必跑 —— 「远端看似无变更」(SHA
+                    # 短路)绝不豁免成员资格对账;漂移未解决不记 success。
+                    membership_resolved, membership_delta = (
+                        await _reconcile_membership_for_source(
+                            cfg,
+                            connector,
+                            pipeline,
+                            session_factory,
+                            log_entry,
+                            dry_run=dry_run,
+                        )
+                    )
                     await _handle_no_change(
                         cfg.id,
                         existing,
@@ -1075,6 +1249,13 @@ async def _sync_one(
                         telemetry=tel if not dry_run else None,
                         builder=builder,
                     )
+                    if membership_delta:
+                        log_entry.delta_counts = {
+                            **(log_entry.delta_counts or {}),
+                            **membership_delta,
+                        }
+                    if not membership_resolved and log_entry.status == "success":
+                        log_entry.status = "partial"
                     return
                 # 首次同步:documents 表无记录,回退到全量拉取
                 logger.info("数据源 %s 首次同步,回退到全量拉取", cfg.id)
@@ -1181,6 +1362,14 @@ async def _sync_one(
         if callable(committer):
             committer()
 
+        # #71 权威成员对账(每轮必跑,与 delta 是否为空无关):正确性独立于
+        # git 事件窗口与 fetch_deleted 历史;退休走同一墓碑语义,货币真值仅在
+        # 退休事务成功后持久化(kill-safety)。
+        membership_resolved, membership_delta = await _reconcile_membership_for_source(
+            cfg, connector, pipeline, session_factory, log_entry, dry_run=dry_run
+        )
+        membership_deleted = membership_delta.get("stale_retired", 0)
+
         # CORRECTION B:终局一致性事实(INDEX → CONSISTENCY → DONE)。
         # 复用权威 verify_source_vectors(与无变更路径同一实现,不造第二套);
         # 凭 ingest 成功推断健康被禁止——校验失败如实记录,不伪造健康载荷,
@@ -1212,7 +1401,10 @@ async def _sync_one(
         # 既有 SyncLog 口径:items_updated 按 chunk 数记账;metadata-only 变更
         # (零重嵌)按篇计入,保持"本轮发生变更的量"可观测。
         log_entry.items_updated = accounting.chunks_written + len(accounting.metadata_docs)
-        log_entry.items_deleted = tombstoned
+        # #71:items_deleted = 本轮文档墓碑总数(窗口检测 + 权威成员对账);
+        # 成员对账的 stale_detected/stale_retired 另有独立 delta_counts 键,
+        # 两者不混淆(授权契约第 13 条)。
+        log_entry.items_deleted = tombstoned + membership_deleted
         log_entry.items_unchanged = len(accounting.unchanged_docs)
         # #65 additive truth:all administrator deltas are document counts.
         # ``items_updated`` above intentionally remains the historical mixed
@@ -1220,10 +1412,12 @@ async def _sync_one(
         log_entry.delta_counts = build_document_delta(
             new_count=len(accounting.new_docs),
             updated_count=len(accounting.updated_docs) + len(accounting.metadata_docs),
-            retired_count=tombstoned,
+            retired_count=tombstoned + membership_deleted,
             unchanged_count=len(accounting.unchanged_docs),
             reason="source_changes",
         )
+        if membership_delta:
+            log_entry.delta_counts = {**log_entry.delta_counts, **membership_delta}
 
         # WEB 合同#6/#7:全量抓取覆盖记账 —— coverage 行始终写入 error_detail
         # (成功也留痕),完整性不足时降级 status,绝不让「85 页只活 2 页」

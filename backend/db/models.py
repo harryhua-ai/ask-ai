@@ -370,6 +370,19 @@ class DataSource(Base):
     # freshness_hours(U-12):新鲜度政策(小时;NULL = 默认 24h)。后端权威
     # 判定超期(对照最近成功同步),超期态 Admin 可见。
     freshness_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # ---- #71 权威成员货币真值(加性列;Admin 只读持久真值,禁止为渲染
+    # 做实时上游枚举)----
+    # membership_status 词表(current/stale/failed/unsupported,见
+    # backend/services/membership_currency.py):current=对账后无漂移;
+    # stale=对账完成后仍有未解决漂移;failed=权威枚举/退休失败;
+    # unsupported=connector 无成员枚举能力(如实中性,不降级健康)。
+    # NULL = 尚未对账(legacy 行;读面呈现 unknown,不参与 worst-of)。
+    membership_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    membership_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    membership_stale_detected: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    membership_stale_retired: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 审计采样(枚举/在服规模 + 陈旧/残余清单样例;全量清单归 SyncLog/报告)
+    membership_detail: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 
 class SyncRequest(Base):

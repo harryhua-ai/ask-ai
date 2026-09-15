@@ -72,7 +72,7 @@ export function SourceHealthPanel({ health }: SourceHealthPanelProps) {
       </CardHeader>
       <CardContent className="p-4 pt-0">
         {health ? (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
             <DimensionCard label="连接状态" dimension={health.connectivity} />
             {/* #21:sync 维是 30 天历史窗口成功率(参考信号),显式标注历史,
                 避免其 critical 态被读成当前严重度;当前态维保持主位不动。 */}
@@ -80,6 +80,9 @@ export function SourceHealthPanel({ health }: SourceHealthPanelProps) {
             <DimensionCard label="知识可用性" dimension={health.coverage} />
             <DimensionCard label="数据新鲜度" dimension={health.freshness} />
             <DimensionCard label="检索/索引一致性" dimension={health.consistency} />
+            {/* #71:权威成员货币(持久真值;与一致性严格分维)。
+                旧客户端缓存 / 历史响应可能缺该维,如实缺卡不崩。 */}
+            {health.currency && <DimensionCard label="上游成员对账" dimension={health.currency} />}
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">暂无健康数据(等待后端 /sync-health 提供)</p>

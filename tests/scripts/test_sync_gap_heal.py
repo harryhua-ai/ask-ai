@@ -155,6 +155,7 @@ async def test_no_change_and_healthy_keeps_success_skip(
     mock_create.return_value = connector
 
     pipeline = _make_pipeline()
+    pipeline._session_factory = None  # #71:本用例不覆盖成员对账面(与姊妹用例同款绝缘)
     session_factory = MagicMock()
     session_factory.return_value.__aenter__.return_value.commit = AsyncMock()
 

@@ -83,6 +83,11 @@ class DataSourceOut(BaseModel):
     knowledge_role: str | None = None  # U-12 生效角色(current/historical)
     freshness_hours: int | None = None  # U-12 生效新鲜度阈值(小时)
     freshness_overdue: bool | None = None  # U-12 后端权威超期态(Admin 可见)
+    # ---- #71 权威成员货币真值(持久列直读;渲染端禁止实时枚举)----
+    membership_status: str | None = None  # current/stale/failed/unsupported;NULL=未对账
+    membership_checked_at: str | None = None
+    membership_stale_detected: int | None = None
+    membership_stale_retired: int | None = None
 
 
 class SourceScheduleTruthOut(BaseModel):
@@ -486,7 +491,7 @@ class HealthDimension(BaseModel):
 
 
 class SourceHealthItem(BaseModel):
-    """单数据源五维健康(读时派生,无 SourceHealthSnapshot)。"""
+    """单数据源健康(读时派生,无 SourceHealthSnapshot)。"""
 
     source_id: str
     source_type: str
@@ -500,6 +505,8 @@ class SourceHealthItem(BaseModel):
     coverage: HealthDimension
     freshness: HealthDimension
     consistency: HealthDimension
+    # #71 权威成员货币(持久真值直读;与 PG↔Weaviate consistency 严格分维)
+    currency: HealthDimension
 
 
 class SourceHealthResponse(BaseModel):

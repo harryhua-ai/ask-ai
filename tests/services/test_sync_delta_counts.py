@@ -24,6 +24,11 @@ def test_document_delta_counts_use_one_stable_unit_without_double_counting():
         "retired_unit": "document",
         "unchanged_count": 4,
         "unchanged_unit": "document",
+        # #71 加性事实键:投影修复计数与 document 变更桶分离
+        "ledger_rebuilt_count": 0,
+        "ledger_rebuilt_unit": "document",
+        "orphan_vectors_retired": 0,
+        "orphan_vectors_retired_unit": "chunk",
     }
 
 
