@@ -19,9 +19,10 @@ Routine planning = edit the Issue only. Add/remove canonical labels; the Project
 | Put in any existing iteration | `iteration:i-001` / `iteration:i-ux-001` (key = iteration title's code token, lowercased) |
 | (Iteration unmanaged / preserve) | **Absence of Iteration authority is PRESERVE, not clear (R2, 2026-09-15):** an Issue with no `iteration:*`/bare-Iteration-title label keeps whatever Iteration its Project item already holds — removing an `iteration:*` label does NOT clear the Project value, and no automated clear command exists (one would require a separate product decision) |
 | Set priority | `priority:p0` · `priority:p1` · `priority:p2` (remove to clear) |
-| Backlog / In Progress / In Review | `status:backlog` · `status:in-progress` · `status:in-review` |
+| Open / In Progress | `status:backlog` → Project Status **open** · `status:in-progress` → **In progress** |
+| In Review / Ready | `status:in-review` / `status:ready` — **RESERVED**: no matching Status option; visible finding, **NO Status mutation** |
 | Done | close the Issue (closure always wins; stale status labels are ignored) |
-| Reopen | reopen + keep/adjust a `status:*` label; a reopened Issue never stays Done (no label → Backlog) |
+| Reopen | reopen + keep/adjust a `status:*` label; a reopened Issue never stays Done (no label → open) |
 
 Governance boundary: **Iteration = development timebox; Release = shipped version.** GitHub Releases/tags are never
 mapped to Project Iterations and `release:*`/tag metadata is not control input. Iterations are created only via
@@ -52,7 +53,8 @@ mutation can never race reconciliation or sync.
 
 ### Label vocabulary (canonical)
 
-`iteration:<key>` (key = slug of iteration title code token) · `priority:p0|p1|p2` · `status:backlog|in-progress|in-review`
+`iteration:<key>` (key = slug of iteration title code token) · `priority:p0|p1|p2` · `status:backlog|in-progress`
+(mutation-capable values; `status:in-review` is RESERVED — see below)
 
 **Sprint retired (product decision, 2026-09-15):** the Project Sprint field was intentionally deleted and is no
 longer part of the governance schema. `sprint:*` is NOT a control label anymore — existing `sprint:*` labels on
@@ -69,10 +71,12 @@ authority — `iteration:<key>` or a bare label exactly equal to a live Iteratio
 Iteration. Absence of Iteration control metadata means **UNMANAGED/PRESERVE**, regardless of schedule state:
 an existing Iteration value is never overwritten, never cleared, and never guessed from the calendar.
 
-**Reserved / unsupported:** `status:ready` — the Project has no `Ready` Status option. The label is recognized as
-explicit control intent and yields a visible `UNSUPPORTED_STATUS_RESERVED` finding with **no Status mutation** until
-the option is authorized by a separate decision (adding it via `singleSelectOptions` is a full-replace hazard and is
-forbidden without a snapshot/restore plan).
+**Reserved / unsupported:** `status:ready` and `status:in-review` — the live Project Status options are
+**open / In progress / Done** (probed 2026-09-15, #85 vocabulary realignment; the former `Backlog` option was
+renamed to `open` and `In review` was removed). Neither `Ready` nor `In review` exists as an option. Both labels are
+recognized as explicit control intent and yield a visible `UNSUPPORTED_STATUS_RESERVED` finding with **no Status
+mutation** (and never a guessed nearest option) until an option is authorized by a separate decision (adding it via
+`singleSelectOptions` is a full-replace hazard and is forbidden without a snapshot/restore plan).
 
 ### Project mapping (derived, resolved live every run)
 
@@ -80,12 +84,14 @@ forbidden without a snapshot/restore plan).
 |---|---|
 | `iteration:<key>` | Iteration whose title code token slug-equals `<key>` (live Iteration field only: I-001 / I-UX-001 / v1.6.0) |
 | `priority:p0/p1/p2` | Priority option P0/P1/P2 |
-| `status:backlog/in-progress/in-review` | Status option Backlog/In progress/In review |
+| `status:backlog` | Status option **open** |
+| `status:in-progress` | Status option **In progress** |
+| `status:in-review` | **RESERVED** — visible finding, no mutation (no `In review` Status option) |
 | (no `iteration:*` / bare-Iteration-title label) | **UNMANAGED/PRESERVE** — existing Iteration untouched; never cleared, never calendar-guessed |
 | `schedule:current/next/backlog` | **No Project field write** — scheduling intent only; Iteration convergence suspended (existing Iteration preserved, none guessed) |
-| `status:ready` | **RESERVED** — visible finding, no mutation |
+| `status:ready` | **RESERVED** — visible finding, no mutation (no `Ready` Status option) |
 | Issue CLOSED | Status = Done (overrides any status label) |
-| Issue OPEN without `status:*` | Status = Backlog |
+| Issue OPEN without `status:*` | Status = open |
 
 No Project field/option/iteration/item ID is ever hardcoded; IDs are re-resolved per run and tolerated to regenerate.
 
@@ -123,7 +129,8 @@ iteration/option). Job summary lists Issue, requested state, findings.
 
 ### Reconciliation (Workflow C)
 
-Auto-repairs deterministic drift: missing membership, wrong Priority/Iteration/Status, closed ≠ Done, reopened = Done.
+Auto-repairs deterministic drift: missing membership, wrong Priority/Iteration/Status, closed ≠ Done, reopened still
+Done (reopened Issues converge to their `status:*` label, or `open` when unlabeled).
 Reports without guessing: conflicting labels, unknown control labels, unknown iteration labels, unknown Project options,
 draft items (no Issue authority), Project members without control labels (not opted in).
 
