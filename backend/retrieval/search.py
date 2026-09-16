@@ -20,6 +20,7 @@ from typing import Any
 
 from backend.embedder.base import Embedder
 from backend.evidence_meta import EVIDENCE_PROPERTIES
+from backend.commerce_meta import COMMERCE_PROPS
 
 logger = logging.getLogger(__name__)
 
@@ -347,6 +348,9 @@ class HybridSearcher:
                 "branch",
                 # INC-2a 证据语义(与 evidence_meta.EVIDENCE_PROPERTIES 同源)
                 *EVIDENCE_PROPERTIES,
+                # Issue #28 / B1-3:变体商业真值(与 ingest.COMMERCE_PROPS 同名;
+                # 非 woo 对象返回空值,下游按空判「非变体」诚实缺席)
+                *COMMERCE_PROPS,
             ],
         )
         return self._apply_knowledge_exclusion(
@@ -443,6 +447,9 @@ class HybridSearcher:
             "branch",
             # INC-2a 证据语义(与 evidence_meta.EVIDENCE_PROPERTIES 同源)
             *EVIDENCE_PROPERTIES,
+            # Issue #28 / B1-3:变体商业真值(与 ingest.COMMERCE_PROPS 同名;
+            # 非 woo 对象返回空值,下游按空判「非变体」诚实缺席)
+            *COMMERCE_PROPS,
         ]
 
         # Issue #78(类范围 hybrid 桶):use_hybrid=True 时在同一类过滤内改用

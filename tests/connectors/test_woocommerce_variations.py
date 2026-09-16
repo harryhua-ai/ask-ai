@@ -356,7 +356,9 @@ def test_variation_identity_survives_chunk_props_projection():
     assert props["variation_identity_key"] == "319:5243"
     # 反混淆:不同 variation 的 identity key 必然不同(两 variation / 两产品不合并)
     other = _variation_raw_document()
-    other.metadata = {**other.metadata, "variation_id": 5229, "variation_identity_key": "319:5229"}
+    # RawDocument frozen:metadata dict 原位变异(不重赋值属性)
+    other.metadata["variation_id"] = 5229
+    other.metadata["variation_identity_key"] = "319:5229"
     other_props = _build_props(_make_chunk(other), other)
     assert other_props["variation_identity_key"] != props["variation_identity_key"]
 
