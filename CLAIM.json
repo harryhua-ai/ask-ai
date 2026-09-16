@@ -45,7 +45,27 @@
  "scope_justifications": {
   "admin/tests/**": "focused B1+B2 RED/GREEN cases (IncidentSectionGap.test.tsx) plus regression guard; test location follows existing TechInsight/TechInsightConvergence tests in admin/tests/; zero product-code impact"
  },
- "candidate": null,
+ "candidate": {
+  "sha": "2411a3dd70fe8b4c1f3ce46eb8d1ec05739842ed",
+  "branch": "agent/58/cc33b953",
+  "preserved_at": "2026-09-16T07:31:25Z",
+  "scope": {
+   "pass": true,
+   "enforcement": "strict",
+   "paths": {
+    "admin/src/pages/analytics/IncidentSection.tsx": "EXPECTED",
+    "admin/tests/IncidentSectionGap.test.tsx": "CONDITIONAL"
+   },
+   "counts": {
+    "EXPECTED": 1,
+    "CONDITIONAL": 1,
+    "UNKNOWN": 0,
+    "FORBIDDEN": 0
+   },
+   "violations": [],
+   "budget_evidence": "Issue58 matrix v163-issue58-gap-matrix-20260916: A1 PARTIAL + A4 MISSING authorize GAP_ONLY B1+B2; single source file admin/src/pages/analytics/IncidentSection.tsx; focused regression tests in admin/tests/** (existing TechInsight/TechInsightConvergence live there); backend/widget/deploy frozen (S3/S4 frozen surface, no telemetry redesign)"
+  }
+ },
  "investigation_artifact": null,
  "change_budget_established_at": "2026-09-16T07:26:16Z"
 }
