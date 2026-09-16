@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from backend.commerce_meta import COMMERCE_PROPS, COMMERCE_PROPERTIES
+from backend.pipeline.ingest import COMMERCE_PROPS, COLLECTION_PROPERTIES
 from scripts.migrate_add_commerce_variation_props import (
     _commerce_property_names,
     ensure_commerce_props,
@@ -98,8 +98,8 @@ def test_commerce_property_names_match_pinned_interface():
         "permalink",
         "commerce_synced_at",
     ]
-    # 单一权威定义点:COMMERCE_PROPERTIES 自带类型,与 COLLECTION_PROPERTIES 段一致
-    dtype_map = dict(COMMERCE_PROPERTIES)
+    # 单一权威定义点:每个 commerce prop 必须在 COLLECTION_PROPERTIES 有类型
+    dtype_map = dict(COLLECTION_PROPERTIES)
     for name in _COMMERCE_NAMES:
         assert name in dtype_map
     # COMMERCE_PROPS 键与 commerce 段完全重合(不缺不多)

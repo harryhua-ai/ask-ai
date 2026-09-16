@@ -24,7 +24,6 @@ import numpy as np
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from backend.commerce_meta import COMMERCE_PROPS, COMMERCE_PROPERTIES
 from backend.connectors.base import RawDocument
 from backend.connectors.safety import (
     TechnicalSafetyPolicy,
@@ -285,13 +284,48 @@ COLLECTION_PROPERTIES: list[tuple[str, str]] = [
     ("generation_ordinal", "int"),
     ("generation_id", "text"),
     # Issue #28 / B1-3(契约 §4 pin 2026-09-16):变体商业真值结构化 property。
-    # 单一权威定义点 = backend.commerce_meta.COMMERCE_PROPERTIES(叶模块,
-    # 与 evidence_meta 同范式);全部加性;非 woo 文档不投影(键缺省 = 空值,
-    # 诚实缺席); woo 父产品 commerce_type="product"(variation_id=0),
-    # 变体 commerce_type="variation"。identity key 全局唯一,一个 variation
-    # 永不与另一 product/SKU 混淆;迁移:scripts/migrate_add_commerce_variation_props.py。
-    *COMMERCE_PROPERTIES,
+    # 全部加性;非 woo 文档不投影(键缺省 = 空值,诚实缺席); woo 父产品
+    # commerce_type="product"(variation_id=0),变体 commerce_type="variation"。
+    # identity key 全局唯一,一个 variation 永不与另一 product/SKU 混淆;
+    # 迁移:scripts/migrate_add_commerce_variation_props.py。
+    ("commerce_type", "text"),
+    ("product_id", "int"),
+    ("variation_id", "int"),
+    ("variation_identity_key", "text"),
+    ("sku", "text"),
+    ("price", "text"),
+    ("regular_price", "text"),
+    ("sale_price", "text"),
+    ("on_sale", "bool"),
+    ("stock_status", "text"),
+    ("stock_quantity", "int"),
+    ("purchasable", "bool"),
+    ("variation_attributes", "text[]"),
+    ("permalink", "text"),
+    ("commerce_synced_at", "text"),
 ]
+
+
+# commerce 投影词表:prop 名 → (Weaviate 类型, doc.metadata 键, 缺省值)。
+# 仅对 source_type="woocommerce" 投影;metadata 缺键用缺省(诚实空值,
+# 不伪造)。stock_quantity None = 端点未管理库存 → 整键省略(不写 0 伪装)。
+COMMERCE_PROPS: dict[str, tuple[str, str, Any]] = {
+    "commerce_type": ("text", "commerce_type", "product"),
+    "product_id": ("int", "product_id", 0),
+    "variation_id": ("int", "variation_id", 0),
+    "variation_identity_key": ("text", "variation_identity_key", ""),
+    "sku": ("text", "sku", ""),
+    "price": ("text", "price", ""),
+    "regular_price": ("text", "regular_price", ""),
+    "sale_price": ("text", "sale_price", ""),
+    "on_sale": ("bool", "on_sale", False),
+    "stock_status": ("text", "stock_status", ""),
+    "stock_quantity": ("int", "stock_quantity", None),
+    "purchasable": ("bool", "purchasable", False),
+    "variation_attributes": ("text[]", "variation_attributes", []),
+    "permalink": ("text", "permalink", ""),
+    "commerce_synced_at": ("text", "date_modified", ""),
+}
 
 
 def _evidence_props(doc: RawDocument) -> dict:
