@@ -54,7 +54,32 @@
   "tests/**": "Focused truth-state RED\u2192GREEN suite (test_document_inspector_truth.py) \u2014 contract requires focused tests + truth-state fixtures",
   "admin/src/lib/dataSourceLifecycle.test.ts": "vitest RED\u2192GREEN for presentation helpers (linkStateLabel/servingProjectionNote) \u2014 contract requires focused tests"
  },
- "candidate": null,
+ "candidate": {
+  "sha": "d104b4503146a03a3246e4eeba4c5e1398bd36fa",
+  "branch": "agent/55/71e2f12b",
+  "preserved_at": "2026-09-16T09:54:44Z",
+  "scope": {
+   "pass": true,
+   "enforcement": "strict",
+   "paths": {
+    "admin/src/lib/dataSourceLifecycle.test.ts": "CONDITIONAL",
+    "admin/src/lib/dataSourceLifecycle.ts": "EXPECTED",
+    "admin/src/pages/DataSourceDetail.tsx": "EXPECTED",
+    "admin/src/types/dataSourceWorkspace.ts": "EXPECTED",
+    "backend/api/admin/data_sources.py": "EXPECTED",
+    "backend/api/admin/schemas.py": "EXPECTED",
+    "tests/api/admin/test_document_inspector_truth.py": "CONDITIONAL"
+   },
+   "counts": {
+    "EXPECTED": 5,
+    "CONDITIONAL": 2,
+    "UNKNOWN": 0,
+    "FORBIDDEN": 0
+   },
+   "violations": [],
+   "budget_evidence": "Matrix-proven gaps at 777b737: (D) version history absent from truth response+UI; (G) citation target/link_state absent (authoritative derivation via wiki_canonical_url + _derive_link_state over persisted metadata_); (A) identity dimensions not surfaced distinctly; (L) retired projection mislabeled. Read-model fields + presentation only; no new truth source; test files conditional (focused suites required by contract)."
+  }
+ },
  "investigation_artifact": null,
  "change_budget_established_at": "2026-09-16T09:53:40Z",
  "promoted_at": "2026-09-16T09:54:08Z"
