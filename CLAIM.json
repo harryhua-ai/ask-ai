@@ -21,8 +21,23 @@
   "implementation_authorized": true
  },
  "workflow": "normal-risk",
- "change_budget": null,
+ "change_budget": {
+  "expected": [
+   "backend/connectors/github.py",
+   "backend/services/membership_currency.py",
+   "scripts/sync.py"
+  ],
+  "conditional": [
+   "tests/**"
+  ],
+  "forbidden": [
+   "deploy/**"
+  ],
+  "evidence": "Frozen Contract r5: minimal fix surface = github connector branch-scope expansion bypass, membership reconcile authority-minus-ledger direction, document count lifecycle filtering; RED characterization tests under tests/connectors plus focused regression tests under tests/; deploy forbidden this round",
+  "justifications": {}
+ },
  "scope_justifications": {},
  "candidate": null,
- "investigation_artifact": null
+ "investigation_artifact": null,
+ "change_budget_established_at": "2026-09-16T01:32:08Z"
 }
