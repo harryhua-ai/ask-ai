@@ -40,7 +40,7 @@
   "justifications": {}
  },
  "scope_justifications": {
-  "tests/**": "Representational RED evidence is the required INVESTIGATION deliverable: 7 fixture tests (zero network) characterizing contract B1-1/B1-2/B1-3/B1-5 gaps \u2014 6 FAIL on main b338c3c (no variations ingestion, no commerce chunk props/schema, no identity key) + 1 control PASS (simple product unchanged). Committed to issue branch agent/28/902b51bc; no product code touched this round."
+  "tests/**": "Representational RED suite (7 fixture tests) is the accepted deliverable from the investigation phase; turns GREEN with this implementation (contract \u00a74 acceptance: RED suite turns GREEN with simple-product control staying green). Also green-side projection tests."
  },
  "candidate": null,
  "investigation_artifact": {
