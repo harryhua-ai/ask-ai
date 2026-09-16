@@ -36,7 +36,8 @@
   "justifications": {}
  },
  "scope_justifications": {
-  "admin/src/pages/**": "List page and detail page consume sourceTypeLabel from sourceEditorModel.ts; RCA predicts zero page edits, kept conditional only in case GREEN requires a rendering-side adjustment; any change stays inside type-truth-to-display consistency."
+  "admin/src/pages/**": "List page and detail page consume sourceTypeLabel from sourceEditorModel.ts; RCA predicts zero page edits, kept conditional only in case GREEN requires a rendering-side adjustment; any change stays inside type-truth-to-display consistency.",
+  "admin/tests/**": "TDD contract: RED must reproduce wrong Wiki rendering; existing tests DataSources.test.tsx #2, DataSourcesConvergence A-P1-05 case, and DataSourceDetail identity-row assertion encode the old github/local_git->Wiki mapping and must be updated; plus new regression tests that unknown/missing types never render Wiki."
  },
  "candidate": null,
  "investigation_artifact": null,
