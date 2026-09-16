@@ -78,7 +78,7 @@ from backend.embedder.fallback import (
     _terminal_sync_embedder,
 )
 from backend.embedder.remote import build_remote_sync_embedder
-from backend.pipeline.generation_builder import GenerationBuilder
+from backend.pipeline.generation_builder import BuildAccounting, GenerationBuilder
 from backend.pipeline.ingest import IngestionPipeline
 from backend.services import document_lifecycle as lifecycle
 from backend.services import schedule_truth
@@ -219,23 +219,29 @@ async def _reconcile_source_schedule(session_factory: Any, source_id: str) -> No
 
 
 async def _count_documents(session_factory: Any, source_id_prefix: str) -> int:
-    """统计 documents 表中某数据源的已有记录数(判断首次 vs 无变更)。
+    """统计 documents 表中某数据源的**在服**记录数(判断首次 vs 无变更)。
 
     用 ``source_id LIKE '<id>/%'`` 前缀匹配(source_id 格式为
-    ``{cfg.id}/{branch}/{rel}``)。
+    ``{cfg.id}/{branch}/{rel}``),且只统计 lifecycle ∈ SERVING 的行
+    (#82:墓碑(superseded/deleted)是已退出服务的逻辑删除行,不计入
+    「未变更 N 篇」等现役口径 —— 否则生产会出现「5534 未变更」实为
+    5379 在服 + 155 已退休的假真值)。
 
     Args:
         session_factory: 异步 SQLAlchemy 会话工厂。
         source_id_prefix: 数据源 ID(如 ``"ne301-local"``)。
 
     Returns:
-        该数据源在 documents 表的行数。
+        该数据源在 documents 表的**在服**行数。
     """
     async with session_factory() as session:
         result = await session.execute(
             select(func.count())
             .select_from(Document)
-            .where(Document.source_id.like(f"{source_id_prefix}/%"))
+            .where(
+                Document.source_id.like(f"{source_id_prefix}/%"),
+                Document.lifecycle.in_(lifecycle.DocLifecycle.SERVING),
+            )
         )
         return int(result.scalar() or 0)
 
@@ -521,12 +527,13 @@ async def _last_success_at(session_factory: Any, source_id: str) -> datetime | N
 
 def _membership_truth_persist_failed(
     log_entry: SyncLog, exc: MembershipTruthPersistenceError
-) -> tuple[bool, dict[str, Any]]:
+) -> tuple[bool, dict[str, Any], tuple[str, ...]]:
     """真值持久化失败的统一处置(R2 BLOCKER 2 冻结语义)。
 
     本轮降级 partial(绝不 success)、error_detail 确定性指明真值持久化
     失败、delta 不携带 membership_status 声明(不伪造已持久真值);
-    已提交墓碑不回滚,下一轮重试。
+    已提交墓碑不回滚,下一轮重试。missing 恒为空:真值未建立 ⇒ 补灌
+    事实同样不可证明,下一轮对账重报。
     """
     logger.error("数据源 %s 成员真值持久化失败: %s", log_entry.source_id, str(exc)[:200])
     if log_entry.status == "success":
@@ -535,7 +542,7 @@ def _membership_truth_persist_failed(
         f"{log_entry.error_detail or ''};"
         f"membership truth persistence failed: {str(exc)[:200]}"
     ).lstrip(";")
-    return False, {}
+    return False, {}, ()
 
 
 async def _reconcile_membership_for_source(
@@ -546,13 +553,18 @@ async def _reconcile_membership_for_source(
     log_entry: SyncLog,
     *,
     dry_run: bool = False,
-) -> tuple[bool, dict[str, Any]]:
+) -> tuple[bool, dict[str, Any], tuple[str, ...]]:
     """#71 权威成员对账:每轮必跑(含无变更 / SHA 短路轮)。
 
     stale_set = 账本在服成员 − 权威成员(connector.membership_source_ids),
     退休走既有 ``tombstone_document`` 逻辑删除语义(同步账本面,与 fetch_deleted
     墓碑块同一 session factory 语义)。正确性不依赖 git 事件窗口 /
     ``fetch_deleted`` 历史 / 删除事件是否被观测(Issue #71 授权契约第 1-8 条)。
+
+    #82 补灌方向:missing = 权威成员 − 账本在服成员(分支 scope 扩大后
+    新纳入的既有内容 / 墓碑后重回权威的文档)。本函数只上报缺失事实,
+    灌入由调用方经既有 ingest 路径定向补灌(:func:`_backfill_missing_members`);
+    退休语义与 lifecycle 词表分毫不变。
 
     货币真值(DataSource.membership_*)只在对账事务成功完成后持久化;
     对账失败如实记 failed 并把本轮 SyncLog 降级 partial —— 绝不在已知名义
@@ -565,19 +577,20 @@ async def _reconcile_membership_for_source(
     下一轮重试对账与真值建立。
 
     Returns:
-        (resolved, delta_merge):resolved=False 表示漂移未解决或真值未
-        建立(调用方不得记 success);delta_merge 需并入本轮 delta_counts
-        (键:membership_status / stale_detected / stale_retired,文档单位;
-        仅在真值确已持久化时携带 membership_status)。
+        (resolved, delta_merge, missing_ids):resolved=False 表示漂移未解决
+        或真值未建立(调用方不得记 success);delta_merge 需并入本轮
+        delta_counts(键:membership_status / stale_detected / stale_retired
+        / membership_missing,文档单位;仅在真值确已持久化时携带
+        membership_status);missing_ids 非空 ⇒ 调用方应定向补灌。
     """
     if dry_run:
         # dry-run 原语义:零写副作用,不枚举权威真值、不持久化
-        return True, {}
+        return True, {}, ()
     ledger_factory = getattr(pipeline, "_session_factory", None)
     if ledger_factory is None:
         # 账本工厂缺省(无 Postgres 部署/纯投影运行)时墓碑不可能成立(与
         # fetch_deleted 墓碑块同一纪律):如实跳过,绝不伪造对账事实。
-        return True, {}
+        return True, {}, ()
     if getattr(connector, "membership_source_ids", None) is None:
         # 无成员枚举能力的 connector(filesystem/woocommerce/web_crawl 等):
         # 如实持久化 unsupported(中性,不降级健康);#71 授权范围第 18 条。
@@ -588,7 +601,7 @@ async def _reconcile_membership_for_source(
             )
         except MembershipTruthPersistenceError as exc:
             return _membership_truth_persist_failed(log_entry, exc)
-        return True, {"membership_status": MEMBERSHIP_STATUS_UNSUPPORTED}
+        return True, {"membership_status": MEMBERSHIP_STATUS_UNSUPPORTED}, ()
     try:
         result = reconcile_membership(
             ledger_factory, connector, cfg.id, reason=f"membership:{cfg.id}"
@@ -623,7 +636,7 @@ async def _reconcile_membership_for_source(
             f"{log_entry.error_detail or ''};"
             f"membership reconciliation failed: {str(exc)[:200]}{detail_note}"
         ).lstrip(";")
-        return False, truth_delta
+        return False, truth_delta, ()
     status = MEMBERSHIP_STATUS_CURRENT if not result.unresolved else MEMBERSHIP_STATUS_STALE
     try:
         await persist_membership_truth(
@@ -644,6 +657,9 @@ async def _reconcile_membership_for_source(
         "stale_detected_unit": "document",
         "stale_retired": result.retired,
         "stale_retired_unit": "document",
+        # #82 加性计数:缺失权威成员(补灌方向的可见性,灌入在调用方)
+        "membership_missing": len(result.missing_ids),
+        "membership_missing_unit": "document",
     }
     if result.unresolved:
         if log_entry.status == "success":
@@ -657,14 +673,62 @@ async def _reconcile_membership_for_source(
             cfg.id,
             len(result.residual_ids),
         )
-        return False, delta
+        return False, delta, tuple(result.missing_ids)
     if result.stale_ids:
         logger.info(
             "数据源 %s 成员对账退休陈旧文档 %d 篇(逻辑删除,物理清除仅经 GC)",
             cfg.id,
             result.retired,
         )
-    return True, delta
+    if result.missing_ids:
+        logger.info(
+            "数据源 %s 成员对账发现权威缺失成员 %d 篇(定向补灌,#82)",
+            cfg.id,
+            len(result.missing_ids),
+        )
+    return True, delta, tuple(result.missing_ids)
+
+
+async def _backfill_missing_members(
+    cfg: SourceConfig,
+    connector: Any,
+    builder: GenerationBuilder,
+    missing_ids: tuple[str, ...],
+) -> BuildAccounting | None:
+    """#82:authority−ledger 缺失成员定向补灌(既有 ingest 路径)。
+
+    分支 scope 扩大后新纳入配置的既有内容(以及墓碑后重回权威的文档)
+    由本函数经 ``connector.fetch_all()`` 过滤 + ``builder.build_generation``
+    补灌 —— 与无变更路径向量缺口「不可重放回退源重建」同一机制。走
+    ``force_rebuild=True``:墓碑行同哈希会被 classify 判 UNCHANGED 而跳过,
+    强制新版本才能触发 ``activate_document_version`` 内置的墓碑撤销语义
+    (恢复回 active),不发明任何新 lifecycle 状态。``missing_ids`` 为空
+    (常态)时零开销:不抓取、不构建、不返回。
+
+    Returns:
+        BuildAccounting(补灌批次的构建事实)或 None(无缺失/零命中)。
+        任一文档构建失败按既有契约 raise IngestFailures(本轮零激活)。
+    """
+    if not missing_ids:
+        return None
+    missing_set = set(missing_ids)
+    docs = [d for d in connector.fetch_all() if d.source_id in missing_set]
+    if not docs:
+        logger.warning(
+            "数据源 %s 权威缺失 %d 篇但全量枚举零命中(下轮对账重报)",
+            cfg.id,
+            len(missing_set),
+        )
+        return None
+    logger.info(
+        "数据源 %s 成员对账定向补灌缺失权威成员 %d/%d 篇(#82)",
+        cfg.id,
+        len(docs),
+        len(missing_set),
+    )
+    return await asyncio.to_thread(
+        builder.build_generation, docs, source_id=cfg.id, force_rebuild=True
+    )
 
 
 async def _handle_no_change(
@@ -1228,7 +1292,7 @@ async def _sync_one(
                 if existing > 0:
                     # #71:权威成员对账每轮必跑 —— 「远端看似无变更」(SHA
                     # 短路)绝不豁免成员资格对账;漂移未解决不记 success。
-                    membership_resolved, membership_delta = (
+                    membership_resolved, membership_delta, missing_ids = (
                         await _reconcile_membership_for_source(
                             cfg,
                             connector,
@@ -1237,6 +1301,11 @@ async def _sync_one(
                             log_entry,
                             dry_run=dry_run,
                         )
+                    )
+                    # #82:缺失权威成员(分支 scope 扩大等)先定向补灌,再走
+                    # 无变更校验 —— 复验即可覆盖补灌文档的账本↔向量一致性。
+                    backfill = await _backfill_missing_members(
+                        cfg, connector, builder, missing_ids
                     )
                     await _handle_no_change(
                         cfg.id,
@@ -1255,6 +1324,21 @@ async def _sync_one(
                             **(log_entry.delta_counts or {}),
                             **membership_delta,
                         }
+                    if backfill is not None:
+                        # #82:补灌是真实新增,绝不伪装「无变更」—— new 桶与
+                        # 加性溯源键如实呈现(_handle_no_change 记 0 new 之上
+                        # 叠加;existing 本就不含补灌前不在服的成员)。
+                        backfill_new_n = len(backfill.new_docs)
+                        log_entry.items_new = backfill_new_n
+                        delta_merge = dict(log_entry.delta_counts or {})
+                        delta_merge["new_count"] = (
+                            int(delta_merge.get("new_count", 0) or 0) + backfill_new_n
+                        )
+                        delta_merge["membership_backfilled"] = (
+                            backfill_new_n + len(backfill.updated_docs)
+                        )
+                        delta_merge["membership_backfilled_unit"] = "document"
+                        log_entry.delta_counts = delta_merge
                     if not membership_resolved and log_entry.status == "success":
                         log_entry.status = "partial"
                     return
@@ -1366,10 +1450,25 @@ async def _sync_one(
         # #71 权威成员对账(每轮必跑,与 delta 是否为空无关):正确性独立于
         # git 事件窗口与 fetch_deleted 历史;退休走同一墓碑语义,货币真值仅在
         # 退休事务成功后持久化(kill-safety)。
-        membership_resolved, membership_delta = await _reconcile_membership_for_source(
-            cfg, connector, pipeline, session_factory, log_entry, dry_run=dry_run
+        membership_resolved, membership_delta, missing_ids = (
+            await _reconcile_membership_for_source(
+                cfg, connector, pipeline, session_factory, log_entry, dry_run=dry_run
+            )
         )
         membership_deleted = membership_delta.get("stale_retired", 0)
+        # #82:缺失权威成员(分支 scope 扩大等)在终局一致性校验前定向补灌,
+        # 使复验覆盖补灌文档的账本↔向量一致性。
+        backfill = await _backfill_missing_members(cfg, connector, builder, missing_ids)
+        backfill_new_n = len(backfill.new_docs) if backfill is not None else 0
+        backfill_updated_n = (
+            len(backfill.updated_docs) + len(backfill.metadata_docs)
+            if backfill is not None
+            else 0
+        )
+        backfill_chunks_n = backfill.chunks_written if backfill is not None else 0
+        # 补灌批次与主批次的重叠成员(墓碑行被主批次判 unchanged、又被补灌
+        # 强制重建):从 unchanged 桶剔除,避免一篇文档进两个变更桶。
+        backfill_ids = set(missing_ids) if backfill is not None else set()
 
         # CORRECTION B:终局一致性事实(INDEX → CONSISTENCY → DONE)。
         # 复用权威 verify_source_vectors(与无变更路径同一实现,不造第二套);
@@ -1398,27 +1497,42 @@ async def _sync_one(
             )
             await tel.consistency(session_factory, {"verification_failed": str(exc)[:300]})
 
-        log_entry.items_new = len(accounting.new_docs)
+        log_entry.items_new = len(accounting.new_docs) + backfill_new_n
         # 既有 SyncLog 口径:items_updated 按 chunk 数记账;metadata-only 变更
         # (零重嵌)按篇计入,保持"本轮发生变更的量"可观测。
-        log_entry.items_updated = accounting.chunks_written + len(accounting.metadata_docs)
+        log_entry.items_updated = (
+            accounting.chunks_written
+            + len(accounting.metadata_docs)
+            + backfill_chunks_n
+            + backfill_updated_n
+        )
         # #71:items_deleted = 本轮文档墓碑总数(窗口检测 + 权威成员对账);
         # 成员对账的 stale_detected/stale_retired 另有独立 delta_counts 键,
         # 两者不混淆(授权契约第 13 条)。
         log_entry.items_deleted = tombstoned + membership_deleted
-        log_entry.items_unchanged = len(accounting.unchanged_docs)
+        # #82:unchanged 口径排除被补灌重建的成员(它们已进入 new/updated 桶)
+        unchanged_n = len(set(accounting.unchanged_docs) - backfill_ids)
+        log_entry.items_unchanged = unchanged_n
         # #65 additive truth:all administrator deltas are document counts.
         # ``items_updated`` above intentionally remains the historical mixed
         # chunk/document field for old consumers and is never reinterpreted.
         log_entry.delta_counts = build_document_delta(
-            new_count=len(accounting.new_docs),
-            updated_count=len(accounting.updated_docs) + len(accounting.metadata_docs),
+            new_count=len(accounting.new_docs) + backfill_new_n,
+            updated_count=len(accounting.updated_docs)
+            + len(accounting.metadata_docs)
+            + backfill_updated_n,
             retired_count=tombstoned + membership_deleted,
-            unchanged_count=len(accounting.unchanged_docs),
+            unchanged_count=unchanged_n,
             reason="source_changes",
         )
         if membership_delta:
             log_entry.delta_counts = {**log_entry.delta_counts, **membership_delta}
+        if backfill is not None:
+            log_entry.delta_counts = {
+                **log_entry.delta_counts,
+                "membership_backfilled": backfill_new_n + backfill_updated_n,
+                "membership_backfilled_unit": "document",
+            }
 
         # WEB 合同#6/#7:全量抓取覆盖记账 —— coverage 行始终写入 error_detail
         # (成功也留痕),完整性不足时降级 status,绝不让「85 页只活 2 页」
