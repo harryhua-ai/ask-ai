@@ -27,8 +27,31 @@
   ]
  },
  "workflow": "gap-matrix",
- "change_budget": null,
+ "change_budget": {
+  "expected": [
+   "backend/api/admin/data_sources.py",
+   "backend/api/admin/schemas.py",
+   "admin/src/pages/DataSourceDetail.tsx",
+   "admin/src/types/dataSourceWorkspace.ts",
+   "admin/src/lib/dataSourceLifecycle.ts"
+  ],
+  "conditional": [
+   "tests/**",
+   "admin/src/lib/dataSourceLifecycle.test.ts",
+   "docs/**"
+  ],
+  "forbidden": [
+   "widget/**",
+   "backend/pipeline/**",
+   "backend/retrieval/**",
+   "backend/services/**",
+   "backend/db/migrations/**"
+  ],
+  "evidence": "Matrix-proven gaps at 777b737: (D) version history absent from truth response+UI; (G) citation target/link_state absent (authoritative derivation via wiki_canonical_url + _derive_link_state over persisted metadata_); (A) identity dimensions not surfaced distinctly; (L) retired projection mislabeled. Read-model fields + presentation only; no new truth source; test files conditional (focused suites required by contract).",
+  "justifications": {}
+ },
  "scope_justifications": {},
  "candidate": null,
- "investigation_artifact": null
+ "investigation_artifact": null,
+ "change_budget_established_at": "2026-09-16T09:53:40Z"
 }
