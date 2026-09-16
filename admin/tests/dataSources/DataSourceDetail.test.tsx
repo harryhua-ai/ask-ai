@@ -286,10 +286,14 @@ describe("DataSourceDetail 详情工作面", () => {
   it("身份/配置摘要:产品线、类型中文标签、同步间隔、来源地址可见", () => {
     renderDetail();
     expect(screen.getAllByText("wiki").length).toBeGreaterThan(0);
-    // A-P1-05(audit):运营呈现词表 github→Wiki(仅呈现映射,source_type 真值不变);
+    // #81:github 源的身份行类型词 = canonical 标签「代码仓库」;
+    // 内容分类词 "Wiki" 禁止作为类型呈现(详情行格式:代码仓库 | URL)。
     // v1.6.3 Track C(U-7):知识表类型列 = 逐文档 content_type(商品/页面/文档),
-    // 源级类型词仅保留于身份行(Wiki | URL),故用局部匹配。
-    expect(screen.getAllByText("Wiki", { exact: false }).length).toBeGreaterThan(0);
+    // 与源级类型词无关。
+    expect(screen.getAllByText("代码仓库", { exact: false }).length).toBeGreaterThan(0);
+    // 身份行格式「类型词 | 来源地址」:断言类型词位不再是 "Wiki"
+    // (product 线名本身含 "wiki" 子串,故以 "Wiki | " 精确锚定类型词位)。
+    expect(screen.queryByText("Wiki | ", { exact: false })).not.toBeInTheDocument();
     // U-7:行类型 = 后端逐文档真值;存量行(null)诚实呈现「—」,禁源级推断
     expect(screen.getAllByText("文档").length).toBeGreaterThan(0);
     expect(screen.getAllByTitle("类型不可用(存量行,后端无真值)").length).toBeGreaterThan(0);
