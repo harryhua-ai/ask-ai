@@ -11,20 +11,14 @@
  "heartbeat_at": "2026-09-16T02:16:42Z",
  "note": null,
  "supersedes": null,
- "mode": "investigation",
- "policy_digest": "94e8ebbcbeb7a6333807586bce580ec9375393cc35092824ab9d15fc28b59ae3",
+ "mode": "implementation",
+ "policy_digest": "87f06288bfd9b9262c7ccc52311f296084933babecea82b6928fe57df15e422b",
  "execution_context": "orchestrated",
  "assignment": {
   "issue_type": "bug",
   "workflow": "normal-risk",
   "lane": "lane-3",
-  "implementation_authorized": false,
-  "investigation_paths": [
-   "backend/**",
-   "tests/**",
-   "scripts/**",
-   "docs/**"
-  ]
+  "implementation_authorized": true
  },
  "workflow": "normal-risk",
  "change_budget": {
@@ -58,5 +52,6 @@
    "tests/connectors/test_woocommerce_variations.py"
   ]
  },
- "change_budget_established_at": "2026-09-16T02:20:21Z"
+ "change_budget_established_at": "2026-09-16T02:20:21Z",
+ "promoted_at": "2026-09-16T02:42:06Z"
 }
