@@ -45,7 +45,34 @@
  "scope_justifications": {
   "tests/**": "Representational RED suite (7 fixture tests) is the accepted deliverable from the investigation phase; turns GREEN with this implementation (contract \u00a74 acceptance: RED suite turns GREEN with simple-product control staying green). Also green-side projection tests."
  },
- "candidate": null,
+ "candidate": {
+  "sha": "f483dea79f9a8aa2d4a114d60dee3895ac8b2f94",
+  "branch": "agent/28/a5c7f423",
+  "preserved_at": "2026-09-16T03:49:46Z",
+  "scope": {
+   "pass": true,
+   "enforcement": "strict",
+   "paths": {
+    "backend/api/admin/schemas.py": "EXPECTED",
+    "backend/connectors/woocommerce.py": "EXPECTED",
+    "backend/pipeline/ingest.py": "EXPECTED",
+    "backend/retrieval/search.py": "EXPECTED",
+    "scripts/migrate_add_commerce_variation_props.py": "EXPECTED",
+    "tests/connectors/test_woocommerce_variations.py": "CONDITIONAL",
+    "tests/db/test_migration_p1_corrective.py": "CONDITIONAL",
+    "tests/db/test_migration_p1_lifecycle.py": "CONDITIONAL",
+    "tests/scripts/test_migrate_add_commerce_variation_props.py": "CONDITIONAL"
+   },
+   "counts": {
+    "EXPECTED": 5,
+    "CONDITIONAL": 4,
+    "UNKNOWN": 0,
+    "FORBIDDEN": 0
+   },
+   "violations": [],
+   "budget_evidence": "Investigation RCA (issue 28, contract v164 Track B): B1 frozen semantics = endpoint-provided actual variations as first-class truth. Minimal fix surface: woo connector variations fetch + variation RawDocument (B1-1/B1-2), additive Weaviate COLLECTION_PROPERTIES + _build_props commerce projection (B1-3), additive search.py return_properties x2 (B1-3 retrieval projection per r4 convention), additive admin DataSourceDocumentTruth fields (B1-4), additive migration script scripts/migrate_add_commerce_variation_props.py (r4 pattern). sync.py untouched (connector-agnostic ingest path). RED characterization committed under tests/."
+  }
+ },
  "investigation_artifact": {
   "kind": "investigation",
   "sha": "465a272afb25dab6fd9409fedf52071d23c52e0c",
