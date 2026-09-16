@@ -41,7 +41,9 @@
   "evidence": "Role A RCA: repair authority lacks lifecycle guard; minimal fix = fail-closed guard + verification honesty + admin CTA",
   "justifications": {}
  },
- "scope_justifications": {},
+ "scope_justifications": {
+  "tests/**": "Acceptance 1-6,8,9 RED/GREEN \u56de\u5f52(\u5893\u7891/\u63a5\u66ff fail-closed\u3001TOCTOU\u3001active gap \u6210\u529f\u3001\u5e42\u7b49 no-op\u3001\u5ba1\u8ba1\u4fdd\u7559)"
+ },
  "candidate": null,
  "investigation_artifact": null,
  "change_budget_established_at": "2026-09-16T00:02:37Z"
