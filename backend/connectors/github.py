@@ -20,10 +20,12 @@ config 新 schema:
 """
 
 import hashlib
+import json
 import logging
 import os
 import re
 import subprocess
+import tempfile
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -63,6 +65,17 @@ _TRANSPORT_PATTERNS: tuple[str, ...] = (
 
 # 子进程总时长上限(秒);生产默认 900s,env 可调;≤0 关闭(旧行为)。
 _DEFAULT_GIT_TIMEOUT_SECONDS = 900
+
+# ---- #82:分支 scope 扩大的补灌触发状态 ----
+# 记录「最近一次完整枚举进账本的分支集合」,存于 clone 目录旁(与 clone 同
+# 生命周期;`git fetch/reset --hard` 不触碰未跟踪文件)。语义:某分支在此
+# 集合中 ⇒ 其内容至少完整枚举过一次(初始全量/上次 scope 扩大补灌);配置
+# 分支集合新增(∉ 集合)⇒ 该分支按"新纳入 scope"处理:绕过分支级 SHA 短路
+# 与 --since 增量窗口,强制完整枚举(与新建源首次全量摄取一致)。
+# 状态缺失(None)⇒ 无法证明任何分支状态,保守维持常规增量语义(绝不把
+# 未知状态误判为扩大);此时 authority−ledger 缺口仍由每轮成员对账的补灌
+# 方向(scripts/sync.py)兜底收敛。
+_BRANCH_SCOPE_MARKER = ".ask-ai-branch-scope.json"
 
 
 class GitTransportError(RuntimeError):
@@ -296,6 +309,9 @@ class GitHubConnector(DataSourceConnector):
 
     def _should_include_path(self, rel: str) -> bool:
         """file_types + ExclusionPolicy 过滤(沿用 local_git 逻辑)。"""
+        if rel == _BRANCH_SCOPE_MARKER:
+            # #82:同步状态文件不是仓库内容,绝不进入枚举/变更/成员真值
+            return False
         p = self._clone_path / rel
         if p.suffix.lower() not in self._file_types:
             return False
@@ -389,6 +405,43 @@ class GitHubConnector(DataSourceConnector):
 
     # ---------------- DataSourceConnector 协议 ----------------
 
+    def _read_branch_scope(self) -> set[str] | None:
+        """读取最近一次完整枚举的分支集合(状态缺失返回 None,#82)。
+
+        None = 无状态可证明(旧版本写入的 clone / 状态损坏):保守返回
+        None,调用方维持常规增量语义,绝不把未知状态误判为 scope 扩大。
+        """
+        marker = self._clone_path / _BRANCH_SCOPE_MARKER
+        try:
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+            branches = payload.get("branches")
+            if not isinstance(branches, list):
+                return None
+            return {str(b) for b in branches}
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as exc:
+            logger.warning("分支 scope 状态读取失败(按无状态处理): %s: %s", marker, exc)
+            return None
+
+    def _write_branch_scope(self, branches: set[str]) -> None:
+        """原子落笔分支 scope 状态(tmp+rename,kill-safety:不留半截 JSON)。"""
+        marker = self._clone_path / _BRANCH_SCOPE_MARKER
+        payload = json.dumps(
+            {"branches": sorted(branches)}, ensure_ascii=False, sort_keys=True
+        )
+        try:
+            fd, tmp_name = tempfile.mkstemp(
+                dir=str(self._clone_path), prefix=".ask-ai-scope-", suffix=".tmp"
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(payload)
+            os.replace(tmp_name, marker)
+        except OSError as exc:
+            # 状态写失败只影响「下次扩大的连接器级识别」,正确性由成员对账
+            # 的 authority−ledger 补灌方向兜底 —— 绝不因记账失败中断同步。
+            logger.warning("分支 scope 状态写入失败(下轮由成员对账兜底): %s", exc)
+
     def membership_source_ids(self) -> set[str]:
         """权威成员枚举(#71):当前远端树状态下的 in-scope 路径全集。
 
@@ -414,13 +467,26 @@ class GitHubConnector(DataSourceConnector):
         return members
 
     def fetch_all(self) -> Iterator[RawDocument]:
-        """全量抓取:每分支 ensure_cloned + git_sync_branch + 遍历。"""
+        """全量抓取:每分支 ensure_cloned + git_sync_branch + 遍历。
+
+        全量轮完整枚举全部配置分支 —— 成功走完后落笔分支 scope 状态(#82),
+        供后续增量轮识别「新加入配置的分支」;中途失败/中断不落笔,状态
+        保持上一次真值。
+        """
         # Track C C-4:clone 时探测仓库访客可达性(结果随文档元数据持久化)
         self._probe_repo_visibility()
-        for branch in self._branches:
-            self._ensure_cloned(branch)
-            self._git_sync_branch(branch)
-            yield from self._iter_files(branch)
+        completed = False
+        try:
+            for branch in self._branches:
+                self._ensure_cloned(branch)
+                self._git_sync_branch(branch)
+                yield from self._iter_files(branch)
+            completed = True
+        finally:
+            # 消费方读完(正常收尾)才代表全量枚举完成;异常/提前 close 不落笔,
+            # 状态保持上一次真值(缺失则维持 None 的保守语义)。
+            if completed:
+                self._write_branch_scope(set(self._branches))
 
     def fetch_changes(self, since: datetime) -> Iterator[RawDocument]:
         """增量抓取:API SHA 有更新才 fetch+reset,再读 since 后变更的文件。
@@ -431,14 +497,54 @@ class GitHubConnector(DataSourceConnector):
         恢复重放(``_recovery_replay``,阶段⑩ F16):跳过 SHA 短路,无条件
         fetch+reset 后按 ``since`` 边界重读本地 git 历史 —— 处理「clone HEAD
         已推进而 ingest 被中断」场景,防止变更被假 no-change success 吞掉。
+
+        分支 scope 扩大(#82):新加入配置的分支(有状态记录且分支不在其中)
+        绕过 SHA 短路与 ``since`` 窗口,强制完整枚举该分支(与新建源首次
+        全量摄取一致)—— 否则初始 clone 已带的 origin/* ref 使新分支 SHA
+        恒等、提交历史又早于窗口,内容永远无法进入账本。状态缺失(None)
+        时不做扩大判定,常规增量语义分毫不变;authority−ledger 缺口由
+        scripts/sync.py 每轮成员对账的补灌方向兜底。
         """
         # Track C C-4:与 fetch_all 同面 —— 增量产物同样携带可达性状态。
         self._probe_repo_visibility()
-        for branch in self._branches:
-            self._ensure_cloned(branch)
-            if self._recovery_replay or self._remote_has_updates(branch):
-                self._git_sync_branch(branch)
-                yield from self._read_local_changes(branch, since)
+        known_scope = self._read_branch_scope()
+        expanded: set[str] = set()
+        completed = False
+        try:
+            for branch in self._branches:
+                self._ensure_cloned(branch)
+                if known_scope is not None and branch not in known_scope:
+                    # #82 scope 扩大:强制完整枚举,不等 SHA 变化、不受窗口限制
+                    logger.info(
+                        "分支 %s 新纳入数据源 scope,强制完整枚举补灌(#82)", branch
+                    )
+                    self._git_sync_branch(branch)
+                    yield from self._iter_files(branch)
+                    expanded.add(branch)
+                    # 逐分支落笔:补灌中途被 kill ⇒ 状态未含该分支 ⇒ 下轮重灌(幂等)
+                    self._write_branch_scope(
+                        ((known_scope or set()) | expanded) & set(self._branches)
+                    )
+                elif self._recovery_replay or self._remote_has_updates(branch):
+                    self._git_sync_branch(branch)
+                    yield from self._read_local_changes(branch, since)
+            completed = True
+        finally:
+            # 完整走完一轮(每个配置分支都得到处理)才做收尾合并;中途
+            # 中断只依赖逐分支落笔(仅含真实完整枚举过的分支)。
+            if completed:
+                # 一轮增量收尾:补灌过的分支并入状态;同时修剪已收窄出配置
+                # 的分支,使状态始终反映「配置内且完整枚举过」的分支集合。
+                # 无状态(None,旧版本写入的 clone)时以本轮配置分支起底 ——
+                # 既有增量源的内容本就经首次全量/历史增量进入账本,残余缺口
+                # 由每轮成员对账的 authority−ledger 补灌方向兜底;绝不把未
+                # 处理的分支伪标为已灌。
+                if known_scope is None:
+                    merged = set(self._branches)
+                else:
+                    merged = (known_scope | expanded) & set(self._branches)
+                if merged != known_scope:
+                    self._write_branch_scope(merged)
 
     def _read_local_changes(self, branch: str, since: datetime) -> Iterator[RawDocument]:
         """``git log --since`` 拿变更文件(沿用 local_git 逻辑,AMR + rename)。"""
