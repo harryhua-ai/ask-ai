@@ -404,3 +404,132 @@ async def test_reconcile_reports_missing_including_tombstoned_authority_member(
             .scalar_one()
         )
         assert row.lifecycle == DocLifecycle.DELETED
+
+
+# --------------------------------------------------------------------------- #
+# 4. Role A 验收面(2026-09-16 批准)
+# --------------------------------------------------------------------------- #
+
+
+class _LedgerWritingBuilder:
+    """以最小账本语义模拟 build_generation 的激活面:upsert 在服 Document 行。
+
+    用于不变量集成断言(AUTHORITY == LEDGER SERVING):真实 build_generation
+    的激活事务会写账本;stub 不写则不变量无从谈起。仅最小等价 —— 新成员
+    建行、已存在行恢复 SERVING(墓碑撤销的最小语义,与
+    activate_document_version 的恢复方向一致)。
+    """
+
+    def __init__(self, session_factory) -> None:
+        self._f = session_factory
+        self.built: list[str] = []
+
+    def build_generation(self, docs, *, source_id, force_rebuild=False, progress=None):
+        from backend.pipeline.generation_builder import BuildAccounting
+
+        new_ids: list[str] = []
+        with self._f() as session:
+            for d in docs:
+                self.built.append(d.source_id)
+                row = (
+                    session.execute(
+                        select(Document).where(Document.source_id == d.source_id)
+                    )
+                    .scalar_one_or_none()
+                )
+                if row is None:
+                    new_ids.append(d.source_id)
+                    _mk_doc(session, d.source_id, DocLifecycle.ACTIVE)
+                elif row.lifecycle not in DocLifecycle.SERVING:
+                    row.lifecycle = DocLifecycle.ACTIVE
+            session.commit()
+        return BuildAccounting(
+            source_id=source_id,
+            new_docs=new_ids,
+            chunks_written=2 * len(docs),
+        )
+
+
+async def test_expansion_backfill_does_not_rebuild_current_members(
+    db_engine, sync_factory, healthy_report
+):
+    """Role A 验收 2:「仅补灌新增 scope」—— scope 扩张轮,已 current 成员
+    不得被重复摄取/重建。fetch_all 返回完整权威全集(含已 current 成员),
+    断言构建批次只含缺失成员。"""
+    factory = get_session_factory(db_engine)
+    await _seed(db_engine, [(HEALTHY, DocLifecycle.ACTIVE)])
+    connector = _Connector(
+        members={HEALTHY, NEW_MEMBER},
+        full_docs=[_raw_doc(NEW_MEMBER), _raw_doc(HEALTHY)],  # 全集,含已 current
+    )
+    _CURRENT["connector"] = connector
+    builder = _LedgerWritingBuilder(sync_factory)
+
+    await sync_mod._sync_one(
+        _cfg(),
+        _Pipeline(sync_factory),
+        factory,
+        triggered_by="manual",
+        builder=builder,
+    )
+    assert builder.built == [NEW_MEMBER], (
+        f"scope 扩张只补缺失成员;实际构建了: {builder.built}"
+    )
+    log = await _latest_sync_log(factory)
+    assert log.status == "success"
+    assert log.delta_counts["membership_backfilled"] == 1
+    # 已 current 成员的账本行原样保留(无重建/重激活副作用)
+    with sync_factory() as session:
+        row = (
+            session.execute(select(Document).where(Document.source_id == HEALTHY))
+            .scalar_one()
+        )
+        assert row.lifecycle == DocLifecycle.ACTIVE
+
+
+async def test_post_sync_invariant_authority_equals_serving_ledger(
+    db_engine, sync_factory, healthy_report
+):
+    """Role A 验收 3:同步成功后 AUTHORITY == LEDGER MEMBERSHIP TRUTH ==
+    CURRENT SERVING SCOPE(非退休账本成员集合 == 权威成员集合),且权威
+    对账复检零 stale、零 missing、零 residual。"""
+    factory = get_session_factory(db_engine)
+    await _seed(db_engine, [(HEALTHY, DocLifecycle.ACTIVE)])
+    authority = {HEALTHY, NEW_MEMBER}
+    connector = _Connector(
+        members=authority,
+        full_docs=[_raw_doc(NEW_MEMBER), _raw_doc(HEALTHY)],
+    )
+    _CURRENT["connector"] = connector
+    builder = _LedgerWritingBuilder(sync_factory)
+
+    await sync_mod._sync_one(
+        _cfg(),
+        _Pipeline(sync_factory),
+        factory,
+        triggered_by="manual",
+        builder=builder,
+    )
+    log = await _latest_sync_log(factory)
+    assert log.status == "success"
+
+    # AUTHORITY == 账本在服成员(非退休)
+    with sync_factory() as session:
+        serving = {
+            str(sid)
+            for (sid,) in session.execute(
+                select(Document.source_id).where(
+                    Document.source_id.like(f"{SRC}/%"),
+                    Document.lifecycle.in_(DocLifecycle.SERVING),
+                )
+            )
+        }
+    assert serving == authority, (
+        f"同步后不变量破坏: authority={sorted(authority)} serving={sorted(serving)}"
+    )
+    # 复检:权威对账零缺口(两方向同时收敛)
+    result = reconcile_membership(sync_factory, connector, SRC, reason="issue82:invariant")
+    assert result.stale_ids == ()
+    assert result.missing_ids == ()
+    assert result.residual_ids == ()
+    assert result.status == "completed"
