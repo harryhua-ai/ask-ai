@@ -52,7 +52,9 @@
   "evidence": "Drift-check issue 25 A-1..A-7 @ main 648b391: fs/woo fetch_deleted=[] (filesystem.py:214, woocommerce.py:335) no ledger-side discovery confirmation anywhere; missing_candidate primitive unreachable (document_lifecycle.py:425 zero callers); GC sweep CLI exists but no scheduler wiring (deploy/** forbidden in this lane so trigger lands in backend/scripts); tombstone reason log-only (document_lifecycle.py:405) no persisted reason/evidence/actor; #50 detail (data_sources.py:1177) has no reason surface; gap-heal repair_documents (generation_builder.py:613) resurrects source-removed content without confirmation check (A-7 interaction). RED tests/scripts/test_fs_disappearance_retirement.py 3/3 FAIL on main (assert active==missing_candidate).",
   "justifications": {}
  },
- "scope_justifications": {},
+ "scope_justifications": {
+  "backend/api/admin/schemas.py": "A-6/#50 detail surface: additive response models (RetirementTruth/AbsenceTruth) + two optional fields on DataSourceDocumentTruth live in schemas.py because the #50 read-model pydantic schemas are defined there; data-only additive (None = no persisted fact), no behavior change. Contract A-6 requires the persisted reason readable via the admin detail endpoint (Acceptance 5)."
+ },
  "candidate": null,
  "investigation_artifact": null
 }
