@@ -66,6 +66,28 @@
  "scope_justifications": {
   "tests/**": "RED trio e41f982 GREEN conversion plus CONTROL anchors and regression suites"
  },
- "candidate": null,
+ "candidate": {
+  "sha": "79fcce6bc5de21ce0082df383f50947f59fadd02",
+  "branch": "agent/31/c1dd813a",
+  "preserved_at": "2026-09-16T04:56:06Z",
+  "scope": {
+   "pass": true,
+   "enforcement": "strict",
+   "paths": {
+    "backend/pipeline/evidence_reservation.py": "EXPECTED",
+    "backend/pipeline/evidence_selection.py": "EXPECTED",
+    "backend/pipeline/rag.py": "EXPECTED",
+    "tests/pipeline/test_issue31_solution_evidence_red.py": "CONDITIONAL"
+   },
+   "counts": {
+    "EXPECTED": 3,
+    "CONDITIONAL": 1,
+    "UNKNOWN": 0,
+    "FORBIDDEN": 0
+   },
+   "violations": [],
+   "budget_evidence": "Track B2 restoration: B2-2 absence instruction (rag.py), B2-5 solution retention (rag.py buckets/promotion), B2-4 case eligibility predicate; directory-granularity budget avoids single-file path drift"
+  }
+ },
  "investigation_artifact": null
 }
