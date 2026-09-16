@@ -97,19 +97,8 @@ function renderWithSources(sources: unknown[]) {
   );
 }
 
-// 测试辅助:打开第 index 行的低频操作菜单。
-function openRowMenu(index = 0) {
-  const trigger = screen.getAllByRole("button", { name: "更多操作" })[index];
-  fireEvent.pointerDown(trigger);
-  fireEvent.click(trigger);
-}
-
-// 关闭已打开的 Radix 菜单(Escape),否则外层触发器对可达性树不可见。
-function closeRowMenu() {
-  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
-}
-
 // DS-01:编辑为行级直接操作(既有能力保留)。
+// #86:常态 ⋯ overflow 菜单已取消,低频操作(同步记录/删除)同为行级直显按钮。
 async function openEditViaMenu() {
   fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
 }
@@ -1111,12 +1100,8 @@ describe("DSH 数据源健康语义", () => {
     );
 
     expect(useSyncRuns).toHaveBeenCalledWith("website-camthink", { enabled: false });
-    // #66:轻量同步记录收进 ⋯ 菜单
-    const trigger = screen.getByRole("button", { name: "更多操作" });
-    fireEvent.pointerDown(trigger);
-    fireEvent.click(trigger);
-    const menuItem = await screen.findByRole("menuitem", { name: "同步记录" });
-    fireEvent.click(menuItem);
+    // #66/#86:同步记录直显为行级按钮,点击展开既有记录面板(行为不变)
+    fireEvent.click(screen.getByRole("button", { name: "同步记录" }));
 
     expect(useSyncRuns).toHaveBeenCalledWith("website-camthink", { enabled: true });
     expect(screen.getByText("同步记录")).toBeInTheDocument();
