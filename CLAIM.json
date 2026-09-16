@@ -46,6 +46,29 @@
   "tests/connectors/test_issue82_branch_scope_change.py": "RED characterization from agent/82/642e501f@3440c31 restored per Frozen Contract (turning GREEN) plus connector-side regressions: scope-state exclusion, narrow-prune/re-expand, upgrade path, and Role A four forbidden-skip conditions parameterization",
   "tests/pipeline/test_issue82_scope_backfill.py": "Sync-side regressions: serving-only count truth, no-change backfill routing and honest accounting, true fast-path control, missing-direction service reporting, Role A only-new-scope backfill and authority==serving-ledger invariant"
  },
- "candidate": null,
+ "candidate": {
+  "sha": "2a33209e8d919bc1e31880714ee57747776a30b0",
+  "branch": "agent/82/727767cd",
+  "preserved_at": "2026-09-16T02:39:43Z",
+  "scope": {
+   "pass": true,
+   "enforcement": "strict",
+   "paths": {
+    "backend/connectors/github.py": "EXPECTED",
+    "backend/services/membership_currency.py": "EXPECTED",
+    "scripts/sync.py": "EXPECTED",
+    "tests/connectors/test_issue82_branch_scope_change.py": "CONDITIONAL",
+    "tests/pipeline/test_issue82_scope_backfill.py": "CONDITIONAL"
+   },
+   "counts": {
+    "EXPECTED": 3,
+    "CONDITIONAL": 2,
+    "UNKNOWN": 0,
+    "FORBIDDEN": 0
+   },
+   "violations": [],
+   "budget_evidence": "Frozen Contract r5: minimal fix surface = github connector branch-scope expansion bypass, membership reconcile authority-minus-ledger direction, document count lifecycle filtering; RED characterization tests under tests/connectors plus focused regression tests under tests/; deploy forbidden this round"
+  }
+ },
  "investigation_artifact": null
 }
