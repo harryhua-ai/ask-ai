@@ -38,7 +38,8 @@
  },
  "scope_justifications": {
   "backend/connectors/github.py": "Branch-scope expansion detection: persist last fully-enumerated branch scope beside the clone; newly-configured branch bypasses branch-level SHA short-circuit and --since window with full enumeration (per Frozen Contract SCOPE)",
-  "backend/services/membership_currency.py": "Authority-minus-ledger direction: MembershipReconciliation reports missing authority members (enumeration minus ledger serving) so sync can backfill via existing ingest path; no retirement-semantics change"
+  "backend/services/membership_currency.py": "Authority-minus-ledger direction: MembershipReconciliation reports missing authority members (enumeration minus ledger serving) so sync can backfill via existing ingest path; no retirement-semantics change",
+  "scripts/sync.py": "Route missing authority members into existing ingest path (fetch_all-filtered build_generation) and exclude tombstoned rows from _count_documents so unchanged/total counts reflect serving truth"
  },
  "candidate": null,
  "investigation_artifact": null,
