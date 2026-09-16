@@ -61,6 +61,28 @@
   "tests/**": "Admin regression coverage for action visibility and permission/lifecycle guards required by issue acceptance item 8",
   "admin/tests/**": "Admin regression suites live under admin/tests/**; acceptance item 8 requires new action-visibility tests there"
  },
- "candidate": null,
+ "candidate": {
+  "sha": "fd53ef6cb6baa4016901950090ac437631618357",
+  "branch": "agent/86/baedd112",
+  "preserved_at": "2026-09-16T01:25:00Z",
+  "scope": {
+   "pass": true,
+   "enforcement": "strict",
+   "paths": {
+    "admin/src/pages/DataSources.tsx": "EXPECTED",
+    "admin/tests/DataSources.test.tsx": "CONDITIONAL",
+    "admin/tests/dataSources/DataSourcesConvergence.test.tsx": "CONDITIONAL",
+    "admin/tests/dataSources/RowActionDiscoverability.test.tsx": "CONDITIONAL"
+   },
+   "counts": {
+    "EXPECTED": 1,
+    "CONDITIONAL": 3,
+    "UNKNOWN": 0,
+    "FORBIDDEN": 0
+   },
+   "violations": [],
+   "budget_evidence": "Issue #86 RCA_VERDICT=ROW_ACTION_DISCOVERABILITY_DRIFT is confined to the Admin DataSources list UI; backend/API/deletion/sync semantics frozen by issue acceptance"
+  }
+ },
  "investigation_artifact": null
 }
