@@ -42,7 +42,9 @@
   "evidence": "Issue58 matrix v163-issue58-gap-matrix-20260916: A1 PARTIAL + A4 MISSING authorize GAP_ONLY B1+B2; single source file admin/src/pages/analytics/IncidentSection.tsx; focused regression tests in admin/tests/** (existing TechInsight/TechInsightConvergence live there); backend/widget/deploy frozen (S3/S4 frozen surface, no telemetry redesign)",
   "justifications": {}
  },
- "scope_justifications": {},
+ "scope_justifications": {
+  "admin/tests/**": "focused B1+B2 RED/GREEN cases (IncidentSectionGap.test.tsx) plus regression guard; test location follows existing TechInsight/TechInsightConvergence tests in admin/tests/; zero product-code impact"
+ },
  "candidate": null,
  "investigation_artifact": null,
  "change_budget_established_at": "2026-09-16T07:26:16Z"
