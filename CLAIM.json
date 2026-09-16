@@ -46,7 +46,27 @@
   "justifications": {}
  },
  "scope_justifications": {},
- "candidate": null,
+ "candidate": {
+  "sha": "45a85f1839cb4e69e4bf6dc1329eeb820ecb2d55",
+  "branch": "agent/53/b477305a",
+  "preserved_at": "2026-09-16T06:20:52Z",
+  "scope": {
+   "pass": true,
+   "enforcement": "strict",
+   "paths": {
+    "admin/src/pages/DataSources.tsx": "EXPECTED",
+    "admin/tests/DataSourcesAttentionReason.test.tsx": "EXPECTED"
+   },
+   "counts": {
+    "EXPECTED": 2,
+    "CONDITIONAL": 0,
+    "UNKNOWN": 0,
+    "FORBIDDEN": 0
+   },
+   "violations": [],
+   "budget_evidence": "RCA per Implementation Contract (issue #53 body, r5-UX orchestrator, GAP_ONLY_IMPLEMENTATION) + gap matrix artifact agent/53/fa864a60@e09c2ea row A1 (PARTIAL): authoritative attentionReasonClasses(lifecycle_counts, attention_count) projection (admin/src/lib/dataSourceOps.ts:166-189) is rendered only in the detail banner (DataSourceDetail.tsx); list \u9700\u5904\u7406 cell (DataSources.tsx:446-459) shows count with generic tooltip; attention-summary payload with lifecycle_counts is already fetched into summaryMap (DataSources.tsx:148-151). Budget exactly as contract-locked: EXPECTED=admin/src/pages/DataSources.tsx + one new focused admin test file; CONDITIONAL=none; FORBIDDEN=everything else. No frontend health recomputation, no new endpoints/hooks, no #81/#82 duplication."
+  }
+ },
  "investigation_artifact": null,
  "change_budget_established_at": "2026-09-16T06:12:50Z"
 }
