@@ -4,12 +4,12 @@
  "claim_id": "harryhua-ai-20260916T041051-a21f6978",
  "agent": "harryhua-ai",
  "claimed_at": "2026-09-16T04:10:52Z",
- "lease_expires_at": "2026-09-16T04:55:52Z",
+ "lease_expires_at": "2026-09-16T04:54:17Z",
  "baseline_commit": "b338c3c7eeafec9f57176aa82dd743b9f195153d",
- "status": "active",
+ "status": "delivered",
  "branch": "agent/25/a21f6978",
  "heartbeat_at": "2026-09-16T04:10:52Z",
- "note": "takeover: Same executor, own STALE lease (claim harryhua-ai-20260916T030306-136c8ca3): 45min lease expired mid-implementation while full regression suite ran; work committed+pushed to agent/25/136c8ca3 @ 5f0c682 as insurance before takeover. Implementation continue per coordinator authorization (v9 promote).",
+ "note": "RCA: founding defect = fs/woo cannot self-declare deletions (fetch_deleted()=[]), no ledger-side full-discovery absence confirmation existed; refill resurrects (PG chunk copies) or loops partial forever (copyless rows, the 2026-09-05 production incident: 26 rows, 481/507, MISSING_LEGITIMATE=26, manually repaired); GC sweep existed with no scheduler and apply was never run in production (purged_at count=0, no gc container).\nBASELINE: b338c3c7eeafec9f57176aa82dd743b9f195153d (drift re-checked to 648b391 \u2014 no lifecycle-path deltas).\nCANDIDATE_BRANCH: agent/25/a21f6978 (supersedes investigation branch agent/25/136c8ca3 @ 8af42d5..277e9d1, kept intact per takeover note).\nCANDIDATE_SHA: 942a88d (chain: 8af42d5 RED characterization -> 5f0c682 feat A-1..A-7 -> 808a700 ruff -> 277e9d1 w6-spy regression fix -> 942a88d #50 models into budgeted file).\nCHANGE_BUDGET: 12 expected (connectors base/fs/woo, services document_lifecycle/lifecycle_gc/vector_consistency, scripts sync/gc_lifecycle, config.py, db/models.py, api/admin data_sources+schemas) + tests/** conditional + deploy/** forbidden; final changed set: 9 EXPECTED files (models.py/vector_consistency.py untouched by additive design; schemas.py net-zero after budget-discipline refactor) + 3 justified conditional tests; scope-check 0 violations.\nRED: tests/scripts/test_fs_disappearance_retirement.py \u2014 on baseline b338c3c: 3/3 FAIL, first assertion `assert 'active' == 'missing_candidate'` (no absence-confirmation path anywhere; fs tombstone branch dead code; missing_candidate primitive zero callers). Commit 8af42d5 preserves the RED evidence.\nGREEN: same family post-implementation 11/11 (two-strike chain, incomplete-discovery no-advance, policy-absence frozen+restore, woo fixture, idempotent re-confirmation, GC 7d window, apply config gate, API detail truth x3); ruff clean on all touched files.\nREGRESSION: full suite 2771 passed; 1 real regression caught and fixed in-run (w6 snapshot spy missing audit kwargs, commit 277e9d1); ",
  "supersedes": {
   "claim_id": "harryhua-ai-20260916T030306-136c8ca3",
   "sha": "c9b4eb6444b2601aa44d33799cc2992aef45e3a4"
