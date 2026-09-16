@@ -161,6 +161,19 @@ async def tech_answer_gaps(
             session, [str(row.QuestionCluster.id) for row in rows]
         )
 
+        # 可用性真值(#59 G1/C2 只读投影):全量缺口聚类计数与分类聚合覆盖上界
+        # MAX(period_end),均来自既有 QuestionCluster 列,忽略筛选与窗口 ——
+        # 空队列时 UI 据此区分「无聚类证据/证据未覆盖当前窗」与真实零态,
+        # 不制造零、不发明刷新溯源(不区分「从未聚类」与「聚类零缺口」);
+        # 零新表零新端点。
+        gap_clusters_total, covered_through = (
+            await session.execute(
+                select(func.count(), func.max(QuestionCluster.period_end))
+                .select_from(QuestionCluster)
+                .where(QuestionCluster.cluster_type == "gap")
+            )
+        ).one()
+
     items: list[dict[str, Any]] = []
     for row in rows:
         c = row.QuestionCluster
@@ -210,6 +223,12 @@ async def tech_answer_gaps(
         "page": page,
         "size": size,
         "miss_type_summary": dict(miss_type_summary),
+        "availability": {
+            "gap_clusters_total": int(gap_clusters_total or 0),
+            "classification_covered_through": (
+                covered_through.isoformat() if covered_through else None
+            ),
+        },
     }
 
 
