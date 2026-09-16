@@ -231,9 +231,11 @@ async def test_sync_one_commits_snapshot_after_delete_loop(_sync_env, monkeypatc
     order: list = []
     real_tombstone = sync_mod.lifecycle.tombstone_document
 
-    def spy_tombstone(session, sid, *, reason="", now=None):
+    def spy_tombstone(session, sid, *, reason="", now=None, **kw):
+        # Track A (#25):tombstone_document 新增 actor/evidence 审计参数,
+        # 透传以保持真实退休语义(spy 只观测调用顺序)。
         order.append(("delete", sid))
-        return real_tombstone(session, sid, reason=reason, now=now)
+        return real_tombstone(session, sid, reason=reason, now=now, **kw)
 
     monkeypatch.setattr(sync_mod.lifecycle, "tombstone_document", spy_tombstone)
     pipeline._session_factory = MagicMock()
