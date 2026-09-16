@@ -117,7 +117,8 @@ def _seed_legacy_objects(client) -> list[str]:
             Property(
                 name=n,
                 data_type={"text": DataType.TEXT, "int": DataType.INT,
-                           "text[]": DataType.TEXT_ARRAY}[d],
+                           "text[]": DataType.TEXT_ARRAY,
+                           "bool": DataType.BOOL}[d],
             )
             for n, d in COLLECTION_PROPERTIES
             if n not in ("generation_ordinal", "generation_id")
