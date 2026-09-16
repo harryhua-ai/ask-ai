@@ -27,8 +27,31 @@
   ]
  },
  "workflow": "normal-risk",
- "change_budget": null,
+ "change_budget": {
+  "expected": [
+   "backend/connectors/filesystem.py",
+   "backend/connectors/woocommerce.py",
+   "backend/connectors/base.py",
+   "backend/services/document_lifecycle.py",
+   "backend/services/lifecycle_gc.py",
+   "backend/services/vector_consistency.py",
+   "scripts/sync.py",
+   "scripts/gc_lifecycle.py",
+   "backend/config.py",
+   "backend/db/models.py",
+   "backend/api/admin/data_sources.py"
+  ],
+  "conditional": [
+   "tests/**"
+  ],
+  "forbidden": [
+   "deploy/**"
+  ],
+  "evidence": "Drift-check issue 25 A-1..A-7 @ main 648b391: fs/woo fetch_deleted=[] (filesystem.py:214, woocommerce.py:335) no ledger-side discovery confirmation anywhere; missing_candidate primitive unreachable (document_lifecycle.py:425 zero callers); GC sweep CLI exists but no scheduler wiring (deploy/** forbidden in this lane so trigger lands in backend/scripts); tombstone reason log-only (document_lifecycle.py:405) no persisted reason/evidence/actor; #50 detail (data_sources.py:1177) has no reason surface; gap-heal repair_documents (generation_builder.py:613) resurrects source-removed content without confirmation check (A-7 interaction). RED tests/scripts/test_fs_disappearance_retirement.py 3/3 FAIL on main (assert active==missing_candidate).",
+  "justifications": {}
+ },
  "scope_justifications": {},
  "candidate": null,
- "investigation_artifact": null
+ "investigation_artifact": null,
+ "change_budget_established_at": "2026-09-16T03:04:19Z"
 }
