@@ -46,7 +46,29 @@
  "scope_justifications": {
   "admin/tests/**": "Focused RED-first empty-state test file (AnswerGapsEmptyStates.test.tsx) colocated per matrix G1 item 4 and existing precedent (GapCauseTaxonomy.test.tsx / TechInsightConvergence.test.tsx live in admin/tests/); renders AnswerGapsTab four empty states with mocked authoritative projection; no other test dirs touched"
  },
- "candidate": null,
+ "candidate": {
+  "sha": "fd0a6a6328e297e49a52da3531e0b8189212566b",
+  "branch": "agent/59/341e8542",
+  "preserved_at": "2026-09-16T07:23:33Z",
+  "scope": {
+   "pass": true,
+   "enforcement": "strict",
+   "paths": {
+    "admin/src/lib/api/techInsight.ts": "EXPECTED",
+    "admin/src/pages/analytics/AnswerGapsTab.tsx": "EXPECTED",
+    "admin/tests/AnswerGapsEmptyStates.test.tsx": "CONDITIONAL",
+    "backend/api/admin/tech_answer_gaps.py": "EXPECTED"
+   },
+   "counts": {
+    "EXPECTED": 3,
+    "CONDITIONAL": 1,
+    "UNKNOWN": 0,
+    "FORBIDDEN": 0
+   },
+   "violations": [],
+   "budget_evidence": "G1 minimal boundary per accepted gap matrix (agent/59 evidence branch @ c5329c5) + Implementation Contract in issue body: three code files exactly; focused RED-first tests colocated with existing admin vitest suites (admin/tests/ holds GapCauseTaxonomy/GapObservationLifecycle/TechInsightConvergence/TrackFEvidence precedent); forbidden per contract (no deploy surface, no widget surface, no trend/distribution re-addition)"
+  }
+ },
  "investigation_artifact": null,
  "change_budget_established_at": "2026-09-16T07:22:01Z"
 }
