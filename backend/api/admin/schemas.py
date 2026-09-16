@@ -289,6 +289,36 @@ class BulkDocumentRepairOut(BaseModel):
     items: list[BulkDocumentRepairItem] = Field(default_factory=list)
 
 
+class RetirementTruth(BaseModel):
+    """v1.6.4 Track A(A-6,#25):持久化退休决策真相。
+
+    权威来源 = documents.metadata_['retirement'](加性键,零迁移);
+    None = 后端无退休记录(行未退休或为 P1 旧墓碑)。reason/actor 为
+    封闭词表(见 document_lifecycle 词表常量),evidence 为确认证据
+    (确认计数/首缺时间/sync_run_id 等),禁止前端推断补齐。
+    """
+
+    reason: str
+    actor: str | None = None
+    evidence: dict | None = None
+    retired_at: str | None = None
+    gc_eligible_at: str | None = None  # None = 普通墓碑(物理 GC 走 opt-in 窗)
+
+
+class AbsenceTruth(BaseModel):
+    """v1.6.4 Track A(A-2/A-3,#25):缺席确认状态真相。
+
+    权威来源 = documents.metadata_['absence']。confirmations = 连续完整
+    发现缺席计数(A-3:政策缺席恒 0 不计数);policy_reason 非空 = 范围外
+    缺席(重包含可恢复),空 = 范围内缺席(两次连续 → RETIRED)。
+    """
+
+    confirmations: int = 0
+    since: str | None = None
+    policy_reason: str | None = None
+    last_observed_at: str | None = None
+
+
 class DataSourceDocumentTruth(BaseModel):
     """GET /data-sources/{source_id}/documents/detail 响应:单文档真相。
 
@@ -317,6 +347,9 @@ class DataSourceDocumentTruth(BaseModel):
     recovery_attempts_failed: int = 0  # U-10(自动恢复尝试未成功权威计数)
     recovery_attempts_succeeded: int = 0  # U-10
     latest_repair_task: DocumentRepairTaskOut | None = None  # U-8
+    # ---- v1.6.4 Track A(加性真相;None = 无该持久化事实)----
+    retirement: RetirementTruth | None = None  # A-6 退休决策(reason/evidence/actor)
+    absence: AbsenceTruth | None = None  # A-2/A-3 缺席确认状态
     current_version: DocumentCurrentVersionTruth | None = None
     generation: DocumentGenerationTruth | None = None
 

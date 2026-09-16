@@ -120,6 +120,11 @@ _RESIDUAL_TAG_RE = re.compile(r"</?\s*[a-zA-Z][^>]*?>")
 class WooCommerceConnector:
     """WooCommerce 商城 Connector(实现 DataSourceConnector Protocol)。
 
+    v1.6.4 Track A(Issue #25):``DECLARES_DELETIONS = False`` —— 无删除
+    事件 webhook,退休由 sync 侧账本缺席确认(完整发现差集 + 两次连续)
+    驱动;``policy_absence_reason`` 恒 None(woo 无管理员范围过滤,listing
+    即权威,缺席可进入 A-2 确认)。
+
     通过 ``SourceConfig.config`` 提供参数(config 缺失时 fallback 环境变量):
     - ``store_url`` (str, 必填): 商城站点(如 ``https://www.camthink.ai``)
     - ``consumer_key`` (str, 必填): WooCommerce REST API key
@@ -332,6 +337,17 @@ class WooCommerceConnector:
                     "product %s 转换失败: %s", p.get("id"), str(exc)[:200]
                 )
 
+    # 不能自证删除事件(无 webhook)→ 账本侧缺席确认负责退休(Track A A-1)
+    DECLARES_DELETIONS = False
+
+    def policy_absence_reason(self, source_id: str) -> str | None:
+        """woo 无管理员范围过滤(listing 即权威)→ 恒 None(Track A A-3)。
+
+        产品从 listing 消失(下架/删除/转 draft)即在范围内缺席,可进入
+        A-2 两次连续确认退休流程。
+        """
+        return None
+
     def fetch_deleted(self, since: datetime) -> list[str]:
         """检测已删除的 product(诚实降级:始终返回 [])。
 
@@ -340,8 +356,9 @@ class WooCommerceConnector:
         Protocol 签名(``fetch_deleted(self, since)``),返回 ``[]``
         (与 filesystem.py:182-189 范式一致)。
 
-        若后续需要删除检测,应由调用方(sync.py)维护 known_ids 快照
-        对比,或接入 WooCommerce webhook。
+        v1.6.4 Track A(Issue #25):woo 产品的退休不再依赖本方法 —— sync
+        侧以完整权威发现(``fetch_all`` 差集)做账本侧缺席确认(A-1/A-2),
+        本实现保持 ``[]`` 语义不变。
 
         Args:
             since: 未使用(保留 Protocol 签名兼容)。

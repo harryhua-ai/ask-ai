@@ -93,6 +93,39 @@ RETIRED_RETENTION_DAYS = 7
 # (active 集不再含前任代),恒 ≤ 该上限;常量用于审计与测试断言。
 SERVING_WITHDRAWAL_MAX_DAYS = 1
 
+# --------------------------------------------------------------------------- #
+# 缺席确认常量(v1.6.4 Track A,Issue #25;契约
+# docs/engineering/tasks/v164-track-a-lifecycle-retirement-contract.md 冻结):
+#   A-1 账本侧确认 = 向量侧 EXTRA_CONFIRMED_RETIRED 的镜像(不能自证删除的
+#       连接器 filesystem/woo 由完整权威发现的差集驱动退休);
+#   A-2 两次连续完整发现才退休:第一次 → missing_candidate 宽限(仍在服务,
+#       Needs Attention 可见);第二次 → RETIRED(即时撤出服务,GC 资格锚
+#       = retired_at + 7d);不完整/失败/低覆盖发现不推进计数(调用方守卫);
+#   A-3 政策缺席(include_dirs/file_types/排除)绝不推进确认计数,以独立
+#       reason 呈现;重包含后经 activate/restore 原语恢复,零复活副作用;
+#   A-6 退休决策持久化 reason/evidence/actor(documents.metadata_ 加性键,
+#       零迁移),幂等重放零变更。
+# 词表边界:A-4 冻结 —— 不新增 L 轴状态(缺席宽限 = MISSING_CANDIDATE,
+# 退休 = DELETED,均属既有词表;bucket 投影 retired = superseded + deleted)。
+# --------------------------------------------------------------------------- #
+
+# A-2:确认退休所需连续完整发现次数(第一次观察即入宽限,第二次确认退休)
+ABSENCE_CONFIRMATIONS_REQUIRED = 2
+
+# documents.metadata_ 加性键(JSONB;零迁移零回填,缺键 = 无该事实)
+ABSENCE_META_KEY = "absence"
+RETIREMENT_META_KEY = "retirement"
+
+# 退休 reason 词表(A-6 封闭枚举;#50 详情面直接映射文案)
+RETIRE_REASON_DISCOVERY = "discovery_confirmed_absence"
+RETIRE_REASON_FETCH_DELETED = "fetch_deleted"
+RETIRE_REASON_MANUAL = "manual"
+
+# actor 词表(操作面标识,非自由文本)
+ACTOR_SYNC = "sync"
+ACTOR_SYNC_ABSENCE = "sync:absence-reconciliation"
+ACTOR_SYNC_FETCH_DELETED = "sync:fetch_deleted"
+
 # 迁移初始代(legacy 对象寻址不变;ordinal=0):
 # 确定性 UUID,迁移幂等的锚 —— 重复迁移不会产生第二个初始代。
 LEGACY_GENERATION_ORDINAL = 0
@@ -386,12 +419,23 @@ def activate_document_version(
 
 
 def tombstone_document(
-    session: Session, source_id: str, *, reason: str = "", now: datetime | None = None
+    session: Session,
+    source_id: str,
+    *,
+    reason: str = "",
+    now: datetime | None = None,
+    actor: str = ACTOR_SYNC,
+    evidence: dict | None = None,
 ) -> bool:
     """墓碑原语(逻辑删除,非物理):lifecycle→deleted,退出服务集。
 
     前置条件:存在文档行且尚未墓碑(幂等:已 deleted → False)。
     物理清除仅经 GC 接口(窗值不设隐式默认,运营化归 P5)。
+
+    v1.6.4 Track A(A-6):退休决策持久化 —— actor/evidence 写入
+    ``metadata_[retirement]``(加性键,零迁移);普通墓碑不走 7 天自动窗
+    (墓碑物理 GC 仍 opt-in,见 lifecycle_gc),发现确认退休走
+    :func:`confirm_absence_retirement`。
     """
     ts = now or utcnow()
     doc = session.execute(select(Document).where(Document.source_id == source_id)).scalar_one_or_none()
@@ -401,6 +445,18 @@ def tombstone_document(
     doc.deleted_at = ts
     doc.superseded_at = None
     doc.superseded_by = None
+    base = doc.metadata_ if isinstance(doc.metadata_, dict) else {}
+    record = {
+        "reason": reason or RETIRE_REASON_MANUAL,
+        "actor": actor,
+        "evidence": evidence or {},
+        "retired_at": ts.isoformat(),
+        # 普通墓碑不设 gc_eligible_at(None = 物理清除走 opt-in 墓碑窗,
+        # 与冻结「墓碑窗不设隐式默认」一致;发现确认退休才带 7 天自动窗)。
+        "gc_eligible_at": None,
+    }
+    # JSONB 变更追踪:整体重赋值(见 _write_absence_state 同款纪律)。
+    doc.metadata_ = {**base, RETIREMENT_META_KEY: record}
     session.flush()
     logger.info("墓碑生效 %s(逻辑删除,reason=%s);物理清除仅经 GC", source_id, reason)
     return True
@@ -430,6 +486,191 @@ def mark_missing_candidate(session: Session, source_id: str, *, now: datetime | 
         return False
     doc.lifecycle = DocLifecycle.MISSING_CANDIDATE
     session.flush()
+    return True
+
+
+# ---------------------------------------------------------------------------
+# 缺席确认与发现确认退休(v1.6.4 Track A,Issue #25):常量词表见模块顶部
+# 「缺席确认常量」区;本区只放纯函数/原语。契约:docs/engineering/tasks/
+# v164-track-a-lifecycle-retirement-contract.md(A-1/A-2/A-3/A-6 冻结)。
+# --------------------------------------------------------------------------- #
+
+
+def _metadata_dict(doc: Document) -> dict:
+    """防御式取文档 metadata_(非 dict 视为空;不改变行上原值)。"""
+    return doc.metadata_ if isinstance(doc.metadata_, dict) else {}
+
+
+def get_absence_state(doc: Document) -> dict | None:
+    """读取缺席确认状态(缺键/畸形 → None)。"""
+    raw = _metadata_dict(doc).get(ABSENCE_META_KEY)
+    if not isinstance(raw, dict) or not raw:
+        return None
+    return raw
+
+
+def get_retirement_record(doc: Document) -> dict | None:
+    """读取持久化退休决策记录(reason/evidence/actor;缺键 → None)。"""
+    raw = _metadata_dict(doc).get(RETIREMENT_META_KEY)
+    if not isinstance(raw, dict) or not raw:
+        return None
+    return raw
+
+
+def _write_absence_state(
+    doc: Document,
+    *,
+    confirmations: int,
+    since: str | None,
+    policy_reason: str | None,
+    observed_at: str,
+) -> None:
+    """写入缺席确认状态(原地;调用方负责 commit)。
+
+    JSONB 变更追踪:必须整体重赋值属性(原地 dict 变更不会被 SQLAlchemy
+    flush,缺席计数将静默丢失 —— 二次确认永远无法达成)。
+    """
+    base = doc.metadata_ if isinstance(doc.metadata_, dict) else {}
+    doc.metadata_ = {
+        **base,
+        ABSENCE_META_KEY: {
+            "confirmations": int(confirmations),
+            "since": since,
+            "policy_reason": policy_reason,
+            "last_observed_at": observed_at,
+        },
+    }
+
+
+def clear_absence_state(doc: Document) -> bool:
+    """清除缺席状态(重新出现/恢复;幂等:无状态 → False)。"""
+    if not isinstance(doc.metadata_, dict) or ABSENCE_META_KEY not in doc.metadata_:
+        return False
+    doc.metadata_ = {k: v for k, v in doc.metadata_.items() if k != ABSENCE_META_KEY}
+    return True
+
+
+def confirm_absence_retirement(
+    doc: Document,
+    *,
+    reason: str,
+    actor: str,
+    evidence: dict | None = None,
+    now: datetime | None = None,
+) -> dict:
+    """发现确认退休(账本侧;A-2 第二击):lifecycle→DELETED + 退休元数据。
+
+    与 :func:`tombstone_document` 同一状态语义(逻辑删除、即时撤出服务),
+    额外持久化 A-6 审计记录(reason/evidence/actor/retired_at +
+    ``gc_eligible_at = retired_at + 7d``,A-4 冻结时序;GC sweep 据此对
+    发现确认行走 7 天自动窗,普通墓碑 opt-in 语义不变)。
+    幂等:已 DELETED 且有记录 → 仅返回既有记录,零变更。
+    """
+    ts = now or utcnow()
+    existing = get_retirement_record(doc)
+    if doc.lifecycle == DocLifecycle.DELETED and existing is not None:
+        return existing
+    doc.lifecycle = DocLifecycle.DELETED
+    doc.deleted_at = ts
+    doc.superseded_at = None
+    doc.superseded_by = None
+    base = doc.metadata_ if isinstance(doc.metadata_, dict) else {}
+    record = {
+        "reason": reason,
+        "actor": actor,
+        "evidence": evidence or {},
+        "retired_at": ts.isoformat(),
+        "gc_eligible_at": (ts + timedelta(days=RETIRED_RETENTION_DAYS)).isoformat(),
+    }
+    # JSONB 变更追踪:整体重赋值(见 _write_absence_state 同款纪律)。
+    doc.metadata_ = {**base, RETIREMENT_META_KEY: record}
+    clear_absence_state(doc)
+    logger.info(
+        "发现确认退休 %s(reason=%s, actor=%s);GC 资格 %s(7 天冻结窗)",
+        doc.source_id,
+        reason,
+        actor,
+        record["gc_eligible_at"],
+    )
+    return record
+
+
+def record_absence_observation(
+    doc: Document,
+    *,
+    policy_reason: str | None = None,
+    observed_at: datetime | None = None,
+    evidence: dict | None = None,
+) -> str:
+    """记录一次完整权威发现的缺席观察(A-2 状态机核心;原地,调用方 commit)。
+
+    Returns(outcome 词表):
+      - ``"retired"``:行已退休(DELETED/SUPERSEDED)→ 幂等跳过,零变更;
+      - ``"policy"``:政策缺席(A-3)→ 入宽限态呈现 Needs Attention 但
+        计数**冻结清零**(连续性被打断,绝不推进退休确认);
+      - ``"observed"``:首次/未达阈值的在范围缺席 → 计数 +1;
+      - ``"confirmed"``:计数达到 ``ABSENCE_CONFIRMATIONS_REQUIRED`` →
+        退休(DELETED + A-6 审计记录)。
+    """
+    ts = observed_at or utcnow()
+    if doc.lifecycle in (DocLifecycle.DELETED, DocLifecycle.SUPERSEDED):
+        return "retired"
+    prev = get_absence_state(doc) or {}
+    prev_confirmations = int(prev.get("confirmations") or 0)
+    if policy_reason is not None:
+        # A-3:政策缺席是「非确认观察」—— 入宽限态(仍在服务、attention
+        # 可见)但连续计数清零;跨政策中断的退休确认被结构性排除。
+        _write_absence_state(
+            doc,
+            confirmations=0,
+            since=None,
+            policy_reason=policy_reason,
+            observed_at=ts.isoformat(),
+        )
+        if doc.lifecycle != DocLifecycle.MISSING_CANDIDATE:
+            doc.lifecycle = DocLifecycle.MISSING_CANDIDATE
+        return "policy"
+    confirmations = prev_confirmations + 1
+    since = prev.get("since") or ts.isoformat()
+    if doc.lifecycle != DocLifecycle.MISSING_CANDIDATE:
+        doc.lifecycle = DocLifecycle.MISSING_CANDIDATE
+    if confirmations >= ABSENCE_CONFIRMATIONS_REQUIRED:
+        confirm_absence_retirement(
+            doc,
+            reason=RETIRE_REASON_DISCOVERY,
+            actor=ACTOR_SYNC_ABSENCE,
+            evidence={
+                **(evidence or {}),
+                "confirmations": confirmations,
+                "first_absence_at": since,
+            },
+            now=ts,
+        )
+        return "confirmed"
+    _write_absence_state(
+        doc,
+        confirmations=confirmations,
+        since=since,
+        policy_reason=None,
+        observed_at=ts.isoformat(),
+    )
+    return "observed"
+
+
+def restore_from_absence(doc: Document) -> bool:
+    """缺席宽限行重新出现于权威清单 → 恢复 active 并清除缺席状态(A-3/A-2)。
+
+    幂等:非宽限行或缺席/退休标记全无 → False。服务投影随 lifecycle 立即
+    回到 SERVING;若向量已被 GC,由既有 repair/refill 路径再物化(本原语
+    只管生命周期,零复活副作用)。
+    """
+    if doc.lifecycle != DocLifecycle.MISSING_CANDIDATE:
+        return False
+    if get_absence_state(doc) is None and get_retirement_record(doc) is None:
+        return False
+    doc.lifecycle = DocLifecycle.ACTIVE
+    doc.deleted_at = None
+    clear_absence_state(doc)
     return True
 
 

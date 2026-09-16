@@ -44,7 +44,17 @@ class FilesystemConnector(DataSourceConnector):
     ``{cfg.id}/{branch}/{rel}``,``RawDocument.branch`` 透传该分支名。
     过滤策略:``file_types`` 白名单 + ``include_dirs`` 前缀 + ``ExclusionPolicy``
     (排除构建目录、二进制、测试数据等)共同生效。
+
+    v1.6.4 Track A(Issue #25)生命周期契约:
+    - ``DECLARES_DELETIONS = False``:本地 FS 无删除事件日志,本连接器不能
+      自证删除;账本行退休由 sync 侧完整权威发现差集 + 两次连续缺席确认
+      驱动(A-1/A-2),``fetch_deleted`` 维持诚实空实现;
+    - ``policy_absence_reason``:按既有过滤策略逐维分类「范围外缺席」
+      (A-3:政策缺席绝不确认为源删除)。
     """
+
+    # 不能自证删除事件 → 账本侧缺席确认负责退休(Track A A-1)
+    DECLARES_DELETIONS = False
 
     def __init__(self, config: SourceConfig) -> None:
         self._config = config
@@ -164,6 +174,39 @@ class FilesystemConnector(DataSourceConnector):
             return False
         return True
 
+    def policy_absence_reason(self, source_id: str) -> str | None:
+        """按当前管理员策略判定该身份是否「范围外」(A-3;Track A)。
+
+        与 :meth:`fetch_all` 的过滤视野同一判定来源(``file_types`` →
+        ``include_dirs`` → 技术安全 → ``ExclusionPolicy``;尺寸维度无法对
+        已消失文件回放,不参与分类 —— 尺寸排除是技术安全的硬上限,历史行
+        由 corpus repair 的 unsafe-artifact 面负责)。
+
+        Returns:
+            范围外缺席的固定 reason 词表(``"file_types"`` / ``"include_dirs"`` /
+            ``"technical_safety"`` / ``"exclusion_policy"``);范围内(即若文件
+            在盘就会被摄取)→ None,其缺席可进入 A-2 退休确认。
+        """
+        prefix = f"{self._config.id}/{self._branch}/"
+        if not source_id.startswith(prefix):
+            # 异形身份(非本连接器产出的复合路径):保守视为范围内
+            # (宁可走确认流程,也不静默豁免)。
+            return None
+        rel = source_id[len(prefix) :]
+        ext = os.path.splitext(rel)[1]
+        if ext not in self._file_types:
+            return "file_types"
+        if self._include_dirs and not any(
+            rel.startswith(d.rstrip("/")) or rel == d for d in self._include_dirs
+        ):
+            return "include_dirs"
+        verdict = self._safety.check_path(rel, 0)
+        if not verdict.safe:
+            return "technical_safety"
+        if self._policy.should_exclude(rel, 0):
+            return "exclusion_policy"
+        return None
+
     def fetch_all(self) -> Iterator[RawDocument]:
         """全量抓取:递归遍历根目录,yield 所有符合过滤条件的文件。
 
@@ -215,7 +258,11 @@ class FilesystemConnector(DataSourceConnector):
         """返回自 ``since`` 起被删除的文档 source_id 列表。
 
         本地文件系统无法可靠重建删除事件(无 commit/事件日志),
-        因此本方法始终返回空列表。如需删除检测,应由调用方维护
-        快照对比逻辑(记录上次同步的文件列表,与当前列表求差集)。
+        因此本方法始终返回空列表(诚实降级)。
+
+        v1.6.4 Track A(Issue #25):fs 文档的退休不再依赖本方法 —— sync
+        侧以完整权威发现(``fetch_all`` 差集)做账本侧缺席确认(A-1/A-2:
+        两次连续完整发现 → missing_candidate → RETIRED),本实现保持 ``[]``
+        语义不变。
         """
         return []
