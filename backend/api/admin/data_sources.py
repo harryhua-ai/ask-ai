@@ -13,6 +13,7 @@ from uuid import uuid4
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -62,7 +63,11 @@ from backend.pipeline.rag import LINK_STATE_NONE, _derive_link_state
 from backend.services import knowledge_policy, repo_discovery, source_lifecycle
 from backend.services import schedule_truth as schedule_truth_svc
 from backend.services.chunk_serving import chunk_serving_for_doc
-from backend.services.document_lifecycle import DocLifecycle
+from backend.services.document_lifecycle import (
+    DocLifecycle,
+    get_absence_state,
+    get_retirement_record,
+)
 from backend.services.document_repair import (
     create_repair_task,
     ensure_repair_stack,
@@ -1257,13 +1262,60 @@ async def _inspector_version_history(
     return entries, truncated
 
 
-@router.get("/{source_id}/documents/detail", response_model=DataSourceDocumentTruth)
+# --------------------------------------------------------------------------- #
+# v1.6.4 Track A(A-6/A-2/A-3,#25):持久化退休决策与缺席确认的详情真相模型。
+# 加性子类定义在本模块(读面所在;schemas.py 为冻结读模型文件,零改动)——
+# None = 后端无该持久化事实(不推断、不编造,与 #50 只读真相面纪律一致)。
+# --------------------------------------------------------------------------- #
+
+
+class RetirementTruth(BaseModel):
+    """持久化退休决策真相(documents.metadata_['retirement'] 投影)。
+
+    reason/actor 为封闭词表(见 document_lifecycle 词表常量),evidence 为
+    确认证据(确认计数/首缺时间/sync_run_id 等);gc_eligible_at = None 表示
+    普通墓碑(物理 GC 走 opt-in 窗),非 None = 发现确认退休(A-2 + 7 天窗)。
+    """
+
+    reason: str
+    actor: str | None = None
+    evidence: dict | None = None
+    retired_at: str | None = None
+    gc_eligible_at: str | None = None
+
+
+class AbsenceTruth(BaseModel):
+    """缺席确认状态真相(documents.metadata_['absence'] 投影)。
+
+    confirmations = 连续完整发现缺席计数(A-3:政策缺席恒 0 不计数);
+    policy_reason 非空 = 范围外缺席(重包含可恢复),空 = 范围内缺席
+    (两次连续 → RETIRED)。
+    """
+
+    confirmations: int = 0
+    since: str | None = None
+    policy_reason: str | None = None
+    last_observed_at: str | None = None
+
+
+class DataSourceDocumentTruthV25(DataSourceDocumentTruth):
+    """#50 单文档真相的 Track A 加性投影(A-6/Acceptance 5;response_model)。
+
+    组合树(94f2349 谱系):继承 #55 的身份/版本历史/引用真值字段,
+    叠加 Track A 退休/缺席确认投影 —— 两面均为加性,零字段冲突。
+    """
+
+    retirement: RetirementTruth | None = None
+    absence: AbsenceTruth | None = None
+
+
+@router.get("/{source_id}/documents/detail", response_model=DataSourceDocumentTruthV25)
 async def get_source_document_truth(
     source_id: str,
     _: ViewerDep,
     request: Request,
     doc_source_id: str = Query(..., description="复合文档身份 <source_id>/<branch>/<rel_path>"),
-) -> DataSourceDocumentTruth:
+) -> DataSourceDocumentTruthV25:
     """单文档真相(状态 + 权威归属字段 + 现行版本/生成;只读)。
 
     - 文档行不存在 / 不属于本源 → 404 "后端无此记录"(显式缺席,不编造);
@@ -1342,7 +1394,11 @@ async def get_source_document_truth(
                 .limit(1)
             )
         ).scalar_one_or_none()
-        return DataSourceDocumentTruth(
+        # v1.6.4 Track A(A-6/A-2/A-3,#25):持久化退休决策与缺席确认状态
+        # 原样投影(权威 = documents.metadata_ 加性键;缺键 = None,不推断)。
+        retirement_record = get_retirement_record(doc)
+        absence_record = get_absence_state(doc)
+        return DataSourceDocumentTruthV25(
             source_id=source_id,
             doc_source_id=doc.source_id,
             title=doc.title,
@@ -1355,6 +1411,31 @@ async def get_source_document_truth(
             chunk_count=doc.chunk_count,
             content_type=doc.content_type,
             chunk_serving=chunk_serving_truth,
+            retirement=(
+                RetirementTruth(
+                    reason=str(retirement_record.get("reason") or ""),
+                    actor=retirement_record.get("actor"),
+                    evidence=(
+                        retirement_record.get("evidence")
+                        if isinstance(retirement_record.get("evidence"), dict)
+                        else None
+                    ),
+                    retired_at=retirement_record.get("retired_at"),
+                    gc_eligible_at=retirement_record.get("gc_eligible_at"),
+                )
+                if retirement_record is not None
+                else None
+            ),
+            absence=(
+                AbsenceTruth(
+                    confirmations=int(absence_record.get("confirmations") or 0),
+                    since=absence_record.get("since"),
+                    policy_reason=absence_record.get("policy_reason"),
+                    last_observed_at=absence_record.get("last_observed_at"),
+                )
+                if absence_record is not None
+                else None
+            ),
             recovery_attempts_failed=rec_failed,
             recovery_attempts_succeeded=rec_succeeded,
             latest_repair_task=(

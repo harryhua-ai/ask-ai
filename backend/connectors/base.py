@@ -57,7 +57,18 @@ class DataSourceConnector(Protocol):
 
     所有具体 Connector 必须实现该协议,以提供全量抓取、增量变更抓取
     与已删除文档 ID 查询能力。
+
+    v1.6.4 Track A(Issue #25)生命周期契约扩展:
+    - ``DECLARES_DELETIONS``:连接器能否自证删除事件(git/web=True,
+      filesystem/woo=False)。不能自证者由 sync 侧账本缺席确认
+      (完整权威发现差集,A-2 两次连续)驱动退休 —— 见
+      ``backend/services/document_lifecycle.record_absence_observation``。
+    - ``policy_absence_reason(source_id)``:管理员策略(include_dirs/
+      file_types/排除/技术安全)下该身份是否**不在摄取范围**(A-3:范围外
+      缺席绝不确认为源删除,返回人读 reason;范围内返回 None)。
     """
+
+    DECLARES_DELETIONS: bool
 
     @property
     def source_id(self) -> str: ...
@@ -70,3 +81,5 @@ class DataSourceConnector(Protocol):
     def fetch_changes(self, since: datetime) -> Iterator[RawDocument]: ...
 
     def fetch_deleted(self, since: datetime) -> list[str]: ...
+
+    def policy_absence_reason(self, source_id: str) -> str | None: ...

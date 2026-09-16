@@ -36,6 +36,16 @@ from backend.services import document_lifecycle as lifecycle
 logger = logging.getLogger(__name__)
 
 
+def _parse_iso_or_none(raw: Any) -> datetime | None:
+    """防御式解析 ISO 时间串(畸形/缺失 → None)。"""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
 @dataclass
 class GCReport:
     """一次 sweep 的审计账本(dry-run 与 apply 同构)。"""
@@ -49,6 +59,9 @@ class GCReport:
     versions_deleted: int = 0
     documents_deleted: int = 0
     errors: list[str] = field(default_factory=list)
+    # v1.6.4 Track A(#25):发现确认退休行的资格观察(7 天自动窗内尚未
+    # 到期者单列呈现;到期者已并入 documents_eligible)。A-6 证据面。
+    retirement_pending: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -61,6 +74,7 @@ class GCReport:
             "versions_deleted": self.versions_deleted,
             "documents_deleted": self.documents_deleted,
             "errors": self.errors,
+            "retirement_pending": self.retirement_pending,
         }
 
 
@@ -158,6 +172,31 @@ async def sweep(
             )
         ).scalars().all()
         doomed.extend(sup_rows)
+
+        # ---- v1.6.4 Track A(#25):发现确认退休行的 7 天自动窗(A-2 冻结时序)
+        # metadata 带 retirement 标记的 DELETED 行按
+        # ``gc_eligible_at = retired_at + 7d`` **自动**取得物理清除资格,
+        # 不依赖墓碑 opt-in 配置(A-5:普通墓碑 GC 仍 opt-in,分层不变);
+        # gc_eligible_at 缺失(防御)→ 回退 deleted_at + 7d 同窗。
+        ret_rows = (
+            await session.execute(
+                select(Document).where(
+                    Document.lifecycle == lifecycle.DocLifecycle.DELETED,
+                    Document.metadata_[lifecycle.RETIREMENT_META_KEY].is_not(None),
+                )
+            )
+        ).scalars().all()
+        for row in ret_rows:
+            record = lifecycle.get_retirement_record(row) or {}
+            eligible = _parse_iso_or_none(record.get("gc_eligible_at"))
+            if eligible is None:
+                anchor = row.deleted_at or ts
+                eligible = anchor + timedelta(days=lifecycle.RETIRED_RETENTION_DAYS)
+            if eligible <= ts:
+                doomed.append(row)
+            else:
+                report.retirement_pending.append(row.source_id)
+
         if tombstone_days is not None:
             del_cut = ts - timedelta(days=tombstone_days)
             del_rows = (
@@ -166,6 +205,8 @@ async def sweep(
                         Document.lifecycle == lifecycle.DocLifecycle.DELETED,
                         Document.deleted_at.is_not(None),
                         Document.deleted_at <= del_cut,
+                        # 普通(非发现确认)墓碑:维持 opt-in 语义不变
+                        Document.metadata_[lifecycle.RETIREMENT_META_KEY].is_(None),
                     )
                 )
             ).scalars().all()

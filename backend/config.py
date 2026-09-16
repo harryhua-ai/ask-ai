@@ -47,6 +47,12 @@ class Settings:
     # 墓碑物理 GC 关闭,直至运营显式配置(已废除的 30 天默认禁止回用;
     # RETIRED 代 7 天为冻结默认,不走本配置)。运营化归 P5。
     lifecycle_gc_tombstone_days: int | None = None
+    # v1.6.4 Track A(A-5,#25):GC 物理 apply config gate。False(默认)=
+    # 调度 sweep 只报告资格(reporting by default);True 才允许
+    # scripts/gc_lifecycle.py --apply 执行物理清除 —— 首次生产 apply 是
+    # 受控操作员动作(dry-run 输出先归档)。发现确认退休的 7 天资格**判定**
+    # 恒自动(A-2 冻结),本门只管物理清除执行。
+    lifecycle_gc_apply: bool = False
     internal_api_base_url: str = "http://backend:8000"
 
     @property
@@ -103,6 +109,8 @@ def load_settings(config_dir: Path | None = None) -> Settings:
             if _env("LIFECYCLE_GC_TOMBSTONE_DAYS")
             else None
         ),
+        lifecycle_gc_apply=_env("LIFECYCLE_GC_APPLY", "").strip().lower()
+        in ("1", "true", "yes", "on"),
         # Hardware-Aware Runtime:sync 执行面消费 backend 单一驻留嵌入运行时的
         # 内部端点基址(compose 网络内服务名;本地联调可覆盖)
         internal_api_base_url=_env("INTERNAL_API_BASE_URL", "http://backend:8000"),

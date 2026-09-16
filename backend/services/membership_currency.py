@@ -71,6 +71,10 @@ class MembershipReconciliation:
     stale_ids: tuple[str, ...] = field(default_factory=tuple)
     retired: int = 0
     residual_ids: tuple[str, ...] = field(default_factory=tuple)
+    # #82:authority−ledger 方向(权威成员 − 账本在服成员)。非空 ⇒ 存在
+    # 配置范围内却从未入账(或已退休但重回权威)的成员,由调用方经既有
+    # ingest 路径补灌;本服务只负责对账事实,不做灌入。
+    missing_ids: tuple[str, ...] = field(default_factory=tuple)
     status: str = "completed"  # completed / failed
     error: str | None = None
 
@@ -124,6 +128,10 @@ def reconcile_membership(
     with session_factory() as session:
         active = ledger_active_membership(session, source_id)
         stale = sorted(active - enumeration)
+        # #82:补灌方向 —— 权威成员 − 账本在服成员。覆盖两类缺口:从未灌入
+        # (分支 scope 扩大后新纳入的既有内容)与墓碑后重回权威(上游删除后
+        # 重新出现); retirement 语义不变,缺失成员的灌入归调用方既有路径。
+        missing = sorted(enumeration - active)
         retired = 0
         for sid in stale:
             if tombstone_document(session, sid, reason=reason or "membership_reconcile"):
@@ -134,12 +142,14 @@ def reconcile_membership(
         residual = ledger_active_membership(session, source_id)
     residual_ids = tuple(sorted(residual - enumeration))
     logger.info(
-        "成员对账完成 %s: authoritative=%d ledger_serving=%d stale=%d retired=%d residual=%d",
+        "成员对账完成 %s: authoritative=%d ledger_serving=%d stale=%d retired=%d"
+        " missing=%d residual=%d",
         source_id,
         len(enumeration),
         len(active),
         len(stale),
         retired,
+        len(missing),
         len(residual_ids),
     )
     return MembershipReconciliation(
@@ -149,6 +159,7 @@ def reconcile_membership(
         stale_ids=tuple(stale),
         retired=retired,
         residual_ids=residual_ids,
+        missing_ids=tuple(missing),
         status="completed",
     )
 
@@ -208,4 +219,6 @@ def truth_detail_of(result: MembershipReconciliation) -> dict[str, Any]:
         "ledger_serving": result.ledger_active_count,
         "stale_sample": list(result.stale_ids[:_DETAIL_SAMPLE]),
         "residual_sample": list(result.residual_ids[:_DETAIL_SAMPLE]),
+        # #82 加性审计键:缺失成员样例(补灌方向的可见性;Admin 契约词表不变)
+        "missing_sample": list(result.missing_ids[:_DETAIL_SAMPLE]),
     }
