@@ -11,7 +11,7 @@
  "heartbeat_at": "2026-09-16T09:53:01Z",
  "note": null,
  "supersedes": null,
- "mode": "investigation",
+ "mode": "implementation",
  "policy_digest": "1f109f90045e1335e9178bb350184c04bf94fb3dfa4222453435218c70242b52",
  "execution_context": "orchestrated",
  "assignment": {
@@ -56,5 +56,6 @@
  },
  "candidate": null,
  "investigation_artifact": null,
- "change_budget_established_at": "2026-09-16T09:53:40Z"
+ "change_budget_established_at": "2026-09-16T09:53:40Z",
+ "promoted_at": "2026-09-16T09:54:08Z"
 }
