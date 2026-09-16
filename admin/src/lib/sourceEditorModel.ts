@@ -99,10 +99,14 @@ export const TYPE_LABELS: Record<string, string> = {
  * v1.6.3 A-P1-05(audit §4):运营呈现词表(硬参考 panel 1/2 词表)。
  * 仅呈现层映射,不改 source_type 真值;列表/详情知识表共用本映射;
  * 编辑抽屉保留 TYPE_LABELS(既有编辑器权威超集,合同 C-B1-09)。
+ * #81:类型列必须忠实 canonical source/connector type——github/local_git
+ * 曾按内容分类呈现为 "Wiki",与数据源真实类型不一致;改为既有权威词表
+ * TYPE_LABELS 的 canonical 标签「代码仓库」。未知/缺失类型不经本表静默
+ * fallback,沿用 sourceTypeLabel 的既有 fail-visible 语义(裸显原始 key)。
  */
 export const SOURCE_TYPE_OPERATION_LABELS: Record<string, string> = {
-  github: "Wiki",
-  local_git: "Wiki",
+  github: "代码仓库",
+  local_git: "代码仓库",
   filesystem: "文件系统",
   web_crawl: "网站",
   woocommerce: "商城",

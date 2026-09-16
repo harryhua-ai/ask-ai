@@ -311,10 +311,11 @@ describe("v1.6.3 Design Remediation A 类呈现(数据源列表)", () => {
     expect(screen.queryByText("最近同步")).not.toBeInTheDocument();
   });
 
-  it("A-P1-05:类型运营词表 商城/Wiki/网站/文件系统(仅呈现映射)", () => {
+  it("#81:类型列 = canonical 类型词表 代码仓库/商城/网站/文件系统(无 Wiki 归类)", () => {
     renderList([wooSource, wikiSource]);
     expect(screen.getAllByText("商城").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Wiki").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("代码仓库").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Wiki")).not.toBeInTheDocument();
     expect(screen.queryByText("woocommerce")).not.toBeInTheDocument();
     expect(screen.queryByText("github")).not.toBeInTheDocument();
   });

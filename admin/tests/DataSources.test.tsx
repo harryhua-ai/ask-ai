@@ -251,7 +251,7 @@ describe("DataSources", () => {
     expect(screen.queryByPlaceholderText("30m / 48h")).not.toBeInTheDocument();
   });
 
-  it("#2 表格对 local_git 源显示运营词标签(Wiki),不裸显英文", () => {
+  it("#2 表格对 local_git 源显示 canonical 类型标签(代码仓库),不裸显英文", () => {
     const localGitDs = {
       id: "ne301-docs-local",
       type: "local_git",
@@ -263,9 +263,49 @@ describe("DataSources", () => {
       updated_at: "2026-07-01T00:00:00Z",
     };
     renderWithSources([localGitDs]);
-    // A-P1-05(audit):运营呈现词表 local_git/github → Wiki(仅呈现映射,真值不变)
-    expect(screen.getAllByText("Wiki").length).toBeGreaterThan(0);
+    // #81:「类型」列必须忠实 canonical connector type;github/local_git 的
+    // 内容分类词 "Wiki" 是错误归类,禁止作为类型呈现。
+    expect(screen.getAllByText("代码仓库").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Wiki")).not.toBeInTheDocument();
     expect(screen.queryByText("local_git")).not.toBeInTheDocument();
+  });
+
+  // #81 RED:neomind 源 canonical type = github,「类型」列曾被运营词表
+  // 渲染为内容分类词 "Wiki",与数据源真实类型不一致。
+  it("#81 github 源(neomind)「类型」列显示 canonical 标签,不显示 Wiki", () => {
+    renderWithSources([
+      {
+        id: "github-neomind",
+        type: "github",
+        product: "neomind",
+        enabled: true,
+        config: { repo_url: "https://github.com/camthink-ai/NeoMind.git" },
+        sync_interval: "24h",
+        created_at: "2026-07-01T00:00:00Z",
+        updated_at: "2026-07-01T00:00:00Z",
+      },
+    ]);
+    expect(screen.getAllByText("代码仓库").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Wiki")).not.toBeInTheDocument();
+  });
+
+  // #81 回归:未知/缺失类型必须 fail-visible(既有语义=裸显原始 key),
+  // 禁止静默 fallback 成 Wiki。
+  it("#81 未知类型 fail-visible:裸显原始 key,绝不显示 Wiki", () => {
+    renderWithSources([
+      {
+        id: "legacy-unknown",
+        type: "archived_wiki_engine",
+        product: "legacy",
+        enabled: true,
+        config: {},
+        sync_interval: "24h",
+        created_at: "2026-07-01T00:00:00Z",
+        updated_at: "2026-07-01T00:00:00Z",
+      },
+    ]);
+    expect(screen.getAllByText("archived_wiki_engine").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Wiki")).not.toBeInTheDocument();
   });
 
   it("#3 同名产品线多源:产品线列副标题按类型显示 repo_url/root_path 用于区分", () => {
