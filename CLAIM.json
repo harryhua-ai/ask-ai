@@ -4,12 +4,12 @@
  "claim_id": "harryhua-ai-20260916T045439-c1dd813a",
  "agent": "harryhua-ai",
  "claimed_at": "2026-09-16T04:54:40Z",
- "lease_expires_at": "2026-09-16T05:39:40Z",
+ "lease_expires_at": "2026-09-16T04:58:16Z",
  "baseline_commit": "b338c3c7eeafec9f57176aa82dd743b9f195153d",
- "status": "active",
+ "status": "delivered",
  "branch": "agent/31/c1dd813a",
  "heartbeat_at": "2026-09-16T04:54:40Z",
- "note": "takeover: Self-takeover of own STALE claim harryhua-ai-20260916T035142-934805f1: implementation complete and committed 79fcce6 on agent/31/934805f1 (pushed to origin 04:36:35Z just before lease end); RED trio GREEN + CONTROL anchors green; focused tests/pipeline(772)+tests/retrieval(78) green; full-suite baseline comparison done. Lease consumed by full-suite regression runs on a contended shared machine (parallel executor #25 active).",
+ "note": "# Issue #31 Trace Executor Report \u2014 IMPLEMENTATION (Track B2 restoration, CANDIDATE READY)\n\nRCA: Production session 5fcad09e (2026-09-07) emitted \"\u5b98\u65b9\u8d44\u6599\u672a\u8f7d\u660e NE101 \u7535\u6c60\u7eed\u822a/IP \u7b49\u7ea7/\u4ef7\u683c\" while IP67 exists in the knowledge domain, and the final evidence surface was 1 unrelated dev-guide + 4 internal support tickets (boost=0). Root causes on r4 main b338c3c (from investigation artifact agent/31/443274a1 @ e41f982, verified this run):\n- B2-2: generation user skeleton still carried the context-scoped absence directive (rag.py `_build_messages`, baseline 1260-1261; contract anchor 1156-1157 drifted) \u2014 reverse polarity vs frozen B2-2.\n- B2-4: `evidence_matches_slot` CASE_EVIDENCE predicate admitted only `source_type=\"filesystem\"` \u2014 first-party published case-study pages (web_crawl/website) were structurally ineligible.\n- B2-5: no retention path for solution-class queries \u2014 SOLUTION_GUIDE coverage was title/doc_section signal + threshold-gated (0.3) in-pool R1 promotion only; sub-threshold Solution pages silently dropped (compounded by #77 `_compose_user_facing_evidence` [:top_k] truncation evicting appended F-1' promotions).\n\nBASELINE: b338c3c7eeafec9f57176aa82dd743b9f195153d (BASELINE_POLICY: exact; lane-2 worktree prepared at this commit). Note: main HEAD (648b391) is a diverged lineage lacking the r4 #77/#78 pipeline work; all implementation targeted the baseline tree.\n\nCANDIDATE_BRANCH: agent/31/c1dd813a (same commit also pushed as agent/31/934805f1 \u2014 pre-expiry safety push; prior branch preserved, not rewritten). Lane: lane-2.\n\nCANDIDATE_SHA: 79fcce6bc5de21ce0082df383f50947f59fadd02 (parent b338c3c). 4 files changed, 441 insertions(+), 8 deletions(-): backend/pipeline/rag.py, backend/pipeline/evidence_selection.py, backend/pipeline/evidence_reservation.py, tests/pipeline/test_issue31_solution_evidence_red.py (reconstructed from e41f982, unmodified).\n\nCHANGE_BUDGET: expected=backend/pipeline/** + backend/retrieval/** + backend/services/** \u2014 hits: backend/pipeline/rag.py, backend",
  "supersedes": {
   "claim_id": "harryhua-ai-20260916T035142-934805f1",
   "sha": "51f385261265f7da32dd381e3948ed148eaea569"
