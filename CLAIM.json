@@ -51,7 +51,31 @@
   "admin/tests/dataSources/SourceHealthPanel.test.tsx": "\u77e9\u9635\u9a8c\u6536\u8981\u6c42\u7684 focused tests",
   "admin/tests/dataSources/DataSourceDetailConvergence.test.tsx": "\u77e9\u9635\u9a8c\u6536\u8981\u6c42\u7684 focused tests"
  },
- "candidate": null,
+ "candidate": {
+  "sha": "1be524f8a6c0fb6ae907b3e3c32ea84e2541ee5f",
+  "branch": "agent/54/c940b146",
+  "preserved_at": "2026-09-16T07:46:24Z",
+  "scope": {
+   "pass": true,
+   "enforcement": "strict",
+   "paths": {
+    "admin/src/components/dataSources/SourceHealthPanel.tsx": "EXPECTED",
+    "admin/src/lib/dataSourceObservability.ts": "EXPECTED",
+    "admin/src/pages/DataSourceDetail.tsx": "EXPECTED",
+    "admin/tests/dataSourceObservability.test.ts": "CONDITIONAL",
+    "admin/tests/dataSources/DataSourceDetailConvergence.test.tsx": "CONDITIONAL",
+    "admin/tests/dataSources/SourceHealthPanel.test.tsx": "CONDITIONAL"
+   },
+   "counts": {
+    "EXPECTED": 3,
+    "CONDITIONAL": 3,
+    "UNKNOWN": 0,
+    "FORBIDDEN": 0
+   },
+   "violations": [],
+   "budget_evidence": "Gap matrix agent/54/52290664@2deb5852 PARTIAL rows 3/4/5/6 minimal boundary: 3 admin implementation files (pure function + two render sites) and 3 focused test files; backend/widget/deploy zero diff per contract SCOPE/NON_GOALS"
+  }
+ },
  "investigation_artifact": null,
  "change_budget_established_at": "2026-09-16T07:35:44Z"
 }
