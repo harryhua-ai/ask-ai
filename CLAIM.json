@@ -1,0 +1,68 @@
+{
+ "v": 2,
+ "task": 31,
+ "claim_id": "harryhua-ai-20260916T035142-934805f1",
+ "agent": "harryhua-ai",
+ "claimed_at": "2026-09-16T03:51:42Z",
+ "lease_expires_at": "2026-09-16T04:36:42Z",
+ "baseline_commit": "b338c3c7eeafec9f57176aa82dd743b9f195153d",
+ "status": "active",
+ "branch": "agent/31/934805f1",
+ "heartbeat_at": "2026-09-16T03:51:42Z",
+ "note": null,
+ "supersedes": null,
+ "mode": "implementation",
+ "policy_digest": "189f761a89b3c7cb72a25a2db1b87e85dfab22813e10bb57bdd2490d82568675",
+ "execution_context": "orchestrated",
+ "assignment": {
+  "issue_type": "bug",
+  "workflow": "high-risk",
+  "implementation_authorized": true,
+  "change_budget": {
+   "expected": [
+    "backend/pipeline/**",
+    "backend/retrieval/**",
+    "backend/services/**"
+   ],
+   "conditional": [
+    "tests/**"
+   ],
+   "forbidden": [
+    "deploy/**",
+    "admin/**",
+    "widget/**",
+    ".github/**"
+   ],
+   "evidence": "Track B2 restoration: B2-2 absence instruction (rag.py), B2-5 solution retention (rag.py buckets/promotion), B2-4 case eligibility predicate; directory-granularity budget avoids single-file path drift",
+   "justifications": {
+    "tests/**": "RED trio e41f982 GREEN conversion plus CONTROL anchors and regression suites"
+   }
+  }
+ },
+ "workflow": "high-risk",
+ "change_budget": {
+  "expected": [
+   "backend/pipeline/**",
+   "backend/retrieval/**",
+   "backend/services/**"
+  ],
+  "conditional": [
+   "tests/**"
+  ],
+  "forbidden": [
+   "deploy/**",
+   "admin/**",
+   "widget/**",
+   ".github/**"
+  ],
+  "evidence": "Track B2 restoration: B2-2 absence instruction (rag.py), B2-5 solution retention (rag.py buckets/promotion), B2-4 case eligibility predicate; directory-granularity budget avoids single-file path drift",
+  "justifications": {
+   "tests/**": "RED trio e41f982 GREEN conversion plus CONTROL anchors and regression suites"
+  }
+ },
+ "scope_justifications": {
+  "tests/**": "RED trio e41f982 GREEN conversion plus CONTROL anchors and regression suites"
+ },
+ "candidate": null,
+ "investigation_artifact": null
+}
