@@ -228,6 +228,41 @@ class DocumentGenerationTruth(BaseModel):
     chunk_count: int
     failure: dict | None = None
     created_at: str | None = None
+
+
+class DocumentVersionHistoryEntry(BaseModel):
+    """Issue #55(版本历史):DocumentVersion 权威行的 Inspector 投影。
+
+    与现行版本同一权威关系(document_versions 行),仅按 version_seq
+    降序展开;不新增真值、不推断状态。
+    """
+
+    version_seq: int
+    status: str
+    chunk_count: int
+    source_version: dict | None = None
+    valid_from: str | None = None
+    valid_to: str | None = None
+    superseded_by_version_id: str | None = None
+    generation_ordinal: int | None = None
+
+
+class DocumentCitationTruth(BaseModel):
+    """Issue #55(引用与链接有效性):#48 既有权威派生的 Inspector 投影。
+
+    - ``url``:账本存储 canonical 目标(identity 保全,绝不改写);
+    - ``citation_url``:权威引用目标(wiki slug 权威映射后的可导航路由;
+      与存储 URL 相同 = 无映射发生);空白 URL → None(知识案例语义);
+    - ``link_state``:#48 冻结词表 external/none/private/stale,由
+      ``rag._derive_link_state`` 派生(单一权威,零第二真值);
+    - ``visitor_reachability``:连接器 clone 时探测真值原样;
+      None = 元数据未记录(显式缺席,绝不推断)。
+    """
+
+    url: str
+    citation_url: str | None = None
+    link_state: str
+    visitor_reachability: str | None = None
     ready_at: str | None = None
     activated_at: str | None = None
     withdrawn_at: str | None = None
@@ -319,6 +354,10 @@ class DataSourceDocumentTruth(BaseModel):
     latest_repair_task: DocumentRepairTaskOut | None = None  # U-8
     current_version: DocumentCurrentVersionTruth | None = None
     generation: DocumentGenerationTruth | None = None
+    # ---- Issue #55(Inspector 真值面;矩阵 gap 闭环,加性)----
+    versions: list[DocumentVersionHistoryEntry] = Field(default_factory=list)
+    versions_truncated: bool = False  # True = 超出上限,仅最近 N 条(诚实标注)
+    citation: DocumentCitationTruth | None = None  # None = 不可用(绝不伪造)
 
 
 class DocumentRepairRequest(BaseModel):

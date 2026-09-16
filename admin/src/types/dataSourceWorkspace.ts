@@ -153,6 +153,35 @@ export interface SourceDocumentTruth {
   recovery_attempts_succeeded: number;
   /** U-8 最近一次修复任务(验证卡数据源)。 */
   latest_repair_task: DocumentRepairTask | null;
+  /** Issue #55 版本历史(document_versions 权威行降序;空 = 后端无此记录)。 */
+  versions: DocumentVersionHistoryEntry[];
+  /** Issue #55 True = 超出上限仅最近 N 条(诚实标注,不静默截断)。 */
+  versions_truncated: boolean;
+  /** Issue #55 引用与链接有效性(#48 权威派生;null = 不可用,绝不伪造)。 */
+  citation: DocumentCitationTruth | null;
+}
+
+/** Issue #55:版本历史行(document_versions 权威行的 Inspector 投影)。 */
+export interface DocumentVersionHistoryEntry {
+  version_seq: number;
+  status: string;
+  chunk_count: number;
+  source_version: Record<string, unknown> | null;
+  valid_from: string | null;
+  valid_to: string | null;
+  superseded_by_version_id: string | null;
+  generation_ordinal: number | null;
+}
+
+/** Issue #55:引用真值(#48 link_state 词表 external/none/private/stale)。 */
+export interface DocumentCitationTruth {
+  /** 账本存储 canonical 目标(identity 保全,绝不改写)。 */
+  url: string;
+  /** 权威引用目标(wiki slug 权威映射路由;与 url 相同 = 无映射;空白 URL = null)。 */
+  citation_url: string | null;
+  link_state: string;
+  /** 连接器 clone 时探测真值;null = 未记录(显式缺席,不推断)。 */
+  visitor_reachability: string | null;
 }
 
 /** 逐源索引生成列表响应。 */

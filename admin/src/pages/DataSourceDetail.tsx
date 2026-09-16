@@ -53,7 +53,9 @@ import {
   generationStatusLabel,
   isRetiredLifecycle,
   lifecycleLabel,
+  linkStateLabel,
   notServingReason,
+  servingProjectionNote,
 } from "@/lib/dataSourceLifecycle";
 import { sourceLocation, sourceTypeLabel, formatSyncTime } from "@/lib/sourceEditorModel";
 
@@ -794,6 +796,17 @@ export default function DataSourceDetail() {
                                 )}
                                 {truthQuery.data && (
                                   <>
+                                    {/* Issue #55:身份区 —— 权威身份维度显式呈现
+                                        (复合身份/分支/类型/产品;账本权威列,零推断)。 */}
+                                    <p
+                                      className="break-all font-mono text-xs text-muted-foreground"
+                                      data-testid="inspector-identity"
+                                    >
+                                      {truthQuery.data.doc_source_id}
+                                      {truthQuery.data.branch &&
+                                        ` · branch ${truthQuery.data.branch}`}
+                                      {` · ${truthQuery.data.source_type} · ${truthQuery.data.product}`}
+                                    </p>
                                     <p className="font-medium">问题</p>
                                     <p className="text-muted-foreground">
                                       {notServingReason(truthQuery.data) ?? "该文档当前在服,无异常记录"}
@@ -834,7 +847,17 @@ export default function DataSourceDetail() {
                                               {truthQuery.data.chunk_serving.serving_chunks} /{" "}
                                               {truthQuery.data.chunk_serving.total_chunks}
                                             </span>
-                                            {truthQuery.data.serving ? " 在服" : " 不完整"}
+                                            {/* Issue #55(退役 ≠ healthy):退役文档的投影
+                                                是审计口径,不得呈现为「不完整/在服」。 */}
+                                            {servingProjectionNote(truthQuery.data.lifecycle) ? (
+                                              <span className="text-muted-foreground">
+                                                {" "}· {servingProjectionNote(truthQuery.data.lifecycle)}
+                                              </span>
+                                            ) : truthQuery.data.serving ? (
+                                              " 在服"
+                                            ) : (
+                                              " 不完整"
+                                            )}
                                           </>
                                         ) : (
                                           <>
@@ -863,6 +886,50 @@ export default function DataSourceDetail() {
                                           <span className="text-amber-600">后端无此记录</span>
                                         )}
                                       </p>
+                                    </div>
+                                    {/* Issue #55:版本历史 —— document_versions 权威行
+                                        降序展开(与现行版本同一权威关系;空 = 后端无此记录)。 */}
+                                    <div>
+                                      <p className="text-xs">
+                                        <span className="text-muted-foreground">版本历史:</span>{" "}
+                                        {truthQuery.data.versions?.length ? (
+                                          <span className="text-muted-foreground">
+                                            {truthQuery.data.versions.length} 条(降序)
+                                          </span>
+                                        ) : (
+                                          <span className="text-amber-600">后端无此记录</span>
+                                        )}
+                                      </p>
+                                      {truthQuery.data.versions?.length ? (
+                                        <ul
+                                          className="mt-1 space-y-0.5 text-xs"
+                                          data-testid="inspector-version-history"
+                                        >
+                                          {truthQuery.data.versions.map((v) => (
+                                            <li
+                                              key={v.version_seq}
+                                              className={
+                                                v.version_seq ===
+                                                truthQuery.data?.current_version?.version_seq
+                                                  ? "font-medium"
+                                                  : "text-muted-foreground"
+                                              }
+                                            >
+                                              v{v.version_seq}({v.status}) · 生效自{" "}
+                                              {v.valid_from ? formatSyncTime(v.valid_from) : "后端无此记录"}{" "}
+                                              · chunk {v.chunk_count}
+                                              {v.version_seq ===
+                                                truthQuery.data?.current_version?.version_seq &&
+                                                " · 现行"}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      ) : null}
+                                      {truthQuery.data.versions_truncated && (
+                                        <p className="text-[10px] text-muted-foreground">
+                                          仅显示最近 20 条(后端诚实截断)
+                                        </p>
+                                      )}
                                     </div>
                                     {/* U-10:自动恢复注记(持久化权威事件计数,禁前端计数) */}
                                     {truthQuery.data.recovery_attempts_failed > 0 && (
@@ -960,19 +1027,50 @@ export default function DataSourceDetail() {
                                           </p>
                                         </div>
                                       )}
+                                    {/* Issue #55:引用与链接 —— 消费 #48 权威派生
+                                        (link_state 词表 + slug 权威映射目标);
+                                        非 external 状态不渲染 <a>,存储 URL 原样保全。 */}
                                     <p className="break-all text-xs">
-                                      URL:{" "}
-                                      {truthQuery.data.url.startsWith("http") ? (
-                                        <a
-                                          className="underline underline-offset-2"
-                                          href={truthQuery.data.url}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                        >
-                                          {truthQuery.data.url}
-                                        </a>
+                                      引用:{" "}
+                                      {truthQuery.data.citation ? (
+                                        <>
+                                          {truthQuery.data.citation.link_state === "external" &&
+                                          truthQuery.data.citation.citation_url ? (
+                                            <a
+                                              className="underline underline-offset-2"
+                                              href={truthQuery.data.citation.citation_url}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                            >
+                                              {truthQuery.data.citation.citation_url}
+                                            </a>
+                                          ) : (
+                                            <span className="font-mono">
+                                              {truthQuery.data.citation.citation_url ??
+                                                truthQuery.data.citation.url}
+                                            </span>
+                                          )}{" "}
+                                          <Badge
+                                            variant="outline"
+                                            data-testid="inspector-link-state"
+                                            title="引用有效性 = 后端权威派生(#48 冻结词表 external/none/private/stale)"
+                                          >
+                                            {linkStateLabel(truthQuery.data.citation.link_state)}
+                                          </Badge>
+                                          <span className="text-muted-foreground">
+                                            {" "}· 访客可达性:
+                                            {truthQuery.data.citation.visitor_reachability ?? "未记录"}
+                                          </span>
+                                          {truthQuery.data.citation.citation_url &&
+                                            truthQuery.data.citation.citation_url !==
+                                              truthQuery.data.citation.url && (
+                                              <span className="text-muted-foreground">
+                                                {" "}· 存储 {truthQuery.data.citation.url}
+                                              </span>
+                                            )}
+                                        </>
                                       ) : (
-                                        <span className="font-mono">{truthQuery.data.url}</span>
+                                        <span className="text-amber-600">不可用</span>
                                       )}
                                     </p>
                                     <p className="text-xs text-muted-foreground">

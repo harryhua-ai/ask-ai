@@ -138,6 +138,40 @@ export function isRetiredLifecycle(lifecycle: string | null | undefined): boolea
   return lifecycle === "superseded" || lifecycle === "deleted";
 }
 
+/**
+ * Issue #55(Inspector 真值面):#48 link_state 冻结词表的呈现映射。
+ *
+ * 词表与判定全部由后端权威派生(`rag._derive_link_state`);本函数只做
+ * 展示映射,未知/缺席状态显式呈现「不可用」,绝不发明新状态或伪造语义。
+ */
+export const LINK_STATE_LABELS: Record<string, string> = {
+  external: "可点击(外部直达)",
+  none: "无外部目的地",
+  private: "非公开,不提供外链",
+  stale: "可能已失效,不保证可达",
+};
+
+export function linkStateLabel(state: string | null | undefined): string {
+  if (state == null) return "不可用";
+  return LINK_STATE_LABELS[state] ?? "不可用";
+}
+
+/**
+ * Issue #55(退役 ≠ healthy):退役文档的 chunk 投影注记。
+ *
+ * 退役(superseded/deleted)文档即使向量/ chunk 一致性全绿,其投影也只是
+ * 审计口径的历史留存 —— 不得呈现为「不完整」(它本就不应服务),更不得
+ * 呈现为「在服」。可服务生命周期返回 null(保留既有 在服/不完整 语义)。
+ */
+export function servingProjectionNote(
+  lifecycle: string | null | undefined,
+): string | null {
+  if (isRetiredLifecycle(lifecycle)) {
+    return "退役文档的审计口径投影,不代表在服";
+  }
+  return null;
+}
+
 export const BUCKET_LABELS: Record<BucketKey, string> = {
   current: "当前在服",
   attention: "需要关注",
