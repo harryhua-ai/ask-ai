@@ -21,8 +21,10 @@
 - ``SOLUTION_GUIDE``  方案/选型证据 = 可公开引用 **且** 标题/章节携带方案
   信号(冻结词表)。通用规格页无信号 → 不得虚假满足(假阴性方向安全:
   真方案未识别 = 诚实 uncovered,可观察;假阳性 = 虚假覆盖,禁止);
-- ``CASE_EVIDENCE``   filesystem 内部案例(跨产品设计,存于 knowledge 域
-  ——既有知识桶结构事实),背景参与,永不进入公开编号引用权威;
+- ``CASE_EVIDENCE``   案例证据 = filesystem 内部案例(跨产品设计,存于
+  knowledge 域——既有知识桶结构事实;背景参与,永不进入公开编号引用权威)
+  + 第一方公开 case-study 页(web_crawl/website 类;B2-4/#31:已证落地证明,
+  公开源,可正常编号引用;与内部历史支持工单结构可区分);
 - ``STORE_OFFICIAL``  woocommerce(官方商店)专属。wiki/官网提及同价格、
   同产品也不得冒充 Store 商务真相(角色即权威,内容不转正);
 - 未知角色:无可验证语义 → 不匹配(宁可诚实 uncovered,不可虚假覆盖)。
@@ -77,6 +79,25 @@ _SOLUTION_SIGNALS: tuple[str, ...] = (
 
 #: 案例证据连接器类型(support 案例存为 filesystem,product=knowledge)
 _SOURCE_CASE = "filesystem"
+
+#: 第一方公开 case-study 页连接器类型(website 爬取类;B2-4/#31:已证落地
+#: 证明的合格权威,与 filesystem 内部历史支持工单结构可区分)。
+_SOURCE_PUBLISHED_CASE_TYPES: frozenset[str] = frozenset({"web_crawl", "website"})
+
+#: 公开案例页 URL 结构信号(小写包含;保守词表:假阳性=虚假覆盖,
+#: 假阴性=诚实 uncovered,故只收强路径信号 —— case-study/case-studies/
+#: case 形态的官方站点点。)。
+_PUBLISHED_CASE_URL_SIGNALS: tuple[str, ...] = (
+    "case-stud",
+    "/case/",
+    "/cases/",
+)
+
+#: 公开案例页标题/章节结构信号(与 _SOLUTION_SIGNALS 同词表纪律)。
+_PUBLISHED_CASE_TITLE_SIGNALS: tuple[str, ...] = (
+    "case study",
+    "case-study",
+)
 
 #: 官方商店连接器类型(STORE_OFFICIAL 唯一结构权威来源)
 _SOURCE_STORE = "woocommerce"
@@ -162,6 +183,19 @@ def _has_solution_signal(result) -> bool:
     return any(signal in hay for signal in _SOLUTION_SIGNALS)
 
 
+def _is_published_case_page(result) -> bool:
+    """候选是否为第一方公开 case-study 页(B2-4/#31;纯结构事实谓词)。
+
+    判据 = 持久化 URL 路径或标题/章节携带 case-study 措辞(保守强信号);
+    不做正文审查、不做 LLM 分类,与既有角色匹配纪律一致。
+    """
+    url = (getattr(result, "url", None) or "").lower()
+    if any(signal in url for signal in _PUBLISHED_CASE_URL_SIGNALS):
+        return True
+    hay = f"{getattr(result, 'title', None) or ''}\n{getattr(result, 'doc_section', None) or ''}".lower()
+    return any(signal in hay for signal in _PUBLISHED_CASE_TITLE_SIGNALS)
+
+
 def evidence_matches_slot(
     slot: EvidenceSlot,
     candidate,
@@ -201,7 +235,17 @@ def evidence_matches_slot(
         if source_type not in PUBLIC_SOURCE_TYPES or not _has_solution_signal(candidate):
             return False
     elif slot.role == ROLE_CASE_EVIDENCE:
-        if source_type != _SOURCE_CASE:
+        # B2-4/#31:两类案例证据并存且结构可区分 ——
+        # (1) filesystem 内部支持案例(既有语义,含 knowledge 域案例);
+        # (2) 第一方公开 case-study 页(web_crawl/website 类,已证落地证明)。
+        # 其余来源不得冒充案例角色(不虚假覆盖)。
+        if not (
+            source_type == _SOURCE_CASE
+            or (
+                source_type in _SOURCE_PUBLISHED_CASE_TYPES
+                and _is_published_case_page(candidate)
+            )
+        ):
             return False
     elif slot.role == ROLE_STORE_OFFICIAL:
         if source_type != _SOURCE_STORE:
