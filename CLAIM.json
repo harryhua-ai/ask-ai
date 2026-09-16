@@ -51,7 +51,8 @@
   "justifications": {}
  },
  "scope_justifications": {
-  "tests/**": "Focused truth-state RED\u2192GREEN suite (test_document_inspector_truth.py) \u2014 contract requires focused tests + truth-state fixtures"
+  "tests/**": "Focused truth-state RED\u2192GREEN suite (test_document_inspector_truth.py) \u2014 contract requires focused tests + truth-state fixtures",
+  "admin/src/lib/dataSourceLifecycle.test.ts": "vitest RED\u2192GREEN for presentation helpers (linkStateLabel/servingProjectionNote) \u2014 contract requires focused tests"
  },
  "candidate": null,
  "investigation_artifact": null,
