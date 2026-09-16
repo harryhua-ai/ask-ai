@@ -1,0 +1,66 @@
+{
+ "v": 2,
+ "task": 86,
+ "claim_id": "harryhua-ai-20260916T012151-baedd112",
+ "agent": "harryhua-ai",
+ "claimed_at": "2026-09-16T01:21:51Z",
+ "lease_expires_at": "2026-09-16T02:06:51Z",
+ "baseline_commit": "b338c3c7eeafec9f57176aa82dd743b9f195153d",
+ "status": "active",
+ "branch": "agent/86/baedd112",
+ "heartbeat_at": "2026-09-16T01:21:51Z",
+ "note": null,
+ "supersedes": null,
+ "mode": "implementation",
+ "policy_digest": "9f3502047aa20c1d33dba7431899787698f33b54acae78a08f6a8140c6727c11",
+ "execution_context": "orchestrated",
+ "assignment": {
+  "issue_type": "bug",
+  "workflow": "normal-risk",
+  "lane": "lane-2",
+  "implementation_authorized": true,
+  "change_budget": {
+   "expected": [
+    "admin/src/**"
+   ],
+   "conditional": [
+    "tests/**",
+    "admin/tests/**"
+   ],
+   "forbidden": [
+    "backend/**",
+    "deploy/**"
+   ],
+   "evidence": "Issue #86 RCA_VERDICT=ROW_ACTION_DISCOVERABILITY_DRIFT is confined to the Admin DataSources list UI; backend/API/deletion/sync semantics frozen by issue acceptance",
+   "justifications": {
+    "tests/**": "Admin regression coverage for action visibility and permission/lifecycle guards required by issue acceptance item 8",
+    "admin/tests/**": "Admin regression suites live under admin/tests/**; acceptance item 8 requires new action-visibility tests there"
+   }
+  }
+ },
+ "workflow": "normal-risk",
+ "change_budget": {
+  "expected": [
+   "admin/src/**"
+  ],
+  "conditional": [
+   "tests/**",
+   "admin/tests/**"
+  ],
+  "forbidden": [
+   "backend/**",
+   "deploy/**"
+  ],
+  "evidence": "Issue #86 RCA_VERDICT=ROW_ACTION_DISCOVERABILITY_DRIFT is confined to the Admin DataSources list UI; backend/API/deletion/sync semantics frozen by issue acceptance",
+  "justifications": {
+   "tests/**": "Admin regression coverage for action visibility and permission/lifecycle guards required by issue acceptance item 8",
+   "admin/tests/**": "Admin regression suites live under admin/tests/**; acceptance item 8 requires new action-visibility tests there"
+  }
+ },
+ "scope_justifications": {
+  "tests/**": "Admin regression coverage for action visibility and permission/lifecycle guards required by issue acceptance item 8",
+  "admin/tests/**": "Admin regression suites live under admin/tests/**; acceptance item 8 requires new action-visibility tests there"
+ },
+ "candidate": null,
+ "investigation_artifact": null
+}
