@@ -27,8 +27,26 @@
   ]
  },
  "workflow": "normal-risk",
- "change_budget": null,
+ "change_budget": {
+  "expected": [
+   "backend/connectors/woocommerce.py",
+   "backend/pipeline/ingest.py",
+   "backend/retrieval/search.py",
+   "backend/api/admin/schemas.py",
+   "scripts/migrate_add_commerce_variation_props.py"
+  ],
+  "conditional": [
+   "tests/**",
+   "admin/src/**"
+  ],
+  "forbidden": [
+   "deploy/**"
+  ],
+  "evidence": "Investigation RCA (issue 28, contract v164 Track B): B1 frozen semantics = endpoint-provided actual variations as first-class truth. Minimal fix surface: woo connector variations fetch + variation RawDocument (B1-1/B1-2), additive Weaviate COLLECTION_PROPERTIES + _build_props commerce projection (B1-3), additive search.py return_properties x2 (B1-3 retrieval projection per r4 convention), additive admin DataSourceDocumentTruth fields (B1-4), additive migration script scripts/migrate_add_commerce_variation_props.py (r4 pattern). sync.py untouched (connector-agnostic ingest path). RED characterization committed under tests/.",
+  "justifications": {}
+ },
  "scope_justifications": {},
  "candidate": null,
- "investigation_artifact": null
+ "investigation_artifact": null,
+ "change_budget_established_at": "2026-09-16T02:20:21Z"
 }
