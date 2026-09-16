@@ -6,8 +6,10 @@
  * - 需处理计数与操作者状态均来自后端权威投影(attention-summary/last_sync/
  *   /sync-health),前端零健康重判;
  * - 异常优先排序;搜索/状态/类型过滤为呈现层;页脚 共 N 个数据源;
- * - 既有操作(同步/编辑/删除/可观测性)保留,操作收敛为 context-preserving
- *   抽屉语法(编辑数据源 Drawer,KB-OPS-V163-002 §4.5)。
+ * - 既有操作(同步/编辑/删除/可观测性)保留,编辑收敛为 context-preserving
+ *   抽屉语法(编辑数据源 Drawer,KB-OPS-V163-002 §4.5);
+ * - #86 Frozen Direction:常态取消「⋯」overflow,操作列直显
+ *   详情/编辑/同步/同步记录/删除;重试删除仍为 delete_failed 条件动作。
  */
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
@@ -214,15 +216,12 @@ describe("v1.6.3 B1 数据源列表收敛(hard ref panel 1)", () => {
     expect(screen.getByText("编辑数据源")).toBeInTheDocument();
   });
 
-  it("既有破坏性操作(删除)保留但收敛进 ⋯ 次要菜单(hard ref §4.1 compact actions)", async () => {
+  it("#86 Frozen Direction:删除 与 同步记录 直显为行级操作,常态无 ⋯ 次要菜单", () => {
     renderList([wooSource, wikiSource]);
-    // 删除不再以大红按钮平铺;收进紧凑操作菜单
-    expect(screen.queryByRole("button", { name: "删除" })).not.toBeInTheDocument();
-    const trigger = screen.getAllByRole("button", { name: "更多操作" })[0];
-    fireEvent.pointerDown(trigger);
-    fireEvent.click(trigger);
-    expect(await screen.findByRole("menuitem", { name: "同步记录" })).toBeInTheDocument();
-    expect(screen.getAllByRole("menuitem", { name: "删除" }).length).toBe(1);
+    // #86:overflow 取消;破坏性删除以紧凑直显按钮保留(权限/确认语义不变)
+    expect(screen.queryByRole("button", { name: "更多操作" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "删除" }).length).toBe(2);
+    expect(screen.getAllByRole("button", { name: "同步记录" }).length).toBe(2);
   });
 
   it("零数据源:空态与页脚 共 0 个数据源", () => {
@@ -265,18 +264,17 @@ describe("v1.6.3 Design Remediation A 类呈现(数据源列表)", () => {
     expect(screen.getByTitle("https://woocommerce.com")).toBeInTheDocument();
   });
 
-  it("DS-01/#66:操作列直接提供详情/编辑/同步,仅同步记录进菜单", async () => {
+  it("#86:操作列直显 详情/编辑/同步/同步记录/删除(无 overflow 入口)", () => {
     renderList([wooSource]);
     expect(screen.getByRole("button", { name: "详情" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "同步" })).toBeInTheDocument();
-    const trigger = screen.getAllByRole("button", { name: "更多操作" })[0];
-    fireEvent.pointerDown(trigger);
-    fireEvent.click(trigger);
-    expect(screen.getByRole("menuitem", { name: "同步记录" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "同步记录" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "删除" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "更多操作" })).not.toBeInTheDocument();
   });
 
-  it("#66:列表展开只显示最近三次轻量同步记录,不复制详情健康诊断", async () => {
+  it("#66/#86:列表展开只显示最近三次轻量同步记录,不复制详情健康诊断", async () => {
     vi.mocked(useSyncRuns).mockReturnValue({
       data: {
         items: [
@@ -300,10 +298,8 @@ describe("v1.6.3 Design Remediation A 类呈现(数据源列表)", () => {
       refetch: vi.fn(),
     } as never);
     renderList([wooSource]);
-    const trigger = screen.getAllByRole("button", { name: "更多操作" })[0];
-    fireEvent.pointerDown(trigger);
-    fireEvent.click(trigger);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "同步记录" }));
+    // #86:同步记录直显为行级按钮,点击行为不变(展开记录面板)
+    fireEvent.click(screen.getByRole("button", { name: "同步记录" }));
     expect(await screen.findByText("同步记录")).toBeInTheDocument();
     expect(screen.getByText(/新增知识 1/)).toBeInTheDocument();
     expect(screen.getByText(/更新知识 2/)).toBeInTheDocument();

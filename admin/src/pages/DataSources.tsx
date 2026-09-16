@@ -6,13 +6,6 @@ import LoadError from "@/components/LoadError";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import {
   useDataSources,
@@ -468,7 +461,10 @@ export default function DataSources() {
                       )}
                     </TableCell>
                     <TableCell>
-                      {/* #66 remediation: routine row sync is directly discoverable. */}
+                      {/* #66 remediation: routine row sync is directly discoverable.
+                          #86 Frozen Direction: 常态取消「⋯」overflow 菜单;同步记录/删除
+                          直显为行级操作(权限/disabled/lifecycle guard 与确认语义全部保持),
+                          重试删除仍仅为 delete_failed 条件动作,不恢复常态隐藏菜单。 */}
                       <div className="flex items-center gap-1">
                         <Button
                           size="sm"
@@ -507,38 +503,37 @@ export default function DataSources() {
                             {isActive ? "同步中..." : isTriggerPending ? "触发中..." : "同步"}
                           </Button>
                         )}
-                        <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button size="sm" variant="outline" aria-label="更多操作" className="h-7 px-2.5">
-                            ⋯
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2"
+                          title={isExpanded ? "收起同步记录面板" : "查看同步记录"}
+                          onClick={() => toggleObservability(ds.id)}
+                        >
+                          {isExpanded ? "收起同步记录" : "同步记录"}
+                        </Button>
+                        {canWrite && ds.lifecycle_state === "delete_failed" && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-destructive hover:text-destructive"
+                            disabled={retryDeleteDs.isPending}
+                            onClick={() => handleRetryDelete(ds.id)}
+                          >
+                            重试删除
                           </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => toggleObservability(ds.id)}>
-                            {isExpanded ? "收起同步记录" : "同步记录"}
-                          </DropdownMenuItem>
-                          {canWrite && ds.lifecycle_state === "delete_failed" && (
-                            <DropdownMenuItem
-                              disabled={retryDeleteDs.isPending}
-                              onSelect={() => handleRetryDelete(ds.id)}
-                            >
-                              重试删除
-                            </DropdownMenuItem>
-                          )}
-                          {canWrite && (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                className="text-destructive focus:text-destructive"
-                                disabled={deleteDs.isPending || isDeletionInFlight(ds)}
-                                onSelect={() => handleDelete(ds.id)}
-                              >
-                                {isDeletionInFlight(ds) ? "删除中…" : "删除"}
-                              </DropdownMenuItem>
-                            </>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                        )}
+                        {canWrite && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-destructive hover:text-destructive"
+                            disabled={deleteDs.isPending || isDeletionInFlight(ds)}
+                            onClick={() => handleDelete(ds.id)}
+                          >
+                            {isDeletionInFlight(ds) ? "删除中…" : "删除"}
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
