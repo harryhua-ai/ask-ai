@@ -32,6 +32,7 @@ import { SyncStatusPanel } from "@/components/dataSources/SyncStatusPanel";
 import { isDeletionInFlight, isSyncEligible } from "@/types/api";
 import type { DataSource, SyncStatusItem } from "@/types/api";
 import {
+  attentionReasonClasses,
   operatorStateOf,
   relativeTime,
   toneVariant,
@@ -380,6 +381,13 @@ export default function DataSources() {
               const isTriggerPending = triggerSync.isPending && triggerSync.variables === ds.id;
               const state = operatorStateOfSource(ds);
               const attentionCount = summary?.attention_count ?? null;
+              // #53 A1:需处理原因 = 已取回 attention-summary lifecycle_counts 的权威投影
+              // (与详情 banner 同一出处;前端零健康重判),列表行扫描可见。
+              const attentionReasons =
+                summary && attentionCount != null && attentionCount > 0
+                  ? attentionReasonClasses(summary.lifecycle_counts, attentionCount)
+                  : [];
+              const attentionReasonText = attentionReasons.join(" · ");
               const rel = relativeTime(ds.last_sync);
               // 次级证据进徽章 title:历史可靠性窗口明细 + 最近同步错误明细
               const badgeTitleParts: string[] = [];
@@ -448,11 +456,18 @@ export default function DataSources() {
                       {attentionCount == null ? (
                         <span className="text-sm text-muted-foreground">—</span>
                       ) : attentionCount > 0 ? (
+                        // #53 A1:原因文本单行截断随行扫描可见;完整分解进 title
+                        // (取代泛化 tooltip);保持 A-P1-03 单行密度,无新列。
                         <span
-                          className="font-semibold text-destructive"
-                          title={`${attentionCount} 项知识需要处理`}
+                          className="flex max-w-[320px] items-baseline gap-1.5"
+                          title={attentionReasonText}
                         >
-                          {attentionCount}
+                          <span className="shrink-0 font-semibold text-destructive">
+                            {attentionCount}
+                          </span>
+                          <span className="min-w-0 truncate text-xs text-muted-foreground">
+                            {attentionReasonText}
+                          </span>
                         </span>
                       ) : (
                         <span className="text-muted-foreground">—</span>
