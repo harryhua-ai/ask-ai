@@ -42,7 +42,8 @@
   "justifications": {}
  },
  "scope_justifications": {
-  "tests/**": "Acceptance 1-6,8,9 RED/GREEN \u56de\u5f52(\u5893\u7891/\u63a5\u66ff fail-closed\u3001TOCTOU\u3001active gap \u6210\u529f\u3001\u5e42\u7b49 no-op\u3001\u5ba1\u8ba1\u4fdd\u7559)"
+  "tests/**": "Acceptance 1-6,8,9 RED/GREEN \u56de\u5f52(\u5893\u7891/\u63a5\u66ff fail-closed\u3001TOCTOU\u3001active gap \u6210\u529f\u3001\u5e42\u7b49 no-op\u3001\u5ba1\u8ba1\u4fdd\u7559)",
+  "admin/src/**": "Acceptance 7,9:retired \u884c UI \u79fb\u9664 repair CTA + \u5df2\u9000\u5f79\u6587\u6848;vitest \u8986\u76d6\u5448\u73b0\u5c42\u5b88\u536b\u7eaf\u51fd\u6570"
  },
  "candidate": null,
  "investigation_artifact": null,
