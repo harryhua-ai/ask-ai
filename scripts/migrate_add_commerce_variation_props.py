@@ -32,7 +32,7 @@ from weaviate.exceptions import WeaviateInvalidInputError
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend.commerce_meta import COMMERCE_PROPS, COMMERCE_PROPERTIES  # noqa: E402
+from backend.pipeline.ingest import COMMERCE_PROPS, COLLECTION_PROPERTIES  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +47,9 @@ _DT = {
 
 
 def _commerce_property_names() -> list[str]:
-    """本迁移负责的 property 名(= COMMERCE_PROPERTIES 单一权威词表)。"""
-    return [name for name, _dtype in COMMERCE_PROPERTIES]
+    """本迁移负责的 property 名(= COLLECTION_PROPERTIES 的 commerce 段)。"""
+    commerce_keys = set(COMMERCE_PROPS)
+    return [name for name, dtype in COLLECTION_PROPERTIES if name in commerce_keys]
 
 
 def plan_commerce_props(col) -> list[str]:
@@ -63,7 +64,7 @@ def ensure_commerce_props(col) -> list[str]:
     幂等:已存在的 property 跳过;只动 schema,不写任何对象数据。
     """
     added: list[str] = []
-    dtypes = dict(COMMERCE_PROPERTIES)
+    dtypes = dict(COLLECTION_PROPERTIES)
     for name in plan_commerce_props(col):
         dtype = dtypes[name]
         try:
