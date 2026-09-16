@@ -4,12 +4,12 @@
  "claim_id": "harryhua-ai-20260916T022606-727767cd",
  "agent": "harryhua-ai",
  "claimed_at": "2026-09-16T02:26:06Z",
- "lease_expires_at": "2026-09-16T03:11:06Z",
+ "lease_expires_at": "2026-09-16T02:43:36Z",
  "baseline_commit": "b338c3c7eeafec9f57176aa82dd743b9f195153d",
- "status": "active",
+ "status": "delivered",
  "branch": "agent/82/727767cd",
  "heartbeat_at": "2026-09-16T02:26:06Z",
- "note": "takeover: Same executor identity (harryhua-ai) continuing its own STALE claim after 45-min lease expiry (02:15:39Z) and full 10-min grace; work committed e909900+30f173a on agent/82/70c86e29, regression complete, remaining: scope-check/preserve/release",
+ "note": "# Issue #82 Implementation Report \u2014 branch-scope expansion backfill + membership count truth\n\nSTATUS: DELIVERED \u2014 CANDIDATE READY (not merged, not deployed, issue left open per governance)\nRCA: four intuition hypotheses falsified by investigation; real defect is two-directional \u2014 branch-scope EXPANSION can never ingest (branch-level SHA short-circuit: initial clone already carries all origin/* refs, so newly-configured branch is born \"unchanged\"; --since window skips its pre-window history) while reconciliation had only the retirement direction (stale = ledger\u2212authority; authority\u2212ledger backfill computed by no component); plus count truth lied (_count_documents had no lifecycle filter: \"\u672a\u53d8\u66f4 5534\" = 5379 serving + 155 tombstoned; 0 ir-ver rows despite ir-ver configured)\nBASELINE: b338c3c7eeafec9f57176aa82dd743b9f195153d (BASELINE_POLICY: exact, lane-2 worktree)\nCANDIDATE_BRANCH: agent/82/727767cd (preserve-required ref after takeover; identical to work branch agent/82/70c86e29) \u2014 both pushed to origin\nCANDIDATE_SHA: 2a33209e8d919bc1e31880714ee57747776a30b0 (commits e909900 fix + 30f173a test-schema + 2a33209 Role-A addenda)\nCHANGE_BUDGET: expected = backend/connectors/github.py + backend/services/membership_currency.py + scripts/sync.py (all touched); conditional = tests/** (2 test files); forbidden = deploy/** untouched; scope-check clean (UNKNOWN 0 / FORBIDDEN 0)\nRED: agent/82/642e501f@3440c31 b1 restored verbatim; pre-fix run on baseline = b1 FAIL (fetch_changes yields [] for expanded branch) with A1/A2/B2/B3 passing \u2014 the true gap is authority\u2212ledger, invisible to fetch and reconcile\nGREEN: b1 GREEN post-fix; A1 narrowing-retirement anchor + A2/B2/B3 stay GREEN; connector file 12 passed; Role A acceptance wired: D1 parameterized \u00d74 (no skip by unchanged SHA / pre-existing ref / pre-window content / empty delta window), only-new-scope backfill (connector + sync D2), post-sync invariant authority == serving ledger (D3)\nREGRESSION: focused suites 617 passed / 5 pre",
  "supersedes": {
   "claim_id": "harryhua-ai-20260916T013039-70c86e29",
   "sha": "528af29c0758048ffd897ee163fdf1e5ce2fe527"
