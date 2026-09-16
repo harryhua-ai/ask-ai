@@ -45,7 +45,9 @@
   "evidence": "Investigation RCA (issue 28, contract v164 Track B): B1 frozen semantics = endpoint-provided actual variations as first-class truth. Minimal fix surface: woo connector variations fetch + variation RawDocument (B1-1/B1-2), additive Weaviate COLLECTION_PROPERTIES + _build_props commerce projection (B1-3), additive search.py return_properties x2 (B1-3 retrieval projection per r4 convention), additive admin DataSourceDocumentTruth fields (B1-4), additive migration script scripts/migrate_add_commerce_variation_props.py (r4 pattern). sync.py untouched (connector-agnostic ingest path). RED characterization committed under tests/.",
   "justifications": {}
  },
- "scope_justifications": {},
+ "scope_justifications": {
+  "tests/**": "Representational RED evidence is the required INVESTIGATION deliverable: 7 fixture tests (zero network) characterizing contract B1-1/B1-2/B1-3/B1-5 gaps \u2014 6 FAIL on main b338c3c (no variations ingestion, no commerce chunk props/schema, no identity key) + 1 control PASS (simple product unchanged). Committed to issue branch agent/28/902b51bc; no product code touched this round."
+ },
  "candidate": null,
  "investigation_artifact": null,
  "change_budget_established_at": "2026-09-16T02:20:21Z"
