@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { bucketOfDocument, isRetiredLifecycle } from "./dataSourceLifecycle";
+import {
+  bucketOfDocument,
+  isRetiredLifecycle,
+  linkStateLabel,
+  servingProjectionNote,
+} from "./dataSourceLifecycle";
 
 /** Issue #83:退役生命周期(superseded/deleted)不得提供 repair 入口。 */
 describe("isRetiredLifecycle 退役判定(Issue #83)", () => {
@@ -32,5 +37,35 @@ describe("isRetiredLifecycle 退役判定(Issue #83)", () => {
         bucketOfDocument({ lifecycle, serving: false }) === "retired",
       );
     }
+  });
+});
+
+/** Issue #55:Inspector link_state 呈现词表(#48 冻结词表的展示映射)。 */
+describe("linkStateLabel(Issue #55)", () => {
+  it("四态各有确定文案,不发明新状态", () => {
+    expect(linkStateLabel("external")).toBe("可点击(外部直达)");
+    expect(linkStateLabel("none")).toBe("无外部目的地");
+    expect(linkStateLabel("private")).toBe("非公开,不提供外链");
+    expect(linkStateLabel("stale")).toBe("可能已失效,不保证可达");
+  });
+
+  it("缺席/未知状态显式呈现,不伪造", () => {
+    expect(linkStateLabel(null)).toBe("不可用");
+    expect(linkStateLabel(undefined)).toBe("不可用");
+    expect(linkStateLabel("some_new_state")).toBe("不可用");
+  });
+});
+
+/** Issue #55:退役文档的 chunk 投影是审计口径,不得呈现为「不完整/健康」。 */
+describe("servingProjectionNote(Issue #55)", () => {
+  it("退役(superseded/deleted)= 审计口径注记", () => {
+    expect(servingProjectionNote("deleted")).toMatch(/审计/);
+    expect(servingProjectionNote("superseded")).toMatch(/审计/);
+  });
+
+  it("可服务生命周期无注记(呈现既有在服/不完整语义)", () => {
+    expect(servingProjectionNote("active")).toBeNull();
+    expect(servingProjectionNote("missing_candidate")).toBeNull();
+    expect(servingProjectionNote("discovered")).toBeNull();
   });
 });
