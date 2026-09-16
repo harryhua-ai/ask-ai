@@ -781,6 +781,32 @@ async def _handle_no_change(
         log_entry.finished_at = datetime.now(UTC)
         log_entry.duration_ms = int((time.monotonic() - start) * 1000)
         return
+    # v1.6.4 Track A(Issue #25):账本侧缺席确认(仅不能自证删除的连接器,
+    # fs/woo;A-1/A-2/A-3)。必须在一致性校验**之前**执行:fs 文件删除后
+    # 向量仍在,verify 恒 healthy(正是 founding defect 的隐蔽形态)——缺席
+    # 确认先完成退休/宽限标记,verify 才能反映真实服务口径(退休行退出
+    # SERVING/期望计数)。不完整发现本轮 no-op,绝不推进计数(A-2)。
+    absence: dict = {
+        "complete": False,
+        "confirmed": [],
+        "candidates": [],
+        "policy_absent": [],
+        "restored": [],
+    }
+    if pipeline._session_factory is not None and not getattr(
+        connector, "DECLARES_DELETIONS", True
+    ):
+        try:
+            absence = _reconcile_source_absence(
+                source_id,
+                connector,
+                pipeline,
+                sync_run_id=getattr(telemetry, "run_id", None),
+            )
+        except Exception as exc:  # noqa: BLE001 - 缺席确认失败不阻断同步业务
+            logger.warning(
+                "数据源 %s 缺席确认失败(本轮 no-op): %s", source_id, str(exc)[:160]
+            )
     report = await verify_source_vectors(session_factory, pipeline, source_id)
     if telemetry is not None:
         await telemetry.progress(session_factory, STAGE_CONSISTENCY, None, None)
@@ -829,6 +855,32 @@ async def _handle_no_change(
         gap_repaired_ids: set[str] = set()
         if report.refill_source_ids:
             refill_set = set(report.refill_source_ids)
+            # v1.6.4 Track A(A-7,#25):refill 绝不复活已退休(withdrawn)
+            # 身份。verify_source_vectors 口径已把 WITHDRAWN 排除在期望外,
+            # 理论上不会出现在 refill 清单;此处显式再守卫,防上游口径漂移
+            # (source-confirmed-removed 的内容不得经 repair 复活)。
+            if pipeline._session_factory is not None:
+                with pipeline._session_factory() as _wd_session:
+                    withdrawn_ids = set(
+                        _wd_session.execute(
+                            select(Document.source_id).where(
+                                Document.source_id.in_(refill_set),
+                                Document.lifecycle.in_(lifecycle.DocLifecycle.WITHDRAWN),
+                            )
+                        ).scalars()
+                    )
+                refill_set -= withdrawn_ids
+                if withdrawn_ids:
+                    logger.warning(
+                        "refill 守卫(A-7):%d 个已退休身份被排除,绝不复活:%s",
+                        len(withdrawn_ids),
+                        sorted(withdrawn_ids)[:3],
+                    )
+                    gap_parts.append(
+                        f"A-7 守卫:排除已退休身份 {len(withdrawn_ids)} 篇(不复活)"
+                    )
+            # 空集时 repair_documents 返回零计划(无害空转);不修改 frozen
+            # report,下游 refill 记账按实际修复量归零。
             # P1 gap-heal:优先从 PG 持久 chunk 副本重建(零源抓取;真值驱动);
             # 无持久副本的迁移缺口文档回退源抓取 + 强制重建(新代激活,非原位覆写)。
             repaired, unrepairable, chunks_repaired = builder.repair_documents(
@@ -961,6 +1013,27 @@ async def _handle_no_change(
             f"一致性校验发现缺口 {report.actual_chunks}/{report.expected_chunks} chunks;"
             f"{';'.join(gap_parts)}"
         )
+    # v1.6.4 Track A:缺席确认事实记账(两分支共有;文档退休计数与 #71 的
+    # items_deleted 文档语义一致 —— 缺席确认退休是文档级退休,非孤儿向量)。
+    if any(absence.get(k) for k in ("confirmed", "candidates", "policy_absent", "restored")):
+        absence_note = (
+            f"缺席确认:RETIRED={len(absence['confirmed'])}(两次连续完整发现),"
+            f"missing_candidate={len(absence['candidates'])}(第一次,宽限中),"
+            f"policy_absent={len(absence['policy_absent'])}(不计数),"
+            f"restored={len(absence['restored'])}(重新出现)"
+        )
+        log_entry.error_detail = (
+            f"{log_entry.error_detail or ''};{absence_note}"
+            if log_entry.error_detail
+            else absence_note
+        )
+    if absence.get("confirmed"):
+        log_entry.items_deleted = (log_entry.items_deleted or 0) + len(absence["confirmed"])
+        delta = log_entry.delta_counts or {}
+        log_entry.delta_counts = {
+            **delta,
+            "retired_count": int(delta.get("retired_count") or 0) + len(absence["confirmed"]),
+        }
     log_entry.finished_at = datetime.now(UTC)
     log_entry.duration_ms = int((time.monotonic() - start) * 1000)
 
@@ -1185,6 +1258,120 @@ def _reconcile_orphan_vectors(
             unresolved += 1
             logger.warning("EXTRA_UNRESOLVED_ORPHAN: %s 保留(发现不完整,不删除)", sid)
     return retired, repaired, unresolved
+
+
+# ---------------------------------------------------------------------------
+# 账本侧缺席确认(v1.6.4 Track A,Issue #25;A-1/A-2/A-3/A-6/A-7)
+# ---------------------------------------------------------------------------
+
+
+def _reconcile_source_absence(
+    source_id: str,
+    connector: Any,
+    pipeline: IngestionPipeline,
+    *,
+    sync_run_id: int | None = None,
+) -> dict:
+    """完整权威发现差集 → 账本缺席确认状态机(向量侧 EXTRA_CONFIRMED_RETIRED
+    的账本侧镜像;A-1/A-2 冻结语义)。
+
+    仅对**不能自证删除**的连接器(``DECLARES_DELETIONS = False``:fs/woo)
+    生效 —— git/web 连接器已经由 ``fetch_deleted``/membership 快照证明删除,
+    维持既有路径(A-1)。逐账本行分类:
+
+      - 行在权威清单中(重新出现):missing_candidate 宽限行 → 恢复 active
+        并清除缺席状态(A-2/A-3 恢复语义);
+      - 行缺席 + 政策范围外(``policy_absence_reason``):入宽限态呈现
+        Needs Attention,连续计数**冻结清零**(A-3:政策缺席绝不确认为删除);
+      - 行缺席 + 范围内:计数 +1;两次**连续**完整发现 → RETIRED
+        (lifecycle=DELETED + A-6 审计记录持久化,即时撤出服务投影,
+        GC 资格 = retired_at + 7d)。
+
+    完整性守卫复用 :func:`_discover_source_docs`(发现失败/不完整/低覆盖 →
+    本轮整体 no-op,不推进任何计数);幂等:重复确认扫描对已退休行零变更。
+
+    Returns:
+        ``{"complete": bool, "confirmed": [sid], "candidates": [sid],
+        "policy_absent": [sid], "restored": [sid]}``(供 SyncLog 记账)。
+    """
+
+    def _empty(complete: bool) -> dict:
+        return {
+            "complete": complete,
+            "confirmed": [],
+            "candidates": [],
+            "policy_absent": [],
+            "restored": [],
+        }
+
+    if getattr(connector, "DECLARES_DELETIONS", True):
+        # git/web:连接器自证删除,本机制不介入(A-1 边界)。
+        return _empty(False)
+    sync_factory = pipeline._session_factory
+    if sync_factory is None:
+        # 无账本(纯投影运行):缺席确认不可能成立,如实跳过。
+        logger.warning("数据源 %s 无账本会话工厂,缺席确认跳过", source_id)
+        return _empty(False)
+
+    docs, complete, membership = _discover_source_docs(connector)
+    extracted_ids = {d.source_id for d in docs}
+    # 退休证据 = 权威成员集;无原语的连接器(fs/woo:抽取即枚举)回退抽取集。
+    membership_ids = membership if membership is not None else extracted_ids
+    if not complete:
+        logger.warning(
+            "数据源 %s 发现不完整,缺席确认本轮 no-op(不推进计数,A-2)", source_id
+        )
+        return _empty(False)
+
+    reason_fn = getattr(connector, "policy_absence_reason", None)
+    now = lifecycle.utcnow()
+    result = _empty(True)
+    with sync_factory() as session:
+        rows = (
+            session.execute(
+                select(Document).where(
+                    Document.source_id.startswith(f"{source_id}/", autoescape=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for doc in rows:
+            sid = doc.source_id
+            if doc.lifecycle in lifecycle.DocLifecycle.WITHDRAWN:
+                continue  # 已退休/被接替:幂等跳过,零变更
+            if sid in membership_ids:
+                # 在权威清单中:宽限行恢复(A-2/A-3);健康行零变更。
+                if lifecycle.restore_from_absence(doc):
+                    result["restored"].append(sid)
+                    logger.info("缺席恢复: %s 重新出现于权威发现,恢复 active", sid)
+                continue
+            # 缺席:先做 A-3 政策分类(范围外绝不推进确认计数)。
+            policy_reason = reason_fn(sid) if callable(reason_fn) else None
+            outcome = lifecycle.record_absence_observation(
+                doc,
+                policy_reason=policy_reason,
+                observed_at=now,
+                evidence={"sync_run_id": sync_run_id, "listing_size": len(membership_ids)},
+            )
+            if outcome == "confirmed":
+                result["confirmed"].append(sid)
+                logger.warning(
+                    "缺席确认退休 %s(两次连续完整发现;即时撤出服务,7 天后 GC 资格)",
+                    sid,
+                )
+            elif outcome == "observed":
+                result["candidates"].append(sid)
+                logger.info("缺席候选: %s 第一次完整发现缺席,入宽限态(仍在服务)", sid)
+            else:  # "policy"
+                result["policy_absent"].append(sid)
+                logger.info(
+                    "政策缺席: %s 因策略范围外不可见(%s),不推进退休确认",
+                    sid,
+                    policy_reason,
+                )
+        session.commit()
+    return result
 
 
 async def _sync_one(
@@ -1436,10 +1623,36 @@ async def _sync_one(
             with pipeline._session_factory() as sync_session:
                 for doc_id in deleted:
                     if lifecycle.tombstone_document(
-                        sync_session, doc_id, reason=f"fetch_deleted:{cfg.id}"
+                        sync_session,
+                        doc_id,
+                        reason=f"fetch_deleted:{cfg.id}",
+                        actor=lifecycle.ACTOR_SYNC_FETCH_DELETED,
+                        evidence={"mechanism": "fetch_deleted", "source": cfg.id},
                     ):
                         tombstoned += 1
                 sync_session.commit()
+        # v1.6.4 Track A(Issue #25):账本侧缺席确认(仅 fs/woo 类连接器;
+        # A-1/A-2 两次连续完整发现退休;A-3 政策缺席不计数)。紧跟墓碑块之后:
+        # git provenance 先行,发现差集补位;幂等,与 #71 成员对账天然共存
+        # (#71 仅覆盖提供 membership_source_ids 的连接器)。
+        absence_change: dict = {}
+        if pipeline._session_factory is not None and not getattr(
+            connector, "DECLARES_DELETIONS", True
+        ):
+            try:
+                absence_change = _reconcile_source_absence(
+                    cfg.id,
+                    connector,
+                    pipeline,
+                    sync_run_id=getattr(tel, "run_id", None) if not dry_run else None,
+                )
+                if absence_change.get("confirmed"):
+                    tombstoned += len(absence_change["confirmed"])
+            except Exception as exc:  # noqa: BLE001 - 缺席确认失败不阻断同步
+                logger.warning(
+                    "数据源 %s 缺席确认失败(本轮 no-op): %s", cfg.id, str(exc)[:160]
+                )
+                absence_change = {}
         # 阶段⑩ W6:retirement 效应安全完成后才推进 crawl 成员快照。
         # 删除循环中途被 kill → 本调用不执行 → 旧快照保留 → 下轮重报同一
         # 差集(重复墓碑幂等),ghost 不再永久化。无此能力的 connector no-op。
@@ -1533,6 +1746,19 @@ async def _sync_one(
                 "membership_backfilled": backfill_new_n + backfill_updated_n,
                 "membership_backfilled_unit": "document",
             }
+        # Track A:缺席确认事实进 error_detail(宽限/政策缺席/恢复均留痕;
+        # 退休篇数已并入 items_deleted/retired_count)。
+        if any(
+            absence_change.get(k)
+            for k in ("confirmed", "candidates", "policy_absent", "restored")
+        ):
+            log_entry.error_detail = (
+                f"{log_entry.error_detail or ''};缺席确认:"
+                f"RETIRED={len(absence_change['confirmed'])}(两次连续完整发现),"
+                f"missing_candidate={len(absence_change['candidates'])}(第一次,宽限中),"
+                f"policy_absent={len(absence_change['policy_absent'])}(不计数),"
+                f"restored={len(absence_change['restored'])}(重新出现)"
+            ).lstrip(";")
 
         # WEB 合同#6/#7:全量抓取覆盖记账 —— coverage 行始终写入 error_detail
         # (成功也留痕),完整性不足时降级 status,绝不让「85 页只活 2 页」

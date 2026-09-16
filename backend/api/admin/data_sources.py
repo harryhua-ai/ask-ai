@@ -18,6 +18,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.api.admin.schemas import (
+    AbsenceTruth,
     BulkDocumentRepairItem,
     BulkDocumentRepairOut,
     ChunkServingTruth,
@@ -38,6 +39,7 @@ from backend.api.admin.schemas import (
     KnowledgePreviewResponse,
     KnowledgeSettingsOut,
     KnowledgeSettingsUpdate,
+    RetirementTruth,
     SourceAttentionSummaryItem,
     SourceAttentionSummaryResponse,
     SourceScheduleTruthOut,
@@ -62,7 +64,11 @@ from backend.pipeline.rag import LINK_STATE_NONE, _derive_link_state
 from backend.services import knowledge_policy, repo_discovery, source_lifecycle
 from backend.services import schedule_truth as schedule_truth_svc
 from backend.services.chunk_serving import chunk_serving_for_doc
-from backend.services.document_lifecycle import DocLifecycle
+from backend.services.document_lifecycle import (
+    DocLifecycle,
+    get_absence_state,
+    get_retirement_record,
+)
 from backend.services.document_repair import (
     create_repair_task,
     ensure_repair_stack,
@@ -1342,6 +1348,10 @@ async def get_source_document_truth(
                 .limit(1)
             )
         ).scalar_one_or_none()
+        # v1.6.4 Track A(A-6/A-2/A-3,#25):持久化退休决策与缺席确认状态
+        # 原样投影(权威 = documents.metadata_ 加性键;缺键 = None,不推断)。
+        retirement_record = get_retirement_record(doc)
+        absence_record = get_absence_state(doc)
         return DataSourceDocumentTruth(
             source_id=source_id,
             doc_source_id=doc.source_id,
@@ -1355,6 +1365,31 @@ async def get_source_document_truth(
             chunk_count=doc.chunk_count,
             content_type=doc.content_type,
             chunk_serving=chunk_serving_truth,
+            retirement=(
+                RetirementTruth(
+                    reason=str(retirement_record.get("reason") or ""),
+                    actor=retirement_record.get("actor"),
+                    evidence=(
+                        retirement_record.get("evidence")
+                        if isinstance(retirement_record.get("evidence"), dict)
+                        else None
+                    ),
+                    retired_at=retirement_record.get("retired_at"),
+                    gc_eligible_at=retirement_record.get("gc_eligible_at"),
+                )
+                if retirement_record is not None
+                else None
+            ),
+            absence=(
+                AbsenceTruth(
+                    confirmations=int(absence_record.get("confirmations") or 0),
+                    since=absence_record.get("since"),
+                    policy_reason=absence_record.get("policy_reason"),
+                    last_observed_at=absence_record.get("last_observed_at"),
+                )
+                if absence_record is not None
+                else None
+            ),
             recovery_attempts_failed=rec_failed,
             recovery_attempts_succeeded=rec_succeeded,
             latest_repair_task=(
