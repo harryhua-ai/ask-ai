@@ -1,16 +1,19 @@
 {
  "v": 2,
  "task": 82,
- "claim_id": "harryhua-ai-20260916T013039-70c86e29",
+ "claim_id": "harryhua-ai-20260916T022606-727767cd",
  "agent": "harryhua-ai",
- "claimed_at": "2026-09-16T01:30:39Z",
- "lease_expires_at": "2026-09-16T02:15:39Z",
+ "claimed_at": "2026-09-16T02:26:06Z",
+ "lease_expires_at": "2026-09-16T03:11:06Z",
  "baseline_commit": "b338c3c7eeafec9f57176aa82dd743b9f195153d",
  "status": "active",
- "branch": "agent/82/70c86e29",
- "heartbeat_at": "2026-09-16T01:30:39Z",
- "note": null,
- "supersedes": null,
+ "branch": "agent/82/727767cd",
+ "heartbeat_at": "2026-09-16T02:26:06Z",
+ "note": "takeover: Same executor identity (harryhua-ai) continuing its own STALE claim after 45-min lease expiry (02:15:39Z) and full 10-min grace; work committed e909900+30f173a on agent/82/70c86e29, regression complete, remaining: scope-check/preserve/release",
+ "supersedes": {
+  "claim_id": "harryhua-ai-20260916T013039-70c86e29",
+  "sha": "528af29c0758048ffd897ee163fdf1e5ce2fe527"
+ },
  "mode": "implementation",
  "policy_digest": "94e8ebbcbeb7a6333807586bce580ec9375393cc35092824ab9d15fc28b59ae3",
  "execution_context": "orchestrated",
@@ -42,6 +45,5 @@
   "scripts/sync.py": "Route missing authority members into existing ingest path (fetch_all-filtered build_generation) and exclude tombstoned rows from _count_documents so unchanged/total counts reflect serving truth"
  },
  "candidate": null,
- "investigation_artifact": null,
- "change_budget_established_at": "2026-09-16T01:32:08Z"
+ "investigation_artifact": null
 }
