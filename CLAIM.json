@@ -1,16 +1,19 @@
 {
  "v": 2,
  "task": 48,
- "claim_id": "harryhua-ai-20260915T231823-e6a859d7",
+ "claim_id": "harryhua-ai-20260916T001412-a646f3c3",
  "agent": "harryhua-ai",
- "claimed_at": "2026-09-15T23:18:23Z",
- "lease_expires_at": "2026-09-16T00:03:23Z",
+ "claimed_at": "2026-09-16T00:14:13Z",
+ "lease_expires_at": "2026-09-16T00:59:13Z",
  "baseline_commit": "b338c3c7eeafec9f57176aa82dd743b9f195153d",
  "status": "active",
- "branch": "agent/48/e6a859d7",
- "heartbeat_at": "2026-09-15T23:18:23Z",
- "note": null,
- "supersedes": null,
+ "branch": "agent/48/a646f3c3",
+ "heartbeat_at": "2026-09-16T00:14:13Z",
+ "note": "takeover: claim e6a859d7 lease fixed at claim-time+45min (ght heartbeat renew no-op: already-check remote.heartbeat_at>=local skips first renewal, adopted:true with unchanged expiry); expired 00:03:23Z during full regression run (36min suite). Work committed 3ec10d5 on agent/48/e6a859d7 (13 files, scope-budget compliant, RED->GREEN done, regression green except 2 baseline-preexisting gap_export failures verified via stash A/B). Zero uncommitted mutation.",
+ "supersedes": {
+  "claim_id": "harryhua-ai-20260915T231823-e6a859d7",
+  "sha": "4c3f906f6dc7f5946889a0cc7aa7f9c2ad522ddd"
+ },
  "mode": "implementation",
  "policy_digest": "167c6ddb4292f7743813e9177162204c37cd236be5ddf2e76bc25ef5a74fc3a1",
  "execution_context": "orchestrated",
@@ -45,6 +48,5 @@
   "widget/src/**": "C-2/C-3 widget \u72b6\u6001\u6e32\u67d3\u5b88\u536b(sanitize \u5fbd\u6807\u95e8 + LinkState \u7c7b\u578b + \u9759\u6001\u5fbd\u6807\u6837\u5f0f + vitest)"
  },
  "candidate": null,
- "investigation_artifact": null,
- "change_budget_established_at": "2026-09-15T23:18:46Z"
+ "investigation_artifact": null
 }
