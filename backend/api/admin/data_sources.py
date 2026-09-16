@@ -29,9 +29,11 @@ from backend.api.admin.schemas import (
     DataSourceOut,
     DataSourceUpdate,
     DocumentCurrentVersionTruth,
+    DocumentCitationTruth,
     DocumentGenerationTruth,
     DocumentRepairRequest,
     DocumentRepairTaskOut,
+    DocumentVersionHistoryEntry,
     KnowledgePreviewRequest,
     KnowledgePreviewResponse,
     KnowledgeSettingsOut,
@@ -55,6 +57,8 @@ from backend.db.models import (
     IndexGeneration,
     SyncLog,
 )
+from backend.pipeline.canonical_url import wiki_canonical_url
+from backend.pipeline.rag import LINK_STATE_NONE, _derive_link_state
 from backend.services import knowledge_policy, repo_discovery, source_lifecycle
 from backend.services import schedule_truth as schedule_truth_svc
 from backend.services.chunk_serving import chunk_serving_for_doc
@@ -1180,6 +1184,79 @@ async def list_source_documents(
     )
 
 
+# Issue #55:版本历史暴露上限(诚实截断;versions_truncated 标注,不静默)。
+_INSPECTOR_VERSION_HISTORY_LIMIT = 20
+
+
+def _inspector_citation_truth(doc: Document) -> DocumentCitationTruth:
+    """Issue #55:引用与链接有效性真值(#48 既有权威派生,零第二真值)。
+
+    复用检索序列化同一函数(``rag._derive_link_state``)与同一权威映射
+    (``canonical_url.wiki_canonical_url``),输入全部来自账本权威列
+    (documents.url / documents.metadata_ 的 frontmatter_slug 与
+    visitor_reachability)。未记录 → 显式 None/unknown(零回填约束:
+    unknown 不推断为 private,保持既有可点击语义)。
+    """
+    stored_url = doc.url or ""
+    meta = doc.metadata_ or {}
+    reachability = meta.get("visitor_reachability") or None
+    if not stored_url.strip():
+        # 知识案例语义:url='' → 显式 none,绝不伪造外部目的地。
+        return DocumentCitationTruth(
+            url=stored_url,
+            citation_url=None,
+            link_state=LINK_STATE_NONE,
+            visitor_reachability=reachability,
+        )
+    citation_url = wiki_canonical_url(
+        stored_url, frontmatter_slug=meta.get("frontmatter_slug") or None
+    )
+    return DocumentCitationTruth(
+        url=stored_url,
+        citation_url=citation_url,
+        link_state=_derive_link_state(
+            citation_url, stored_url, visitor_reachability=reachability or "unknown"
+        ),
+        visitor_reachability=reachability,
+    )
+
+
+async def _inspector_version_history(
+    session: AsyncSession, doc_source_id: str
+) -> tuple[list[DocumentVersionHistoryEntry], bool]:
+    """Issue #55:DocumentVersion 权威行降序展开(与现行版本同一权威关系)。"""
+    rows = (
+        (
+            await session.execute(
+                select(DocumentVersion)
+                .where(DocumentVersion.source_id == doc_source_id)
+                .order_by(DocumentVersion.version_seq.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    truncated = len(rows) > _INSPECTOR_VERSION_HISTORY_LIMIT
+    entries = [
+        DocumentVersionHistoryEntry(
+            version_seq=v.version_seq,
+            status=v.status,
+            chunk_count=v.chunk_count,
+            source_version=v.source_version,
+            valid_from=_iso_or_none(v.valid_from),
+            valid_to=_iso_or_none(v.valid_to),
+            superseded_by_version_id=(
+                str(v.superseded_by_version_id)
+                if v.superseded_by_version_id is not None
+                else None
+            ),
+            generation_ordinal=v.generation_ordinal,
+        )
+        for v in rows[:_INSPECTOR_VERSION_HISTORY_LIMIT]
+    ]
+    return entries, truncated
+
+
 @router.get("/{source_id}/documents/detail", response_model=DataSourceDocumentTruth)
 async def get_source_document_truth(
     source_id: str,
@@ -1253,6 +1330,10 @@ async def get_source_document_truth(
                     "chunk serving 投影不可用(%s): %s", doc.source_id, str(exc)[:120]
                 )
         rec_failed, rec_succeeded = await recovery_counts(session, doc.source_id)
+        versions_history, versions_truncated = await _inspector_version_history(
+            session, doc.source_id
+        )
+        citation_truth = _inspector_citation_truth(doc)
         latest_task = (
             await session.execute(
                 select(DocumentRepairTask)
@@ -1341,6 +1422,9 @@ async def get_source_document_truth(
                 if generation is not None
                 else None
             ),
+            versions=versions_history,
+            versions_truncated=versions_truncated,
+            citation=citation_truth,
         )
 
 
