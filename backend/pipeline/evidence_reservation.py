@@ -31,6 +31,15 @@ RCA(2026-09-11 只读实测,probe_f1p):
 不做的事:不全局抬 top_k;不做按 source-type 机械配额;不改动既有幸存者
 及其排序;比较管线(自有逐目标聚焦重排)不触碰;任何规则在证据不存在时
 fail-open 不补位(不虚构)。
+
+B2-5(#31)Solution 保位扩展(Track B2 冻结语义授权「B2 may extend slot
+semantics but not remove the mechanism」):SOLUTION_GUIDE 为 required 槽时,
+R1 晋升的阈值门控放宽为正相关下限(:data:`SOLUTION_RETENTION_FLOOR`)——
+官方 Solution 页在全局 cross-encoder 竞争中常落阈下(生产实证 2026-09-07
+会话 5fcad09e),阈值门控对方案页构成系统性静默丢弃。保留语义仍受「槽零
+幸存才触发」+ MAX_PROMOTIONS + 证据存在性(fail-open 不补位)约束;调用方
+需在 user-facing 组合截断(compose [:top_k])后按身份回填被逐出的保留晋升
+(rag.py answer/stream 两路径同位同语义)。
 """
 
 from dataclasses import replace
@@ -40,6 +49,7 @@ from typing import Any, Awaitable, Callable
 
 from backend.pipeline.evidence_planning import (
     ROLE_PRODUCT_SPEC,
+    ROLE_SOLUTION_GUIDE,
     ROLE_STORE_OFFICIAL,
     EvidencePlan,
     EvidenceSlot,
@@ -52,6 +62,9 @@ from backend.pipeline.evidence_selection import (
 
 #: R1+R2 晋升总量上限(含跨槽;预留是保位,不是扩容)。
 MAX_PROMOTIONS = 4
+#: B2-5(#31):SOLUTION_GUIDE R1 保位的阈下下限(严格大于;正相关即可
+#: 保留 —— 阈值门控对官方 Solution 页是系统性静默丢弃,见模块 docstring)。
+SOLUTION_RETENTION_FLOOR = 0.0
 #: R3b 补充检索的候选深度(聚焦 + 产品过滤 + 渠道过滤后的小池)。
 RESCUE_POOL_LIMIT = 30
 #: R3b 晋升页数上限(不同页各取最优 chunk;维度权威页常排 4-6 位)。
@@ -160,11 +173,18 @@ def reserve_required_slots(
         slot: EvidenceSlot,
         target: str | None,
         candidates: list[Any],
+        *,
+        floor: float | None = None,
     ) -> None:
+        # 门槛:默认 ≥ rerank 阈值;B2-5 SOLUTION_GUIDE 保位放宽为
+        # > SOLUTION_RETENTION_FLOOR(正相关即可,见模块 docstring)。
+        def _gated(score: float) -> bool:
+            return score > floor if floor is not None else score >= threshold
+
         avail = [
             (r, score_by_id[(r.source_id, r.chunk_index)])
             for r in candidates
-            if score_by_id.get((r.source_id, r.chunk_index), float("-inf")) >= threshold
+            if _gated(score_by_id.get((r.source_id, r.chunk_index), float("-inf")))
             and (r.source_id, r.chunk_index) not in taken
             and _eligible(r)
         ]
@@ -212,7 +232,19 @@ def reserve_required_slots(
             )
             if slot.role == ROLE_STORE_OFFICIAL:
                 pool_m = [r for r in pool_m if title_anchored(r, taxonomy)]
-            _promote("R1_required_slot_target", slot, target, pool_m)
+            _promote(
+                "R1_required_slot_target",
+                slot,
+                target,
+                pool_m,
+                # B2-5(#31):官方 Solution 页常落全局重排阈下(生产实证),
+                # 阈值门控对方案槽是系统性静默丢弃;放宽为正相关保留下限。
+                floor=(
+                    SOLUTION_RETENTION_FLOOR
+                    if slot.role == ROLE_SOLUTION_GUIDE
+                    else None
+                ),
+            )
 
     # R2:锚定 store 页补全(至多一页;取幸存分最高的锚定页)
     for slot in plan.slots:

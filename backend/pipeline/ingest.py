@@ -286,7 +286,49 @@ COLLECTION_PROPERTIES: list[tuple[str, str]] = [
     # 迁移初始代 ordinal=0;新增 property 为加性演进,存量对象由迁移回填。
     ("generation_ordinal", "int"),
     ("generation_id", "text"),
+    # Issue #28 / B1-3(契约 §4 pin 2026-09-16):变体商业真值结构化 property。
+    # 全部加性;非 woo 文档不投影(键缺省 = 空值,诚实缺席); woo 父产品
+    # commerce_type="product"(variation_id=0),变体 commerce_type="variation"。
+    # identity key 全局唯一,一个 variation 永不与另一 product/SKU 混淆;
+    # 迁移:scripts/migrate_add_commerce_variation_props.py。
+    ("commerce_type", "text"),
+    ("product_id", "int"),
+    ("variation_id", "int"),
+    ("variation_identity_key", "text"),
+    ("sku", "text"),
+    ("price", "text"),
+    ("regular_price", "text"),
+    ("sale_price", "text"),
+    ("on_sale", "bool"),
+    ("stock_status", "text"),
+    ("stock_quantity", "int"),
+    ("purchasable", "bool"),
+    ("variation_attributes", "text[]"),
+    ("permalink", "text"),
+    ("commerce_synced_at", "text"),
 ]
+
+
+# commerce 投影词表:prop 名 → (Weaviate 类型, doc.metadata 键, 缺省值)。
+# 仅对 source_type="woocommerce" 投影;metadata 缺键用缺省(诚实空值,
+# 不伪造)。stock_quantity None = 端点未管理库存 → 整键省略(不写 0 伪装)。
+COMMERCE_PROPS: dict[str, tuple[str, str, Any]] = {
+    "commerce_type": ("text", "commerce_type", "product"),
+    "product_id": ("int", "product_id", 0),
+    "variation_id": ("int", "variation_id", 0),
+    "variation_identity_key": ("text", "variation_identity_key", ""),
+    "sku": ("text", "sku", ""),
+    "price": ("text", "price", ""),
+    "regular_price": ("text", "regular_price", ""),
+    "sale_price": ("text", "sale_price", ""),
+    "on_sale": ("bool", "on_sale", False),
+    "stock_status": ("text", "stock_status", ""),
+    "stock_quantity": ("int", "stock_quantity", None),
+    "purchasable": ("bool", "purchasable", False),
+    "variation_attributes": ("text[]", "variation_attributes", []),
+    "permalink": ("text", "permalink", ""),
+    "commerce_synced_at": ("text", "date_modified", ""),
+}
 
 
 def _evidence_props(doc: RawDocument) -> dict:
@@ -310,6 +352,25 @@ def _evidence_props(doc: RawDocument) -> dict:
         PROP_CITATION: meta.citation_eligibility,
         PROP_ORIGIN: meta.origin,
     }
+
+
+def _commerce_props(doc: RawDocument) -> dict:
+    """从 RawDocument.metadata 投影变体商业真值 props(Issue #28 / B1-3)。
+
+    仅对 woo 文档投影(契约 §4:commerce 真值只来自连接器);metadata 缺键
+    用 COMMERCE_PROPS 缺省;stock_quantity None(端点未管理库存)整键省略,
+    不写 0 伪装。非 woo 文档返回 {}(加性 schema,键缺省 = 空值)。
+    """
+    if doc.source_type != "woocommerce":
+        return {}
+    meta = getattr(doc, "metadata", None) or {}
+    props: dict = {}
+    for prop, (_dtype, key, default) in COMMERCE_PROPS.items():
+        value = meta.get(key, default)
+        if value is None:
+            continue
+        props[prop] = value
+    return props
 
 
 def _build_props(chunk: "Any", doc: RawDocument) -> dict:
@@ -354,6 +415,8 @@ def _build_props(chunk: "Any", doc: RawDocument) -> dict:
         # INC-2a 证据语义:确定性分类只依赖 doc 自身持久化结构事实
         # (source_type + channel_visibility),与回填工具同函数零漂移
         **_evidence_props(doc),
+        # Issue #28 / B1-3:变体商业真值(仅 woo 文档;加性,键缺省=空值)
+        **_commerce_props(doc),
     }
 
 
@@ -431,7 +494,12 @@ class IngestionPipeline:
             logger.info("Weaviate collection %s 不存在,尝试创建", self._class_name)
             from weaviate.classes.config import Configure, DataType, Property
 
-            _DT = {"text": DataType.TEXT, "int": DataType.INT, "text[]": DataType.TEXT_ARRAY}
+            _DT = {
+                "text": DataType.TEXT,
+                "int": DataType.INT,
+                "text[]": DataType.TEXT_ARRAY,
+                "bool": DataType.BOOL,
+            }
             self._client.collections.create(
                 name=self._class_name,
                 vectorizer_config=Configure.Vectorizer.none(),
@@ -440,7 +508,6 @@ class IngestionPipeline:
                     for name, dtype in COLLECTION_PROPERTIES
                 ],
             )
-
         self._collection = self._client.collections.get(self._class_name)
 
     # ------------------------------------------------------------------ #

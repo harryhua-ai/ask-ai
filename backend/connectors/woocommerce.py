@@ -279,16 +279,22 @@ class WooCommerceConnector:
             url=permalink,
             metadata={
                 "product_id": pid,
+                "variation_id": 0,  # 父产品无变体身份(契约 §4:0 = 非变体)
+                "commerce_type": "product",
                 "sku": sku,
                 "price": price,
                 "regular_price": regular,
                 "sale_price": sale,
+                "on_sale": bool(sale) and sale != price,
                 "stock_status": stock_status,
                 "stock_quantity": stock_qty,
+                "purchasable": stock_status != "outofstock",
+                "variation_attributes": [],
+                "permalink": permalink,
+                "date_modified": p.get("date_modified", ""),
                 "categories": cats,
                 "type": p.get("type", ""),
                 "status": p.get("status", ""),
-                "date_modified": p.get("date_modified", ""),
             },
             content_hash=content_hash,
             channel_visibility=self._channel_visibility,
@@ -296,6 +302,131 @@ class WooCommerceConnector:
             # U-7:WooCommerce 源对象=商品(products API 结构化真值)
             content_type="product",
         )
+
+    def _fetch_variations(self, product_id: int) -> list[dict]:
+        """拉一个 variable 产品的全部 publish variation(Issue #28 / B1-1)。
+
+        端点真值:`GET /wp-json/wc/v3/products/{id}/variations`(契约 §4 冻结
+        接口)。变体清单**只以本端点返回为准**(B1-2:禁止按 attributes 笛卡尔
+        积合成理论组合);单页 per_page 与 products 一致(当前规模 NE101=20,
+        远小于 100;超页数截断风险与 products 同注)。
+
+        HTTP 错误向上传播(与 fetch_all 同语义:失败不得伪装成空变体清单)。
+        """
+        resp = self._get(
+            f"/wp-json/wc/v3/products/{product_id}/variations",
+            params={"per_page": self._per_page, "status": "publish"},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def _variation_to_document(self, parent: dict, v: dict) -> RawDocument:
+        """单个 variation JSON → RawDocument(Issue #28,B1-1/B1-3/B1-5)。
+
+        契约 §4 pin(2026-09-16):variation_identity_key = "{product_id}:{variation_id}"。
+        metadata 携带 attributes/SKU/prices/stock/purchasable/permalink/date_modified
+        结构化真值,commerce_type="variation" 供下游判别;content_type="variation"
+        (与父产品 "product" 区分,source_type 保持 "woocommerce")。
+        """
+        pid = parent["id"]
+        vid = v["id"]
+        attrs = [
+            {"slug": a.get("slug", ""), "option": a.get("option", "")}
+            for a in v.get("attributes", []) or []
+        ]
+        variation_attributes = [f"{a['slug']}={a['option']}" for a in attrs]
+        price = v.get("price", "")
+        regular = v.get("regular_price", "")
+        sale = v.get("sale_price", "")
+        sku = v.get("sku", "")
+        stock_status = v.get("stock_status", "")
+        stock_qty = v.get("stock_quantity")
+        purchasable = bool(v.get("purchasable", True))
+        on_sale = bool(v.get("on_sale", bool(sale) and sale != price))
+        permalink = v.get("permalink", "")
+        date_modified = v.get("date_modified", "")
+
+        name = parent.get("name", "")
+        option_text = " / ".join(a["option"] for a in attrs if a["option"])
+        title = f"{name} — {option_text}" if option_text else name
+
+        # 拼成可检索文本(变体级价格/SKU/库存/属性;BM25/dense 均可命中)
+        parts = [
+            f"# {title}",
+            f"SKU: {sku}" if sku else "",
+            f"Price: ${price}" if price else "",
+            f"Regular: ${regular}" if regular and regular != price else "",
+            f"Sale: ${sale}" if sale and sale != price else "",
+            f"Stock: {stock_status}"
+            + (f" ({stock_qty})" if stock_qty is not None else ""),
+            f"Attributes: {', '.join(variation_attributes)}"
+            if variation_attributes
+            else "",
+        ]
+        content = "\n\n".join(part for part in parts if part)
+        content_hash = hashlib.sha256(content.encode()).hexdigest()
+        # 设备身份沿用父产品派生(与父文档同函数同输入,保证归属一致)
+        product_tag = (
+            _device_identity_from_text(f"{name} {parent.get('slug', '')}")
+            or self._category_to_product(parent.get("categories", []))
+        )
+
+        return RawDocument(
+            source_id=f"{self._config.id}/{pid}/{vid}",
+            source_type="woocommerce",
+            product=product_tag,
+            title=title,
+            content=content,
+            url=permalink,
+            metadata={
+                "product_id": pid,
+                "variation_id": vid,
+                "variation_identity_key": f"{pid}:{vid}",
+                "commerce_type": "variation",
+                "sku": sku,
+                "price": price,
+                "regular_price": regular,
+                "sale_price": sale,
+                "on_sale": on_sale,
+                "stock_status": stock_status,
+                "stock_quantity": stock_qty,
+                "purchasable": purchasable,
+                "attributes": attrs,
+                "variation_attributes": variation_attributes,
+                "permalink": permalink,
+                "date_modified": date_modified,
+                "categories": [
+                    unescape(c.get("name", "")) for c in parent.get("categories", [])
+                ],
+                "type": "variation",
+                "status": v.get("status", ""),
+            },
+            content_hash=content_hash,
+            channel_visibility=self._channel_visibility,
+            branch="",  # 非分支源
+            content_type="variation",
+        )
+
+    def _product_and_variation_documents(self, p: dict) -> Iterator[RawDocument]:
+        """父产品文档 + (variable 时)端点列出的每 variation 一档(B1-1/B1-2)。
+
+        变体只来自 `_fetch_variations` 端点返回,禁止任何理论组合合成(B1-2);
+        变体端点 HTTP 错误向上传播(不伪装空清单);单个 variation 转换失败
+        仅 warning,不中断(与父产品转换同语义)。
+        """
+        yield self._product_to_document(p)
+        if p.get("type") != "variable" or not p.get("variations"):
+            return
+        for v in self._fetch_variations(p["id"]):
+            try:
+                yield self._variation_to_document(p, v)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "variation %s/%s 转换失败: %s",
+                    p.get("id"),
+                    v.get("id"),
+                    str(exc)[:200],
+                )
 
     def _fetch_page(self, **params: Any) -> list[dict]:
         """拉一页 products(raise_for_status 异常向上传播)。"""
@@ -307,7 +438,7 @@ class WooCommerceConnector:
         return resp.json()
 
     def fetch_all(self) -> Iterator[RawDocument]:
-        """全量抓取所有 publish 产品(单页,≤per_page)。
+        """全量抓取所有 publish 产品(单页,≤per_page)+ variable 变体(B1-1)。
 
         HTTP 错误(401/5xx 等)直接向上抛,由 ``_sync_one`` 记
         SyncLog status=failed——首次同步失败不得伪装成"空结果"。
@@ -315,14 +446,14 @@ class WooCommerceConnector:
         products = self._fetch_page()
         for p in products:
             try:
-                yield self._product_to_document(p)
+                yield from self._product_and_variation_documents(p)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "product %s 转换失败: %s", p.get("id"), str(exc)[:200]
                 )
 
     def fetch_changes(self, since: datetime) -> Iterator[RawDocument]:
-        """增量抓取:modified_after 过滤。
+        """增量抓取:modified_after 过滤 + variable 变体(B1-1)。
 
         HTTP 错误(401/5xx 等)直接向上抛。2026-08-04~08-17 教训:此处
         吞异常返回空会让 sync_log 记 success,商城数据静默冻结 13 天;
@@ -331,7 +462,7 @@ class WooCommerceConnector:
         products = self._fetch_page(modified_after=since.isoformat())
         for p in products:
             try:
-                yield self._product_to_document(p)
+                yield from self._product_and_variation_documents(p)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "product %s 转换失败: %s", p.get("id"), str(exc)[:200]

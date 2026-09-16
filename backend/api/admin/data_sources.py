@@ -31,6 +31,7 @@ from backend.api.admin.schemas import (
     DataSourceUpdate,
     DocumentCurrentVersionTruth,
     DocumentCitationTruth,
+    DocumentCommerceTruth,
     DocumentGenerationTruth,
     DocumentRepairRequest,
     DocumentRepairTaskOut,
@@ -1226,6 +1227,54 @@ def _inspector_citation_truth(doc: Document) -> DocumentCitationTruth:
     )
 
 
+def _inspector_commerce_truth(doc: Document) -> DocumentCommerceTruth | None:
+    """Issue #28 / B1-4(集成义务 3):账本变体商业真值投影。
+
+    单一接口词表:字段名与连接器 metadata / Weaviate COMMERCE_PROPS 同名;
+    仅 woo 文档投影,且仅当账本行携带 commerce 标识(commerce_type 或
+    product_id)——pre-migration / pre-resync 存量对象键缺失 → None
+    (诚实缺席,绝不以空值伪装 0 价/缺货,契约 §4)。非 woo 文档恒 None。
+    """
+    if doc.source_type != "woocommerce":
+        return None
+    meta = doc.metadata_ or {}
+    if not meta.get("commerce_type") and not meta.get("product_id"):
+        return None
+
+    def _str(key: str) -> str | None:
+        value = meta.get(key)
+        return str(value) if value is not None else None
+
+    def _int(key: str) -> int | None:
+        value = meta.get(key)
+        return int(value) if value is not None else None
+
+    def _bool(key: str) -> bool | None:
+        value = meta.get(key)
+        return bool(value) if value is not None else None
+
+    attributes = meta.get("variation_attributes")
+    return DocumentCommerceTruth(
+        commerce_type=_str("commerce_type"),
+        product_id=_int("product_id"),
+        variation_id=_int("variation_id"),
+        variation_identity_key=_str("variation_identity_key"),
+        sku=_str("sku"),
+        price=_str("price"),
+        regular_price=_str("regular_price"),
+        sale_price=_str("sale_price"),
+        on_sale=_bool("on_sale"),
+        stock_status=_str("stock_status"),
+        stock_quantity=_int("stock_quantity"),
+        purchasable=_bool("purchasable"),
+        variation_attributes=(
+            [str(a) for a in attributes] if isinstance(attributes, list) else None
+        ),
+        permalink=_str("permalink"),
+        commerce_synced_at=_str("date_modified"),
+    )
+
+
 async def _inspector_version_history(
     session: AsyncSession, doc_source_id: str
 ) -> tuple[list[DocumentVersionHistoryEntry], bool]:
@@ -1386,6 +1435,7 @@ async def get_source_document_truth(
             session, doc.source_id
         )
         citation_truth = _inspector_citation_truth(doc)
+        commerce_truth = _inspector_commerce_truth(doc)
         latest_task = (
             await session.execute(
                 select(DocumentRepairTask)
@@ -1506,6 +1556,7 @@ async def get_source_document_truth(
             versions=versions_history,
             versions_truncated=versions_truncated,
             citation=citation_truth,
+            commerce=commerce_truth,
         )
 
 

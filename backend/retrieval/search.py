@@ -324,6 +324,10 @@ class HybridSearcher:
             logger.info("在服代集合为空(权威:无现役知识),跳过符号 BM25 检索")
             return []
 
+        # Issue #28 / B1-3:函数级导入 —— backend.pipeline.ingest 经
+        # pipeline.__init__ 拉起 rag→citation→search,模块级导入构成循环。
+        from backend.pipeline.ingest import COMMERCE_PROPS
+
         collection = self._client.collections.get(self._class_name)
         from weaviate.classes.query import Filter
 
@@ -365,6 +369,10 @@ class HybridSearcher:
                 "branch",
                 # INC-2a 证据语义(与 evidence_meta.EVIDENCE_PROPERTIES 同源)
                 *EVIDENCE_PROPERTIES,
+                # Issue #28 / B1-3:变体商业真值(与 ingest.COMMERCE_PROPS 同名;
+                # 非 woo 对象返回空值,下游按空判「非变体」诚实缺席)。
+                # 函数级导入:避免 search→pipeline.__init__→rag→citation→search 循环
+                *COMMERCE_PROPS,
             ],
         )
         return self._apply_knowledge_exclusion(
@@ -404,6 +412,9 @@ class HybridSearcher:
         Returns:
             :class:`SearchResult` 列表。
         """
+        # Issue #28 / B1-3:函数级导入(防 search→pipeline→rag→citation 循环)。
+        from backend.pipeline.ingest import COMMERCE_PROPS
+
         if not query or not query.strip():
             logger.info("空 query,跳过 boost 桶 BM25 检索")
             return []
@@ -463,6 +474,8 @@ class HybridSearcher:
             "branch",
             # INC-2a 证据语义(与 evidence_meta.EVIDENCE_PROPERTIES 同源)
             *EVIDENCE_PROPERTIES,
+            # Issue #28 / B1-3:变体商业真值(同上,函数级导入防循环)
+            *COMMERCE_PROPS,
         ]
 
         # Issue #78(类范围 hybrid 桶):use_hybrid=True 时在同一类过滤内改用

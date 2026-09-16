@@ -324,6 +324,31 @@ class BulkDocumentRepairOut(BaseModel):
     items: list[BulkDocumentRepairItem] = Field(default_factory=list)
 
 
+class DocumentCommerceTruth(BaseModel):
+    """单文档变体商业真值(Issue #28 / B1-4,契约 §4 pin 2026-09-16)。
+
+    字段名与 Weaviate chunk props / connector metadata 同名(单一接口词表);
+    非 woo 文档 / 存量行 = None(显式缺席,前端诚实呈现,不得编造)。
+    只读暴露,不参与任何 IA 变更。
+    """
+
+    commerce_type: str | None = None  # "product" | "variation"
+    product_id: int | None = None
+    variation_id: int | None = None  # 父产品 = 0
+    variation_identity_key: str | None = None  # "{product_id}:{variation_id}"
+    sku: str | None = None
+    price: str | None = None
+    regular_price: str | None = None
+    sale_price: str | None = None
+    on_sale: bool | None = None
+    stock_status: str | None = None
+    stock_quantity: int | None = None
+    purchasable: bool | None = None
+    variation_attributes: list[str] | None = None  # "slug=option" 对
+    permalink: str | None = None
+    commerce_synced_at: str | None = None  # connector date_modified 新鲜度戳
+
+
 class DataSourceDocumentTruth(BaseModel):
     """GET /data-sources/{source_id}/documents/detail 响应:单文档真相。
 
@@ -358,6 +383,8 @@ class DataSourceDocumentTruth(BaseModel):
     versions: list[DocumentVersionHistoryEntry] = Field(default_factory=list)
     versions_truncated: bool = False  # True = 超出上限,仅最近 N 条(诚实标注)
     citation: DocumentCitationTruth | None = None  # None = 不可用(绝不伪造)
+    # ---- Issue #28 / B1-4(加性;None = 非 woo / 存量行无商业真值)----
+    commerce: DocumentCommerceTruth | None = None
 
 
 class DocumentRepairRequest(BaseModel):

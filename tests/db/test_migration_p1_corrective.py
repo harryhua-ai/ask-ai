@@ -130,7 +130,8 @@ def _seed_objects(mig, objs) -> None:
             Property(
                 name=n,
                 data_type={"text": DataType.TEXT, "int": DataType.INT,
-                           "text[]": DataType.TEXT_ARRAY}[d],
+                           "text[]": DataType.TEXT_ARRAY,
+                           "bool": DataType.BOOL}[d],
             )
             for n, d in COLLECTION_PROPERTIES
             if n not in ("generation_ordinal", "generation_id")

@@ -39,7 +39,7 @@ from backend.pipeline.citation import (
     validate_citations,
 )
 from backend.pipeline.claim_validation import build_claim_validation
-from backend.pipeline.evidence_planning import derive_evidence_plan
+from backend.pipeline.evidence_planning import ROLE_SOLUTION_GUIDE, derive_evidence_plan
 from backend.pipeline.evidence_reservation import reserve_plan_evidence
 from backend.pipeline.evidence_selection import (
     build_coverage_report,
@@ -1298,8 +1298,13 @@ class RAGOrchestrator:
 ## 要求
 - 只依据上面的资料回答,不编造
 - 引用标记 [N] 只能使用「可引用资料」的编号;「背景资料」仅供理解上下文,禁止引用
-- 精确数值(价格/电压/电流/温度/尺寸/版本号/协议等)必须与所引资料原文一致;
-  资料未载明时,明确说明"官方资料未载明该数值",严禁编造数值或以相近数值搭配 [N] 冒充有据
+- 精确数值(价格/电压/电流/温度/尺寸/版本号/协议等)必须与所引资料原文一致,
+  严禁编造数值或以相近数值搭配 [N] 冒充有据
+- 上面的资料没有某信息 ≠ 官方没有该信息:断言"官方未提供 X"前,必须考虑该类
+  信息的合格官方来源类别(价格/库存→官方商店,方案/落地案例→官网 Solution/
+  案例页,规格参数→产品文档/Wiki,模型/用例能力→官方模型文档)是否存在于
+  知识域但未进入本次检索;若可能存在,只能如实说明现有资料未涵盖并建议以
+  官方渠道为准,不得宣称官方缺失
 - 资料中的客户案例/历史工单仅是第三方历史参考,**不是当前用户的事实**;
   严禁把案例中的设备标识(如 ICCID/IMSI/序列号)、客户身份或案例结论说成
   当前用户的情况;需要引用案例时必须明确表述为"一个历史案例"
@@ -1947,6 +1952,9 @@ class RAGOrchestrator:
         # F-1':证据角色预留 —— 计划驱动补位(required 槽 × 目标保位 / 锚定页
         # 补全 / 规格救援)。零 LLM;晋升候选同阈值门控、总量有界、追加于
         # 幸存者之后(定序仍归 INC-5);比较管线自有逐目标聚焦重排,不参与。
+        # B2-5(#31):SOLUTION_GUIDE 保位晋升记录保留,供组合截断后回填(见下)。
+        _reserved: list[SearchResult] = []
+        res_info: dict[str, Any] = {}
         if plan.slots and cmp_stage_info is None and pool_scores:
             _reserved, res_info = await reserve_plan_evidence(
                 plan,
@@ -1981,6 +1989,29 @@ class RAGOrchestrator:
                 self._top_k,
                 getattr(self._reranker, "threshold", 0.3),
             )
+            # B2-5(#31):官方 Solution 页保留 —— 组合的 [:top_k] 截断会把
+            # 追加在幸存者之后的 F-1' 晋升逐出;required 方案槽的阈下保留
+            # 晋升(正相关下限,保留语义而非竞争落选)按身份回填:
+            # 总量有界(≤ MAX_PROMOTIONS)、零 LLM、比较路径不参与。
+            if _reserved:
+                _kept = {(r.source_id, r.chunk_index) for r in reranked}
+                _solution_keys = {
+                    (p.get("source_id"), p.get("chunk_index"))
+                    for p in res_info.get("promotions", [])
+                    if p.get("role") == ROLE_SOLUTION_GUIDE
+                }
+                _retained = [
+                    r
+                    for r in _reserved
+                    if (r.source_id, r.chunk_index) in _solution_keys
+                    and (r.source_id, r.chunk_index) not in _kept
+                ]
+                if _retained:
+                    reranked = reranked + _retained
+                    res_info.setdefault("solution_retention", []).extend(
+                        {"source_id": r.source_id, "chunk_index": r.chunk_index}
+                        for r in _retained
+                    )
 
         # INC-5:确定性证据选择/组合——required 槽命中证据稳定前置
         # (纯函数,零 LLM;不增删证据只定序,既有排名/剪枝/上下文安全约束保持;
@@ -2835,6 +2866,9 @@ class RAGOrchestrator:
         # F-1':证据角色预留(与 answer 同位同语义,parity)—— required 槽
         # × 目标保位 / 锚定页补全 / 规格救援。零 LLM;晋升候选同阈值门控、
         # 总量有界、追加于幸存者之后(定序仍归 INC-5);比较管线不参与。
+        # B2-5(#31):SOLUTION_GUIDE 保位晋升记录保留,供组合截断后回填(见下)。
+        _reserved: list[SearchResult] = []
+        res_info: dict[str, Any] = {}
         if plan.slots and cmp_stage_info is None and pool_scores:
             _reserved, res_info = await reserve_plan_evidence(
                 plan,
@@ -2908,6 +2942,29 @@ class RAGOrchestrator:
                 self._top_k,
                 getattr(self._reranker, "threshold", 0.3),
             )
+            # B2-5(#31):官方 Solution 页保留(与 answer 同位同语义)——
+            # 组合的 [:top_k] 截断会把追加在幸存者之后的 F-1' 晋升逐出;
+            # required 方案槽的阈下保留晋升(正相关下限,保留语义而非竞争
+            # 落选)按身份回填:总量有界(≤ MAX_PROMOTIONS)、零 LLM。
+            if _reserved:
+                _kept = {(r.source_id, r.chunk_index) for r in reranked}
+                _solution_keys = {
+                    (p.get("source_id"), p.get("chunk_index"))
+                    for p in res_info.get("promotions", [])
+                    if p.get("role") == ROLE_SOLUTION_GUIDE
+                }
+                _retained = [
+                    r
+                    for r in _reserved
+                    if (r.source_id, r.chunk_index) in _solution_keys
+                    and (r.source_id, r.chunk_index) not in _kept
+                ]
+                if _retained:
+                    reranked = reranked + _retained
+                    res_info.setdefault("solution_retention", []).extend(
+                        {"source_id": r.source_id, "chunk_index": r.chunk_index}
+                        for r in _retained
+                    )
 
         # INC-5:确定性证据选择/组合(与 answer 同位同语义,parity)——
         # required 槽命中证据稳定前置;定序决定可见源截断预算归属,
