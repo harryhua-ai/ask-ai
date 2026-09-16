@@ -17,7 +17,13 @@ gap-heal 路径(从 PG 持久 chunk 副本重建,零源抓取、确定性 uuid�
 - 任务/审计持久化:``document_repair_tasks`` 行即审计记录(status/stage/
   events 追加/result 真值);
 - 幂等:同文档存在未完结任务 → 返回同一任务;健康文档重复修复 = 真实
-  复验 no-op(0 重灌,复验通过),绝不做假进度。
+  复验 no-op(0 重灌,复验通过),绝不做假进度;
+- 生命周期门(Issue #83,lifecycle authority ⊨ repair authority):已退役
+  (superseded / deleted 墓碑)文档在**受理与执行两阶段均 fail-closed 拒绝**
+  (零 embed、零 vector insert、零 lifecycle restore、不交接源重建;
+  TOCTOU —— 受理后再退役 —— 由执行阶段复查兜底);verify 的 serving/
+  consistency 真值仅对具备服务资格的文档成立,绝不把退役文档的 index
+  completeness 宣称为"已成功进入当前服务"。
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.db.models import Document, DocumentRepairTask, DocumentVersion, DocumentVersionChunk
 from backend.pipeline.ingest import chunk_uuids_for_version
 from backend.services.chunk_serving import chunk_serving_for_doc
+from backend.services.document_lifecycle import DocLifecycle
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +61,22 @@ _OPEN_STATUSES = (STATUS_PENDING, STATUS_RUNNING)
 
 class RepairUnavailableError(RuntimeError):
     """向量库/嵌入模型不可用(端点层转 503 诚实降级,绝不伪造修复)。"""
+
+
+# Issue #83(lifecycle authority ⊨ repair authority):已退役生命周期
+# (superseded / deleted 墓碑)对 repair **禁止**(fail-closed)。repair 只能
+# 修复"应继续服务但 serving/index 不完整"的知识;退役知识不得由 repair/
+# 重新处理从历史持久副本复活;权威源恢复须经 sync/membership
+# reconciliation 正常路径重新确立权威,历史 version/chunk 审计数据不动。
+_REPAIR_FORBIDDEN_LIFECYCLES = DocLifecycle.WITHDRAWN
+
+
+def _lifecycle_gate_error(lifecycle: str) -> str:
+    return (
+        f"文档已退役(lifecycle={lifecycle}),修复被拒绝(fail-closed):"
+        "退役知识不得由 repair/重新处理从历史副本复活;"
+        "如权威源恢复,请走同步/重建路径重新确立权威"
+    )
 
 
 def _now() -> datetime:
@@ -137,6 +160,12 @@ async def create_repair_task(
         from fastapi import HTTPException
 
         raise HTTPException(status_code=404, detail="后端无此记录")
+    if doc.lifecycle in _REPAIR_FORBIDDEN_LIFECYCLES:
+        # Issue #83:受理即 fail-closed(409)—— 退役文档不受理修复命令,
+        # 不新建任务行(幂等返回开放任务的历史语义不适用于退役文档)。
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=409, detail=_lifecycle_gate_error(doc.lifecycle))
     if idempotency_key:
         existing = (
             await session.execute(
@@ -225,6 +254,13 @@ async def execute_repair_task(
             doc = (
                 await session.execute(select(Document).where(Document.source_id == doc_source_id))
             ).scalar_one_or_none()
+            if doc is not None and doc.lifecycle in _REPAIR_FORBIDDEN_LIFECYCLES:
+                # Issue #83 TOCTOU:task 受理后、执行前文档被墓碑/接替 →
+                # 执行阶段再次 fail-closed:零 embed、零 vector insert、
+                # 零 lifecycle restore、也不交接源重建(退役文档的权威恢复
+                # 只属 sync/membership 路径);任务如实置 failed,绝不把
+                # index completeness 宣称为 serving success。
+                raise RuntimeError(_lifecycle_gate_error(doc.lifecycle))
             version = None
             if doc is not None and doc.current_version_id is not None:
                 version = (

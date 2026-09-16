@@ -51,6 +51,7 @@ import {
   bucketLabel,
   bucketOfDocument,
   generationStatusLabel,
+  isRetiredLifecycle,
   lifecycleLabel,
   notServingReason,
 } from "@/lib/dataSourceLifecycle";
@@ -730,7 +731,10 @@ export default function DataSourceDetail() {
                           <TableCell>
                             <div className="flex items-center gap-1">
                               {/* U-8:修复动作与查看真相都是知识行一级操作,不藏进 overflow。 */}
-                              {canWrite && (
+                              {/* Issue #83:退役行(superseded/deleted)不提供修复入口
+                                  (lifecycle authority ⊨ repair authority;后端同样
+                                  fail-closed),改以明确文案呈现"无需处理"。 */}
+                              {canWrite && bucketKey !== "retired" && (
                                 <Button
                                   size="sm"
                                   variant="outline"
@@ -748,6 +752,14 @@ export default function DataSourceDetail() {
                                     ? "处理中..."
                                     : "修复此知识"}
                                 </Button>
+                              )}
+                              {bucketKey === "retired" && (
+                                <span
+                                  className="text-xs text-muted-foreground"
+                                  title="退役知识由权威 lifecycle 保护,不得由 repair 从历史副本复活;历史版本与删除记录保留为审计真相"
+                                >
+                                  已退役,无需处理
+                                </span>
                               )}
                               <Button
                                 size="sm"
@@ -863,8 +875,10 @@ export default function DataSourceDetail() {
                                         次,未成功。
                                       </p>
                                     )}
-                                    {/* U-8(DS-P3-07):重新处理(真实修复命令;RBAC 内可见) */}
-                                    {canWrite && (
+                                    {/* U-8(DS-P3-07):重新处理(真实修复命令;RBAC 内可见)
+                                        Issue #83:退役行不提供修复入口,改以"已退役,无需处理"
+                                        明确文案(后端受理/执行两阶段同样 fail-closed) */}
+                                    {canWrite && !isRetiredLifecycle(truthQuery.data.lifecycle) && (
                                       <div className="flex justify-end">
                                         <Button
                                           size="sm"
@@ -884,10 +898,21 @@ export default function DataSourceDetail() {
                                         </Button>
                                       </div>
                                     )}
-                                    {/* U-8(DS-P3-08/09):重新处理完成验证卡(vN/12/12/一致性 = 后端真值) */}
+                                    {isRetiredLifecycle(truthQuery.data.lifecycle) && (
+                                      <p
+                                        className="text-right text-xs text-muted-foreground"
+                                        data-testid="doc-retired-note"
+                                      >
+                                        已退役,无需处理(历史版本与删除记录保留为审计真相)
+                                      </p>
+                                    )}
+                                    {/* U-8(DS-P3-08/09):重新处理完成验证卡(vN/12/12/一致性 = 后端真值)
+                                        Issue #83:验证卡仅对具备服务资格的文档呈现 —— 绝不把退役
+                                        文档的 index completeness 宣称为"已成功进入当前服务" */}
                                     {truthQuery.data.latest_repair_task &&
                                       truthQuery.data.latest_repair_task.status === "succeeded" &&
-                                      truthQuery.data.latest_repair_task.result && (
+                                      truthQuery.data.latest_repair_task.result &&
+                                      !isRetiredLifecycle(truthQuery.data.lifecycle) && (
                                         <div
                                           className="rounded-md border border-green-300 bg-green-50 p-3"
                                           data-testid="repair-verification-card"
