@@ -50,7 +50,9 @@
   "evidence": "Matrix-proven gaps at 777b737: (D) version history absent from truth response+UI; (G) citation target/link_state absent (authoritative derivation via wiki_canonical_url + _derive_link_state over persisted metadata_); (A) identity dimensions not surfaced distinctly; (L) retired projection mislabeled. Read-model fields + presentation only; no new truth source; test files conditional (focused suites required by contract).",
   "justifications": {}
  },
- "scope_justifications": {},
+ "scope_justifications": {
+  "tests/**": "Focused truth-state RED\u2192GREEN suite (test_document_inspector_truth.py) \u2014 contract requires focused tests + truth-state fixtures"
+ },
  "candidate": null,
  "investigation_artifact": null,
  "change_budget_established_at": "2026-09-16T09:53:40Z"
