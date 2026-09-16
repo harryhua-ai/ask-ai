@@ -35,7 +35,9 @@
   "evidence": "RCA: backend list API serializes DB truth verbatim (_to_out type=ds.type, backend/api/admin/data_sources.py); DB has no wiki connector and no write path produces type wiki (connector registry: github/local_git/filesystem/woocommerce/web_crawl only). Mislabel origin is frontend admin/src/lib/sourceEditorModel.ts SOURCE_TYPE_OPERATION_LABELS mapping github/local_git -> 'Wiki' (v1.6.3 A-P1-05 ops vocabulary, content-classification not connector type), consumed by list type column, type filter, and detail identity row. Fix = render canonical label (existing TYPE_LABELS vocabulary) at that single mapping point; pages expected unchanged but kept conditional in case rendering needs adjustment; tests conditional for RED->GREEN updates plus new unknown/missing-type fail-visible regression.",
   "justifications": {}
  },
- "scope_justifications": {},
+ "scope_justifications": {
+  "admin/src/pages/**": "List page and detail page consume sourceTypeLabel from sourceEditorModel.ts; RCA predicts zero page edits, kept conditional only in case GREEN requires a rendering-side adjustment; any change stays inside type-truth-to-display consistency."
+ },
  "candidate": null,
  "investigation_artifact": null,
  "change_budget_established_at": "2026-09-16T01:09:59Z"
