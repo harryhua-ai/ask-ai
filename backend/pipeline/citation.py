@@ -51,8 +51,13 @@ SOURCE_LABELS = {
 # 注意(P0 PC-01):这只是**展示层**过滤,不是信任边界——生成前的授权由
 # chunk 级 channel_visibility 检索过滤(主防线)+ SourceVisibilityGuard
 # (backend/services/source_visibility.py,纵深)强制执行。
+#
+# Track C C-5(#48):``local_git`` 显式关闭——文件系统来源(
+# ``file://``)从未公开可链接,不再是公开展示类:其 chunk 在组合层归
+# 背景资料段、不进入可见 sources(与既有 r4 行为一致:file:// 本就过不了
+# rag._is_renderable_public_url,本关闭把「偶被抑制」变为「类型上不可能」)。
 PUBLIC_SOURCE_TYPES: frozenset[str] = frozenset(
-    {"local_git", "github", "woocommerce", "website", "web_crawl"}
+    {"github", "woocommerce", "website", "web_crawl"}
 )
 
 # 第一方知识案例(#28):knowledge-support-cases 管道产出的官方案例记录

@@ -259,6 +259,9 @@ COLLECTION_PROPERTIES: list[tuple[str, str]] = [
     ("text", "text"),
     ("url", "text"),
     ("frontmatter_slug", "text"),
+    # Track C C-4(#48):仓库访客可达性(clone 时连接器探测;"public"/
+    # "private",存量对象缺省 = unknown)。加性演进,零回填。
+    ("visitor_reachability", "text"),
     ("chunk_index", "int"),
     ("content_hash", "text"),
     # Phase 2A 新增
@@ -333,6 +336,11 @@ def _build_props(chunk: "Any", doc: RawDocument) -> dict:
         "url": doc.url,
         # 兼容旧的/测试用 RawDocument-like 对象；缺 metadata 时不伪造 slug。
         "frontmatter_slug": (getattr(doc, "metadata", None) or {}).get("frontmatter_slug", ""),
+        # Track C C-4(#48):仓库访客可达性(github connector clone 时探测)。
+        # 缺 metadata 时存空串(read 侧映射为 unknown),不伪造可达性。
+        "visitor_reachability": (getattr(doc, "metadata", None) or {}).get(
+            "visitor_reachability", ""
+        ),
         "chunk_index": chunk.chunk_index,
         "content_hash": doc.content_hash,
         "channel_visibility": list(chunk.channel_visibility),

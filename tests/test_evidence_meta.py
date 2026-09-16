@@ -56,9 +56,11 @@ PUBLIC_TYPES = ["github", "local_git", "website", "web_crawl", "woocommerce"]
             ("unknown", "unknown", "unknown", "citable-numbered", "UUUD"),
         ),
         (
+            # Track C C-5(#48):local_git 关闭出 PUBLIC 白名单(file:// 从未
+            # 公开可链接)→ citation 镜像同步翻转为 background-declared。
             "local_git",
             ("widget", "api"),
-            ("unknown", "unknown", "unknown", "citable-numbered", "UUUD"),
+            ("unknown", "unknown", "unknown", "background-declared", "UUUD"),
         ),
         # 显式 internal 标记:唯一 sensitivity 判定(EXPLICIT,溯源 s 位=E);
         # citation 仍按 source_type 镜像(与 sensitivity 独立)

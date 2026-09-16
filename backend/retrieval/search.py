@@ -137,6 +137,10 @@ class SearchResult:
     # Docusaurus frontmatter authority; None means the object predates this
     # additive property and callers must preserve the source URL fallback.
     frontmatter_slug: str | None = None
+    # Track C C-4(#48):仓库访客可达性(clone 时连接器探测、摄取持久化)。
+    # "public" / "private";缺属性/空串的对象映射为 "unknown"(存量语义),
+    # 序列化层不得把 unknown 推断为 public 或 private。
+    visitor_reachability: str = "unknown"
 
 
 class HybridSearcher:
@@ -349,6 +353,8 @@ class HybridSearcher:
                 "title",
                 "url",
                 "frontmatter_slug",
+                # Track C C-4(#48):可达性随引用状态链路透出(加性投影)
+                "visitor_reachability",
                 "text",
                 "chunk_index",
                 "chunk_type",
@@ -445,6 +451,8 @@ class HybridSearcher:
             "title",
             "url",
             "frontmatter_slug",
+            # Track C C-4(#48):可达性随引用状态链路透出(加性投影)
+            "visitor_reachability",
             "text",
             "chunk_index",
             "chunk_type",
@@ -588,4 +596,7 @@ class HybridSearcher:
             evidence_citation_eligibility=evidence["evidence_citation_eligibility"],
             evidence_origin=evidence["evidence_origin"],
             frontmatter_slug=props.get("frontmatter_slug"),
+            # Track C C-4(#48):存量对象缺属性/空串 → "unknown"(诚实未知,
+            # 序列化层不得据 unknown 推断 public/private)。
+            visitor_reachability=props.get("visitor_reachability") or "unknown",
         )

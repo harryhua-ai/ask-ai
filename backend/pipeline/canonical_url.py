@@ -97,3 +97,25 @@ def wiki_canonical_url(url: str, *, frontmatter_slug: str | None = None) -> str:
     if frontmatter_slug is None:
         return url
     return _canonical_url_from_slug(frontmatter_slug) or url
+
+
+def is_unverified_wiki_blob(url: str) -> bool:
+    """URL 是否属于「无 slug 权威即回退 blob」的 wiki-documents 文档类。
+
+    即 :func:`wiki_canonical_url` 会尝试映射、但因缺有效 frontmatter slug
+    而原样回退 GitHub blob 的那一类(Track C C-4 的 branch-ref 404 窗口
+    主体:wiki 仓库目录重排/改名会使 blob 路径失效,序列化层据此把该类
+    表达为 ``stale`` 而非当作已验证链接呈现)。
+
+    判定与 :func:`wiki_canonical_url` 的匹配条件严格同构:wiki-documents
+    仓库的 ``blob/<branch>/<path>.md`` 结构;其余 URL(普通仓库/官网/
+    WooCommerce/结构异常)一律 False。
+    """
+    if not url:
+        return False
+    m = _GITHUB_BLOB_RE.match(url)
+    if not m:
+        return False
+    if f"/{WIKI_REPO}/blob/" not in url:
+        return False
+    return m.group("path").endswith(_MD_SUFFIX)
