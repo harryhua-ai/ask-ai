@@ -36,7 +36,9 @@
   "evidence": "Frozen Contract r5: minimal fix surface = github connector branch-scope expansion bypass, membership reconcile authority-minus-ledger direction, document count lifecycle filtering; RED characterization tests under tests/connectors plus focused regression tests under tests/; deploy forbidden this round",
   "justifications": {}
  },
- "scope_justifications": {},
+ "scope_justifications": {
+  "backend/connectors/github.py": "Branch-scope expansion detection: persist last fully-enumerated branch scope beside the clone; newly-configured branch bypasses branch-level SHA short-circuit and --since window with full enumeration (per Frozen Contract SCOPE)"
+ },
  "candidate": null,
  "investigation_artifact": null,
  "change_budget_established_at": "2026-09-16T01:32:08Z"
