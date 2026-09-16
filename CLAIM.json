@@ -49,6 +49,14 @@
   "tests/**": "Representational RED evidence is the required INVESTIGATION deliverable: 7 fixture tests (zero network) characterizing contract B1-1/B1-2/B1-3/B1-5 gaps \u2014 6 FAIL on main b338c3c (no variations ingestion, no commerce chunk props/schema, no identity key) + 1 control PASS (simple product unchanged). Committed to issue branch agent/28/902b51bc; no product code touched this round."
  },
  "candidate": null,
- "investigation_artifact": null,
+ "investigation_artifact": {
+  "kind": "investigation",
+  "sha": "465a272afb25dab6fd9409fedf52071d23c52e0c",
+  "branch": "agent/28/902b51bc",
+  "preserved_at": "2026-09-16T02:32:10Z",
+  "changed_paths": [
+   "tests/connectors/test_woocommerce_variations.py"
+  ]
+ },
  "change_budget_established_at": "2026-09-16T02:20:21Z"
 }
