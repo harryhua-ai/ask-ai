@@ -47,6 +47,37 @@
   "tests/**": "\u56de\u5f52\u4e0e C-7 \u8de8\u6e90\u94fe\u8def\u5957\u4ef6(\u91cd\u5efa\u8c03\u67e5\u5206\u652f RED \u6d4b\u8bd5 + \u65b0\u589e chain \u5957\u4ef6)",
   "widget/src/**": "C-2/C-3 widget \u72b6\u6001\u6e32\u67d3\u5b88\u536b(sanitize \u5fbd\u6807\u95e8 + LinkState \u7c7b\u578b + \u9759\u6001\u5fbd\u6807\u6837\u5f0f + vitest)"
  },
- "candidate": null,
+ "candidate": {
+  "sha": "e9331b883426166fda144fd60fa9c5aa342d4197",
+  "branch": "agent/48/a646f3c3",
+  "preserved_at": "2026-09-16T00:19:12Z",
+  "scope": {
+   "pass": true,
+   "enforcement": "strict",
+   "paths": {
+    "backend/connectors/github.py": "EXPECTED",
+    "backend/pipeline/canonical_url.py": "EXPECTED",
+    "backend/pipeline/citation.py": "EXPECTED",
+    "backend/pipeline/ingest.py": "EXPECTED",
+    "backend/pipeline/rag.py": "EXPECTED",
+    "backend/retrieval/search.py": "EXPECTED",
+    "tests/pipeline/test_issue48_linkability_chain.py": "CONDITIONAL",
+    "tests/pipeline/test_issue48_linkability_state.py": "CONDITIONAL",
+    "tests/test_evidence_meta.py": "CONDITIONAL",
+    "widget/src/styles/widget.css": "CONDITIONAL",
+    "widget/src/types.ts": "CONDITIONAL",
+    "widget/src/utils/__tests__/issue48BadgeLinkabilityGuard.test.ts": "CONDITIONAL",
+    "widget/src/utils/sanitize.ts": "CONDITIONAL"
+   },
+   "counts": {
+    "EXPECTED": 6,
+    "CONDITIONAL": 7,
+    "UNKNOWN": 0,
+    "FORBIDDEN": 0
+   },
+   "violations": [],
+   "budget_evidence": "Track C C-1..C-8 + \u8c03\u67e5\u56db\u7f3a\u9677\u9762(widget badge \u65e0\u5b88\u536b\u3001github \u79c1\u5e93\u65e0\u53ef\u8fbe\u6027\u72b6\u6001\u3001branch-ref \u9648\u65e7\u65e0\u72b6\u6001\u3001local_git \u672a\u663e\u5f0f\u5173\u95ed)"
+  }
+ },
  "investigation_artifact": null
 }
