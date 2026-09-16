@@ -29,7 +29,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from backend.db.models import Document, DocumentVersion, IndexGeneration
 
@@ -335,7 +335,9 @@ async def active_generation_ordinals_async_session(session: Any) -> list[int]:
     return sorted(int(o) for o in result.scalars().all())
 
 
-def withdrawn_document_source_ids_sync(session: Session) -> list[str]:
+def withdrawn_document_source_ids_sync(
+    session: "Session | sessionmaker",
+) -> list[str]:
     """同步会话版:withdrawn(非在服)文档 identity 权威集合(Issue #84)。
 
     同一权威关系(服务选择唯一权威:documents.lifecycle)的互补面:凡
@@ -348,12 +350,24 @@ def withdrawn_document_source_ids_sync(session: Session) -> list[str]:
 
     只读查询;词表与转换原语零触碰(不新增生命周期语义)。fail-closed:
     查询失败异常向上传播,绝不静默回落空集(空集会让墓碑知识复活)。
+
+    r6(v1.6.3-r6)会话获取内聚:入参可为真实 ``Session`` 或
+    ``sessionmaker`` 工厂(生产 lifespan wiring 传工厂,main.py:430);
+    传工厂时在此处获取真实 Session 并确定性关闭 —— 工厂自身无可执行
+    ``execute``,r5 部署即因直传工厂触发 AttributeError(生产事故,
+    受控回滚 r4 处置)。词表与查询语义零变化。
     """
-    rows = session.execute(
-        select(Document.source_id).where(
-            Document.lifecycle.notin_(DocLifecycle.SERVING)
-        )
-    ).scalars().all()
+    own_session = isinstance(session, sessionmaker)
+    session = session() if own_session else session
+    try:
+        rows = session.execute(
+            select(Document.source_id).where(
+                Document.lifecycle.notin_(DocLifecycle.SERVING)
+            )
+        ).scalars().all()
+    finally:
+        if own_session:
+            session.close()
     return sorted({str(r) for r in rows})
 
 
