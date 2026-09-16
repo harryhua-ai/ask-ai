@@ -1,16 +1,19 @@
 {
  "v": 2,
  "task": 28,
- "claim_id": "harryhua-ai-20260916T021642-902b51bc",
+ "claim_id": "harryhua-ai-20260916T031551-a5c7f423",
  "agent": "harryhua-ai",
- "claimed_at": "2026-09-16T02:16:42Z",
- "lease_expires_at": "2026-09-16T03:01:42Z",
+ "claimed_at": "2026-09-16T03:15:52Z",
+ "lease_expires_at": "2026-09-16T04:00:52Z",
  "baseline_commit": "b338c3c7eeafec9f57176aa82dd743b9f195153d",
  "status": "active",
- "branch": "agent/28/902b51bc",
- "heartbeat_at": "2026-09-16T02:16:42Z",
- "note": null,
- "supersedes": null,
+ "branch": "agent/28/a5c7f423",
+ "heartbeat_at": "2026-09-16T03:15:52Z",
+ "note": "takeover: Self-takeover of own STALE investigation-promoted claim (lease lapsed 03:01:42Z, grace elapsed). Candidate c33ed84 pushed to agent/28/902b51bc before expiry. Implementation per pinned contract \u00a74 continues: regression suites (pipeline/retrieval/full) pending, then scope-check/preserve/release delivered.",
+ "supersedes": {
+  "claim_id": "harryhua-ai-20260916T021642-902b51bc",
+  "sha": "2eb61ebd3f3c84535c5daa5dd10a9e4a4c2948b1"
+ },
  "mode": "implementation",
  "policy_digest": "87f06288bfd9b9262c7ccc52311f296084933babecea82b6928fe57df15e422b",
  "execution_context": "orchestrated",
@@ -51,7 +54,5 @@
   "changed_paths": [
    "tests/connectors/test_woocommerce_variations.py"
   ]
- },
- "change_budget_established_at": "2026-09-16T02:20:21Z",
- "promoted_at": "2026-09-16T02:42:06Z"
+ }
 }
