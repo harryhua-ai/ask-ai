@@ -47,7 +47,8 @@
   "justifications": {}
  },
  "scope_justifications": {
-  "admin/tests/dataSourceObservability.test.ts": "\u77e9\u9635\u9a8c\u6536\u8981\u6c42\u7684 focused tests"
+  "admin/tests/dataSourceObservability.test.ts": "\u77e9\u9635\u9a8c\u6536\u8981\u6c42\u7684 focused tests",
+  "admin/tests/dataSources/SourceHealthPanel.test.tsx": "\u77e9\u9635\u9a8c\u6536\u8981\u6c42\u7684 focused tests"
  },
  "candidate": null,
  "investigation_artifact": null,
