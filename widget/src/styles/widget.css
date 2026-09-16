@@ -723,6 +723,17 @@
   text-decoration: none;
   filter: brightness(1.12);
 }
+/* Track C C-2/C-3(#48):非可点击来源徽标 —— 同形但无导航;真值呈现
+   (none/private/stale 状态),禁自跳转与死链 */
+.ask-ai-bubble-assistant .ask-ai-ref-static {
+  cursor: default;
+  opacity: 0.55;
+  filter: grayscale(1);
+}
+.ask-ai-bubble-assistant .ask-ai-ref-static:hover {
+  text-decoration: none;
+  filter: grayscale(1);
+}
 .ask-ai-feedback {
   display: flex;
   gap: 2px;

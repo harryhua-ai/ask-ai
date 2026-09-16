@@ -8,6 +8,14 @@ import { isAllowedUrl } from "./urlPolicy";
 const ALLOWED_TAGS = ["p", "br", "strong", "em", "code", "pre", "h4", "span", "ul", "ol", "li", "a"];
 const ALLOWED_ATTR = ["href", "target", "rel", "class", "title"];
 
+/** Track C C-3:非可点击状态的真值 title(诚实呈现,不伪造导航)。 */
+const NON_CLICKABLE_TITLES: Record<string, string> = {
+  none: "此来源不提供外部链接",
+  private: "此来源不对外公开",
+  stale: "来源可能已移动或失效",
+  legacy: "",
+};
+
 /** DOMPurify 清洗,移除危险标签/属性 */
 export function sanitizeHtml(html: string): string {
   return DOMPurify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR });
@@ -81,7 +89,23 @@ export function renderMarkdownSafe(text: string, sources?: SourceLink[]): string
       const icons = Array.from(found).map((i) => {
         const src = sources[i];
         // T29:数字徽标 —— 锚点文本 = 引用编号 n,title = 来源标题(转义,防属性逃逸/注入)
-        return `<a href="${escapeHtml(src.url)}" title="${escapeHtml(src.title ?? "")}" class="ask-ai-ref" target="_blank" rel="noopener noreferrer">${i + 1}</a>`;
+        // Issue #48 / Track C C-2/C-3:可点击性 = 后端显式 link_state 权威,
+        // widget 不从 URL 字符串形状推断;isAllowedUrl 仅作纵深安全门
+        // (只降级、不升级)。存量载荷(无 link_state 的历史会话)回退到
+        // URL 安全门 + 非空守卫 —— 行为与历史基线一致,且关闭 href=""/
+        // off-host/file:// 假链接(C-2:禁自跳转与死链)。
+        const stateClickable =
+          src.link_state === undefined
+            ? Boolean(src.url) && isAllowedUrl(src.url)
+            : src.link_state === "external";
+        if (stateClickable && isAllowedUrl(src.url)) {
+          return `<a href="${escapeHtml(src.url)}" title="${escapeHtml(src.title ?? "")}" class="ask-ai-ref" target="_blank" rel="noopener noreferrer">${i + 1}</a>`;
+        }
+        // 非 external 状态:真值静态徽标(无 <a>、无 href —— 禁伪造导航),
+        // title 按 state 如实说明(C-3 truthful representation)。
+        const reason =
+          NON_CLICKABLE_TITLES[src.link_state ?? "legacy"] ?? NON_CLICKABLE_TITLES.legacy;
+        return `<span class="ask-ai-ref ask-ai-ref-static" title="${escapeHtml(reason)}">${i + 1}</span>`;
       });
       const trimmed = cleaned.replace(/[。，、.;；\s]+$/, "");
       const isChinese = /[一-鿿]/.test(trimmed);

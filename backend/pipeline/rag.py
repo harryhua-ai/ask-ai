@@ -29,7 +29,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from backend.llm import telemetry as tel
-from backend.pipeline.canonical_url import wiki_canonical_url
+from backend.pipeline.canonical_url import is_unverified_wiki_blob, wiki_canonical_url
 from backend.pipeline.citation import (
     PUBLIC_SOURCE_TYPES,
     CitationStreamFilter,
@@ -117,6 +117,45 @@ def _is_renderable_public_url(url: object) -> bool:
         return False
     parsed = urlparse(url)
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+# Track C C-3(#48):引用序列化的显式 linkability 状态词表(与 widget
+# `LinkState` 契约对齐;widget 仅按状态渲染,不得从 URL 字符串形状推断)。
+LINK_STATE_EXTERNAL = "external"  # (a) 有效外部 canonical 目标 → 可点击
+LINK_STATE_NONE = "none"          # (b) 无外部目的地 → 非可点击来源表示
+LINK_STATE_PRIVATE = "private"    # (c) 非公开/不可达 → 不伪造公开可导航
+LINK_STATE_STALE = "stale"        # (d) 可能已移动/失效 → 真实不可用呈现
+
+
+def _derive_link_state(
+    citation_url: str,
+    original_url: str,
+    *,
+    visitor_reachability: str = "unknown",
+) -> str:
+    """推导序列化来源的显式 link state(Track C C-3/C-4,read 时派生)。
+
+    词表与判定顺序(私有优先于一切——绝不伪造公开可导航):
+
+    - ``private``:连接器 clone 时探测的仓库访客可达性为非公开(C-4:
+      "the connector knows at clone time")。URL 本身保留(identity 保全,
+      acceptance 3),但状态禁止点击;
+    - ``stale``:wiki-documents blob 回退且无 slug 权威(存量对象)——
+      wiki 目录重排/改名会使 blob 404(生产实证:NE503 2-sdk-reference),
+      C-4 要求 "the system may not present a possibly-stale link as
+      verified",故真值呈现为 stale;
+    - ``external``:其余可渲染 http(s) 目标(公开 GitHub blob / slug 权威
+      映射的 wiki 路由 / 官网 / web_crawl / WooCommerce)。
+
+    ``visitor_reachability="unknown"``(存量对象缺加性属性 / 探测失败)不
+    推断为 private——零回填约束下保持既有可点击语义(生产 2026-09-15 全量
+    抽样:12 个 github 源全部公开可达);再摄取时由连接器写入显式状态。
+    """
+    if visitor_reachability == "private":
+        return LINK_STATE_PRIVATE
+    if citation_url == original_url and is_unverified_wiki_blob(original_url):
+        return LINK_STATE_STALE
+    return LINK_STATE_EXTERNAL
 
 
 def _off_topic_reply(language: str) -> str:
@@ -481,7 +520,9 @@ class RAGAnswer:
     Attributes:
         answer: 答案文本(LLM 生成或拒答话术)。
         sources: 去重后的来源列表,每项为
-            ``{"url", "title", "type", "product"}`` 字典。
+            ``{"url", "title", "type", "product", "link_state"}`` 字典
+            (Track C C-3:``link_state`` ∈ external/none/private/stale;
+            映射发生时附加 ``provenance_url``,知识案例附加 ``source_id``)。
         is_answered: 是否成功基于检索资料作答。``False`` 表示命中拒答。
         reranked_results: 重排(及可选裁剪)后的 ``SearchResult`` 列表,
             便于上层做引用渲染 / 调试。
@@ -1290,12 +1331,18 @@ class RAGOrchestrator:
         不进入可点击 sources——普通有效 GitHub / Website / WooCommerce
         payload 保持不变。
 
+        **Link state**(Track C C-3/C-4,#48):每个序列化来源都携带显式
+        ``link_state``(external/none/private/stale)——可点击性是后端
+        拥有的状态,widget 仅按状态渲染。stored URL 不改写(冻结摄取真值),
+        状态在 read/序列化时从持久化字段派生。
+
         Args:
             results: 重排后的 SearchResult 列表(rerank 降序)。
 
         Returns:
             去重 + 过滤后的来源字典列表,字段:``url`` / ``title`` / ``type`` /
-            ``product``(映射发生时附加 ``provenance_url``)。
+            ``product`` / ``link_state``(映射发生时附加 ``provenance_url``;
+            知识案例附加 ``source_id``)。
         """
         seen: set[str] = set()
         sources: list[dict] = []
@@ -1322,6 +1369,13 @@ class RAGOrchestrator:
                     "title": r.title,
                     "type": r.source_type,
                     "product": r.product,
+                    # C-3:显式 linkability 状态(私有可达性优先,wiki 无 slug
+                    # 权威的 blob 回退 → stale,其余 → external)。
+                    "link_state": _derive_link_state(
+                        citation_url,
+                        r.url,
+                        visitor_reachability=getattr(r, "visitor_reachability", "unknown"),
+                    ),
                 }
                 if citation_url != r.url:
                     source["provenance_url"] = r.url
@@ -1330,6 +1384,8 @@ class RAGOrchestrator:
                 # #28:第一方知识案例 → 有编号可引用来源。展示以标题呈现,
                 # url 置空(不外泄文件系统路径);身份按 source_id 在
                 # build_citation_context 匹配。显式 internal 标记不进入。
+                # C-3:url="" 置空路径现在以显式 "none" 状态表达非可点击,
+                # 不再让 widget 从空串形状猜测(C-2:禁 href="" 自跳转)。
                 if r.source_id in seen:
                     continue
                 seen.add(r.source_id)
@@ -1340,6 +1396,7 @@ class RAGOrchestrator:
                         "type": r.source_type,
                         "product": r.product,
                         "source_id": r.source_id,
+                        "link_state": LINK_STATE_NONE,
                     }
                 )
             # 其余类型维持既有语义:不进入可见 sources(citation 层归背景段)

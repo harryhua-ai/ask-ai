@@ -1,10 +1,26 @@
 // Widget 类型定义
 
+/**
+ * Track C C-3(#48):来源可导航性 = 后端拥有的显式状态(与
+ * backend/pipeline/rag.py LINK_STATE_* 词表对齐)。widget 仅按状态渲染,
+ * 不得从 URL 字符串形状推断可点击性。
+ *
+ * - "external":有效外部 canonical 目标 → 可点击;
+ * - "none":无外部目的地(如第一方知识案例)→ 非可点击来源表示;
+ * - "private":非公开/访客不可达 → 不伪造公开可导航;
+ * - "stale":可能已移动/失效(存量 wiki blob 回退)→ 真实不可用呈现。
+ *
+ * 缺省(undefined)= 存量载荷(历史会话无该字段):渲染层回退到 URL
+ * 安全门(见 sanitize.ts;isAllowedUrl 只降级、不升级)。
+ */
+export type LinkState = "external" | "none" | "private" | "stale";
+
 export interface SourceLink {
   url: string;
   title: string;
   type: string;
   product?: string;
+  link_state?: LinkState;
 }
 
 /**

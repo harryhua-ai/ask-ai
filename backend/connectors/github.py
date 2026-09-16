@@ -104,6 +104,10 @@ class GitHubConnector(DataSourceConnector):
         self._config = config
         self._repo_url: str = config.config["repo_url"]
         self._owner, self._repo = self._parse_repo_url(self._repo_url)
+        # Track C C-4(#48):仓库访客可达性(clone 时探测,懒执行一次;
+        # "public" / "private" / "unknown")。随文档元数据持久化,供引用
+        # 序列化推导显式 link_state —— 私库永不产出公开可点击链接。
+        self._repo_visibility: str = "unknown"
         # branches:SourceConfig.branches(复数字段,空 tuple 表示未指定)优先,
         # 回退到 config.branches(兼容旧单数字段),最终默认 ["main"]。
         self._branches: tuple[str, ...] = config.branches or tuple(
@@ -307,9 +311,47 @@ class GitHubConnector(DataSourceConnector):
             return False
         return not self._policy.should_exclude(rel, size)
 
+    def _probe_repo_visibility(self) -> str:
+        """匿名探测仓库访客可达性(Track C C-4:「the connector knows at clone time」)。
+
+        匿名 GET ``/repos/{owner}/{repo}``(故意不带 token —— 探测的是
+        **匿名访客**能否触达该仓库,即 citation 链接的公开可达性):
+
+        - 200 → ``"public"``;
+        - 401/403/404 → ``"private"``(非公开匿名可达 = 访客不可达);
+        - 网络/限流等异常 → ``"unknown"``(诚实未知,不推断)。
+
+        结果按实例缓存(unknown 除外——瞬态故障后下次同步重试);探测
+        绝不阻断摄取,任何异常吞掉后按 unknown 继续。
+        """
+        if self._repo_visibility != "unknown":
+            return self._repo_visibility
+        url = f"https://api.github.com/repos/{self._owner}/{self._repo}"
+        try:
+            with httpx.Client(
+                timeout=10, headers={"Accept": "application/vnd.github+json"}
+            ) as client:
+                resp = client.get(url)
+            if resp.status_code == 200:
+                self._repo_visibility = "public"
+            elif resp.status_code in (401, 403, 404):
+                self._repo_visibility = "private"
+        except Exception as exc:  # noqa: BLE001 - 可达性探测绝不阻断摄取
+            logger.warning("repo 访客可达性探测失败(记为 unknown): %s", str(exc)[:200])
+        return self._repo_visibility
+
     def _make_document(self, rel: str, content: str, branch: str) -> RawDocument:
         """构造 RawDocument(``source_type='github'`` 统一类型,branch 已填)。"""
-        metadata = {"path": rel, "branch": branch, "repo_url": self._repo_url}
+        metadata = {
+            "path": rel,
+            "branch": branch,
+            "repo_url": self._repo_url,
+            # Track C C-4:仓库访客可达性随文档持久化(read 侧据此推导
+            # citation link_state;unknown = 存量/探测失败,序列化层不得
+            # 把 unknown 推断为 public 或 private)。getattr 兼容测试用
+            # 未走 __init__ 的最小实例。
+            "visitor_reachability": getattr(self, "_repo_visibility", "unknown"),
+        }
         slug = extract_frontmatter_slug(content)
         if slug is not None:
             # Retain even an empty value so an explicit malformed authority
@@ -373,6 +415,8 @@ class GitHubConnector(DataSourceConnector):
 
     def fetch_all(self) -> Iterator[RawDocument]:
         """全量抓取:每分支 ensure_cloned + git_sync_branch + 遍历。"""
+        # Track C C-4:clone 时探测仓库访客可达性(结果随文档元数据持久化)
+        self._probe_repo_visibility()
         for branch in self._branches:
             self._ensure_cloned(branch)
             self._git_sync_branch(branch)
@@ -388,6 +432,8 @@ class GitHubConnector(DataSourceConnector):
         fetch+reset 后按 ``since`` 边界重读本地 git 历史 —— 处理「clone HEAD
         已推进而 ingest 被中断」场景,防止变更被假 no-change success 吞掉。
         """
+        # Track C C-4:与 fetch_all 同面 —— 增量产物同样携带可达性状态。
+        self._probe_repo_visibility()
         for branch in self._branches:
             self._ensure_cloned(branch)
             if self._recovery_replay or self._remote_has_updates(branch):
