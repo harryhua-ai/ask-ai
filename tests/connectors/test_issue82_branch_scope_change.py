@@ -61,7 +61,7 @@ _SINCE_FUTURE = datetime.now(UTC) + timedelta(seconds=1)
 # --------------------------------------------------------------------------- #
 
 
-def _git(args: list[str], cwd: Path) -> None:
+def _git(args: list[str], cwd: Path, date: str | None = None) -> None:
     env = {
         **os.environ,
         "GIT_AUTHOR_NAME": "t",
@@ -69,6 +69,12 @@ def _git(args: list[str], cwd: Path) -> None:
         "GIT_AUTHOR_EMAIL": "t@t",
         "GIT_COMMITTER_EMAIL": "t@t",
     }
+    if date is not None:
+        # 显式提交日期(UTC):生产实况「分支历史远早于增量窗口」——
+        # 否则装置提交发生在测试当下,对 --since(按仓库本地时区解析)
+        # 恒在窗口内,(c)/(d) 前置条件失真。
+        env["GIT_AUTHOR_DATE"] = date
+        env["GIT_COMMITTER_DATE"] = date
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True, env=env)
 
 
@@ -85,17 +91,20 @@ def origin_repo(tmp_path: Path) -> Path:
 
     - main.md:两分支共有(同路径跨分支,source_id 因 branch 维度而不同);
     - halow-only.md:仅 halow 存在(收窄后应退休/扩大后应补灌的标志文档)。
+    - 提交日期显式回拨 1 天(UTC):生产实况 halow tip 2026-07-08,远早于
+      last_success 窗口。
     """
+    past = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
     origin = tmp_path / "origin"
     origin.mkdir()
     _git(["init", "-b", "main", "."], cwd=origin)
     (origin / "main.md").write_text("# shared main v1\n", encoding="utf-8")
     _git(["add", "."], cwd=origin)
-    _git(["commit", "-m", "m1"], cwd=origin)
+    _git(["commit", "-m", "m1"], cwd=origin, date=past)
     _git(["checkout", "-b", "halow"], cwd=origin)
     (origin / "halow-only.md").write_text("# halow only knowledge\n", encoding="utf-8")
     _git(["add", "."], cwd=origin)
-    _git(["commit", "-m", "h1"], cwd=origin)
+    _git(["commit", "-m", "h1"], cwd=origin, date=past)
     _git(["checkout", "main"], cwd=origin)
     return origin
 
@@ -416,3 +425,81 @@ def test_c3_expansion_detected_without_prior_full_round(origin_repo, tmp_path):
     conn_expanded = _connector(clone, ["main", "halow"], tips)
     got = {d.source_id for d in conn_expanded.fetch_changes(_SINCE_FUTURE)}
     assert f"{SRC}/halow/halow-only.md" in got
+
+
+# ======================  D. Role A 验收面(2026-09-16 批准)  ======================
+
+# 四个禁止跳过条件(Role A 验收 1):新 scope 内容不得因任一条而被跳过
+_FORBIDDEN_SKIP_CONDITIONS = [
+    "a_sha_unchanged",
+    "b_remote_ref_exists",
+    "c_predates_last_success",
+    "d_no_incremental_delta",
+]
+
+
+@pytest.mark.parametrize("condition", _FORBIDDEN_SKIP_CONDITIONS)
+def test_d1_new_scope_content_never_skipped(condition, origin_repo, tmp_path):
+    """参数化(b1 扩展):扩张分支的既有内容不得因四个禁止跳过条件被跳过。
+
+    每条先断言该「跳过借口」在装置中真实成立,再断言扩张轮 fetch_changes
+    仍完整补灌新 scope 内容 —— 且不重复摄取已 current 的 main scope
+    (Role A 验收 2 的连接器侧)。
+    """
+    clone = _make_clone(origin_repo, tmp_path)
+    tips = _tips(origin_repo)
+    # 逐测试取 since(fixture 提交发生在此刻之前):严格模拟
+    # 「last_success 晚于新分支全部提交」的生产实况
+    since = datetime.now(UTC) + timedelta(seconds=1)
+
+    conn_initial = _connector(clone, ["main"], tips)
+    assert {d.source_id for d in conn_initial.fetch_all()} == {f"{SRC}/main/main.md"}
+
+    conn_expanded = _connector(clone, ["main", "halow"], tips)
+
+    if condition == "a_sha_unchanged":
+        # (a) Git SHA 未变:API tip == 本地跟踪 ref → 常规 SHA 检测判「无更新」
+        assert conn_expanded._local_branch_sha("halow") == tips["halow"]
+        assert conn_expanded._remote_has_updates("halow") is False
+    elif condition == "b_remote_ref_exists":
+        # (b) remote/local 分支 ref 已存在:初始 clone 已带入 origin/halow
+        assert conn_expanded._local_branch_sha("halow") is not None
+    else:
+        # (c) content 早于 last_success:halow 全部提交时间 < since
+        # (d) 常规增量窗口无 delta:--since 窗口内 git log 零产出
+        import subprocess
+
+        assert all(
+            datetime.fromisoformat(line) < since for line in subprocess.run(
+                ["git", "log", "--format=%cI", "refs/remotes/origin/halow"],
+                cwd=clone,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.split()
+        )
+        since_iso = since.strftime("%Y-%m-%dT%H:%M:%S")
+        window = subprocess.run(
+            [
+                "git",
+                "log",
+                f"--since={since_iso}",
+                "--name-only",
+                "--pretty=format:",
+                "--diff-filter=AMR",
+                "-M",
+                "refs/remotes/origin/halow",
+            ],
+            cwd=clone,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        assert [ln for ln in window.splitlines() if ln.strip()] == []
+
+    # 共同断言:四个跳过条件全部成立,扩张轮仍补灌新 scope 内容
+    docs = {d.source_id for d in conn_expanded.fetch_changes(since)}
+    assert f"{SRC}/halow/halow-only.md" in docs
+    assert f"{SRC}/halow/main.md" in docs
+    # 仅补新 scope:已 current 的 main 成员不被重复摄取/重建
+    assert f"{SRC}/main/main.md" not in docs
