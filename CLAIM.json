@@ -58,6 +58,36 @@
   "tests/scripts/test_fs_disappearance_retirement.py": "Acceptance 1-5 characterization family: two-strike fs retirement (was 3/3 RED on baseline b338c3c), policy-absence, woo fixture, idempotence, GC 7d window, apply gate \u2014 all fixture-level via stable _sync_one seam.",
   "tests/connectors/test_web_crawl_w6_snapshot.py": "Regression adaptation: w6 snapshot spy_tombstone signature extends for the new tombstone audit kwargs (actor/evidence); observation semantics unchanged, keeps existing suite green (full-suite-caught real signature break)."
  },
- "candidate": null,
+ "candidate": {
+  "sha": "942a88da0bf4f49786c20aa5c65e2c495e8a31f5",
+  "branch": "agent/25/a21f6978",
+  "preserved_at": "2026-09-16T04:51:55Z",
+  "scope": {
+   "pass": true,
+   "enforcement": "strict",
+   "paths": {
+    "backend/api/admin/data_sources.py": "EXPECTED",
+    "backend/config.py": "EXPECTED",
+    "backend/connectors/base.py": "EXPECTED",
+    "backend/connectors/filesystem.py": "EXPECTED",
+    "backend/connectors/woocommerce.py": "EXPECTED",
+    "backend/services/document_lifecycle.py": "EXPECTED",
+    "backend/services/lifecycle_gc.py": "EXPECTED",
+    "scripts/gc_lifecycle.py": "EXPECTED",
+    "scripts/sync.py": "EXPECTED",
+    "tests/api/admin/test_issue25_lifecycle_detail.py": "CONDITIONAL",
+    "tests/connectors/test_web_crawl_w6_snapshot.py": "CONDITIONAL",
+    "tests/scripts/test_fs_disappearance_retirement.py": "CONDITIONAL"
+   },
+   "counts": {
+    "EXPECTED": 9,
+    "CONDITIONAL": 3,
+    "UNKNOWN": 0,
+    "FORBIDDEN": 0
+   },
+   "violations": [],
+   "budget_evidence": "Drift-check issue 25 A-1..A-7 @ main 648b391: fs/woo fetch_deleted=[] (filesystem.py:214, woocommerce.py:335) no ledger-side discovery confirmation anywhere; missing_candidate primitive unreachable (document_lifecycle.py:425 zero callers); GC sweep CLI exists but no scheduler wiring (deploy/** forbidden in this lane so trigger lands in backend/scripts); tombstone reason log-only (document_lifecycle.py:405) no persisted reason/evidence/actor; #50 detail (data_sources.py:1177) has no reason surface; gap-heal repair_documents (generation_builder.py:613) resurrects source-removed content without confirmation check (A-7 interaction). RED tests/scripts/test_fs_disappearance_retirement.py 3/3 FAIL on main (assert active==missing_candidate)."
+  }
+ },
  "investigation_artifact": null
 }
