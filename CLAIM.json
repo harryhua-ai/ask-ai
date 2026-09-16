@@ -46,7 +46,9 @@
   "evidence": "Gap matrix agent/54/52290664@2deb5852 PARTIAL rows 3/4/5/6 minimal boundary: 3 admin implementation files (pure function + two render sites) and 3 focused test files; backend/widget/deploy zero diff per contract SCOPE/NON_GOALS",
   "justifications": {}
  },
- "scope_justifications": {},
+ "scope_justifications": {
+  "admin/tests/dataSourceObservability.test.ts": "\u77e9\u9635\u9a8c\u6536\u8981\u6c42\u7684 focused tests"
+ },
  "candidate": null,
  "investigation_artifact": null,
  "change_budget_established_at": "2026-09-16T07:35:44Z"
