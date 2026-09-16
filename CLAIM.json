@@ -54,7 +54,8 @@
  },
  "scope_justifications": {
   "backend/api/admin/schemas.py": "A-6/#50 detail surface: additive response models (RetirementTruth/AbsenceTruth) + two optional fields on DataSourceDocumentTruth live in schemas.py because the #50 read-model pydantic schemas are defined there; data-only additive (None = no persisted fact), no behavior change. Contract A-6 requires the persisted reason readable via the admin detail endpoint (Acceptance 5).",
-  "tests/api/admin/test_issue25_lifecycle_detail.py": "Acceptance 5 (A-6): persisted retirement reason/evidence/actor must be readable via the #50 admin detail endpoint \u2014 API-level contract test for the additive DataSourceDocumentTruth fields."
+  "tests/api/admin/test_issue25_lifecycle_detail.py": "Acceptance 5 (A-6): persisted retirement reason/evidence/actor must be readable via the #50 admin detail endpoint \u2014 API-level contract test for the additive DataSourceDocumentTruth fields.",
+  "tests/scripts/test_fs_disappearance_retirement.py": "Acceptance 1-5 characterization family: two-strike fs retirement (was 3/3 RED on baseline b338c3c), policy-absence, woo fixture, idempotence, GC 7d window, apply gate \u2014 all fixture-level via stable _sync_one seam."
  },
  "candidate": null,
  "investigation_artifact": null
