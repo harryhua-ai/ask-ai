@@ -1,0 +1,35 @@
+{
+ "v": 2,
+ "task": 57,
+ "claim_id": "harryhua-ai-20260916T055057-4ce9fc86",
+ "agent": "harryhua-ai",
+ "claimed_at": "2026-09-16T05:50:57Z",
+ "lease_expires_at": "2026-09-16T06:35:57Z",
+ "baseline_commit": "b338c3c7eeafec9f57176aa82dd743b9f195153d",
+ "status": "active",
+ "branch": "agent/57/4ce9fc86",
+ "heartbeat_at": "2026-09-16T05:50:57Z",
+ "note": null,
+ "supersedes": null,
+ "mode": "investigation",
+ "policy_digest": "8f893522dcf69bbac40b22371c95640a5cd0fb2d60e027abdb85b8731973afca",
+ "execution_context": "orchestrated",
+ "assignment": {
+  "issue_type": "unknown",
+  "workflow": "read-only-audit",
+  "lane": "lane-2",
+  "implementation_authorized": false,
+  "investigation_paths": [
+   "admin/**",
+   "backend/**",
+   "widget/**",
+   "tests/**",
+   "docs/**"
+  ]
+ },
+ "workflow": "read-only-audit",
+ "change_budget": null,
+ "scope_justifications": {},
+ "candidate": null,
+ "investigation_artifact": null
+}
