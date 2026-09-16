@@ -43,7 +43,8 @@
   "backend/connectors/github.py": "Branch-scope expansion detection: persist last fully-enumerated branch scope beside the clone; newly-configured branch bypasses branch-level SHA short-circuit and --since window with full enumeration (per Frozen Contract SCOPE)",
   "backend/services/membership_currency.py": "Authority-minus-ledger direction: MembershipReconciliation reports missing authority members (enumeration minus ledger serving) so sync can backfill via existing ingest path; no retirement-semantics change",
   "scripts/sync.py": "Route missing authority members into existing ingest path (fetch_all-filtered build_generation) and exclude tombstoned rows from _count_documents so unchanged/total counts reflect serving truth",
-  "tests/connectors/test_issue82_branch_scope_change.py": "RED characterization from agent/82/642e501f@3440c31 restored per Frozen Contract (turning GREEN) plus connector-side regressions: scope-state exclusion, narrow-prune/re-expand, upgrade path, and Role A four forbidden-skip conditions parameterization"
+  "tests/connectors/test_issue82_branch_scope_change.py": "RED characterization from agent/82/642e501f@3440c31 restored per Frozen Contract (turning GREEN) plus connector-side regressions: scope-state exclusion, narrow-prune/re-expand, upgrade path, and Role A four forbidden-skip conditions parameterization",
+  "tests/pipeline/test_issue82_scope_backfill.py": "Sync-side regressions: serving-only count truth, no-change backfill routing and honest accounting, true fast-path control, missing-direction service reporting, Role A only-new-scope backfill and authority==serving-ledger invariant"
  },
  "candidate": null,
  "investigation_artifact": null
