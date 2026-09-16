@@ -18,7 +18,7 @@
 
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
@@ -218,6 +218,41 @@ async def _ensure_admin_user(session: AsyncSession) -> str:
     session.add(User(email=admin_email, role="admin", password_hash=hash_password(password)))
     logger.info("已创建 admin 用户: %s", admin_email)
     return "created"
+
+
+def _build_withdrawn_identity_provider(sync_session_factory) -> "Callable[[], list[str]]":
+    """Issue #84/r6:生产 withdrawn-identity provider wiring(caller 所有权)。
+
+    职责链(R6 REQUIRED CORRECTION):factory → **acquire 真实 Session** →
+    Session-only 只读 accessor(withdrawn_document_source_ids_sync)→
+    deterministic close。会话获取与关闭由 caller/wiring 侧负责;lifecycle
+    accessor 保持 Session-only 契约,不感知 factory、不创建/管理 Session。
+
+    fail-closed:查询/会话异常向上传播,绝不回落空集(空集会让墓碑知识
+    复活)。TTL 缓存与政策真值同量级,墓碑/接替事务提交后 ≤TTL 收敛到
+    检索面。
+    """
+    # 延迟导入与 lifespan 既有风格一致(模块导入面最小化)。
+    from backend.services.knowledge_policy import CachedSourceExclusions
+
+    def _load() -> list[str]:
+        # factory → acquire 真实 Session → accessor → 无论成败 deterministic close。
+        # 延迟导入与 lifespan 既有风格一致(模块导入面最小化)。
+        from backend.services.document_lifecycle import (
+            withdrawn_document_source_ids_sync,
+        )
+
+        session = sync_session_factory()
+        try:
+            return withdrawn_document_source_ids_sync(session)
+        finally:
+            session.close()
+
+    identities = CachedSourceExclusions(
+        _load,
+        ttl=float(os.environ.get("WITHDRAWN_IDENTITY_TTL", "30")),
+    )
+    return lambda: identities.get()
 
 
 @asynccontextmanager
@@ -425,14 +460,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # 同构(exact or startswith)。fail-closed 与在服代 provider 同构:
         # 查询失败 → 异常向上传播(绝不无限制检索);TTL 缓存与政策真值
         # 同量级,墓碑/接替事务提交后 ≤TTL 收敛到检索面。
-        _withdrawn_sync_session_factory = get_sync_session_factory(settings.postgres_dsn)
-        _withdrawn_identities = CachedSourceExclusions(
-            lambda: withdrawn_document_source_ids_sync(_withdrawn_sync_session_factory),
-            ttl=float(os.environ.get("WITHDRAWN_IDENTITY_TTL", "30")),
+        # r6 修复:factory → acquire 真实 Session → Session-only accessor →
+        # deterministic close(wiring/caller 所有权;原实现直传工厂触发
+        # AttributeError,生产 /ask 全量中断,见 #84)。
+        _withdrawn_identity_provider = _build_withdrawn_identity_provider(
+            get_sync_session_factory(settings.postgres_dsn)
         )
-
-        def _withdrawn_identity_provider() -> list[str]:
-            return _withdrawn_identities.get()
 
         searcher = HybridSearcher(
             weaviate_client,
