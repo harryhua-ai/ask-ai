@@ -127,6 +127,17 @@ export function bucketOfDocument(doc: BucketInput): BucketKey {
   }
 }
 
+/**
+ * Issue #83(lifecycle authority ⊨ repair authority):退役生命周期判定。
+ *
+ * superseded / deleted(墓碑)知识**不得提供修复/重新处理入口**(呈现层
+ * 守卫;后端受理/执行两阶段同样 fail-closed)。退役是正常的审计历史记录,
+ * 管理员正确动作 = 无需处理;权威源恢复由 sync/reconciliation 重建。
+ */
+export function isRetiredLifecycle(lifecycle: string | null | undefined): boolean {
+  return lifecycle === "superseded" || lifecycle === "deleted";
+}
+
 export const BUCKET_LABELS: Record<BucketKey, string> = {
   current: "当前在服",
   attention: "需要关注",
