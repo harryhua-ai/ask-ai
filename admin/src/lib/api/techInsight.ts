@@ -244,12 +244,22 @@ export interface AnswerGapItem {
   created_at: string;
 }
 
+/** 聚类可用性真值(#59 G1/C2 只读投影;全量缺口聚类,忽略筛选与窗口)。 */
+export interface AnswerGapAvailability {
+  /** 全部缺口聚类计数;0 = 无聚类证据(不等于「无缺口」结论,不区分未聚类/零缺口)。 */
+  gap_clusters_total: number;
+  /** 分类聚合覆盖上界 = MAX(period_end);null = 无聚类覆盖真值。 */
+  classification_covered_through: string | null;
+}
+
 export interface AnswerGapList {
   items: AnswerGapItem[];
   total: number;
   page: number;
   size: number;
   miss_type_summary: Record<string, number>;
+  /** 可用性真值(#59 G1;可选,向后兼容)。 */
+  availability?: AnswerGapAvailability;
 }
 
 export interface AnswerGapQuery {

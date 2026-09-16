@@ -21,6 +21,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import LoadError from "@/components/LoadError";
 import { fetchAnswerGaps, type AnswerGapQuery } from "@/lib/api/techInsight";
+import { resolveAnalysisWindow } from "@/lib/analysisWindow";
 import {
   Table,
   TableHeader,
@@ -37,6 +38,48 @@ import { GapCauseFilter } from "./GapCauseFilter";
 import { AnalyticsWindowControl, type AnalyticsWindowValue } from "./AnalyticsWindowControl";
 import { GapTopicCell } from "./GapTopicCell";
 import GapPanel from "./GapPanel";
+
+// 空态四态区分(#59 G1,C2+C3;§7 视觉语法)。判定只消费客户端筛选真值与
+// 服务端 availability 真值(全量聚类计数 + 分类覆盖上界),不制造零、不发明
+// 刷新溯源(不区分「从未聚类」与「聚类零缺口」)、不重加趋势/分布。
+// 互斥分支,确定性优先级:
+//   no-data  聚类总数为 0 → 「暂无缺口聚类证据」(可能尚未执行聚类,或最近
+//            一次聚类未发现缺口;不得暗示无缺口);
+//   stale    窗口有起点且分类覆盖上界早于窗口起点 → 琥珀色陈旧横幅(证据
+//            尚未聚合到当前窗,不暗示无缺口);
+//   filtered 显式筛选(status/cause/q)或窗口收窄后为空 → 既有文案 + 扩大提示;
+//   zero     全部时间 + 无任何筛选而队列为空 → 真实零态。
+type GapEmptyStateKind = "filtered" | "zero" | "no-data" | "stale";
+
+function resolveGapEmptyState(opts: {
+  hasFieldFilters: boolean;
+  window: AnalyticsWindowValue;
+  gapClustersTotal: number | undefined;
+  classificationCoveredThrough: string | null;
+}): GapEmptyStateKind {
+  const {
+    hasFieldFilters,
+    window: winValue,
+    gapClustersTotal,
+    classificationCoveredThrough,
+  } = opts;
+  if (gapClustersTotal === 0) return "no-data";
+  if (winValue !== "all" && !hasFieldFilters && classificationCoveredThrough) {
+    const winStart = new Date(
+      `${resolveAnalysisWindow(winValue).fromISO}Z`,
+    ).getTime();
+    const covered = new Date(classificationCoveredThrough).getTime();
+    if (
+      !Number.isNaN(winStart) &&
+      !Number.isNaN(covered) &&
+      covered < winStart
+    ) {
+      return "stale";
+    }
+  }
+  if (hasFieldFilters || winValue !== "all") return "filtered";
+  return "zero";
+}
 
 export default function AnswerGapsTab() {
   const [search, setSearch] = useState("");
@@ -168,14 +211,54 @@ export default function AnswerGapsTab() {
               </TableHeader>
               <TableBody>
                 {items.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={7}>
-                      <div className="py-6 text-center text-[13px] text-[var(--t3)]">
-                        当前筛选条件下无答案缺口证据
-                        {window !== "all" && "（可尝试扩大时间范围）"}
-                      </div>
-                    </TableCell>
-                  </TableRow>
+                  (() => {
+                    const availability = data?.availability;
+                    const coveredThrough =
+                      availability?.classification_covered_through ?? null;
+                    const kind = resolveGapEmptyState({
+                      hasFieldFilters: Boolean(status || cause || search),
+                      window,
+                      gapClustersTotal: availability?.gap_clusters_total,
+                      classificationCoveredThrough: coveredThrough,
+                    });
+                    // §7 视觉语法:stale=琥珀(中间/陈旧),zero=绿(健康/真实零),
+                    // filtered/no-data=中性灰阶(信息性,非异常)。
+                    const tone =
+                      kind === "stale"
+                        ? "var(--warn)"
+                        : kind === "zero"
+                          ? "var(--ok)"
+                          : "var(--t3)";
+                    return (
+                      <TableRow>
+                        <TableCell colSpan={7}>
+                          <div
+                            data-gap-empty-state={kind}
+                            className="py-6 text-center text-[13px]"
+                            style={{ color: tone }}
+                          >
+                            {kind === "no-data" ? (
+                              <>
+                                暂无缺口聚类证据：可能尚未执行聚类，或最近一次聚类未发现缺口；出现未回答问题聚合后会在此呈现
+                              </>
+                            ) : kind === "stale" ? (
+                              <>
+                                聚类证据覆盖至{" "}
+                                {coveredThrough ? coveredThrough.slice(0, 10) : ""}，此后数据尚未聚合
+                              </>
+                            ) : kind === "zero" ? (
+                              <>当前没有答案缺口</>
+                            ) : (
+                              <>
+                                当前筛选条件下无答案缺口证据
+                                {window !== "all" && "（可尝试扩大时间范围）"}
+                              </>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })()
                 ) : (
                   items.map((gap) => (
                     <TableRow
