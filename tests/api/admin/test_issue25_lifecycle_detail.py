@@ -15,7 +15,6 @@ from datetime import UTC, datetime
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
 
 from backend.auth.jwt import create_access_token, hash_password
 from backend.db.models import (
@@ -27,9 +26,9 @@ from backend.db.models import (
 from backend.main import app
 from backend.services.document_lifecycle import (
     ABSENCE_META_KEY,
-    RETIREMENT_META_KEY,
-    RETIRE_REASON_DISCOVERY,
     ACTOR_SYNC_ABSENCE,
+    RETIRE_REASON_DISCOVERY,
+    RETIREMENT_META_KEY,
 )
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")

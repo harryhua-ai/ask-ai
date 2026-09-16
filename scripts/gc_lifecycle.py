@@ -62,8 +62,10 @@ def resolve_apply(requested: bool, settings) -> tuple[bool, str]:
     if not settings.lifecycle_gc_apply:
         return (
             False,
-            "apply 被拒绝:LIFECYCLE_GC_APPLY 未开启(物理清除是 config-gated "
-            "受控操作;先归档 dry-run 输出,再显式设置 LIFECYCLE_GC_APPLY=true)",
+            (
+                "apply 被拒绝:LIFECYCLE_GC_APPLY 未开启(物理清除是 config-gated "
+                "受控操作;先归档 dry-run 输出,再显式设置 LIFECYCLE_GC_APPLY=true)"
+            ),
         )
     return True, "config-gated apply(LIFECYCLE_GC_APPLY=true)"
 
