@@ -39,7 +39,29 @@
   "admin/src/pages/**": "List page and detail page consume sourceTypeLabel from sourceEditorModel.ts; RCA predicts zero page edits, kept conditional only in case GREEN requires a rendering-side adjustment; any change stays inside type-truth-to-display consistency.",
   "admin/tests/**": "TDD contract: RED must reproduce wrong Wiki rendering; existing tests DataSources.test.tsx #2, DataSourcesConvergence A-P1-05 case, and DataSourceDetail identity-row assertion encode the old github/local_git->Wiki mapping and must be updated; plus new regression tests that unknown/missing types never render Wiki."
  },
- "candidate": null,
+ "candidate": {
+  "sha": "25c67e634b59b0d61cf1f0fafdf75374e60a5cca",
+  "branch": "agent/81/e2191d2d",
+  "preserved_at": "2026-09-16T01:19:26Z",
+  "scope": {
+   "pass": true,
+   "enforcement": "strict",
+   "paths": {
+    "admin/src/lib/sourceEditorModel.ts": "EXPECTED",
+    "admin/tests/DataSources.test.tsx": "CONDITIONAL",
+    "admin/tests/dataSources/DataSourceDetail.test.tsx": "CONDITIONAL",
+    "admin/tests/dataSources/DataSourcesConvergence.test.tsx": "CONDITIONAL"
+   },
+   "counts": {
+    "EXPECTED": 1,
+    "CONDITIONAL": 3,
+    "UNKNOWN": 0,
+    "FORBIDDEN": 0
+   },
+   "violations": [],
+   "budget_evidence": "RCA: backend list API serializes DB truth verbatim (_to_out type=ds.type, backend/api/admin/data_sources.py); DB has no wiki connector and no write path produces type wiki (connector registry: github/local_git/filesystem/woocommerce/web_crawl only). Mislabel origin is frontend admin/src/lib/sourceEditorModel.ts SOURCE_TYPE_OPERATION_LABELS mapping github/local_git -> 'Wiki' (v1.6.3 A-P1-05 ops vocabulary, content-classification not connector type), consumed by list type column, type filter, and detail identity row. Fix = render canonical label (existing TYPE_LABELS vocabulary) at that single mapping point; pages expected unchanged but kept conditional in case rendering needs adjustment; tests conditional for RED->GREEN updates plus new unknown/missing-type fail-visible regression."
+  }
+ },
  "investigation_artifact": null,
  "change_budget_established_at": "2026-09-16T01:09:59Z"
 }
