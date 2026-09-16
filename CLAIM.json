@@ -1,16 +1,19 @@
 {
  "v": 2,
  "task": 25,
- "claim_id": "harryhua-ai-20260916T030306-136c8ca3",
+ "claim_id": "harryhua-ai-20260916T041051-a21f6978",
  "agent": "harryhua-ai",
- "claimed_at": "2026-09-16T03:03:06Z",
- "lease_expires_at": "2026-09-16T03:48:06Z",
+ "claimed_at": "2026-09-16T04:10:52Z",
+ "lease_expires_at": "2026-09-16T04:55:52Z",
  "baseline_commit": "b338c3c7eeafec9f57176aa82dd743b9f195153d",
  "status": "active",
- "branch": "agent/25/136c8ca3",
- "heartbeat_at": "2026-09-16T03:03:06Z",
- "note": null,
- "supersedes": null,
+ "branch": "agent/25/a21f6978",
+ "heartbeat_at": "2026-09-16T04:10:52Z",
+ "note": "takeover: Same executor, own STALE lease (claim harryhua-ai-20260916T030306-136c8ca3): 45min lease expired mid-implementation while full regression suite ran; work committed+pushed to agent/25/136c8ca3 @ 5f0c682 as insurance before takeover. Implementation continue per coordinator authorization (v9 promote).",
+ "supersedes": {
+  "claim_id": "harryhua-ai-20260916T030306-136c8ca3",
+  "sha": "c9b4eb6444b2601aa44d33799cc2992aef45e3a4"
+ },
  "mode": "implementation",
  "policy_digest": "e7b9787f104e742836eb0f788e49369cdcbebe367c2eeaa9ad4260f4e841fe03",
  "execution_context": "orchestrated",
@@ -25,7 +28,7 @@
    "docs/**"
   ]
  },
- "workflow": "normal-risk",
+ "workflow": "high-risk",
  "change_budget": {
   "expected": [
    "backend/connectors/filesystem.py",
@@ -51,7 +54,5 @@
  },
  "scope_justifications": {},
  "candidate": null,
- "investigation_artifact": null,
- "change_budget_established_at": "2026-09-16T03:04:19Z",
- "promoted_at": "2026-09-16T03:36:38Z"
+ "investigation_artifact": null
 }
