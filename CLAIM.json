@@ -11,14 +11,13 @@
  "heartbeat_at": "2026-09-16T03:03:06Z",
  "note": null,
  "supersedes": null,
- "mode": "investigation",
- "policy_digest": "87f06288bfd9b9262c7ccc52311f296084933babecea82b6928fe57df15e422b",
+ "mode": "implementation",
+ "policy_digest": "e7b9787f104e742836eb0f788e49369cdcbebe367c2eeaa9ad4260f4e841fe03",
  "execution_context": "orchestrated",
  "assignment": {
   "issue_type": "bug",
-  "workflow": "normal-risk",
-  "lane": "lane-3",
-  "implementation_authorized": false,
+  "workflow": "high-risk",
+  "implementation_authorized": true,
   "investigation_paths": [
    "backend/**",
    "tests/**",
@@ -53,5 +52,6 @@
  "scope_justifications": {},
  "candidate": null,
  "investigation_artifact": null,
- "change_budget_established_at": "2026-09-16T03:04:19Z"
+ "change_budget_established_at": "2026-09-16T03:04:19Z",
+ "promoted_at": "2026-09-16T03:36:38Z"
 }
