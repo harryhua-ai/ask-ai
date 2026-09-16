@@ -38,8 +38,10 @@ describe("SourceHealthPanel(#11 Health Authority:W2 /sync-health 直呈)", () =>
     // 后端状态词表 → 本地化徽章(不得改判)
     expect(screen.getAllByText("正常").length).toBe(3);        // connectivity/coverage/consistency ok
     expect(screen.getAllByText("健康").length).toBe(2);        // sync healthy + overall HEALTHY
-    // 后端 evidence 原文逐字呈现
-    expect(screen.getByText("last success 3600s ago (threshold=7200s)")).toBeInTheDocument();
+    // #54 R6:freshness 证据人类化呈现(原文整串收进 title,技术核证仍可得);
+    // 非 freshness 维 evidence 仍逐字直呈
+    expect(screen.getByText("最近成功 1小时前；要求 2小时内有成功同步")).toBeInTheDocument();
+    expect(screen.getByTitle("last success 3600s ago (threshold=7200s)")).toBeInTheDocument();
     expect(screen.getByText("24/25 syncs succeeded in 30d")).toBeInTheDocument();
   });
 
@@ -80,7 +82,9 @@ describe("SourceHealthPanel(#11 Health Authority:W2 /sync-health 直呈)", () =>
       />,
     );
     expect(screen.getAllByText("过期").length).toBe(2); // overall STALE + freshness stale
-    expect(screen.getByText("no successful sync on record")).toBeInTheDocument();
+    // #54 R6:已知权威格式本地化,原文收进 title
+    expect(screen.getByText("暂无成功同步记录")).toBeInTheDocument();
+    expect(screen.getByTitle("no successful sync on record")).toBeInTheDocument();
   });
 
   it("passes unknown backend vocabulary through verbatim (no reinterpretation)", () => {
@@ -97,5 +101,57 @@ describe("SourceHealthPanel(#11 Health Authority:W2 /sync-health 直呈)", () =>
     render(<SourceHealthPanel />);
     expect(screen.getByText("暂无健康数据(等待后端 /sync-health 提供)")).toBeInTheDocument();
     expect(screen.queryByText("连接")).not.toBeInTheDocument();
+  });
+});
+
+// ==================== Issue #54(R3+R4/R5/R6:呈现层差距收敛) ====================
+
+describe("SourceHealthPanel(#54:rollup 解释 + freshness 单位 + 时间人类化)", () => {
+  it("R3+R4:overall=健康与同步降级/覆盖未知并置时,必须出现 rollup 解释行(矛盾被显式解释)", () => {
+    render(
+      <SourceHealthPanel
+        health={health({
+          sync: dim("degraded", "12/25 syncs succeeded in 30d"),
+          coverage: dim("unknown", "no structured coverage counters for this source type"),
+        })}
+      />,
+    );
+    // 解释行复述后端文档化优先级,消除「健康 vs 降级/未知」的表面矛盾
+    expect(screen.getByText(/整体=健康/)).toBeInTheDocument();
+    expect(screen.getByText(/近30天/)).toBeInTheDocument();
+    expect(screen.getByText(/不驱动整体/)).toBeInTheDocument();
+    expect(screen.getAllByText(/不拖低整体/).length).toBe(1);
+  });
+
+  it("R3+R4:ACTION_REQUIRED 解释行列出后端既定的同级驱动因子", () => {
+    render(
+      <SourceHealthPanel
+        health={health({
+          overall: "ACTION_REQUIRED",
+          connectivity: dim("failed", "latest run #9 failed@FETCH"),
+          currency: dim("degraded", "member drift unresolved"),
+        })}
+      />,
+    );
+    expect(screen.getByText(/整体=需处理/)).toBeInTheDocument();
+    expect(screen.getByText(/连接失败/)).toBeInTheDocument();
+    expect(screen.getByText(/上游成员对账降级/)).toBeInTheDocument();
+  });
+
+  it("R6:freshness 证据以人类可读单位呈现「最近成功 + 允许阈值」,原文收进 title", () => {
+    render(<SourceHealthPanel health={health()} />);
+    expect(screen.getByText("最近成功 1小时前；要求 2小时内有成功同步")).toBeInTheDocument();
+    expect(screen.getByTitle("last success 3600s ago (threshold=7200s)")).toBeInTheDocument();
+  });
+
+  it("R5:维度 as_of 主呈现为人类化相对时间,原样 ISO 收进 title", () => {
+    const asOf = new Date().toISOString();
+    render(
+      <SourceHealthPanel health={health({ freshness: dim("fresh", "last success 60s ago (threshold=7200s)", asOf) })} />,
+    );
+    expect(screen.getByText(/截至/)).toBeInTheDocument();
+    expect(screen.getByTitle(asOf)).toBeInTheDocument();
+    // 不再裸呈 ISO 主文本
+    expect(screen.queryByText(`截至 ${asOf}`)).not.toBeInTheDocument();
   });
 });

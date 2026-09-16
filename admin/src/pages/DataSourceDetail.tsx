@@ -1021,8 +1021,10 @@ export default function DataSourceDetail() {
                                               </dd>
                                             </div>
                                           </dl>
+                                          {/* #54 R5:完成时间主呈现 = 相对时间,原样 ISO 收进 title */}
                                           <p className="mt-1 text-[10px] text-muted-foreground">
-                                            完成于 {truthQuery.data.latest_repair_task.finished_at ?? "—"} ·
+                                            完成于{" "}
+                                            <RelativeTime iso={truthQuery.data.latest_repair_task.finished_at} /> ·
                                             执行者 {truthQuery.data.latest_repair_task.requested_by ?? "—"}
                                           </p>
                                         </div>

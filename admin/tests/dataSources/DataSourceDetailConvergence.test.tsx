@@ -472,3 +472,39 @@ describe("v1.6.3 Design Remediation A 类呈现(数据源详情)", () => {
     expect(screen.getByTitle(/woo-store\/main\/p1/)).toBeInTheDocument();
   });
 });
+
+// ==================== Issue #54 R5:修复验证卡完成时间人类化(ISO 收进 title) ====================
+
+describe("Issue #54 R5(修复验证卡 finished_at)", () => {
+  it("U-8 验证卡:完成于 = 人类化相对时间,原样 ISO 仅存于 title", async () => {
+    const finishedAt = new Date(Date.now() - 3600 * 1000).toISOString();
+    vi.mocked(useSourceDocumentTruth).mockReturnValue({
+      data: {
+        ...truth,
+        latest_repair_task: {
+          id: "task-1",
+          source_id: "woo-store",
+          doc_source_id: "woo-store/main/gone",
+          status: "succeeded",
+          stage: null,
+          requested_by: "ops@x.com",
+          idempotency_key: null,
+          result: { version_seq: 5, chunks_serving: 12, chunks_total: 12, consistency: "passed" },
+          error: null,
+          events: [],
+          created_at: new Date(Date.now() - 7200 * 1000).toISOString(),
+          finished_at: finishedAt,
+        },
+      } as never,
+      isLoading: false, isError: false, error: null, refetch: vi.fn(),
+    } as never);
+    renderDetail();
+    fireEvent.click(screen.getAllByTestId("doc-row-toggle")[1]);
+    expect(await screen.findByTestId("repair-verification-card")).toBeInTheDocument();
+    // 主呈现 = 相对时间(RelativeTime),ISO 不再作主文本
+    expect(screen.getByTitle(finishedAt)).toBeInTheDocument();
+    expect(screen.queryByText(`完成于 ${finishedAt}`)).not.toBeInTheDocument();
+    const titled = screen.getByTitle(finishedAt);
+    expect(titled.textContent).toMatch(/小时前/);
+  });
+});
