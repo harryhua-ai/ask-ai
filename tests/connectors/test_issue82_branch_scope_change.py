@@ -200,6 +200,31 @@ def _lifecycle_of(factory, source_id: str) -> str:
         return doc.lifecycle
 
 
+@pytest.fixture(autouse=True)
+async def _ensure_ledger_schema():
+    """每个测试前确保共享测试库 schema 在位。
+
+    全量套件中 conftest 的 ``db_engine`` fixture teardown 会
+    ``Base.metadata.drop_all`` 清空共享库;本文件的账本面自建同步引擎、
+    不经过该 fixture,故单文件运行健康、全量排序下会撞上「表不存在」。
+    与 test_sync_membership 的 db_engine fixture 同一保障模式。
+    """
+    from backend.config import load_settings
+    from backend.db.session import get_engine, init_db
+
+    dsn = os.environ.get("TEST_DATABASE_URL", load_settings().postgres_dsn)
+    engine = get_engine(dsn)
+    try:
+        await init_db(engine)
+        # 共享测试库的既有表需要补加性列(create_all 不加列,与 conftest 同)
+        from scripts.migrate_add_membership_currency import migrate as _migrate
+
+        await _migrate(engine)
+    finally:
+        await engine.dispose()
+    yield
+
+
 # ======================  A. 收窄方向(现状健康,GREEN 表征)  ======================
 
 
