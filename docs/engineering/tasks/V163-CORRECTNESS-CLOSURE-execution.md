@@ -1,8 +1,59 @@
 # V1.6.3 CORRECTNESS CLOSURE — Execution Report (#25 / #77 / #91 / #92)
 
-Status: `V1.6.3_CORRECTNESS_CANDIDATE_READY_FOR_ROLE_A_REVIEW_2`
+Status: `V1.6.3_CORRECTNESS_CANDIDATE_READY_FOR_ROLE_A_REVIEW_3`
 Executor: Role B
 Date: 2026-09-17
+
+---
+
+## 0a. REVIEW_3 CORRECTION — immediate content-change invalidation (no TTL wait)
+
+Role A review 2 verdict: BLOCKED — the TTL-aging GREEN proved `unsafe → wait → safe →
+re-evaluate`, but the contract requires same-source content change to invalidate
+suppression **immediately**; the 7-day window must only be a bounded fallback.
+
+### Corrected semantics (fingerprint-invalidated suppression, TTL as fallback)
+
+- **Narrow connector capability (no redesign):** `GitHubConnector` gains the optional
+  duck-typed capability `membership_content_fingerprints(source_ids) -> dict[str, str]`
+  — the CURRENT authoritative content fingerprint per identity, computed with the
+  EXACT same transform as ingestion's `content_hash` (`read_text(utf-8, replace)`
+  universal-newline translation → utf-8 sha256) but read from the **git object
+  database** (`git show origin/<branch>:<rel>`), so it is correct regardless of the
+  transient multi-branch/reset state of the shared clone working tree. Narrow by
+  construction: it is only invoked for identities that have an exclusion row
+  (typically few), zero full-corpus cost.
+- **Reconcile comparison (membership_currency):** for each in-window exclusion row:
+  fingerprint == recorded `content_hash` (content unchanged) → suppression stands
+  within the window; fingerprint differs (authoritative content changed) →
+  suppression is invalidated IMMEDIATELY — the identity re-enters actionable
+  `missing` → backfill re-fetches it → the builder re-judges under the current
+  policy (safe → activate + clear row; unsafe → verdict swapped in place).
+  Connectors WITHOUT the capability fall back to the Tier-2 suppression window
+  (TTL remains the bounded fallback covering policy/safety-rule evolution).
+- Everything from REVIEW_2 is preserved: builder-always-re-judges (tier 1),
+  bounded TTL fallback, single-verdict-per-identity rows, expired-out-of-authority
+  purge hygiene, zero re-embedding of unchanged excluded content, transient
+  fail-closed.
+
+### REVIEW_3 RED → GREEN
+
+`test_immediate_content_change_reevaluation_without_ttl` (committed FIRST as RED,
+`38db48b`; run against the REVIEW_2 tree — no TTL aging anywhere):
+
+| Cycle | Behavior asserted | Pre-fix (1032954) | Post-fix |
+|---|---|---|---|
+| 1: X unsafe (hash A) | exclusion(A) persisted, not serving | PASS | PASS |
+| 2 IMMEDIATELY: X → safe (hash B), fingerprint drift | stale exclusion must not suppress → refetch → safety passes → activate → row cleared → serving | **FAIL** (`TTL 窗口内永久缺席`) | **PASS** |
+| 3: unchanged (hash B) | true no-change, zero re-embed, zero actionable missing | n/a | **PASS** |
+
+Companion regressions: `test_fingerprint_match_keeps_suppression_without_reembed`
+(fingerprint equality keeps suppression — the loop is NOT recreated) and
+`test_fingerprint_capability_absent_keeps_ttl_fallback` (capability-less connectors
+keep Tier-2 window behavior). Connector-level: `tests/connectors/test_issue91_content_fingerprints.py`
+proves hash parity with `RawDocument.content_hash` byte-for-byte (including CRLF and
+CJK newline-translation surfaces), drift detection across a moved remote ref, and
+absence semantics for unknown/out-of-scope identities.
 
 ---
 
@@ -366,25 +417,28 @@ surfaces: active/missing/permanent-excluded/retired/failed counts all exposed).
 
 ## I. Full regression
 
-Full backend suite on the REVIEW_2 candidate tree (`tests --ignore=tests/e2e
---ignore=tests/runtime`, HF_HUB_OFFLINE=1, ~171s):
+Full backend suite on the REVIEW_3 candidate tree (`tests --ignore=tests/e2e
+--ignore=tests/runtime`, HF_HUB_OFFLINE=1, ~177s):
 
-**2864 passed / 4 failed / 5 skipped / 4 errors** — every failure/error reproduced
-identically on the pristine baseline `42b205aa` (clean detached worktree A/B):
+**2870 passed / 3 failed / 5 skipped / 4 errors** (second same-scope run surfaced the
+shared-DB flake family: same tree, drifting failure membership — the established
+four-point discipline). Every deterministic failure/error reproduced identically on
+the pristine baseline `42b205aa` (clean detached worktree A/B):
 
 | Symptom | Candidate | Baseline | Verdict |
 |---|---|---|---|
 | `test_gap_export` ×2 | failed | failed | baseline-existing (known signature since r5) |
 | `test_lifespan_smoke` | failed | failed | baseline-existing environmental |
-| `test_sync_executor_loop::…bounded_retry` | failed (isolated too) | failed (isolated too) | baseline-existing on this machine/DB state |
 | `embedder/test_bge` ×4 | error (HF offline) | error (HF offline) | baseline-existing environmental |
-| `analytics_business`/`leads` KPI family | drifts run-to-run on identical tree | same drift | shared-DB ordering flake family (known r5 discipline) |
+| `test_recovery_semantics` ×4 | failed isolated | failed isolated (4F/19P identical) | baseline-existing on this machine/DB state |
+| `analytics_business`/`leads` KPI family | drifts run-to-run on identical tree | same drift | shared-DB ordering flake family |
 
 **Zero diff-attributable failures.**
 
-Focused/subsystem evidence (REVIEW_2 tree): stale-exclusion suite 5/5 (RED first);
-existing #91 suites 12/12; builder/membership/#82/#25 focused 54 passed;
-#77 focused 18 passed; migration-manifest suites 39 passed; ruff clean on all
+Focused/subsystem evidence (REVIEW_3 tree): stale-exclusion suite 8/8 (immediate
+3-cycle RED first: `38db48b`); connector fingerprint suite 3/3 (hash parity + drift +
+absence semantics); existing #91 suites 12/12; builder/membership/#82/#25 focused 54
+passed; #77 focused 18 passed; migration-manifest suites green; ruff clean on all
 touched files.
 
 ## J. Production READ-ONLY observations
@@ -433,7 +487,7 @@ touched files.
 
 ## M/N. Candidate SHA / PR
 
-- Candidate commits (branch `exec/v163-correctness-closure`, REVIEW_2):
+- Candidate commits (branch `exec/v163-correctness-closure`, REVIEW_3):
   - `45738ef` docs: RCA + dependency graph + minimal plan
   - `ca271cb` test: RED characterization round 1 (baseline-failing evidence)
   - `468646d` migrate(#92): identity widening migration + manifest registration
@@ -441,5 +495,9 @@ touched files.
   - `c6fc27c` feat(#91): exclusion partition + membership subtraction + accounting
   - `cc5ba38`/`a2b61ec` docs: execution report round 1
   - `fb7f1f8` test(#91): RED for stale-exclusion blocker (fails on a2b61ec behavior)
-  - REVIEW_2 fix commit: (see git log — implementation + report update)
+  - `5811a41` fix(#91): bounded suppression window + re-evaluation (REVIEW_2)
+  - `1032954` docs: REVIEW_2 report
+  - `38db48b` test(#91): RED for immediate content-change re-evaluation (no TTL)
+  - `c0ae155` fix(#91): fingerprint-invalidated suppression (REVIEW_3)
+  - REVIEW_3 report commit: (see git log)
 - PR: https://github.com/harryhua-ai/ask-ai/pull/93 (base `main`, not merged, not deployed)
