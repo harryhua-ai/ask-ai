@@ -1,8 +1,72 @@
 # V1.6.3 CORRECTNESS CLOSURE — Execution Report (#25 / #77 / #91 / #92)
 
-Status: `V1.6.3_CORRECTNESS_CANDIDATE_READY_FOR_ROLE_A`
+Status: `V1.6.3_CORRECTNESS_CANDIDATE_READY_FOR_ROLE_A_REVIEW_2`
 Executor: Role B
 Date: 2026-09-17
+
+---
+
+## 0. REVIEW_2 CORRECTION — stale-exclusion invalidation/re-evaluation (P0 blocker fix)
+
+Role A review 1 verdict: BLOCKED — `reconcile_membership` collapsed exclusions to
+`source_id` with **unbounded** suppression: once recorded, an identity could never
+re-enter actionable missing even after its authoritative content changed, so the
+builder never re-evaluated and valid content could remain permanently absent.
+
+### Corrected semantics (two-tier, bounded)
+
+- **Tier 1 — immediate (builder is the only judge).** The exclusion table is
+  bookkeeping, never a decision gate: `GenerationBuilder` runs the CURRENT policy's
+  `check_content` on every piece of content that reaches it. Any content change that
+  reaches the builder (normal incremental `fetch_changes` path, refill, backfill) is
+  re-evaluated immediately: safe → activates and the exclusion row is deleted in the
+  activation transaction; unsafe-with-different-hash → the row is updated in place
+  (single-verdict-per-identity).
+- **Tier 2 — bounded backstop (suppression window).** `ingestion_exclusions` PK is now
+  `source_id` alone (row = the verdict on the identity's CURRENT content; `content_hash`
+  is an attributed column). Reconcile-time suppression is bounded by
+  `INGESTION_EXCLUSION_REEVALUATION_DAYS = 7` (from `last_confirmed_at`,
+  `backend/services/ingestion_exclusions.py`): an expired row no longer suppresses
+  missing, so the identity re-enters actionable missing → backfill re-fetches it →
+  the builder re-judges under the current policy → the verdict is refreshed
+  (same-unsafe-content: `times_confirmed`+1, suppression window restarts, **zero
+  embedding**; now-safe: activate + clear; changed-unsafe: verdict swapped in place).
+  Policy/safety-rule evolution therefore has a deterministic re-evaluation path.
+- **Hygiene:** inside the reconcile transaction, expired rows whose identity has LEFT
+  the authoritative enumeration are purged (no suppression/audit purpose remains);
+  expired rows still inside the enumeration are retained — they ARE the re-evaluation
+  request.
+- **Bounded cost:** a re-evaluation costs one content fetch + safety scan per expired
+  identity (zero embedding) and a full `fetch_all` happens only in rounds where
+  expired identities exist (≤ once per window per affected source) — the original
+  repeated-GPU loop is NOT recreated (proven by
+  `test_expired_exclusion_same_unsafe_content_reconfirmed_without_embedding`).
+
+Single implementation surface: `backend/services/ingestion_exclusions.py`
+(window constant, `record_permanent_exclusion` upsert with content-transition
+semantics, `suppression_excluded_ids`, `purge_expired_out_of_authority`,
+`delete_for_identities`); consumed by `membership_currency` and `generation_builder`.
+
+### REVIEW_2 RED → GREEN
+
+New suite `tests/pipeline/test_issue91_stale_exclusion_reevaluation.py`, committed FIRST
+as RED against the pre-fix tree (`fb7f1f8`, run on a2b61ec behavior — implementation
+stashed), then GREEN on the corrected tree:
+
+| Test | Pre-fix (a2b61ec) | Post-fix |
+|---|---|---|
+| `test_stale_exclusion_cycle2_reevaluates_changed_content` (Role A 3-cycle sequence) | **FAIL** — content changed to safe → suppressed forever, never refetched (`永久缺席`) | **PASS** — expired suppression → refetched → activated → stale row cleared → cycle 3 true no-change, zero re-embed, zero actionable missing |
+| `test_expired_exclusion_same_unsafe_content_reconfirmed_without_embedding` | **FAIL** — never re-confirmed (`times_confirmed` stuck) | **PASS** — re-confirmed, window restarts, still non-serving, **zero embedding** |
+| `test_policy_evolution_reevaluates_previously_excluded_identity` | **FAIL** — no re-evaluation path | **PASS** — relaxed current policy re-judges after expiry → activates → row cleared |
+| `test_reconcile_purges_expired_exclusions_out_of_authority` | **FAIL** — expired out-of-authority row kept forever | **PASS** — purged in-reconcile; in-enumeration expired rows retained |
+| `test_incremental_content_change_bypasses_suppression_immediately` | **PASS** (protection; tier-1 already correct) | **PASS** |
+
+### Preserved invariants (re-verified)
+
+Eligible-set atomicity, zero re-embedding of unchanged excluded content, transient
+fail-closed, no best-effort partial activation, secrets/binaries never in serving
+truth, #71/#82 reconciliation, #77 evidence eligibility — all existing #91 suites
+(12 tests) plus focused generation/membership/sync/#25/#77 suites re-run green (§I).
 
 ---
 
@@ -302,24 +366,26 @@ surfaces: active/missing/permanent-excluded/retired/failed counts all exposed).
 
 ## I. Full regression
 
-Full backend suite on the final candidate tree (`tests --ignore=tests/e2e --ignore=tests/runtime`,
-HF_HUB_OFFLINE=1, ~175s):
+Full backend suite on the REVIEW_2 candidate tree (`tests --ignore=tests/e2e
+--ignore=tests/runtime`, HF_HUB_OFFLINE=1, ~171s):
 
-**2853 passed / 3 failed / 6 skipped / 4 errors** — clean A/B against pristine baseline
-`42b205aa` (temp detached worktree, identical invocation) shows an **identical failure set**:
+**2864 passed / 4 failed / 5 skipped / 4 errors** — every failure/error reproduced
+identically on the pristine baseline `42b205aa` (clean detached worktree A/B):
 
 | Symptom | Candidate | Baseline | Verdict |
 |---|---|---|---|
 | `test_gap_export` ×2 | failed | failed | baseline-existing (known signature since r5) |
 | `test_lifespan_smoke` | failed | failed | baseline-existing environmental |
+| `test_sync_executor_loop::…bounded_retry` | failed (isolated too) | failed (isolated too) | baseline-existing on this machine/DB state |
 | `embedder/test_bge` ×4 | error (HF offline) | error (HF offline) | baseline-existing environmental |
-| `analytics_business`/`leads` KPI family | drifts run-to-run on identical tree | same drift | shared-DB ordering flake family (known r5 discipline); file-level A/B identical |
+| `analytics_business`/`leads` KPI family | drifts run-to-run on identical tree | same drift | shared-DB ordering flake family (known r5 discipline) |
 
 **Zero diff-attributable failures.**
 
-Focused/subsystem evidence: new suites 17 passed; builder/membership/#82/#25 focused 54 passed;
-pipeline+retrieval+services 1249 passed; scripts+db+connectors 647 passed/5 skipped;
-migration-manifest suites 39 passed; ruff clean on all touched files.
+Focused/subsystem evidence (REVIEW_2 tree): stale-exclusion suite 5/5 (RED first);
+existing #91 suites 12/12; builder/membership/#82/#25 focused 54 passed;
+#77 focused 18 passed; migration-manifest suites 39 passed; ruff clean on all
+touched files.
 
 ## J. Production READ-ONLY observations
 
@@ -367,10 +433,13 @@ migration-manifest suites 39 passed; ruff clean on all touched files.
 
 ## M/N. Candidate SHA / PR
 
-- Candidate commits (branch `exec/v163-correctness-closure`):
+- Candidate commits (branch `exec/v163-correctness-closure`, REVIEW_2):
   - `45738ef` docs: RCA + dependency graph + minimal plan
-  - `ca271cb` test: RED characterization (baseline-failing evidence)
+  - `ca271cb` test: RED characterization round 1 (baseline-failing evidence)
   - `468646d` migrate(#92): identity widening migration + manifest registration
   - `41917d6` feat(#92): model columns 200→500
   - `c6fc27c` feat(#91): exclusion partition + membership subtraction + accounting
+  - `cc5ba38`/`a2b61ec` docs: execution report round 1
+  - `fb7f1f8` test(#91): RED for stale-exclusion blocker (fails on a2b61ec behavior)
+  - REVIEW_2 fix commit: (see git log — implementation + report update)
 - PR: https://github.com/harryhua-ai/ask-ai/pull/93 (base `main`, not merged, not deployed)
