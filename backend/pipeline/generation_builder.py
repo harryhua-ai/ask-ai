@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.db.models import (
@@ -244,12 +244,17 @@ class GenerationBuilder:
                 verdict = pipeline._safety.check_content(doc.content)
                 if not verdict.safe:
                     from backend.connectors.safety import record_safety_exclusion
+                    from backend.services.ingestion_exclusions import (
+                        record_permanent_exclusion,
+                    )
 
                     record_safety_exclusion(
                         pipeline.safety_stats, doc.source_id, verdict.reason, verdict.detail
                     )
                     # #91:确定性排除(内容纯函数)→ 分区登记,绝不进 failed。
-                    # 登记写失败按既有契约转瞬态失败(fail-closed,绝不静默)。
+                    # 本表只是记账,绝不是判定门:任何内容到达 builder 都已
+                    # 经过现行政策重判。登记写失败按既有契约转瞬态失败
+                    # (fail-closed,绝不静默)。
                     failure = DocFailure(
                         source_id=doc.source_id,
                         stage=STAGE_SAFETY_FILTER,
@@ -257,8 +262,13 @@ class GenerationBuilder:
                         retryable=False,
                         detail=verdict.reason,
                     )
-                    self._record_permanent_exclusion(
-                        doc, verdict.reason, verdict.detail, STAGE_SAFETY_FILTER
+                    record_permanent_exclusion(
+                        self._session_factory,
+                        source_id=doc.source_id,
+                        content_hash=doc.content_hash,
+                        reason=verdict.reason,
+                        detail=verdict.detail,
+                        stage=STAGE_SAFETY_FILTER,
                     )
                     excluded.append(failure)
                     continue
@@ -451,17 +461,13 @@ class GenerationBuilder:
                 if previous is not None and previous.generation_id != gen.id:
                     predecessor_gens.append(previous.generation_id)
                 total_chunks += len(p.chunks)
-            # #91:激活成功即清除该身份的陈旧排除登记(政策放宽自愈 —— 内容
-            # 重新通过安全判定并入服后,登记不再压制 missing 方向)。
+            # #91:激活成功即清除该身份的排除登记(内容重判通过 ⇒ 登记作废,
+            # 压制与重评估路径同步终结;政策放宽自愈)。
             if prepared:
-                from backend.db.models import IngestionExclusion
+                from backend.services.ingestion_exclusions import delete_for_identities
 
-                session.execute(
-                    delete(IngestionExclusion).where(
-                        IngestionExclusion.source_id.in_(
-                            [p.doc.source_id for p in prepared]
-                        )
-                    )
+                delete_for_identities(
+                    session, [p.doc.source_id for p in prepared]
                 )
             lifecycle.mark_generation_ready(
                 session,
@@ -491,49 +497,6 @@ class GenerationBuilder:
             len(excluded),
         )
         return gen, total_chunks, excluded
-
-    # ------------------------------------------------------------------ #
-    # #91:确定性永久排除登记(可审计;幂等 upsert)
-    # ------------------------------------------------------------------ #
-
-    def _record_permanent_exclusion(
-        self, doc: Any, reason: str, detail: str, stage: str
-    ) -> None:
-        """确定性安全排除持久化登记(upsert;同身份同内容幂等确认)。
-
-        主键 (source_id, content_hash):判定是内容的纯函数 —— 同键重复确认
-        只递增计数;内容变更即新键(下次同步重新判定)。写失败向上抛出,
-        由调用方按瞬态失败处置(fail-closed,绝不静默丢单)。
-        """
-        from backend.db.models import IngestionExclusion
-
-        now = lifecycle.utcnow()
-        with self._session_factory() as session:
-            row = session.get(
-                IngestionExclusion,
-                {"source_id": doc.source_id, "content_hash": doc.content_hash},
-            )
-            if row is None:
-                session.add(
-                    IngestionExclusion(
-                        source_id=doc.source_id,
-                        content_hash=doc.content_hash,
-                        reason=reason,
-                        detail=detail,
-                        stage=stage,
-                        actor=lifecycle.ACTOR_SYNC,
-                        times_confirmed=1,
-                        first_seen_at=now,
-                        last_confirmed_at=now,
-                    )
-                )
-            else:
-                row.reason = reason
-                row.detail = detail
-                row.stage = stage
-                row.times_confirmed += 1
-                row.last_confirmed_at = now
-            session.commit()
 
     # ------------------------------------------------------------------ #
     # 验证 / 失败清理(P0-A:只按本文档自身确定性 UUID 点删)

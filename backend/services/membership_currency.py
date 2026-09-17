@@ -36,8 +36,15 @@ from typing import Any
 
 from sqlalchemy import select
 
-from backend.db.models import DataSource, Document, IngestionExclusion
-from backend.services.document_lifecycle import DocLifecycle, tombstone_document
+from backend.db.models import DataSource, Document
+from backend.services.document_lifecycle import DocLifecycle, tombstone_document, utcnow
+from backend.services.ingestion_exclusions import (
+    purge_expired_out_of_authority,
+    suppression_excluded_ids,
+)
+from backend.services.ingestion_exclusions import (
+    suppression_cutoff as exclusion_suppression_cutoff,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,21 +139,22 @@ def reconcile_membership(
     with session_factory() as session:
         active = ledger_active_membership(session, source_id)
         stale = sorted(active - enumeration)
-        # #91:确定性永久排除登记(可审计面)。仅对「不在服」的身份生效 ——
-        # 在服身份的陈旧登记由激活事务清除;此处再兜底不压制任何在服事实。
-        exclusion_rows = session.execute(
-            select(IngestionExclusion.source_id).where(
-                IngestionExclusion.source_id.like(f"{source_id}/%")
-            )
-        ).scalars().all()
-        excluded_set = {str(sid) for sid in exclusion_rows} - active
-        # #82:补灌方向 —— 权威成员 − 账本在服成员 − 确定性永久排除。
+        # #91(Role A REVIEW_2):确定性永久排除的压制**有界** —— 仅窗口内
+        # 的登记压制 missing;过期身份重回 missing ⇒ 补灌重取 ⇒ builder 按
+        # 现行政策重判(同内容不安全=刷新确认,内容变更=按事实处置)。
+        # 在服身份的登记由激活事务清除,此处兜底不压制任何在服事实。
+        cutoff = exclusion_suppression_cutoff(utcnow())
+        excluded_set = suppression_excluded_ids(session, source_id, cutoff=cutoff) - active
+        # #82:补灌方向 —— 权威成员 − 账本在服成员 − 窗口内确定性永久排除。
         # 覆盖两类缺口:从未灌入(分支 scope 扩大后新纳入的既有内容)与
         # 墓碑后重回权威(上游删除后重新出现);排除物是第三类「不可灌入」,
-        # 不得作为 actionable missing 反复补灌(#91)。retirement 语义不变,
-        # 可灌缺失成员的灌入归调用方既有路径。
+        # 窗口内不作为 actionable missing 反复补灌(#91)。retirement 语义
+        # 不变,可灌缺失成员的灌入归调用方既有路径。
         excluded_ids = tuple(sorted(excluded_set & enumeration))
         missing = sorted((enumeration - active) - excluded_set)
+        # 卫生(同事务,幂等):清除「窗口过期 ∘ 已不在权威枚举」的登记;
+        # 枚举内的过期行保留 —— 它们正是重评估请求(过期 ⇒ 重回 missing)。
+        purge_expired_out_of_authority(session, source_id, enumeration, cutoff=cutoff)
         retired = 0
         for sid in stale:
             if tombstone_document(session, sid, reason=reason or "membership_reconcile"):

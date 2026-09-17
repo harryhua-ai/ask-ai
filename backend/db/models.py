@@ -972,28 +972,34 @@ class DocumentRecoveryEvent(Base):
 
 
 class IngestionExclusion(Base):
-    """永久性灌入排除登记(#91 P0;确定性资格分区的权威面)。
+    """永久性灌入排除登记(#91;确定性资格分区的权威面)。
 
     RECONCILABLE AUTHORITY = AUTHORITATIVE MEMBERSHIP − 本表登记的确定性
     永久排除(技术安全:二进制内容/私钥 armor/解码失败等纯内容判定)。
-    语义契约(#91 Final Acceptance Contract):
+    语义契约(#91 Final Acceptance Contract + Role A REVIEW_2 修正):
 
     - 排除发生在原子 eligible 生成代**之前**:被排除物绝不 chunk/embed/
       入账/入向量,也绝不以「失败」身份毒化整代(瞬态失败仍 fail-closed);
-    - 主键 (source_id, content_hash):内容变了 → 新键 → 下次同步重新判定
-      (判定是内容的纯函数);政策放宽后内容重新通过 → 正常激活并在激活
-      事务内清除本表该身份的陈旧登记(自愈);
+    - **每身份恰一行 = 对其当前权威内容的判定**(PK = source_id;
+      ``content_hash`` 记录判定所针对的内容指纹)。builder 对任何到达它
+      的内容**永远重跑现行政策判定**,本表只是记账,绝不是判定门;
+    - **压制有界**(:data:`backend.services.ingestion_exclusions.
+      INGESTION_EXCLUSION_REEVALUATION_DAYS`):成员对账只在窗口内把该
+      身份从 actionable missing 压制;窗口过期 ⇒ 身份重回 missing ⇒
+      补灌重取内容 ⇒ builder 按现行政策重判 —— 同内容不安全则刷新确认
+      (压制重启,零嵌入),内容变更则按事实处置(安全=激活+清登记,
+      不安全=换判定行)。政策/安全规则演进因此有确定性重评估路径;
     - 可审计:reason/detail/stage/actor + 首见/末次确认时间与确认次数;
     - 本表**不是** lifecycle 词表的一部分(排除物从未入服,与退休/墓碑
-      正交);成员对账用它压制 missing 方向,真值面如实单独计数。
+      正交);真值面如实单独计数,不假收敛。
     """
 
     __tablename__ = "ingestion_exclusions"
 
     # 复合文档身份(容量与 documents.source_id 同批,#92)
     source_id: Mapped[str] = mapped_column(String(500), primary_key=True)
-    # 内容指纹:同身份不同内容 = 不同排除键(内容变更后重新评估)
-    content_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # 判定所针对的内容指纹(builder 判定内容变更后原位更新本列)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     # 技术安全判定 reason 词表(safety.py SafetyVerdict.reason):
     # binary_content / secret_content / poor_decode / secret_file /
     # model_artifact_ext / hard_oversized
