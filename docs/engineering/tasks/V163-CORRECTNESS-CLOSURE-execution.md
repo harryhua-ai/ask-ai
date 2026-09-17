@@ -373,4 +373,4 @@ migration-manifest suites 39 passed; ruff clean on all touched files.
   - `468646d` migrate(#92): identity widening migration + manifest registration
   - `41917d6` feat(#92): model columns 200→500
   - `c6fc27c` feat(#91): exclusion partition + membership subtraction + accounting
-- PR: (filled at delivery)
+- PR: https://github.com/harryhua-ai/ask-ai/pull/93 (base `main`, not merged, not deployed)
