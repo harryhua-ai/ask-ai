@@ -33,8 +33,8 @@ from backend.db.models import (
     DocumentVersion,
     IndexGeneration,
 )
-from backend.pipeline.ingest import IngestFailures
 from backend.pipeline.generation_builder import GenerationBuilder
+from backend.pipeline.ingest import IngestFailures
 from backend.services import document_lifecycle as lifecycle
 
 TEST_DSN = os.environ.get(
@@ -175,19 +175,15 @@ def _purge(s) -> None:
         select(IndexGeneration).where(IndexGeneration.source_id == SRC)
     ).scalars():
         s.delete(row)
-    s.commit()
-    try:
-        from backend.db.models import IngestionExclusion
+    from backend.db.models import IngestionExclusion
 
-        for row in s.execute(
-            select(IngestionExclusion).where(
-                IngestionExclusion.source_id.like(f"{PREFIX}%")
-            )
-        ).scalars():
-            s.delete(row)
-        s.commit()
-    except Exception:  # noqa: BLE001 - 基线(无该表)时清理为 no-op
-        pass
+    for row in s.execute(
+        select(IngestionExclusion).where(
+            IngestionExclusion.source_id.like(f"{PREFIX}%")
+        )
+    ).scalars():
+        s.delete(row)
+    s.commit()
 
 
 def _exclusion_rows(sync_factory, sid: str):

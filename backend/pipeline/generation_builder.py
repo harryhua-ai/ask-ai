@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.db.models import (
@@ -75,6 +75,8 @@ class BuildAccounting:
     generation_ordinal: int | None = None
     generation_status: str | None = None
     chunks_written: int = 0
+    # #91:确定性永久安全排除(分区,非失败;已登记 ingestion_exclusions)
+    excluded_docs: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -144,7 +146,11 @@ class GenerationBuilder:
 
         - ``force_rebuild=True``(--reindex / refill 旧语义回退):忽略
           UNCHANGED/METADATA 判定,全部按内容重建(新版本,重分块重嵌);
-        - 任一文档失败:raise IngestFailures(既有契约),本轮**零激活**。
+        - 任一文档失败:raise IngestFailures(既有契约),本轮**零激活**;
+        - #91:确定性永久安全排除(内容纯函数判定)在生成代**之前**分区 ——
+          登记入 ``ingestion_exclusions``、进 ``excluded_docs`` 账目、绝不
+          chunk/embed/入账,也**不进** failed(不毒化整代);瞬态失败语义
+          分毫不变(fail-closed 只对 eligible 集承诺原子性)。
         """
         accounting = BuildAccounting(source_id=source_id)
         if not docs:
@@ -182,13 +188,17 @@ class GenerationBuilder:
             _progress(STAGE_INDEX, len(docs))
             return accounting
 
-        gen, total_chunks_activated = self._build_and_activate(
+        gen, total_chunks_activated, excluded = self._build_and_activate(
             rebuild_docs, source_id=source_id, progress=_progress
         )
         accounting.generation_ordinal = gen.ordinal
         accounting.generation_status = gen.status
         accounting.chunks_written = total_chunks_activated
+        accounting.excluded_docs = [f.source_id for f in excluded]
+        excluded_ids = {f.source_id for f in excluded}
         for d in rebuild_docs:
+            if d.source_id in excluded_ids:
+                continue  # #91:分区排除物不进 new/updated 变更桶(从未入服)
             row = classified[d.source_id][2]
             if row is None:
                 accounting.new_docs.append(d.source_id)
@@ -206,7 +216,7 @@ class GenerationBuilder:
         *,
         source_id: str,
         progress: "Any | None" = None,
-    ) -> tuple[IndexGeneration, int]:
+    ) -> tuple[IndexGeneration, int, list[DocFailure]]:
         pipeline = self._pipeline
         with self._session_factory() as session:
             gen = lifecycle.create_generation(session, source_id)
@@ -216,6 +226,8 @@ class GenerationBuilder:
 
         written: dict[str, list[Chunk]] = {}
         failed: list[DocFailure] = []
+        # #91:确定性永久排除分区(非失败;可审计,不入账不入向量)
+        excluded: list[DocFailure] = []
         results: dict[str, int] = {}
         done = 0
 
@@ -236,15 +248,19 @@ class GenerationBuilder:
                     record_safety_exclusion(
                         pipeline.safety_stats, doc.source_id, verdict.reason, verdict.detail
                     )
-                    failed.append(
-                        DocFailure(
-                            source_id=doc.source_id,
-                            stage=STAGE_SAFETY_FILTER,
-                            error_class="permanent_safety_excluded",
-                            retryable=False,
-                            detail=verdict.reason,
-                        )
+                    # #91:确定性排除(内容纯函数)→ 分区登记,绝不进 failed。
+                    # 登记写失败按既有契约转瞬态失败(fail-closed,绝不静默)。
+                    failure = DocFailure(
+                        source_id=doc.source_id,
+                        stage=STAGE_SAFETY_FILTER,
+                        error_class="permanent_safety_excluded",
+                        retryable=False,
+                        detail=verdict.reason,
                     )
+                    self._record_permanent_exclusion(
+                        doc, verdict.reason, verdict.detail, STAGE_SAFETY_FILTER
+                    )
+                    excluded.append(failure)
                     continue
                 if _is_code(doc):
                     chunks = chunk_code(doc, pipeline._max_tokens, pipeline._overlap)
@@ -295,6 +311,7 @@ class GenerationBuilder:
             raise IngestFailures(
                 f"生成 {gen_ordinal} 构建失败(embed):{failed[0].detail if failed else exc}",
                 failures=failed,
+                excluded=excluded,
             ) from exc
         _progress(STAGE_EMBED, len(docs))
 
@@ -345,6 +362,7 @@ class GenerationBuilder:
             raise IngestFailures(
                 f"生成 {gen_ordinal} 构建失败({len(failed)} 篇,零激活): " + " | ".join(lines),
                 failures=failed,
+                excluded=excluded,
             )
 
         # Phase 4:激活前验证(对象数 == chunk 数;I-5 验证先于激活)
@@ -433,6 +451,18 @@ class GenerationBuilder:
                 if previous is not None and previous.generation_id != gen.id:
                     predecessor_gens.append(previous.generation_id)
                 total_chunks += len(p.chunks)
+            # #91:激活成功即清除该身份的陈旧排除登记(政策放宽自愈 —— 内容
+            # 重新通过安全判定并入服后,登记不再压制 missing 方向)。
+            if prepared:
+                from backend.db.models import IngestionExclusion
+
+                session.execute(
+                    delete(IngestionExclusion).where(
+                        IngestionExclusion.source_id.in_(
+                            [p.doc.source_id for p in prepared]
+                        )
+                    )
+                )
             lifecycle.mark_generation_ready(
                 session,
                 gen_row,
@@ -452,14 +482,58 @@ class GenerationBuilder:
             session.commit()
 
         logger.info(
-            "生成 %s(ord=%d)已激活: %d 篇 / %d chunks;前任代 %d 个",
+            "生成 %s(ord=%d)已激活: %d 篇 / %d chunks;前任代 %d 个;永久排除 %d 篇",
             gen_id[:8],
             gen_ordinal,
             len(prepared),
             total_chunks,
             len(set(predecessor_gens)),
+            len(excluded),
         )
-        return gen, total_chunks
+        return gen, total_chunks, excluded
+
+    # ------------------------------------------------------------------ #
+    # #91:确定性永久排除登记(可审计;幂等 upsert)
+    # ------------------------------------------------------------------ #
+
+    def _record_permanent_exclusion(
+        self, doc: Any, reason: str, detail: str, stage: str
+    ) -> None:
+        """确定性安全排除持久化登记(upsert;同身份同内容幂等确认)。
+
+        主键 (source_id, content_hash):判定是内容的纯函数 —— 同键重复确认
+        只递增计数;内容变更即新键(下次同步重新判定)。写失败向上抛出,
+        由调用方按瞬态失败处置(fail-closed,绝不静默丢单)。
+        """
+        from backend.db.models import IngestionExclusion
+
+        now = lifecycle.utcnow()
+        with self._session_factory() as session:
+            row = session.get(
+                IngestionExclusion,
+                {"source_id": doc.source_id, "content_hash": doc.content_hash},
+            )
+            if row is None:
+                session.add(
+                    IngestionExclusion(
+                        source_id=doc.source_id,
+                        content_hash=doc.content_hash,
+                        reason=reason,
+                        detail=detail,
+                        stage=stage,
+                        actor=lifecycle.ACTOR_SYNC,
+                        times_confirmed=1,
+                        first_seen_at=now,
+                        last_confirmed_at=now,
+                    )
+                )
+            else:
+                row.reason = reason
+                row.detail = detail
+                row.stage = stage
+                row.times_confirmed += 1
+                row.last_confirmed_at = now
+            session.commit()
 
     # ------------------------------------------------------------------ #
     # 验证 / 失败清理(P0-A:只按本文档自身确定性 UUID 点删)

@@ -30,7 +30,6 @@ from sqlalchemy import delete, select
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import scripts.sync as sync_mod
-from backend.config import load_settings
 from backend.connectors.base import RawDocument
 from backend.connectors.registry import SourceConfig
 from backend.db.models import (
@@ -46,14 +45,19 @@ from backend.services.document_lifecycle import DocLifecycle
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
-TEST_DSN = os.environ.get(
-    "TEST_DATABASE_URL",
-    "postgresql+asyncpg://ask_ai:changeme@localhost:5432/ask_ai_test",
-)
 WEAVIATE_PORT = int(os.environ.get("P1_WEAVIATE_PORT", "8080"))
 CLASS_NAME = "I91ConvProbe"
 
 SRC = "i91conv-local"
+
+# DSN 纪律:与 tests/services/test_issue91_membership_exclusion.py 同因 ——
+# load_settings() 的 dotenv 注入是惰性的,async(账本)与 sync(真实 builder)
+# 两个引擎面必须共享一次解析的 DSN,否则落到不同库。
+from backend.config import load_settings as _load_settings
+
+_load_settings()
+TEST_DSN = os.environ.get("TEST_DATABASE_URL", _load_settings().postgres_dsn)
+
 OK1 = f"{SRC}/main/docs/overview.md"
 OK2 = f"{SRC}/main/docs/setup.md"
 OK3 = f"{SRC}/main/CHANGELOG.md"
@@ -193,6 +197,12 @@ async def db_engine():
         from scripts.migrate_add_membership_currency import migrate as _migrate
 
         await _migrate(engine)
+        # #91/#92 幂等迁移(共享测试库:补表 + 身份列补容)
+        from scripts.migrate_add_ingestion_exclusions import migrate as _excl
+        from scripts.migrate_widen_document_source_id_500 import migrate as _widen
+
+        await _excl(engine)
+        await _widen(engine)
         yield engine
     finally:
         f = get_session_factory(engine)
@@ -208,16 +218,13 @@ async def db_engine():
             )
             await session.execute(delete(IndexGeneration).where(IndexGeneration.source_id == SRC))
             await session.execute(delete(DataSource).where(DataSource.id == SRC))
-            try:
-                from backend.db.models import IngestionExclusion
+            from backend.db.models import IngestionExclusion
 
-                await session.execute(
-                    delete(IngestionExclusion).where(
-                        IngestionExclusion.source_id.like(f"{SRC}/%")
-                    )
+            await session.execute(
+                delete(IngestionExclusion).where(
+                    IngestionExclusion.source_id.like(f"{SRC}/%")
                 )
-            except Exception:  # noqa: BLE001 - 基线无该表
-                pass
+            )
             await session.commit()
         await engine.dispose()
 
@@ -235,8 +242,8 @@ def sync_factory(db_engine):
 
 def _real_stack(sync_factory):
     """真实 IngestionPipeline + GenerationBuilder(fake embedder + 真 Weaviate)。"""
-    from backend.pipeline.ingest import IngestionPipeline
     from backend.pipeline.generation_builder import GenerationBuilder
+    from backend.pipeline.ingest import IngestionPipeline
 
     client = _make_weaviate_client()
     embedder = _FakeEmbedder()
@@ -387,8 +394,10 @@ async def test_first_cycle_converges_despite_permanent_exclusion(
     )
 
     delta = dict(log.delta_counts or {})
-    assert delta["membership_excluded"] == 1, "对账面必须暴露永久排除计数"
+    # 首轮时序:对账(此时尚无排除登记)→ 补灌构建(分区 BIN)。排除计数
+    # 如实出现在构建面;对账面计数从第二轮起呈现(见下一测试)。
     assert delta["permanent_excluded"] == 1, "构建面必须暴露分区计数"
+    assert delta["eligible_count"] == 2, "eligible = 补灌批次 − 分区排除"
     # 排除物零嵌入(嵌入只发生在合法内容上)
     embedded = "\n".join(_embedded_texts(stack))
     assert "firmware-bytes" not in embedded, "排除物绝不进入嵌入"
@@ -434,7 +443,11 @@ async def test_second_cycle_true_no_change_zero_reembed(
     assert log.status == "success"
     delta = dict(log.delta_counts or {})
     assert delta["unchanged_count"] == 3
+    assert delta["membership_excluded"] == 1, "第二轮对账面如实暴露永久排除计数"
     assert "membership_backfilled" not in delta, "排除物不得再触发补灌"
+    assert "membership_missing" not in delta or delta["membership_missing"] == 0, (
+        "排除物不再是 actionable missing"
+    )
     assert _embedded_texts(stack) == [], "第二轮零嵌入(生产 GPU 放大循环终止)"
     stack.client.close()
 

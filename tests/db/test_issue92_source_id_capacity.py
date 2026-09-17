@@ -22,11 +22,16 @@ from sqlalchemy import delete, select, text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from backend.config import load_settings
-from backend.db.models import Document, DocumentRepairTask, DocumentRecoveryEvent, DocumentVersion
+from backend.db.models import Document, DocumentRecoveryEvent, DocumentRepairTask, DocumentVersion
 from backend.db.session import get_engine, get_session_factory, init_db
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
+
+# DSN 纪律:与 tests/services/test_issue91_membership_exclusion.py 同因。
+from backend.config import load_settings as _load_settings
+
+_load_settings()
+DSN = os.environ.get("TEST_DATABASE_URL", _load_settings().postgres_dsn)
 
 # 生产实failure 的 canonical 身份(同构构造;>200 字符)
 LONG_REL = (
@@ -45,14 +50,16 @@ def _identity_length_guard():
 
 @pytest_asyncio.fixture(loop_scope="session")
 async def db_engine():
-    engine = get_engine(
-        os.environ.get("TEST_DATABASE_URL", load_settings().postgres_dsn)
-    )
+    engine = get_engine(DSN)
     try:
         await init_db(engine)
         from scripts.migrate_add_membership_currency import migrate as _migrate
 
         await _migrate(engine)
+        # 共享测试库的既有列需要补容(#92 幂等迁移;create_all 不改列)
+        from scripts.migrate_widen_document_source_id_500 import migrate as _widen
+
+        await _widen(engine)
         yield engine
     finally:
         f = get_session_factory(engine)

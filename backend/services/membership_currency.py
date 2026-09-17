@@ -36,7 +36,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from backend.db.models import DataSource, Document
+from backend.db.models import DataSource, Document, IngestionExclusion
 from backend.services.document_lifecycle import DocLifecycle, tombstone_document
 
 logger = logging.getLogger(__name__)
@@ -75,6 +75,10 @@ class MembershipReconciliation:
     # 配置范围内却从未入账(或已退休但重回权威)的成员,由调用方经既有
     # ingest 路径补灌;本服务只负责对账事实,不做灌入。
     missing_ids: tuple[str, ...] = field(default_factory=tuple)
+    # #91:确定性永久排除(authority ∩ ingestion_exclusions,非在服)。
+    # 这些身份**不再**计入 missing(不反复补灌、不反复嵌入),但必须单独
+    # 如实暴露 —— 不假收敛(绝不插成在服账本行)。
+    excluded_ids: tuple[str, ...] = field(default_factory=tuple)
     status: str = "completed"  # completed / failed
     error: str | None = None
 
@@ -128,10 +132,21 @@ def reconcile_membership(
     with session_factory() as session:
         active = ledger_active_membership(session, source_id)
         stale = sorted(active - enumeration)
-        # #82:补灌方向 —— 权威成员 − 账本在服成员。覆盖两类缺口:从未灌入
-        # (分支 scope 扩大后新纳入的既有内容)与墓碑后重回权威(上游删除后
-        # 重新出现); retirement 语义不变,缺失成员的灌入归调用方既有路径。
-        missing = sorted(enumeration - active)
+        # #91:确定性永久排除登记(可审计面)。仅对「不在服」的身份生效 ——
+        # 在服身份的陈旧登记由激活事务清除;此处再兜底不压制任何在服事实。
+        exclusion_rows = session.execute(
+            select(IngestionExclusion.source_id).where(
+                IngestionExclusion.source_id.like(f"{source_id}/%")
+            )
+        ).scalars().all()
+        excluded_set = {str(sid) for sid in exclusion_rows} - active
+        # #82:补灌方向 —— 权威成员 − 账本在服成员 − 确定性永久排除。
+        # 覆盖两类缺口:从未灌入(分支 scope 扩大后新纳入的既有内容)与
+        # 墓碑后重回权威(上游删除后重新出现);排除物是第三类「不可灌入」,
+        # 不得作为 actionable missing 反复补灌(#91)。retirement 语义不变,
+        # 可灌缺失成员的灌入归调用方既有路径。
+        excluded_ids = tuple(sorted(excluded_set & enumeration))
+        missing = sorted((enumeration - active) - excluded_set)
         retired = 0
         for sid in stale:
             if tombstone_document(session, sid, reason=reason or "membership_reconcile"):
@@ -143,13 +158,14 @@ def reconcile_membership(
     residual_ids = tuple(sorted(residual - enumeration))
     logger.info(
         "成员对账完成 %s: authoritative=%d ledger_serving=%d stale=%d retired=%d"
-        " missing=%d residual=%d",
+        " missing=%d permanent_excluded=%d residual=%d",
         source_id,
         len(enumeration),
         len(active),
         len(stale),
         retired,
         len(missing),
+        len(excluded_ids),
         len(residual_ids),
     )
     return MembershipReconciliation(
@@ -160,6 +176,7 @@ def reconcile_membership(
         retired=retired,
         residual_ids=residual_ids,
         missing_ids=tuple(missing),
+        excluded_ids=excluded_ids,
         status="completed",
     )
 
@@ -221,4 +238,6 @@ def truth_detail_of(result: MembershipReconciliation) -> dict[str, Any]:
         "residual_sample": list(result.residual_ids[:_DETAIL_SAMPLE]),
         # #82 加性审计键:缺失成员样例(补灌方向的可见性;Admin 契约词表不变)
         "missing_sample": list(result.missing_ids[:_DETAIL_SAMPLE]),
+        # #91 加性审计键:确定性永久排除样例(不可灌入,非 actionable missing)
+        "excluded_sample": list(result.excluded_ids[:_DETAIL_SAMPLE]),
     }

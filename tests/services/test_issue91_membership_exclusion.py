@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -23,12 +23,17 @@ from sqlalchemy import delete
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend.config import load_settings
-from backend.connectors.registry import SourceConfig
 from backend.db.models import Document, DocumentVersion
 from backend.db.session import get_engine, get_session_factory, init_db
 from backend.services.membership_currency import reconcile_membership, truth_detail_of
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
+
+# DSN 纪律:load_settings() 首调会经 dotenv 把 .env 的 TEST_DATABASE_URL 注入
+# 进程环境;异步(账本 seed)与同步(对账)两个引擎面必须在同一次解析上取值
+# —— 惰性求值时机不同会落到不同库(ask_ai vs ask_ai_test,本套件实证教训)。
+load_settings()  # 触发 dotenv 注入,统一两面的 DSN 解析
+_DSN = os.environ.get("TEST_DATABASE_URL", load_settings().postgres_dsn)
 
 SRC = "i91memb-local"
 OK = f"{SRC}/main/docs/overview.md"
@@ -50,45 +55,45 @@ class _Connector:
 
 @pytest_asyncio.fixture(loop_scope="session")
 async def db_engine():
-    engine = get_engine(
-        os.environ.get("TEST_DATABASE_URL", load_settings().postgres_dsn)
-    )
+    engine = get_engine(_DSN)
     try:
         await init_db(engine)
         from scripts.migrate_add_membership_currency import migrate as _migrate
 
         await _migrate(engine)
+        # #91/#92 幂等迁移(共享测试库:补表 + 身份列补容)
+        from scripts.migrate_add_ingestion_exclusions import migrate as _excl
+        from scripts.migrate_widen_document_source_id_500 import migrate as _widen
+
+        await _excl(engine)
+        await _widen(engine)
         yield engine
     finally:
         f = get_session_factory(engine)
         async with f() as session:
+            from backend.db.models import DataSource
+
+            await session.execute(delete(DataSource).where(DataSource.id == SRC))
             await session.execute(delete(Document).where(Document.source_id.like(f"{SRC}/%")))
             await session.execute(
                 delete(DocumentVersion).where(DocumentVersion.source_id.like(f"{SRC}/%"))
             )
-            try:
-                from backend.db.models import IngestionExclusion
+            from backend.db.models import IngestionExclusion
 
-                await session.execute(
-                    delete(IngestionExclusion).where(
-                        IngestionExclusion.source_id.like(f"{SRC}/%")
-                    )
+            await session.execute(
+                delete(IngestionExclusion).where(
+                    IngestionExclusion.source_id.like(f"{SRC}/%")
                 )
-            except Exception:  # noqa: BLE001 - 基线无该表
-                pass
+            )
             await session.commit()
         await engine.dispose()
 
 
 @pytest.fixture
-def sync_factory(db_engine):
+def sync_factory():
     import sqlalchemy
 
-    engine = sqlalchemy.create_engine(
-        os.environ.get("TEST_DATABASE_URL", load_settings().postgres_dsn).replace(
-            "+asyncpg", "+psycopg2"
-        )
-    )
+    engine = sqlalchemy.create_engine(_DSN.replace("+asyncpg", "+psycopg2"))
     try:
         yield sqlalchemy.orm.sessionmaker(bind=engine)
     finally:
@@ -154,7 +159,7 @@ async def test_excluded_identity_suppressed_from_missing(db_engine, sync_factory
     _seed_exclusion(sync_factory, BIN)
     connector = _Connector(members={OK, BIN, GONE})
     result = reconcile_membership(sync_factory, connector, SRC, reason="i91:test")
-    assert result.missing_ids == (), "排除物不是 actionable missing(基线:含 BIN)"
+    assert result.missing_ids == (GONE,), "排除物不是 actionable missing;真缺失照常上报"
     assert result.excluded_ids == (BIN,), "排除事实必须单独暴露(AC10)"
     assert result.stale_ids == ()
     detail = truth_detail_of(result)
