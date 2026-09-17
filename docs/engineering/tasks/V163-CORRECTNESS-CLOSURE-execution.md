@@ -1,6 +1,6 @@
 # V1.6.3 CORRECTNESS CLOSURE — Execution Report (#25 / #77 / #91 / #92)
 
-Status: `WORK_IN_PROGRESS` (final status at bottom)
+Status: `V1.6.3_CORRECTNESS_CANDIDATE_READY_FOR_ROLE_A`
 Executor: Role B
 Date: 2026-09-17
 
@@ -19,7 +19,77 @@ Date: 2026-09-17
   - `tests/pipeline/test_issue77_evidence_eligibility.py tests/services/test_corpus_repair.py` → **18 passed**
   - Production read-only PRE_COUNT (`neomind-local/main/eval/**` lifecycle=active) = **298** (2026-09-17, unchanged from historical baseline)
 
-## B/C. RCA
+## B. Issue matrix (canonical close gates = latest Role A Final Acceptance Contracts)
+
+### #25 — filesystem retirement closure (Final Acceptance Contract items 1–8)
+
+| AC | Verdict | Evidence on current main `42b205aa` |
+|---|---|---|
+| 1. Two-discovery retirement (`missing_candidate` → RETIRED) | **SATISFIED** | `DocLifecycle.MISSING_CANDIDATE` grace + `confirm_absence_retirement` (document_lifecycle.py); `tests/scripts/test_fs_disappearance_retirement.py::test_two_complete_discoveries_retire_disappeared_file` green this round |
+| 2. Failed/partial/permission/low-coverage discovery does not advance | **SATISFIED** | incomplete-discovery no-advance tests green this round (A-2) |
+| 3. Policy absence distinct + restore | **SATISFIED** | `policy_absent` classification + `test_policy_absence_frozen_then_reinclusion_restores` green this round |
+| 4. Retirement truth: retired_at/reason/evidence/actor + gc_eligible_at = retired_at + 7d; GC gated | **SATISFIED** | `gc_eligible_at` anchor in lifecycle; `test_gc_apply_requires_config_gate` green (composition suite); scheduled sweep + config-gated apply shipped in r5 |
+| 5. Idempotency/auditability + Admin detail truth | **SATISFIED** | idempotent re-confirmation tests; `tests/api/admin/test_issue25_lifecycle_detail.py` green this round |
+| 6. Repair cannot resurrect source-confirmed-retired content | **SATISFIED** | A-7 withdrawn-identity guard (r6 hardening `67d426d`) + refill exclusion tests green |
+| 7. #71/#82 connector/membership regression | **SATISFIED** | `test_membership_currency.py` + `test_issue82_scope_backfill.py` green this round (10 + 6 tests) |
+| 8. Full regression green, serving-projection/fail-closed unchanged | **SATISFIED** | full suite A/B (§I) — zero diff-attributable failures |
+| Woo two-discovery fixture | **SATISFIED** | woo fixture test green (r5 contract; included in fs retirement suite family) |
+
+**#25 verdict: code-level scope = PASS (no code change required this round).** Production
+physical GC apply remains separately gated (close condition excludes it).
+
+### #77 — evidence eligibility (Final Acceptance Contract items 1–9)
+
+| AC | Verdict | Evidence |
+|---|---|---|
+| 1. Ingestion exclusion (future eval/**) | **PARTIAL → ops** | mechanism accepted & tested (`test_issue77_eval_boundary_via_existing_exclude_dirs`); config change is the authorized production operation |
+| 2. Existing corpus 298 → 0 | **PARTIAL → ops** | PRE_COUNT refreshed 2026-09-17 = **298**; acceptance seam `CorpusRepairTool.plan(membership)` tested green this round |
+| 3. Ledger/vector consistency post-op | **PARTIAL → ops** | repair apply deletes ledger row + deterministic UUIDs (contract tests green) |
+| 4. Retrieval gate | **PARTIAL → ops** | post-op production probes required |
+| 5. Real /ask gate | **PARTIAL → ops** | post-op production probes required |
+| 6. No collateral exclusion | **SATISFIED (mechanism)** | neighbor-preservation contract tests green |
+| 7. Before/after evidence | **PARTIAL → ops** | PRE captured this round; POST awaits authorized op |
+| 8. Separation from #90 | **SATISFIED** | #90 untouched |
+| 9. Regression gate | **SATISFIED** | `tests/pipeline/test_issue77_evidence_eligibility.py` + `tests/services/test_corpus_repair.py` = 18 passed this round |
+
+**#77 verdict: engineering PASS (already accepted/released in `67d426d`; zero rewrite).
+Remaining = authorized production operation only.**
+
+### #91 — permanent exclusion non-convergence (Final AC items 1–12)
+
+| AC | Verdict |
+|---|---|
+| 1. RED characterization | **PASS** (§G, commit `ca271cb`) |
+| 2. Eligibility partition auditable | **PASS** (`ingestion_exclusions` + `excluded_docs`) |
+| 3. Eligible atomic activation | **PASS** (builder tests) |
+| 4. Not actionable missing forever | **PASS** (membership suppression tests) |
+| 5. Second-cycle no-change | **PASS** (zero-re-embed test) |
+| 6. New-content detection | **PASS** (new-member backfill test) |
+| 7. Transient fail-closed | **PASS** (embed-failure tests, both levels) |
+| 8. Safety preservation | **PASS** (excluded never in ledger/vector truth) |
+| 9. Policy interaction semantics | **PASS** (policy-vs-safety no-mismatch test) |
+| 10. Truth/observability | **PASS** (eligible/excluded/transient/activated accounting) |
+| 11. #71/#82/#77 regression | **PASS** (focused + full A/B) |
+| 12. Production acceptance | **PARTIAL → authorized production run** |
+
+### #92 — source_id capacity (Final AC items 1–12)
+
+| AC | Verdict |
+|---|---|
+| 1. Dependency audit | **PASS** (5 composite identity columns + sibling-risk inventory) |
+| 2. RED >200 | **PASS** (StringDataRightTruncation reproduced) |
+| 3. Lossless GREEN | **PASS** (byte-for-byte read-back) |
+| 4. ≤200 IDs unchanged | **PASS** (control test) |
+| 5. Relational integrity | **PASS** (version/lifecycle/membership/repair/recovery tests) |
+| 6. Generation/vector provenance | **PASS** (e2e projection test) |
+| 7. API/Admin truth | **PASS** (schemas audited: plain `str`, no truncation) |
+| 8. Migration discipline | **PASS** (idempotent + manifest-registered, executed ×2 in tests) |
+| 9. No workaround | **PASS** (no exclusion/hashing/aliasing) |
+| 10. End-to-end fixture | **PASS** (long i18n path ledger→generation→vector) |
+| 11. Regression | **PASS** (§I) |
+| 12. Production acceptance | **PARTIAL → authorized production migration/deploy** |
+
+## C. RCA
 
 ### ROOT_CAUSE_91 (P0 — non-converging sync generations)
 
@@ -184,15 +254,72 @@ as the core #91 fix; identity hashing/aliasing for #92.
 
 ## G. RED evidence
 
-(pending — this section will be filled as RED suites are executed)
+Commit `ca271cb` preserves the RED suites; executed on pristine baseline `42b205aa`:
+
+| Suite | Baseline result | Failure mechanism observed (production-faithful) |
+|---|---|---|
+| `tests/pipeline/test_issue91_exclusion_partition.py` (6 tests) | **6 failed** | `build_generation` raises `IngestFailures(生成 1 构建失败(1 篇,零激活): … stage=SAFETY_FILTER class=permanent_safety_excluded detail=binary_content)` — the exact production error string; `IngestionExclusion` import fails (no persistence surface); long-identity truncation |
+| `tests/pipeline/test_issue91_convergence.py` (5 tests) | **4 failed / 1 passed** | sync round ends `status=failed` with `生成 1 构建失败(1 篇,零激活)…` — the ne301-style loop reproduced end-to-end; the 1 pass = transient fail-closed control (already green at baseline, by design) |
+| `tests/services/test_issue91_membership_exclusion.py` (2 tests) | **2 failed** | `MembershipReconciliation` has no `excluded_ids` surface; BIN reported as actionable `missing` |
+| `tests/db/test_issue92_source_id_capacity.py` (4 tests) | **4 failed** | `StringDataRightTruncation: value too long for type character varying(200)` — production error class; migration script absent |
+
+The transient fail-closed tests (builder + sync level) pass on BOTH trees: they protect
+AC7 and were never expected to be RED.
 
 ## H. GREEN evidence
 
-(pending)
+Final candidate tree — all new suites green:
+
+| Suite | Result |
+|---|---|
+| `tests/pipeline/test_issue91_exclusion_partition.py` | 6 passed (partition + audit idempotency + transient fail-closed + policy self-heal + long-identity e2e projection) |
+| `tests/pipeline/test_issue91_convergence.py` | 5 passed (first-cycle convergence + second-cycle true no-change/zero-re-embed + new-member detection + transient fail-closed + policy-vs-safety no-mismatch) |
+| `tests/services/test_issue91_membership_exclusion.py` | 2 passed (missing suppression + control) |
+| `tests/db/test_issue92_source_id_capacity.py` | 4 passed (lossless >200 insert/read-back + short-ID byte-for-byte + repair/recovery surfaces + idempotent widening of all 5 columns) |
+
+Contract coverage map (#91 Final AC): AC1→RED table; AC2→exclusion_row_auditable; AC3→
+excluded_partitioned_eligible_generation_activates; AC4/AC5→second_cycle_true_no_change_zero_reembed;
+AC6→new_eligible_member_still_backfilled; AC7/AC8→transient_embed_failure tests (both levels);
+AC9→policy_absence_and_safety_exclusion_no_mismatch; AC10→delta keys
+`eligible_count`/`permanent_excluded`/`membership_excluded` + counters `docs_permanent_excluded`;
+AC11→focused membership/generation suites green; AC12→loop-termination proven at fixture level,
+production proof remains the authorized run gate.
+
+#92 Final AC coverage: AC1→dependency inventory (§B); AC2→RED; AC3→lossless read-back;
+AC4→short-ID byte-for-byte; AC5→version/lifecycle/repair/recovery relational tests; AC6→
+vector props preserve exact identity (e2e projection test); AC7→API schemas use plain `str`
+(audited, no truncation); AC8→idempotent migration registered in `deploy/prod/migrations.json`;
+AC9→no exclusion/workaround; AC10→long-identity e2e projection test; AC11→regression green;
+AC12→production gate remains.
+
+Cross-issue invariants: I1 (membership ≠ blind ingest) reconciled domain excludes only
+deterministic exclusions; I2 (permanent ≠ transient) enforced by partition vs fail-closed
+split with tests; I3/I4/I5 (#25 lifecycle vocabulary untouched); I6 (lossless identity,
+#92); I7 (repair cannot resurrect: excluded identities have no ledger row and are suppressed
+from refill; #25 A-7 guard untouched); I8 (atomic generation preserved for the eligible set);
+I9 (failures still reported — excluded are counted separately, never hidden); I10 (truth
+surfaces: active/missing/permanent-excluded/retired/failed counts all exposed).
 
 ## I. Full regression
 
-(pending)
+Full backend suite on the final candidate tree (`tests --ignore=tests/e2e --ignore=tests/runtime`,
+HF_HUB_OFFLINE=1, ~175s):
+
+**2853 passed / 3 failed / 6 skipped / 4 errors** — clean A/B against pristine baseline
+`42b205aa` (temp detached worktree, identical invocation) shows an **identical failure set**:
+
+| Symptom | Candidate | Baseline | Verdict |
+|---|---|---|---|
+| `test_gap_export` ×2 | failed | failed | baseline-existing (known signature since r5) |
+| `test_lifespan_smoke` | failed | failed | baseline-existing environmental |
+| `embedder/test_bge` ×4 | error (HF offline) | error (HF offline) | baseline-existing environmental |
+| `analytics_business`/`leads` KPI family | drifts run-to-run on identical tree | same drift | shared-DB ordering flake family (known r5 discipline); file-level A/B identical |
+
+**Zero diff-attributable failures.**
+
+Focused/subsystem evidence: new suites 17 passed; builder/membership/#82/#25 focused 54 passed;
+pipeline+retrieval+services 1249 passed; scripts+db+connectors 647 passed/5 skipped;
+migration-manifest suites 39 passed; ruff clean on all touched files.
 
 ## J. Production READ-ONLY observations
 
@@ -202,6 +329,9 @@ as the core #91 fix; identity hashing/aliasing for #92.
   per-cycle failures `lowpower-camera-local` (~37min/cycle), `ne301-local` (~1h42m/cycle),
   `neomind-local`, `neomind-extensions-local`, `wiki-documents-local` (StringDataRightTruncation).
   10/15 sources healthy per cycle. Backend healthy throughout; /ask unaffected.
+- Wasted work quantified over the 3 observed cycles: ~2h19m of embedding per cycle
+  (ne301 1h42m + lowpower 37min) is discarded by zero-activation, i.e. ~7h GPU-embedding
+  per day at the current 3.5h cron cadence, until this fix deploys.
 
 ## K. Remaining production acceptance gates (NOT authorized this round)
 
@@ -219,8 +349,28 @@ as the core #91 fix; identity hashing/aliasing for #92.
 
 ## L. Risks / follow-ups
 
-(pending)
+- **Semantics note (recorded, unchanged behavior):** an *already-serving* document whose
+  future content turns safety-excluded will keep serving its previous version (partition
+  applies to new versions; no retroactive withdrawal). This matches today's behavior for
+  serving content and stays within contract; retroactive corpus re-evaluation remains the
+  separate `historical_artifact_verdict` / U-12 surface.
+- `source_id`-level (config id) columns remain `String(100)` (SyncLog/SyncRun/SyncRequest/
+  IndexGeneration/KnowledgeSettingsPreview). Composite document identities are now 500;
+  source config ids are operator-controlled short identifiers. FOLLOW_UP_CANDIDATE: none
+  required now; revisit only if source ids ever approach 100.
+- varchar(500) is a capacity bound, not an identity redesign; a path longer than 500 would
+  still truncate-fail (honest failure, not silent corruption). Not observed in production
+  (max observed ≈ 245).
+- #90 (261 tombstone physical hygiene) untouched, as contracted.
+- Known baseline flake families (gap_export ×2, analytics/leads KPI, lifespan_smoke,
+  embedder-offline) remain repository-level hygiene items, outside this round's boundary.
 
 ## M/N. Candidate SHA / PR
 
-(pending)
+- Candidate commits (branch `exec/v163-correctness-closure`):
+  - `45738ef` docs: RCA + dependency graph + minimal plan
+  - `ca271cb` test: RED characterization (baseline-failing evidence)
+  - `468646d` migrate(#92): identity widening migration + manifest registration
+  - `41917d6` feat(#92): model columns 200→500
+  - `c6fc27c` feat(#91): exclusion partition + membership subtraction + accounting
+- PR: (filled at delivery)
