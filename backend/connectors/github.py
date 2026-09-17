@@ -26,7 +26,7 @@ import os
 import re
 import subprocess
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -465,6 +465,51 @@ class GitHubConnector(DataSourceConnector):
                     continue
                 members.add(f"{self._config.id}/{branch}/{rel}")
         return members
+
+    def membership_content_fingerprints(
+        self, source_ids: Iterable[str]
+    ) -> dict[str, str]:
+        """给定复合身份的**当前权威内容指纹**(#91 REVIEW_3,可选窄面能力)。
+
+        与 :meth:`_make_document` 的 ``content_hash`` **同一变换**(clone 内
+        ``read_text(encoding="utf-8", errors="replace")`` 的通用换行平移后
+        utf-8 字节 sha256),但直接读 git 对象库(``git show
+        origin/<branch>:<rel>``)—— 与工作树「多分支共用一个 clone、按分支
+        reset」的瞬态状态无关,成员枚举后调用恒正确。
+
+        窄面:仅对存在排除登记的身份被调用(membership 对账时),零全量
+        内容读取成本。无法判定(身份形态不符/分支不在 scope/文件不在
+        远端 ref/git 读取失败)的身份**不出现在返回值** —— 调用方按
+        「窗口内压制」兜底(Tier 2;TTL 仍是有界回退)。
+        """
+        out: dict[str, str] = {}
+        for sid in source_ids:
+            parts = sid.split("/", 2)
+            if len(parts) != 3 or parts[0] != self._config.id:
+                continue
+            branch, rel = parts[1], parts[2]
+            if branch not in self._branches:
+                continue
+            try:
+                proc = subprocess.run(
+                    ["git", "show", f"origin/{branch}:{rel}"],
+                    cwd=self._clone_path,
+                    capture_output=True,
+                    timeout=60,
+                    check=True,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.warning(
+                    "权威内容指纹读取失败 %s(按窗口内压制兜底): %s",
+                    sid,
+                    str(exc)[:160],
+                )
+                continue
+            text_content = proc.stdout.decode("utf-8", errors="replace")
+            # 与 fetch 的 read_text 通用换行平移逐字对齐(\r\n 与孤立 \r → \n)
+            text_content = text_content.replace("\r\n", "\n").replace("\r", "\n")
+            out[sid] = hashlib.sha256(text_content.encode("utf-8")).hexdigest()
+        return out
 
     def fetch_all(self) -> Iterator[RawDocument]:
         """全量抓取:每分支 ensure_cloned + git_sync_branch + 遍历。

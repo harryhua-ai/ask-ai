@@ -1,17 +1,22 @@
 """永久性灌入排除登记服务(#91;单一实现,membership 与 builder 共享)。
 
-Role A REVIEW_2 修正的核心语义 —— **有界的陈旧排除失效/重评估**:
+Role A REVIEW_2/REVIEW_3 修正后的完整语义 —— **即时失效 + 有界兜底**:
 
 1. builder 对任何到达它的内容**永远重跑现行政策** ``check_content``,
    本表只是记账(写面),绝不是判定门 —— 增量路径把内容变更送到 builder
    即刻重判(安全=激活+清登记;不安全=原位换判定)。
-2. 对账压制**有界**:仅窗口内(:data:`INGESTION_EXCLUSION_REEVALUATION_DAYS`,
-   自 ``last_confirmed_at`` 起)把身份从 actionable missing 压制;过期身份
-   重回 missing ⇒ 补灌重取 ⇒ builder 重判 —— 同内容不安全=刷新确认
+2. **即时失效(REVIEW_3)**:连接器若能提供权威内容指纹
+   (``membership_content_fingerprints``,github 经 git 对象库窄面读取),
+   对账逐身份比对登记的 ``content_hash``:指纹漂移 ⇒ **立即**不再压制
+   missing ⇒ 补灌重取 ⇒ 重判。
+3. **有界兜底(Tier 2)**:无指纹能力或指纹不可得时,压制仅在窗口内生效
+   (:data:`INGESTION_EXCLUSION_REEVALUATION_DAYS`,自 ``last_confirmed_at``);
+   过期身份重回 missing ⇒ 补灌重取 ⇒ 重判 —— 同内容不安全=刷新确认
    (压制重启,零嵌入,不复活 GPU 循环),内容变更=按事实处置。
-3. 每身份恰一行(PK = source_id):行 = 对该身份**当前权威内容**的判定;
+   政策/安全规则演进经窗口过期获得确定性重评估路径。
+4. 每身份恰一行(PK = source_id):行 = 对该身份**当前权威内容**的判定;
    ``content_hash`` 记录判定针对的内容指纹,判定换内容即原位更新。
-4. 卫生:对账事务内清除「窗口过期 ∘ 已不在权威枚举」的行(不再有任何
+5. 卫生:对账事务内清除「窗口过期 ∘ 已不在权威枚举」的行(不再有任何
    压制或审计用途;身份重回权威时经补灌重评估重建,无复活风险)。
 
 被排除物:不入账、不入向量、永不成为服务真值(不假收敛)。
@@ -93,19 +98,6 @@ def record_permanent_exclusion(
             row.last_confirmed_at = ts
             row.actor = actor
         session.commit()
-
-
-def suppression_excluded_ids(
-    session: Any, source_id: str, *, cutoff: datetime
-) -> set[str]:
-    """窗口内仍压制 missing 的身份集(同步 Session 面;供成员对账)。"""
-    rows = session.execute(
-        select(IngestionExclusion.source_id).where(
-            IngestionExclusion.source_id.like(f"{source_id}/%"),
-            IngestionExclusion.last_confirmed_at >= cutoff,
-        )
-    ).scalars().all()
-    return {str(sid) for sid in rows}
 
 
 def purge_expired_out_of_authority(

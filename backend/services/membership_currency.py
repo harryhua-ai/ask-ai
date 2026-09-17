@@ -36,11 +36,10 @@ from typing import Any
 
 from sqlalchemy import select
 
-from backend.db.models import DataSource, Document
+from backend.db.models import DataSource, Document, IngestionExclusion
 from backend.services.document_lifecycle import DocLifecycle, tombstone_document, utcnow
 from backend.services.ingestion_exclusions import (
     purge_expired_out_of_authority,
-    suppression_excluded_ids,
 )
 from backend.services.ingestion_exclusions import (
     suppression_cutoff as exclusion_suppression_cutoff,
@@ -139,13 +138,52 @@ def reconcile_membership(
     with session_factory() as session:
         active = ledger_active_membership(session, source_id)
         stale = sorted(active - enumeration)
-        # #91(Role A REVIEW_2):确定性永久排除的压制**有界** —— 仅窗口内
-        # 的登记压制 missing;过期身份重回 missing ⇒ 补灌重取 ⇒ builder 按
-        # 现行政策重判(同内容不安全=刷新确认,内容变更=按事实处置)。
+        # #91(Role A REVIEW_2/REVIEW_3):确定性永久排除的压制**有界且指纹
+        # 失效**。窗口内的登记默认压制 missing;但若连接器能提供权威内容
+        # 指纹(github:git 对象库读取,与灌入哈希同变换),则逐身份比对:
+        #   指纹一致(内容未变)→ 窗口内继续压制;
+        #   指纹漂移(权威内容已变)→ **立即失效压制**,身份重回 actionable
+        #   missing ⇒ 补灌重取 ⇒ builder 按现行政策重判(安全=激活+清登记,
+        #   不安全=原位换判定)。无指纹能力的连接器按 Tier 2 窗口兜底
+        #   (TTL 仍是有界回退,覆盖政策/规则演进的重评估)。
         # 在服身份的登记由激活事务清除,此处兜底不压制任何在服事实。
         cutoff = exclusion_suppression_cutoff(utcnow())
-        excluded_set = suppression_excluded_ids(session, source_id, cutoff=cutoff) - active
-        # #82:补灌方向 —— 权威成员 − 账本在服成员 − 窗口内确定性永久排除。
+        in_window_rows = session.execute(
+            select(IngestionExclusion).where(
+                IngestionExclusion.source_id.like(f"{source_id}/%"),
+                IngestionExclusion.last_confirmed_at >= cutoff,
+            )
+        ).scalars().all()
+        candidate_exclusions = [row for row in in_window_rows if row.source_id not in active]
+        excluded_set: set[str] = set()
+        if candidate_exclusions:
+            fingerprint_fn = getattr(connector, "membership_content_fingerprints", None)
+            current_fingerprints: dict[str, str] = {}
+            if callable(fingerprint_fn):
+                try:
+                    current_fingerprints = dict(
+                        fingerprint_fn([row.source_id for row in candidate_exclusions])
+                        or {}
+                    )
+                except Exception as exc:  # noqa: BLE001 - 指纹不可得 ⇒ 窗口内压制兜底
+                    logger.warning(
+                        "数据源 %s 成员内容指纹查询失败(按窗口内压制兜底): %s",
+                        source_id,
+                        str(exc)[:200],
+                    )
+            for row in candidate_exclusions:
+                current_fp = current_fingerprints.get(row.source_id)
+                if current_fp is None or current_fp == row.content_hash:
+                    excluded_set.add(row.source_id)
+                else:
+                    logger.info(
+                        "排除登记内容指纹漂移 %s(%s → %s):立即失效压制,"
+                        "身份重回 actionable missing 重评估",
+                        row.source_id,
+                        str(row.content_hash)[:12],
+                        current_fp[:12],
+                    )
+        # #82:补灌方向 —— 权威成员 − 账本在服成员 − 压制中的确定性永久排除。
         # 覆盖两类缺口:从未灌入(分支 scope 扩大后新纳入的既有内容)与
         # 墓碑后重回权威(上游删除后重新出现);排除物是第三类「不可灌入」,
         # 窗口内不作为 actionable missing 反复补灌(#91)。retirement 语义
