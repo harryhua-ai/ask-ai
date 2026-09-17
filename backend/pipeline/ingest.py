@@ -67,11 +67,19 @@ class IngestFailures(RuntimeError):
 
     消息文本包含逐文档明细行(含 stage/分类/可重试性),由调用方
     (scripts/sync.py)原样落入 SyncLog.error_detail —— 零签名变更即诊断化。
+
+    ``excluded``(#91,加性):本轮被**确定性永久安全排除**而分区出去的
+    文档(非失败、不阻塞原子激活;已持久化登记至 ingestion_exclusions)。
+    失败轮如实携带,供 sync 记账区分「瞬态失败」与「永久排除」—— 绝不
+    把排除冒记为失败,也绝不把失败掩饰为排除。
     """
 
-    def __init__(self, message: str, failures: list[DocFailure]) -> None:
+    def __init__(
+        self, message: str, failures: list[DocFailure], excluded: list[DocFailure] | None = None
+    ) -> None:
         super().__init__(message)
         self.failures = failures
+        self.excluded = list(excluded or [])
 
 
 def classify_ingest_failure(detail: str, default_class: str = "error") -> tuple[str, bool]:

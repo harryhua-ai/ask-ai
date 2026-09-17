@@ -36,8 +36,14 @@ from typing import Any
 
 from sqlalchemy import select
 
-from backend.db.models import DataSource, Document
-from backend.services.document_lifecycle import DocLifecycle, tombstone_document
+from backend.db.models import DataSource, Document, IngestionExclusion
+from backend.services.document_lifecycle import DocLifecycle, tombstone_document, utcnow
+from backend.services.ingestion_exclusions import (
+    purge_expired_out_of_authority,
+)
+from backend.services.ingestion_exclusions import (
+    suppression_cutoff as exclusion_suppression_cutoff,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +81,10 @@ class MembershipReconciliation:
     # 配置范围内却从未入账(或已退休但重回权威)的成员,由调用方经既有
     # ingest 路径补灌;本服务只负责对账事实,不做灌入。
     missing_ids: tuple[str, ...] = field(default_factory=tuple)
+    # #91:确定性永久排除(authority ∩ ingestion_exclusions,非在服)。
+    # 这些身份**不再**计入 missing(不反复补灌、不反复嵌入),但必须单独
+    # 如实暴露 —— 不假收敛(绝不插成在服账本行)。
+    excluded_ids: tuple[str, ...] = field(default_factory=tuple)
     status: str = "completed"  # completed / failed
     error: str | None = None
 
@@ -128,10 +138,61 @@ def reconcile_membership(
     with session_factory() as session:
         active = ledger_active_membership(session, source_id)
         stale = sorted(active - enumeration)
-        # #82:补灌方向 —— 权威成员 − 账本在服成员。覆盖两类缺口:从未灌入
-        # (分支 scope 扩大后新纳入的既有内容)与墓碑后重回权威(上游删除后
-        # 重新出现); retirement 语义不变,缺失成员的灌入归调用方既有路径。
-        missing = sorted(enumeration - active)
+        # #91(Role A REVIEW_2/REVIEW_3):确定性永久排除的压制**有界且指纹
+        # 失效**。窗口内的登记默认压制 missing;但若连接器能提供权威内容
+        # 指纹(github:git 对象库读取,与灌入哈希同变换),则逐身份比对:
+        #   指纹一致(内容未变)→ 窗口内继续压制;
+        #   指纹漂移(权威内容已变)→ **立即失效压制**,身份重回 actionable
+        #   missing ⇒ 补灌重取 ⇒ builder 按现行政策重判(安全=激活+清登记,
+        #   不安全=原位换判定)。无指纹能力的连接器按 Tier 2 窗口兜底
+        #   (TTL 仍是有界回退,覆盖政策/规则演进的重评估)。
+        # 在服身份的登记由激活事务清除,此处兜底不压制任何在服事实。
+        cutoff = exclusion_suppression_cutoff(utcnow())
+        in_window_rows = session.execute(
+            select(IngestionExclusion).where(
+                IngestionExclusion.source_id.like(f"{source_id}/%"),
+                IngestionExclusion.last_confirmed_at >= cutoff,
+            )
+        ).scalars().all()
+        candidate_exclusions = [row for row in in_window_rows if row.source_id not in active]
+        excluded_set: set[str] = set()
+        if candidate_exclusions:
+            fingerprint_fn = getattr(connector, "membership_content_fingerprints", None)
+            current_fingerprints: dict[str, str] = {}
+            if callable(fingerprint_fn):
+                try:
+                    current_fingerprints = dict(
+                        fingerprint_fn([row.source_id for row in candidate_exclusions])
+                        or {}
+                    )
+                except Exception as exc:  # noqa: BLE001 - 指纹不可得 ⇒ 窗口内压制兜底
+                    logger.warning(
+                        "数据源 %s 成员内容指纹查询失败(按窗口内压制兜底): %s",
+                        source_id,
+                        str(exc)[:200],
+                    )
+            for row in candidate_exclusions:
+                current_fp = current_fingerprints.get(row.source_id)
+                if current_fp is None or current_fp == row.content_hash:
+                    excluded_set.add(row.source_id)
+                else:
+                    logger.info(
+                        "排除登记内容指纹漂移 %s(%s → %s):立即失效压制,"
+                        "身份重回 actionable missing 重评估",
+                        row.source_id,
+                        str(row.content_hash)[:12],
+                        current_fp[:12],
+                    )
+        # #82:补灌方向 —— 权威成员 − 账本在服成员 − 压制中的确定性永久排除。
+        # 覆盖两类缺口:从未灌入(分支 scope 扩大后新纳入的既有内容)与
+        # 墓碑后重回权威(上游删除后重新出现);排除物是第三类「不可灌入」,
+        # 窗口内不作为 actionable missing 反复补灌(#91)。retirement 语义
+        # 不变,可灌缺失成员的灌入归调用方既有路径。
+        excluded_ids = tuple(sorted(excluded_set & enumeration))
+        missing = sorted((enumeration - active) - excluded_set)
+        # 卫生(同事务,幂等):清除「窗口过期 ∘ 已不在权威枚举」的登记;
+        # 枚举内的过期行保留 —— 它们正是重评估请求(过期 ⇒ 重回 missing)。
+        purge_expired_out_of_authority(session, source_id, enumeration, cutoff=cutoff)
         retired = 0
         for sid in stale:
             if tombstone_document(session, sid, reason=reason or "membership_reconcile"):
@@ -143,13 +204,14 @@ def reconcile_membership(
     residual_ids = tuple(sorted(residual - enumeration))
     logger.info(
         "成员对账完成 %s: authoritative=%d ledger_serving=%d stale=%d retired=%d"
-        " missing=%d residual=%d",
+        " missing=%d permanent_excluded=%d residual=%d",
         source_id,
         len(enumeration),
         len(active),
         len(stale),
         retired,
         len(missing),
+        len(excluded_ids),
         len(residual_ids),
     )
     return MembershipReconciliation(
@@ -160,6 +222,7 @@ def reconcile_membership(
         retired=retired,
         residual_ids=residual_ids,
         missing_ids=tuple(missing),
+        excluded_ids=excluded_ids,
         status="completed",
     )
 
@@ -221,4 +284,6 @@ def truth_detail_of(result: MembershipReconciliation) -> dict[str, Any]:
         "residual_sample": list(result.residual_ids[:_DETAIL_SAMPLE]),
         # #82 加性审计键:缺失成员样例(补灌方向的可见性;Admin 契约词表不变)
         "missing_sample": list(result.missing_ids[:_DETAIL_SAMPLE]),
+        # #91 加性审计键:确定性永久排除样例(不可灌入,非 actionable missing)
+        "excluded_sample": list(result.excluded_ids[:_DETAIL_SAMPLE]),
     }

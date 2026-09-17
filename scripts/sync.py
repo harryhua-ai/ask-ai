@@ -660,6 +660,9 @@ async def _reconcile_membership_for_source(
         # #82 加性计数:缺失权威成员(补灌方向的可见性,灌入在调用方)
         "membership_missing": len(result.missing_ids),
         "membership_missing_unit": "document",
+        # #91 加性计数:确定性永久排除(不可灌入,已分区登记,非 actionable)
+        "membership_excluded": len(result.excluded_ids),
+        "membership_excluded_unit": "document",
     }
     if result.unresolved:
         if log_entry.status == "success":
@@ -687,6 +690,31 @@ async def _reconcile_membership_for_source(
             len(result.missing_ids),
         )
     return True, delta, tuple(result.missing_ids)
+
+
+def _exclusion_delta(accounting: Any) -> dict[str, Any]:
+    """#91:由 BuildAccounting 构造 eligible/永久排除加性记账键(AC10/AC12)。
+
+    eligible = 进入本轮构建判定的文档中未被分区排除的部分(有资格参与
+    原子生成的候选);permanent_excluded = 确定性安全排除分区数。零排除
+    时返回空 dict(不制造无信息键)。
+    """
+    excluded_n = len(getattr(accounting, "excluded_docs", []) or [])
+    total_n = (
+        len(accounting.new_docs)
+        + len(accounting.updated_docs)
+        + len(accounting.unchanged_docs)
+        + len(accounting.metadata_docs)
+        + excluded_n
+    )
+    if not excluded_n and not total_n:
+        return {}
+    return {
+        "eligible_count": total_n - excluded_n,
+        "eligible_count_unit": "document",
+        "permanent_excluded": excluded_n,
+        "permanent_excluded_unit": "document",
+    }
 
 
 async def _backfill_missing_members(
@@ -1525,6 +1553,8 @@ async def _sync_one(
                             backfill_new_n + len(backfill.updated_docs)
                         )
                         delta_merge["membership_backfilled_unit"] = "document"
+                        # #91 加性记账:eligible / 永久排除分区事实(AC10/AC12)
+                        delta_merge.update(_exclusion_delta(backfill))
                         log_entry.delta_counts = delta_merge
                     if not membership_resolved and log_entry.status == "success":
                         log_entry.status = "partial"
@@ -1746,6 +1776,16 @@ async def _sync_one(
                 "membership_backfilled": backfill_new_n + backfill_updated_n,
                 "membership_backfilled_unit": "document",
             }
+        # #91 加性记账:主构建 + 补灌批次的 eligible/永久排除分区事实
+        main_exclusion_delta = _exclusion_delta(accounting)
+        if main_exclusion_delta or backfill is not None:
+            merge = dict(main_exclusion_delta)
+            if backfill is not None:
+                for key, value in _exclusion_delta(backfill).items():
+                    if key.endswith("_unit"):
+                        continue
+                    merge[key] = merge.get(key, 0) + value
+            log_entry.delta_counts = {**log_entry.delta_counts, **merge}
         # Track A:缺席确认事实进 error_detail(宽限/政策缺席/恢复均留痕;
         # 退休篇数已并入 items_deleted/retired_count)。
         if any(
@@ -1808,6 +1848,19 @@ async def _sync_one(
                 session_factory,
                 docs_failed=len(ingest_failures),
                 docs_failed_retryable=sum(1 for f in ingest_failures if f.retryable),
+            )
+        # #91:失败轮的永久排除分区事实照常暴露 —— 排除不是失败,也不是
+        # 健康假象的遮掩(AC10/I9:绝不靠「少报错误」制造假健康)。
+        excluded_failures = getattr(exc, "excluded", None) or []
+        if excluded_failures:
+            await tel.counters(
+                session_factory,
+                docs_permanent_excluded=len(excluded_failures),
+            )
+            log_entry.error_detail = (
+                f"{log_entry.error_detail};"
+                f"永久排除分区 {len(excluded_failures)} 篇"
+                f"(已登记 ingestion_exclusions,不再重复补灌)"
             )
         # #34:传输类失败证据化 —— 计入 SyncRun.counters.transport_failures,
         # 并向 run_sync 上抛信号(经返回值),落入 executor 既有有界重试;

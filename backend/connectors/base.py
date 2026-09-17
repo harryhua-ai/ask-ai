@@ -66,6 +66,12 @@ class DataSourceConnector(Protocol):
     - ``policy_absence_reason(source_id)``:管理员策略(include_dirs/
       file_types/排除/技术安全)下该身份是否**不在摄取范围**(A-3:范围外
       缺席绝不确认为源删除,返回人读 reason;范围内返回 None)。
+
+    Issue #91 可选能力(鸭子类型,非协议必需):
+    - ``membership_content_fingerprints(source_ids) -> dict[str, str]``:
+      给定复合身份的**当前权威内容指纹**(与 RawDocument.content_hash 同
+      变换)。供成员对账对排除登记做指纹比对 —— 指纹漂移 ⇒ 立即失效压制
+      重评估;无此能力的连接器由压制窗口(TTL)兜底。实现者:GitHubConnector。
     """
 
     DECLARES_DELETIONS: bool

@@ -65,7 +65,9 @@ class Document(Base):
 
     __tablename__ = "documents"
 
-    source_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    # #92:canonical 复合身份容量 200→500(scripts/migrate_widen_document_source_id_500.py
+    # 同批登记;存量行零改写,不截断/不哈希/不别名)
+    source_id: Mapped[str] = mapped_column(String(500), primary_key=True)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     source_type: Mapped[str] = mapped_column(String(50), nullable=False)
     product: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -85,7 +87,7 @@ class Document(Base):
     current_version_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True, index=True
     )
-    superseded_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    superseded_by: Mapped[str | None] = mapped_column(String(500), nullable=True)
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # ---- v1.6.3 Track C(U-7 逐文档 content_type;加性,零回填)----
@@ -115,7 +117,8 @@ class DocumentVersion(Base):
     __tablename__ = "document_versions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    source_id: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    # #92:身份容量与 documents.source_id 同批扩容(复合身份列,非源配置 id)
+    source_id: Mapped[str] = mapped_column(String(500), nullable=False, index=True)
     version_seq: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     metadata_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -927,7 +930,8 @@ class DocumentRepairTask(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     source_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
-    doc_source_id: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    # #92:复合文档身份容量与 documents.source_id 同批扩容
+    doc_source_id: Mapped[str] = mapped_column(String(500), nullable=False, index=True)
     # pending / running / succeeded / failed(终态不可逆;无强转)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
     # plan / repair / verify(进度阶段;UI 进度呈现数据源)
@@ -957,13 +961,59 @@ class DocumentRecoveryEvent(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     source_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
-    doc_source_id: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    # #92:复合文档身份容量与 documents.source_id 同批扩容
+    doc_source_id: Mapped[str] = mapped_column(String(500), nullable=False, index=True)
     # succeeded / failed(自动恢复尝试结果;词表冻结)
     outcome: Mapped[str] = mapped_column(String(20), nullable=False)
     # 来源同步运行(可追溯;sync_runs.id)
     sync_run_id: Mapped[int | None] = mapped_column(Integer)
     detail: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class IngestionExclusion(Base):
+    """永久性灌入排除登记(#91;确定性资格分区的权威面)。
+
+    RECONCILABLE AUTHORITY = AUTHORITATIVE MEMBERSHIP − 本表登记的确定性
+    永久排除(技术安全:二进制内容/私钥 armor/解码失败等纯内容判定)。
+    语义契约(#91 Final Acceptance Contract + Role A REVIEW_2 修正):
+
+    - 排除发生在原子 eligible 生成代**之前**:被排除物绝不 chunk/embed/
+      入账/入向量,也绝不以「失败」身份毒化整代(瞬态失败仍 fail-closed);
+    - **每身份恰一行 = 对其当前权威内容的判定**(PK = source_id;
+      ``content_hash`` 记录判定所针对的内容指纹)。builder 对任何到达它
+      的内容**永远重跑现行政策判定**,本表只是记账,绝不是判定门;
+    - **压制有界**(:data:`backend.services.ingestion_exclusions.
+      INGESTION_EXCLUSION_REEVALUATION_DAYS`):成员对账只在窗口内把该
+      身份从 actionable missing 压制;窗口过期 ⇒ 身份重回 missing ⇒
+      补灌重取内容 ⇒ builder 按现行政策重判 —— 同内容不安全则刷新确认
+      (压制重启,零嵌入),内容变更则按事实处置(安全=激活+清登记,
+      不安全=换判定行)。政策/安全规则演进因此有确定性重评估路径;
+    - 可审计:reason/detail/stage/actor + 首见/末次确认时间与确认次数;
+    - 本表**不是** lifecycle 词表的一部分(排除物从未入服,与退休/墓碑
+      正交);真值面如实单独计数,不假收敛。
+    """
+
+    __tablename__ = "ingestion_exclusions"
+
+    # 复合文档身份(容量与 documents.source_id 同批,#92)
+    source_id: Mapped[str] = mapped_column(String(500), primary_key=True)
+    # 判定所针对的内容指纹(builder 判定内容变更后原位更新本列)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # 技术安全判定 reason 词表(safety.py SafetyVerdict.reason):
+    # binary_content / secret_content / poor_decode / secret_file /
+    # model_artifact_ext / hard_oversized
+    reason: Mapped[str] = mapped_column(String(50), nullable=False)
+    detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    stage: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    actor: Mapped[str] = mapped_column(String(100), nullable=False, default="sync")
+    times_confirmed: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_confirmed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class KnowledgeSettingsPreview(Base):
