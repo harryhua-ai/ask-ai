@@ -121,6 +121,25 @@ class _Connector:
         return []
 
 
+class _FingerprintConnector(_Connector):
+    """REVIEW_3:具备权威内容指纹能力的连接器(github 同构,窄面)。
+
+    ``membership_content_fingerprints(ids)`` 返回给定身份的当前权威内容
+    sha256(与 RawDocument.content_hash 同变换)。无能力的连接器不实现
+    该方法 —— 对账按 Tier 2 窗口兜底。
+    """
+
+    def __init__(self, members, full_docs, fingerprints: dict[str, str]) -> None:
+        super().__init__(members, full_docs)
+        self._fingerprints = fingerprints
+        self.fingerprint_queries: list[list[str]] = []
+
+    def membership_content_fingerprints(self, source_ids):
+        ids = list(source_ids)
+        self.fingerprint_queries.append(ids)
+        return {sid: fp for sid, fp in self._fingerprints.items() if sid in set(ids)}
+
+
 class _FakeEmbedder:
     dimension = 8
 
@@ -566,3 +585,142 @@ async def test_reconcile_purges_expired_exclusions_out_of_authority(
     assert result.status == "completed"
     assert await _exclusion_row(db_engine, POLICY_GONE) is None, "越权过期登记被清除"
     assert await _exclusion_row(db_engine, FLIP) is not None, "枚举内过期行保留待重评估"
+
+
+# --------------------------------------------------------------------------- #
+# Role A REVIEW_3:同源内容变更立即失效压制(不等 TTL)
+# --------------------------------------------------------------------------- #
+
+
+async def test_immediate_content_change_reevaluation_without_ttl(
+    db_engine, sync_factory, healthy_report
+):
+    """无任何人工过期:循环1 排除(A);循环2 同身份权威内容变为安全(B)
+    ⇒ 指纹漂移立即失效压制 ⇒ 重取、重判、激活、清登记;循环3 真 no-change
+    零重嵌。旧实现:7 天窗口内压制 ⇒ 永久缺席。"""
+    stack = _real_stack(sync_factory)
+    factory = get_session_factory(db_engine)
+    await _seed_active(db_engine, OK1)
+
+    # ---- 循环 1:X = 不安全内容(A)→ 排除持久化、不入服 ----
+    safe_doc = _raw_doc(FLIP, SAFE_CONTENT)
+    unsafe_doc = _raw_doc(FLIP, UNSAFE_CONTENT)
+    connector = _FingerprintConnector(
+        members={OK1, FLIP},
+        full_docs=[unsafe_doc],
+        fingerprints={},  # 排除发生前:无登记身份,对账不查指纹
+    )
+    _CURRENT["connector"] = connector
+    await sync_mod._sync_one(
+        _cfg(), stack.pipeline, factory, triggered_by="manual", builder=stack.builder
+    )
+    row1 = await _exclusion_row(db_engine, FLIP)
+    assert row1 is not None and row1.content_hash == _hash(UNSAFE_CONTENT), (
+        "循环1:排除(A)持久化"
+    )
+    assert FLIP not in await _serving_ids(db_engine)
+
+    # ---- 循环 2(立即,无 TTL 等待):权威内容变为安全(B)----
+    # 指纹漂移(A ≠ B)⇒ 陈旧排除必须立即失效 ⇒ X 重回 actionable missing
+    # ⇒ 补灌重取 ⇒ 现行安全判定通过 ⇒ 激活 ⇒ 清登记 ⇒ 入服。
+    connector = _FingerprintConnector(
+        members={OK1, FLIP},
+        full_docs=[safe_doc],
+        fingerprints={FLIP: _hash(SAFE_CONTENT)},
+    )
+    _CURRENT["connector"] = connector
+    await sync_mod._sync_one(
+        _cfg(), stack.pipeline, factory, triggered_by="manual", builder=stack.builder
+    )
+    log2 = await _latest_sync_log(db_engine)
+    assert log2.status == "success", f"循环2 必须收敛: {log2.error_detail[:200]}"
+    assert FLIP in await _serving_ids(db_engine), (
+        "内容变更(指纹漂移)必须立即失效压制并重评估激活"
+        "(旧实现:TTL 窗口内永久缺席)"
+    )
+    assert await _exclusion_row(db_engine, FLIP) is None, "激活清除陈旧排除"
+    assert any("credentials guide" in t for t in _embedded_texts(stack)), (
+        "重评估真实抓取并嵌入安全内容"
+    )
+
+    # ---- 循环 3:一切未变 → 真 no-change、零重嵌、零 actionable missing ----
+    embedded_before = len(_embedded_texts(stack))
+    connector = _FingerprintConnector(
+        members={OK1, FLIP},
+        full_docs=[safe_doc],
+        fingerprints={FLIP: _hash(SAFE_CONTENT)},
+    )
+    _CURRENT["connector"] = connector
+    await sync_mod._sync_one(
+        _cfg(), stack.pipeline, factory, triggered_by="cron", builder=stack.builder
+    )
+    log3 = await _latest_sync_log(db_engine)
+    assert log3.status == "success"
+    assert dict(log3.delta_counts or {}).get("membership_missing", 0) == 0
+    assert len(_embedded_texts(stack)) == embedded_before, "循环3 零重复嵌入"
+    stack.client.close()
+
+
+async def test_fingerprint_match_keeps_suppression_without_reembed(
+    db_engine, sync_factory, healthy_report
+):
+    """指纹一致(内容未变)+ 窗口内:压制保持、零补灌、零嵌入 —— 指纹机制
+    绝不复活 GPU 循环。"""
+    stack = _real_stack(sync_factory)
+    factory = get_session_factory(db_engine)
+    await _seed_active(db_engine, OK1)
+
+    unsafe_doc = _raw_doc(FLIP, UNSAFE_CONTENT)
+    _CURRENT["connector"] = _Connector(
+        members={OK1, FLIP}, full_docs=[unsafe_doc]
+    )
+    await sync_mod._sync_one(
+        _cfg(), stack.pipeline, factory, triggered_by="manual", builder=stack.builder
+    )
+    embedded_before = len(_embedded_texts(stack))
+
+    connector = _FingerprintConnector(
+        members={OK1, FLIP},
+        full_docs=[unsafe_doc],
+        fingerprints={FLIP: _hash(UNSAFE_CONTENT)},  # 指纹一致
+    )
+    _CURRENT["connector"] = connector
+    await sync_mod._sync_one(
+        _cfg(), stack.pipeline, factory, triggered_by="cron", builder=stack.builder
+    )
+    log = await _latest_sync_log(db_engine)
+    assert log.status == "success"
+    delta = dict(log.delta_counts or {})
+    assert delta.get("membership_excluded", 0) == 1, "指纹一致 ⇒ 窗口内压制保持"
+    assert "membership_backfilled" not in delta, "不补灌"
+    assert len(_embedded_texts(stack)) == embedded_before, "零重复嵌入"
+    assert FLIP not in await _serving_ids(db_engine)
+    stack.client.close()
+
+
+async def test_fingerprint_capability_absent_keeps_ttl_fallback(
+    db_engine, sync_factory, healthy_report
+):
+    """无指纹能力的连接器:窗口内压制兜底不变(Tier 2),回归保护。"""
+    stack = _real_stack(sync_factory)
+    factory = get_session_factory(db_engine)
+    await _seed_active(db_engine, OK1)
+
+    _CURRENT["connector"] = _Connector(
+        members={OK1, FLIP}, full_docs=[_raw_doc(FLIP, UNSAFE_CONTENT)]
+    )
+    await sync_mod._sync_one(
+        _cfg(), stack.pipeline, factory, triggered_by="manual", builder=stack.builder
+    )
+    embedded_before = len(_embedded_texts(stack))
+
+    _CURRENT["connector"] = _Connector(
+        members={OK1, FLIP}, full_docs=[_raw_doc(FLIP, UNSAFE_CONTENT)]
+    )
+    await sync_mod._sync_one(
+        _cfg(), stack.pipeline, factory, triggered_by="cron", builder=stack.builder
+    )
+    delta = dict((await _latest_sync_log(db_engine)).delta_counts or {})
+    assert delta.get("membership_excluded", 0) == 1, "无指纹能力 ⇒ 窗口内压制兜底"
+    assert len(_embedded_texts(stack)) == embedded_before
+    stack.client.close()
