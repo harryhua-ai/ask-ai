@@ -36,6 +36,52 @@ Frozen baseline characteristics:
 
 Expose authoritative visitor Country/Region and authoritative Entry Channel without reducing the scan density of the existing Conversation Review list. Both dimensions must be filterable server-side across the complete result set.
 
+## Repository baseline audit — 2026-09-18
+
+Role A inspected current `main` before re-authorizing this feature.
+
+Confirmed existing support:
+- `Conversation.country` already exists in PostgreSQL as `String(10)`;
+- `Conversation.session_id` and `Conversation.site_id` already exist and are indexed;
+- the current `channel` field is transport semantics. The Admin UI explicitly offers `widget` / `discord`, so it is **not** Entry Channel;
+- the current Conversation Review list/detail API does **not** expose `country`, `site_id`, or `session_id`;
+- the current Admin list API has no Country or Entry/site filter.
+
+Critical defect in existing country capture:
+- current `/api/ask` derives `Conversation.country` from the region suffix of `Accept-Language` (for example `en-US → US`);
+- this is language/locale inference, not geographic truth, and directly violates this Product Contract;
+- therefore the repository has a **country storage field but does not currently have acceptable country-detection functionality**.
+
+### Required capability addition
+
+Issue #68 therefore includes backend country-truth implementation, not only Admin presentation.
+
+Required behavior:
+1. Replace `Accept-Language`-derived country assignment with one authoritative request-country resolver.
+2. Resolver output is ISO 3166-1 alpha-2 or `UNKNOWN`/NULL.
+3. A deployment must be able to obtain country from a trusted server-side source:
+   - trusted ingress/edge country metadata, **or**
+   - trusted server-side IP geolocation;
+   exact provider/library is Engineering HOW, but client-spoofable arbitrary headers are not authority.
+4. The trust boundary must be explicit. Forwarded geo/IP metadata is accepted only from configured trusted ingress/proxy paths.
+5. Raw IP must not be exposed in Admin and must not be newly retained merely for this feature.
+6. Country resolution failure is fail-honest: persist/display Unknown rather than infer from language.
+7. Existing historical country values produced by the old `Accept-Language` heuristic must **not** be presented as authoritative geography. Migration/provenance strategy must classify them as legacy-untrusted or convert them to Unknown; silently grandfathering them as factual Country is forbidden.
+8. New country truth must carry sufficient provenance/audit semantics to distinguish trusted geo from Unknown/legacy-untrusted data. Exact schema (`country_source`, migration marker, or equivalent) is Engineering HOW.
+9. Add the appropriate query/index support so Country filtering is server-side and remains operational at Conversation Review scale.
+10. Add regression tests proving `Accept-Language` cannot determine Country.
+
+### Entry Channel baseline result
+
+The current `channel` field is confirmed to be transport semantics. Therefore #68 requires a **separate Entry dimension backed by `site_id` / authoritative site configuration**.
+
+Admin API requirements:
+- list response exposes Country truth and Entry/site display projection;
+- detail response exposes the same values;
+- list endpoint accepts Country and Entry/site filters before pagination;
+- transport `channel` filter remains independently available;
+- no URL/domain guessing is allowed.
+
 ## Truth model
 
 ### Country/Region
@@ -121,7 +167,7 @@ If the compatibility audit proves the existing Channel filter already equals Ent
 1. Existing Conversation Review visual hierarchy and compact-card density are preserved.
 2. Country/Region and Entry are visible from authoritative backend values without converting the list to a table.
 3. Detail exposes the same authoritative values.
-4. Existing Channel semantic is audited; duplicate/ambiguous channel filters are forbidden.
+4. Existing Channel semantic is confirmed as transport (`widget` / `discord`) and remains distinct; Entry is a separate site-backed dimension.
 5. Country and Entry filters are server-side and operate before pagination.
 6. Filtered totals/pagination are correct and filters compose with existing filters.
 7. Unknown is explicit and filterable.
@@ -130,8 +176,9 @@ If the compatibility audit proves the existing Channel filter already equals Ent
 10. No raw IP exposure or unnecessary new PII.
 11. Historical missing truth remains Unknown unless authoritative persisted backfill exists.
 12. Existing Conversation ID/status/intent/confidence/answer-state/latency semantics remain unchanged.
-13. Regression tests cover authority, Unknown, existing-channel compatibility, filtering, pagination/counts and old/new rows.
-14. Visual acceptance is performed against the real current Conversation Review baseline, not the superseded table mock.
+13. Regression tests cover trusted country resolution, rejection of Accept-Language inference, legacy-untrusted country handling, Unknown, transport-vs-Entry separation, filtering, pagination/counts and old/new rows.
+14. Production-like acceptance demonstrates at least one trusted-country path yields the correct ISO country and an unavailable/untrusted path yields Unknown.
+15. Visual acceptance is performed against the real current Conversation Review baseline, not the superseded table mock.
 
 ## Non-goals
 
