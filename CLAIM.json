@@ -52,5 +52,11 @@
   },
   "preserved_at": "2026-09-18T10:05:13Z"
  },
- "takeover_evidence": "same attempt continuation: A REQUEST_CHANGES received on candidate 76ade35; lease lapsed during review wait; continuing same task per v1 flow (no fresh ready needed)"
+ "takeover_evidence": "same attempt continuation: A REQUEST_CHANGES received on candidate 76ade35; lease lapsed during review wait; continuing same task per v1 flow (no fresh ready needed)",
+ "delivery": {
+  "pr": 97,
+  "sha": "04aa9c311643d35a74f9031c09dbe032015498d1",
+  "note": "REVIEW_1 resolved: geoip stage removed (claimed==shipped), single trusted-ingress authoritative path, no two-stage claim; targeted 42/42; new candidate 04aa9c3, same PR #97",
+  "delivered_at": "2026-09-18T10:05:39Z"
+ }
 }
