@@ -5,9 +5,9 @@
  "github_principal": "harryhua-ai",
  "executor_id": "harryhua-ai",
  "claimed_at": "2026-09-18T09:55:54Z",
- "lease_expires_at": "2026-09-18T10:40:54Z",
+ "lease_expires_at": "2026-09-18T10:17:14Z",
  "execution_base": "055451f5f4409dc3329c5f45dd0d76801d3b319d",
- "status": "active",
+ "status": "delivered",
  "branch": "agent/68/1d32748e",
  "heartbeat_at": "2026-09-18T09:55:54Z",
  "contract_digest": "6b9d8260b3a938d38c08da162008ff544f4785561098fda24b02763656b317e6",
@@ -58,5 +58,11 @@
   "sha": "04aa9c311643d35a74f9031c09dbe032015498d1",
   "note": "REVIEW_1 resolved: geoip stage removed (claimed==shipped), single trusted-ingress authoritative path, no two-stage claim; targeted 42/42; new candidate 04aa9c3, same PR #97",
   "delivered_at": "2026-09-18T10:05:39Z"
+ },
+ "completed": {
+  "pr": 97,
+  "merge_commit": "db5ee9820b861494080c27caf372bb3584f82a9c",
+  "candidate_sha": "04aa9c311643d35a74f9031c09dbe032015498d1",
+  "completed_at": "2026-09-18T10:16:14Z"
  }
 }
