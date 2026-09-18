@@ -1,15 +1,15 @@
 {
  "v": 3,
  "task": 68,
- "claim_id": "harryhua-ai-20260918T080904-ce39b4bb",
+ "claim_id": "harryhua-ai-20260918T095554-75a1225a",
  "github_principal": "harryhua-ai",
  "executor_id": "harryhua-ai",
- "claimed_at": "2026-09-18T08:09:53Z",
- "lease_expires_at": "2026-09-18T09:38:28Z",
+ "claimed_at": "2026-09-18T09:55:54Z",
+ "lease_expires_at": "2026-09-18T10:40:54Z",
  "execution_base": "055451f5f4409dc3329c5f45dd0d76801d3b319d",
  "status": "active",
- "branch": "agent/68/b740a638",
- "heartbeat_at": "2026-09-18T08:53:28Z",
+ "branch": "agent/68/1d32748e",
+ "heartbeat_at": "2026-09-18T09:55:54Z",
  "contract_digest": "6b9d8260b3a938d38c08da162008ff544f4785561098fda24b02763656b317e6",
  "candidate": {
   "branch": "agent/68/b740a638",
@@ -52,10 +52,5 @@
   },
   "preserved_at": "2026-09-18T09:35:49Z"
  },
- "delivery": {
-  "pr": 97,
-  "sha": "76ade35c61a3729538f66031a32015d25b09ebfe",
-  "note": "Candidate 76ade35: country truth + site-backed entry; 40 new tests RED-to-GREEN; vitest 600/600; backend regression 2958P/2F (pre-existing baseline time-bomb); screenshots + report in PR #97",
-  "delivered_at": "2026-09-18T09:36:14Z"
- }
+ "takeover_evidence": "same attempt continuation: A REQUEST_CHANGES received on candidate 76ade35; lease lapsed during review wait; continuing same task per v1 flow (no fresh ready needed)"
 }
