@@ -230,7 +230,8 @@ class Conversation(Base):
     custom_tags: Mapped[list[Any]] = mapped_column(JSONB, default=[])
     customization_id: Mapped[str | None] = mapped_column(String(50))
     country: Mapped[str | None] = mapped_column(String(10))
-    # #68 Country Truth:国家权威来源(ingress|geoip);NULL = 无权威值
+    # #68 Country Truth:国家权威来源(ingress;REVIEW_1 收窄为单一权威路径);
+    # NULL = 无权威值
     # (Unknown 或 legacy 启发式遗留)。呈现语义:country 仅在 country_source
     # 非空时才是地理事实;迁移把启发式存量转 Unknown(禁止 silent grandfather)。
     country_source: Mapped[str | None] = mapped_column(String(20))

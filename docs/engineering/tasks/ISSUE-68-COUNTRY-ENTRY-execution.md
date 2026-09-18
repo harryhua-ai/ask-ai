@@ -5,6 +5,17 @@
 - Contract: issue #68 body `ght-contract` v1 + `docs/engineering/tasks/CONVERSATION-REVIEW-PRODUCT-UI-CONTRACT-20260917.md`
 - 状态: **CANDIDATE READY — 待 Role A review**(本报告 = Candidate 移交,不含 merge)
 
+## REVIEW_1(REQUEST_CHANGES)应答 — candidate 76ade35
+
+A exact-SHA review(76ade35)判定 **REQUEST_CHANGES**,两个 material blocker 及本轮处置:
+
+| Blocker | 处置 |
+| --- | --- |
+| 1. GeoIP 生产路径不可部署(geoip2 不在冻结镜像依赖集,宣称≠交付) | **采纳 A 的窄化选项**:整个 GeoIP 档从候选移除 —— geo_country 不再含 geoip 阶段,config 移除 `GEOIP_DATABASE_PATH`,`country_resolution_mode=geoip` 等历史值按 off 诚实降级并有测试固化。宣称能力=交付能力;若运维后续需要 tier-2,作为独立增量补依赖+具代表性验证后另交付 |
+| 2. 解析语义与冻结权威序(ingress→GeoIP→Unknown)不符(实现为互斥模式) | 同由窄化消解:候选明确支持**单一权威路径**(受信 ingress 头),不宣称两级链;契约权威序第 2 级为 "when explicitly configured" 的 or-选项,单一受信路径满足契约且不 redefine Product 语义(取 A 明示许可的第二选项) |
+
+修正后目标面 **42/42 绿**(resolver 20 / 迁移 4 / Admin API 9 / production-like 持久化 3 / business geo 6 既有);新 Candidate SHA 见 ght deliver 记录(同 PR #97)。
+
 ## 0. 契约准入备注(机械修正留痕)
 
 A 批准的契约块 `authority.implementation` 值为 `authorized`,不是 v3 合法枚举
@@ -38,27 +49,27 @@ A 批准的契约块 `authority.implementation` 值为 `authorized`,不是 v3 �
 | tests/api/admin/test_conversations_country_entry.py(9 例) | `Conversation(country_source=...)` TypeError(列缺失) |
 | tests/api/test_routes_country_persistence.py(3 例) | Settings 无 `country_resolution_mode` 字段 |
 
-GREEN 后 **40/40 全绿**。
+GREEN 后 **40/40 全绿**(REVIEW_1 窄化后为 42/42,含 6 例既有 business geo)。
 
 ## 3. 实现(GREEN)
 
-### 3.1 权威 resolver — `backend/services/geo_country.py`(新)
+### 3.1 权威 resolver — `backend/services/geo_country.py`(新;REVIEW_1 后窄化)
 
 - 唯一入口 `resolve_request_country(request, settings) -> (country, source)`;
-  输出只有 ISO 3166-1 alpha-2 或 None;返回接口无 raw IP 位置(IP 仅瞬时参与
-  解析,不落库/不进日志)。
-- 权威序:①受信 ingress geo 头(`country_ingress_header` 显式配置)→
-  ②服务端 GeoIP(`geoip_database_path`,geoip2 惰性加载,不可用降级 Unknown)→
-  ③Unknown。
-- **显式信任边界**:转发 geo/XFF 仅当直连 peer ∈ `geo_trusted_proxy_cidrs`;
-  空 CIDR = 无人可信;GeoIP 模式下 XFF 第一跳仅在 peer 受信时采信。
+  输出只有 ISO 3166-1 alpha-2 或 None;返回接口无 raw IP 位置(本路径不消费 IP)。
+- **单一权威路径**:受信 ingress geo 头 —— `country_resolution_mode=ingress`
+  + `country_ingress_header` 显式配置 + 直连 peer ∈ `geo_trusted_proxy_cidrs`
+  三条件同时成立,头值才是权威;否则 Unknown。
+- **显式信任边界**:客户端可伪造的任意头不是权威;空 CIDR = 无人可信。
 - Accept-Language/locale/timezone/问题文本不在输入面(接口即证据,测试覆盖)。
-- 模式值非法按 off 处理 + 告警;解析链路任何异常 fail-honest → Unknown。
+- 模式值非法或不受支持(含历史 geoip)按 off 处理 + 告警;解析链路任何异常
+  fail-honest → Unknown。
+- GeoIP tier 有意不交付(理由见 REVIEW_1 应答节),零新增依赖。
 
-### 3.2 配置 — backend/config.py(4 个新字段,env 注入)
+### 3.2 配置 — backend/config.py(3 个新字段,env 注入)
 
-`COUNTRY_RESOLUTION_MODE`(off 默认)/`COUNTRY_INGRESS_HEADER`/
-`GEO_TRUSTED_PROXY_CIDRS`(逗号分隔)/`GEOIP_DATABASE_PATH`。
+`COUNTRY_RESOLUTION_MODE`(off 默认;REVIEW_1 后合法值仅 `off|ingress`)/
+`COUNTRY_INGRESS_HEADER` / `GEO_TRUSTED_PROXY_CIDRS`(逗号分隔)。
 默认 off ⇒ 部署零配置时行为 = 恒 Unknown(fail-honest,不回归任何现有行为)。
 
 ### 3.3 模型 + 迁移
@@ -111,9 +122,9 @@ GREEN 后 **40/40 全绿**。
 
 ### 4.1 目标测试(40/40 GREEN)
 
-- resolver 单元 17:AC1(语言/时区不可判定 + off 默认)、AC2(伪造头拒绝/
-  受信头接受/非法值 fail-honest/未配置头名或 CIDR 恒 Unknown/XFF 仅受信 peer/
-  IP 不外泄/接口无 IP 位置)。
+- resolver 单元 20:AC1(语言/时区不可判定 + off 默认)、AC2(伪造头拒绝/
+  受信头接受/非法值 fail-honest/未配置头名或 CIDR 恒 Unknown/IP 不外泄/
+  接口无 IP 位置)+ REVIEW_1 收窄固化(geoip 模式值 → off 诚实降级)。
 - 迁移 4:legacy 转 Unknown、trusted 保留、幂等(二跑 no-op)、
   列+索引缺失重建分支(物理 DROP 后迁移重建,再次 legacy 转换)。
 - Admin API 9:呈现门(legacy 不呈现)、entry 投影、country/UNKNOWN/entry/
@@ -162,10 +173,11 @@ evidence/issue68/(1536×1024,真实登录态 + 真实 dev 数据):
 
 - 迁移 `scripts/migrate_add_country_truth.py` 已登记清单,部署编排按冻结发布树
   在 rollout 前执行(幂等,在线安全)。
-- 生产启用权威来源需运维显式配置(二选一):
-  ingress 模式 = `COUNTRY_RESOLUTION_MODE=ingress` + `COUNTRY_INGRESS_HEADER=<头名>`
-  + `GEO_TRUSTED_PROXY_CIDRS=<边缘网段>`;或 geoip 模式 = `...=geoip` +
-  `GEOIP_DATABASE_PATH=<MMDB>`。未配置 = 恒 Unknown(诚实缺省)。
+- 生产启用权威来源需运维显式配置(唯一受支持路径,REVIEW_1 窄化后):
+  `COUNTRY_RESOLUTION_MODE=ingress` + `COUNTRY_INGRESS_HEADER=<边缘下发的
+  geo 头名>` + `GEO_TRUSTED_PROXY_CIDRS=<边缘/反代网段>`。
+  未配置 = 恒 Unknown(诚实缺省);`geoip` 等其它值按 off 降级(有测试固化,
+  不虚假宣称 server-side GeoIP 能力)。
 
 ### 3.8 回归期发现与修复 — mock 测试面 settings 缺失
 
@@ -186,14 +198,15 @@ ask 流测试(reliability/multilingual/routes/gap_export 共 14 例)直接构造
 | AC4 channel 保持 transport;Entry=site_id 权威投影;列表=详情 | 渠道 select 保留 + entry 投影测试 + 截图 3 |
 | AC5 服务端过滤先于分页/计数、组合、UNKNOWN 一等 | Admin API 过滤测试(counts 断言)+ 截图 2/4 |
 | AC6 保留紧凑高密度 UI,无表格化/常驻列/多Pane | 截图 1-4;卡片元数据行渐进增强 |
-| AC7 聚焦前后端测试绿 + 截图对照基线 | vitest 600/600 + 40/40 + evidence 4 张 |
+| AC7 聚焦前后端测试绿 + 截图对照基线 | vitest 600/600 + 42/42 + evidence 4 张 |
 
 ## 6. 边界与不做
 
 - 未动 #87(Thread,独立契约)、#48、未做销售线索存量清洗(线索 country 经
   写入路径自动归真;存量线索语义属 Sales Lead 面,超本契约,留 A 裁决);
 - 未引入新 PII;未改 product 语义;未触生产;
-- 依赖零新增(geoip2 为可选运行时依赖,惰性导入;不装即 Unknown 降级)。
+- 依赖零新增:server-side GeoIP tier 有意不交付(REVIEW_1 Blocker 1 处置),
+  不宣称、不半交付;后续如需按独立增量补 geoip2 依赖 + 具代表性验证。
 
 ## 7. Candidate
 

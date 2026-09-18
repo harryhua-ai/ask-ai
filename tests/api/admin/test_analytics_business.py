@@ -121,7 +121,7 @@ async def test_business_overview_geo_pct_and_90d(business_seed):
                 is_answered=True,
                 intent_tag="commercial",
                 country="US",
-                country_source="geoip",
+                country_source="ingress",
             )
         )
         session.add(

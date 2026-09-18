@@ -60,7 +60,7 @@ async def geo_env():
         rows = [
             # (question, country, country_source, site_id, channel)
             (f"{_Q}trusted-us-siteA", "US", "ingress", site_a, "widget"),
-            (f"{_Q}trusted-de-siteB", "DE", "geoip", site_b, "widget"),
+            (f"{_Q}trusted-de-siteB", "DE", "ingress", site_b, "widget"),
             (f"{_Q}legacy-us-nosource", "US", None, site_a, "widget"),  # 启发式遗留
             (f"{_Q}unknown-null", None, None, None, "discord"),  # 全未知
         ]
@@ -111,7 +111,7 @@ async def test_list_projects_country_only_with_trusted_source(geo_env):
     assert by_q[f"{_Q}trusted-us-siteA"]["country"] == "US"
     assert by_q[f"{_Q}trusted-us-siteA"]["country_source"] == "ingress"
     assert by_q[f"{_Q}trusted-de-siteB"]["country"] == "DE"
-    assert by_q[f"{_Q}trusted-de-siteB"]["country_source"] == "geoip"
+    assert by_q[f"{_Q}trusted-de-siteB"]["country_source"] == "ingress"
     # legacy 启发式值不得呈现为地理事实
     assert by_q[f"{_Q}legacy-us-nosource"]["country"] is None
     assert by_q[f"{_Q}legacy-us-nosource"]["country_source"] is None
@@ -196,7 +196,7 @@ async def test_detail_exposes_same_truth(geo_env):
         assert data["total"] == 1
         detail = await _detail(client, geo_env["headers"], data["items"][0]["id"])
     assert detail["country"] == "DE"
-    assert detail["country_source"] == "geoip"
+    assert detail["country_source"] == "ingress"
     assert detail["entry"]["display_name"] == "Wiki"
 
 

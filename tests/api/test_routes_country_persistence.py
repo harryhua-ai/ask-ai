@@ -65,7 +65,6 @@ async def ingress_app():
         country_resolution_mode="ingress",
         country_ingress_header="geo-country",
         geo_trusted_proxy_cidrs=("127.0.0.0/8",),
-        geoip_database_path="",
     )
     app.state.session_factory = get_session_factory(engine)
     app.state.budget = _DecliningBudget()
