@@ -12,5 +12,31 @@
  "heartbeat_at": "2026-09-18T15:02:16Z",
  "supersedes": null,
  "contract_digest": "037288e88626263b95584ed299915d36d8a33dfb643c74581d14f588b44f2939",
- "candidate": null
+ "candidate": {
+  "branch": "agent/94/e64b331f",
+  "sha": "c0a2b7883bebce5d0d4a59d34d46df9baf83c948",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "backend/db/models.py": "ALLOWED",
+    "backend/pipeline/generation_builder.py": "ALLOWED",
+    "backend/services/membership_currency.py": "ALLOWED",
+    "backend/services/zero_semantic_chunks.py": "ALLOWED",
+    "deploy/prod/migrations.json": "ALLOWED",
+    "docs/engineering/tasks/ISSUE-94-ZERO-CHUNK-execution.md": "ALLOWED",
+    "scripts/migrate_add_zero_semantic_chunks.py": "ALLOWED",
+    "scripts/sync.py": "ALLOWED",
+    "tests/api/admin/conftest.py": "ALLOWED",
+    "tests/pipeline/test_issue94_zero_chunk_builder.py": "ALLOWED",
+    "tests/services/test_issue94_membership_zero_chunk.py": "ALLOWED",
+    "tests/services/test_issue94_zero_chunk_service.py": "ALLOWED"
+   },
+   "violations": [],
+   "counts": {
+    "ALLOWED": 12,
+    "FORBIDDEN": 0
+   }
+  },
+  "preserved_at": "2026-09-18T15:02:37Z"
+ }
 }
