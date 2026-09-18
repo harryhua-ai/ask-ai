@@ -13,6 +13,7 @@
         "scripts/migrate_add_commerce_variation_props.py",
         "scripts/migrate_widen_document_source_id_500.py",
         "scripts/migrate_add_ingestion_exclusions.py",
-        "scripts/migrate_add_country_truth.py"
+        "scripts/migrate_add_country_truth.py",
+        "scripts/migrate_add_zero_semantic_chunks.py"
     ]
 }
