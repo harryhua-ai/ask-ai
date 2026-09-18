@@ -22,6 +22,8 @@ export interface UiStrings {
   notNow: string;
   /** C/聊天窗关闭控件可访问名 */
   minimize: string;
+  /** #87 REPLAN(a):「新对话」= 轮换匿名会话身份开启新 Thread */
+  newConversation: string;
   /** 聊天窗头部可访问名(dialog 语义) */
   chatTitle: string;
   /** Trusted Actions 区可访问名 */
@@ -46,6 +48,7 @@ const EN: UiStrings = {
   pillLabel: "Ask AI",
   notNow: "Not now",
   minimize: "Minimize",
+  newConversation: "New chat",
   chatTitle: "Ask AI chat",
   trustedActions: "Suggested actions",
   genericGreeting: "How can I help?",
@@ -68,6 +71,7 @@ const ZH: UiStrings = {
   pillLabel: "问 AI",
   notNow: "暂不需要",
   minimize: "收起",
+  newConversation: "新对话",
   chatTitle: "Ask AI 对话",
   trustedActions: "推荐操作",
   genericGreeting: "有什么可以帮你?",

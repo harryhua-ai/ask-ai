@@ -1,5 +1,6 @@
 """对话审查端点（多维过滤 + 分页 + 详情）。"""
 
+import re
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.auth.dependencies import CurrentUser, require_role
 from backend.db.models import Conversation, SiteExperience, SourceClick, Trace
+from backend.services.conversation_threads import build_threads
 from backend.services.intent_tagger import tag_batch, tag_single
 
 router = APIRouter(prefix="/conversations", tags=["对话审查"])
@@ -329,6 +331,279 @@ async def list_country_options(_: ViewerDep, request: Request) -> dict[str, list
             )
         ).scalars().all()
     return {"countries": list(rows)}
+
+
+@router.get("/threads")
+async def list_conversation_threads(
+    _: ViewerDep,
+    request: Request,
+    channel: str | None = Query(default=None),
+    is_answered: bool | None = Query(default=None),
+    feedback: str | None = Query(default=None, pattern="^(up|down)$"),
+    intent_tag: str | None = Query(default=None),
+    q: str | None = Query(default=None, description="全文搜索 question/answer"),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    country: str | None = Query(
+        default=None,
+        pattern=_COUNTRY_PATTERN,
+        description="#68/#87:ISO 3166-1 alpha-2 或 UNKNOWN",
+    ),
+    entry: str | None = Query(
+        default=None,
+        pattern=_ENTRY_PATTERN,
+        description="#68/#87:站点标识或 UNKNOWN",
+    ),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=100),
+) -> dict[str, Any]:
+    """会话(Thread)列表(#87):服务端确定性聚合 + 过滤 + 分页。
+
+    语义:聚合/过滤/计数全部在分页前完成;任一 Turn 命中过滤条件即晋升其
+    所在 Thread(完整轮次,不裁剪);session_id 缺失的历史行为诚实 singleton。
+    卡片仅含真实派生字段(首问/轮数/时间范围/入口/国家/异常信号),
+    无 LLM 标题/解决态推断/质量分。
+    """
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        light_rows = (
+            await session.execute(
+                select(
+                    Conversation.id,
+                    Conversation.session_id,
+                    Conversation.site_id,
+                    Conversation.channel,
+                    Conversation.created_at,
+                )
+            )
+        ).all()
+        threads = build_threads(light_rows)
+
+        conditions = _thread_filter_conditions(
+            channel=channel,
+            is_answered=is_answered,
+            feedback=feedback,
+            intent_tag=intent_tag,
+            q=q,
+            date_from=date_from,
+            date_to=date_to,
+            country=country,
+            entry=entry,
+        )
+        qualifying: set | None = None
+        if conditions:
+            qualifying = set(
+                (
+                    await session.execute(select(Conversation.id).where(*conditions))
+                ).scalars().all()
+            )
+
+    qualifying_threads = [
+        t for t in threads if qualifying is None or any(tid in qualifying for tid in t.turn_ids)
+    ]
+    # build_threads 已按最近活动降序
+    total = len(qualifying_threads)
+    page_threads = qualifying_threads[(page - 1) * size : (page - 1) * size + size]
+    page_turn_ids = [tid for t in page_threads for tid in t.turn_ids]
+
+    async with factory() as session:
+        turn_rows = {}
+        if page_turn_ids:
+            rows = (
+                await session.execute(
+                    select(Conversation).where(Conversation.id.in_(page_turn_ids))
+                )
+            ).scalars().all()
+            turn_rows = {r.id: r for r in rows}
+            # 异常信号:任一轮未回答或最新 trace 失败(与单轮 trace_summary 同源)
+            trace_rows = (
+                await session.execute(
+                    select(Trace)
+                    .where(Trace.conversation_id.in_(page_turn_ids))
+                    .order_by(desc(Trace.turn_index))
+                )
+            ).scalars().all()
+        site_ids = {t.site_id for t in page_threads if t.site_id}
+        entry_map: dict[str, dict] = {}
+        if site_ids:
+            sites = (
+                await session.execute(
+                    select(SiteExperience).where(SiteExperience.site_id.in_(site_ids))
+                )
+            ).scalars().all()
+            entry_map = {
+                s.site_id: {"site_id": s.site_id, "display_name": s.display_name}
+                for s in sites
+            }
+
+    latest_failure: dict = {}
+    for t in trace_rows:
+        if t.conversation_id not in latest_failure:
+            latest_failure[t.conversation_id] = _infer_markers(
+                t.type or "rag", t.stages or {}
+            )["failure"]
+
+    def _turns_of(thread) -> list:
+        return [turn_rows[tid] for tid in thread.turn_ids if tid in turn_rows]
+
+    items = []
+    for thread in page_threads:
+        turns = _turns_of(thread)
+        intent_tag_first = next(
+            (t.intent_tag for t in turns if t.intent_tag), None
+        )
+        country_truth = next(
+            (
+                (t.country, t.country_source)
+                for t in turns
+                if t.country and t.country_source
+            ),
+            (None, None),
+        )
+        has_abnormal = any(
+            (not t.is_answered) or latest_failure.get(t.id, False) for t in turns
+        )
+        items.append(
+            {
+                "thread_id": thread.thread_id,
+                "first_question": turns[0].question if turns else "",
+                "turn_count": thread.turn_count,
+                "started_at": thread.started_at.isoformat() if thread.started_at else "",
+                "last_activity_at": (
+                    thread.last_activity_at.isoformat() if thread.last_activity_at else ""
+                ),
+                "intent_tag": intent_tag_first,
+                "channel": thread.channel,
+                "site_id": thread.site_id,
+                "entry": entry_map.get(thread.site_id or ""),
+                "country": country_truth[0],
+                "country_source": country_truth[1],
+                "has_abnormal": has_abnormal,
+            }
+        )
+    return {"items": items, "total": total, "page": page, "size": size}
+
+
+def _thread_filter_conditions(
+    *,
+    channel,
+    is_answered,
+    feedback,
+    intent_tag,
+    q,
+    date_from,
+    date_to,
+    country,
+    entry,
+) -> list:
+    """Thread 过滤条件(任一 Turn 命中即晋升;语义与单轮列表同源)。"""
+    conditions = []
+    if channel:
+        conditions.append(Conversation.channel == channel)
+    if is_answered is not None:
+        conditions.append(Conversation.is_answered == is_answered)
+    if feedback:
+        conditions.append(Conversation.feedback == feedback)
+    if intent_tag:
+        conditions.append(Conversation.intent_tag == intent_tag)
+    if q:
+        pattern = f"%{q}%"
+        conditions.append(
+            Conversation.question.ilike(pattern)
+            | Conversation.answer.ilike(pattern)
+            | Conversation.id.cast(Text).ilike(pattern)
+        )
+    if date_from:
+        conditions.append(Conversation.created_at >= date_from)
+    if date_to:
+        conditions.append(Conversation.created_at <= date_to)
+    # #68 呈现门同源:country 仅权威来源值命中具体码;UNKNOWN = 无权威值轮次
+    if country == "UNKNOWN":
+        conditions.append(
+            Conversation.country_source.is_(None) | Conversation.country.is_(None)
+        )
+    elif country:
+        conditions.append(
+            (Conversation.country == country) & Conversation.country_source.is_not(None)
+        )
+    if entry == "UNKNOWN":
+        conditions.append(Conversation.site_id.is_(None))
+    elif entry:
+        conditions.append(Conversation.site_id == entry)
+    return conditions
+
+
+_THREAD_ID_PATTERN = r"^thread_[0-9a-f]{10}$"
+
+
+@router.get("/threads/{thread_id}")
+async def get_conversation_thread(
+    thread_id: str,
+    _: ViewerDep,
+    request: Request,
+) -> dict[str, Any]:
+    """会话详情(#87):transcript-first,按时间升序完整轮次。"""
+    if not re.fullmatch(_THREAD_ID_PATTERN, thread_id):
+        raise HTTPException(status_code=404, detail="会话不存在")
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        light_rows = (
+            await session.execute(
+                select(
+                    Conversation.id,
+                    Conversation.session_id,
+                    Conversation.site_id,
+                    Conversation.channel,
+                    Conversation.created_at,
+                )
+            )
+        ).all()
+        match = next((t for t in build_threads(light_rows) if t.thread_id == thread_id), None)
+        if match is None:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        turns = (
+            await session.execute(
+                select(Conversation)
+                .where(Conversation.id.in_(match.turn_ids))
+                .order_by(Conversation.created_at.asc())
+            )
+        ).scalars().all()
+        entry: dict | None = None
+        if match.site_id:
+            site = await session.get(SiteExperience, match.site_id)
+            if site is not None:
+                entry = {"site_id": site.site_id, "display_name": site.display_name}
+
+    country_truth = next(
+        ((t.country, t.country_source) for t in turns if t.country and t.country_source),
+        (None, None),
+    )
+    return {
+        "thread_id": thread_id,
+        "turn_count": match.turn_count,
+        "started_at": match.started_at.isoformat() if match.started_at else "",
+        "last_activity_at": (
+            match.last_activity_at.isoformat() if match.last_activity_at else ""
+        ),
+        "session_id": match.session_id,
+        "channel": match.channel,
+        "entry": entry,
+        "country": country_truth[0],
+        "country_source": country_truth[1],
+        "turns": [
+            {
+                "id": str(t.id),
+                "question": t.question,
+                "answer": t.answer,
+                "is_answered": t.is_answered,
+                "intent_tag": t.intent_tag,
+                "channel": t.channel,
+                "created_at": t.created_at.isoformat() if t.created_at else "",
+                "response_time_ms": t.response_time_ms,
+            }
+            for t in turns
+        ],
+    }
 
 
 @router.get("/{conversation_id}")
