@@ -5,9 +5,9 @@
  "github_principal": "harryhua-ai",
  "executor_id": "harryhua-ai",
  "claimed_at": "2026-09-18T13:00:32Z",
- "lease_expires_at": "2026-09-18T14:02:18Z",
+ "lease_expires_at": "2026-09-18T13:19:56Z",
  "execution_base": "db5ee9820b861494080c27caf372bb3584f82a9c",
- "status": "active",
+ "status": "delivered",
  "branch": "agent/87/f1afd855",
  "heartbeat_at": "2026-09-18T13:17:18Z",
  "contract_digest": "e656cb6ae97f20b949e911c112172d7ec58dabdfc39d582bf94d6117149cce27",
@@ -48,5 +48,11 @@
   "sha": "07f2f005466e6a3459baa27024d31e914634f5ed",
   "note": "REPLAN(a) implemented: Widget \u65b0\u5bf9\u8bdd rotates session identity (rotation primitive + header affordance + transcript clear); RED-GREEN 10 new tests; widget 210/210, backend threads 22/22, admin 603/603, build ok; new candidate 07f2f00, same PR #98",
   "delivered_at": "2026-09-18T13:12:54Z"
+ },
+ "completed": {
+  "pr": 98,
+  "merge_commit": "14735859df9a8c8d379677238d1599f7f4dbb03b",
+  "candidate_sha": "07f2f005466e6a3459baa27024d31e914634f5ed",
+  "completed_at": "2026-09-18T13:18:56Z"
  }
 }
