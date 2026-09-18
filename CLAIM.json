@@ -11,5 +11,29 @@
  "branch": "agent/87/a8766a35",
  "heartbeat_at": "2026-09-18T11:25:28Z",
  "contract_digest": "e656cb6ae97f20b949e911c112172d7ec58dabdfc39d582bf94d6117149cce27",
- "candidate": null
+ "candidate": {
+  "branch": "agent/87/a8766a35",
+  "sha": "bae461d3523da353db861806f9bbccd768876dcd",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "admin/src/hooks/useConversationThreads.ts": "ALLOWED",
+    "admin/src/pages/Conversations.tsx": "ALLOWED",
+    "admin/tests/ConversationThreads.test.tsx": "ALLOWED",
+    "backend/api/admin/conversations.py": "ALLOWED",
+    "backend/services/conversation_threads.py": "ALLOWED",
+    "docs/engineering/tasks/ISSUE-87-THREAD-REVIEW-execution.md": "ALLOWED",
+    "docs/engineering/tasks/evidence/issue87/01-threads-mode-list.png": "ALLOWED",
+    "docs/engineering/tasks/evidence/issue87/02-thread-transcript-detail.png": "ALLOWED",
+    "tests/api/admin/test_conversation_threads_api.py": "ALLOWED",
+    "tests/services/test_conversation_threads.py": "ALLOWED"
+   },
+   "violations": [],
+   "counts": {
+    "ALLOWED": 10,
+    "FORBIDDEN": 0
+   }
+  },
+  "preserved_at": "2026-09-18T11:42:57Z"
+ }
 }
