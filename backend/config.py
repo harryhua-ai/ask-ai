@@ -54,6 +54,18 @@ class Settings:
     # 恒自动(A-2 冻结),本门只管物理清除执行。
     lifecycle_gc_apply: bool = False
     internal_api_base_url: str = "http://backend:8000"
+    # #68 Country Truth:权威国家解析模式。off(默认,恒 Unknown)/ ingress
+    # (受信边缘 geo 头)/ geoip(服务端 IP 地理库)。Accept-Language/语言/
+    # 时区一律不作地理依据;模式值非法按 off 处理(fail-honest)。
+    country_resolution_mode: str = "off"
+    # ingress 模式的受信 geo 头名(如 nginx geo 模块下发的 geo-country);
+    # 空 = 未配置权威头,恒 Unknown。仅对端在受信 CIDR 内时才被采信。
+    country_ingress_header: str = ""
+    # 受信反向代理/边缘 CIDR(逗号分隔);只有直连对端落在其中时,转发的
+    # geo 头 / XFF 才是可信输入。空列表 = 无人可信(显式信任边界)。
+    geo_trusted_proxy_cidrs: tuple[str, ...] = ()
+    # geoip 模式的 MMDB 数据库路径(MaxMind 格式);空 = 未配置,恒 Unknown。
+    geoip_database_path: str = ""
 
     @property
     def postgres_dsn(self) -> str:
@@ -114,6 +126,14 @@ def load_settings(config_dir: Path | None = None) -> Settings:
         # Hardware-Aware Runtime:sync 执行面消费 backend 单一驻留嵌入运行时的
         # 内部端点基址(compose 网络内服务名;本地联调可覆盖)
         internal_api_base_url=_env("INTERNAL_API_BASE_URL", "http://backend:8000"),
+        country_resolution_mode=_env("COUNTRY_RESOLUTION_MODE", "off"),
+        country_ingress_header=_env("COUNTRY_INGRESS_HEADER", ""),
+        geo_trusted_proxy_cidrs=tuple(
+            entry.strip()
+            for entry in _env("GEO_TRUSTED_PROXY_CIDRS", "").split(",")
+            if entry.strip()
+        ),
+        geoip_database_path=_env("GEOIP_DATABASE_PATH", ""),
         model_cache_dir=Path(_env("MODEL_CACHE_DIR", str(project_root / "models"))),
         github_token=_env("GITHUB_TOKEN"),
         api_host=_env("ASKAI_API_HOST", "0.0.0.0"),

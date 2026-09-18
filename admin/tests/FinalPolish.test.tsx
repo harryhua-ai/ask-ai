@@ -62,6 +62,9 @@ vi.mock("@/hooks/useConversations", () => ({
   useConversationDetail: () => ({ data: undefined }),
   useTagConversation: () => ({ mutate: vi.fn() }),
   useBatchTag: () => ({ mutate: vi.fn(), isPending: false, data: undefined }),
+  // #68:Country/Entry 筛选候选(默认空集;页面需正常渲染)
+  useEntryOptions: () => ({ data: [] }),
+  useCountryOptions: () => ({ data: { countries: [] } }),
   useTraces: () => ({ data: undefined }),
 }));
 

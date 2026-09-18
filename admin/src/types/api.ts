@@ -378,6 +378,11 @@ export interface Conversation {
   created_at: string;
   intent_tag: string | null;
   trace_summary?: TraceSummary | null;
+  /** #68:权威国家值(仅 country_source 非空时非 null;null = Unknown) */
+  country?: string | null;
+  country_source?: string | null;
+  /** #68:入口权威投影(site_id → 站点配置 display_name);null = Unknown */
+  entry?: { site_id: string; display_name: string } | null;
 }
 
 export interface AnswerOverride {

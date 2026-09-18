@@ -58,6 +58,9 @@ vi.mock("@/hooks/useConversations", () => ({
   }),
   useTagConversation: () => ({ mutate: vi.fn(), isPending: false, data: null }),
   useBatchTag: () => ({ mutate: vi.fn(), isPending: false, data: null }),
+  // #68:Country/Entry 筛选候选(默认空集;页面需正常渲染)
+  useEntryOptions: () => ({ data: [] }),
+  useCountryOptions: () => ({ data: { countries: [] } }),
 }));
 
 const { mockFetchTraces } = vi.hoisted(() => ({ mockFetchTraces: vi.fn() }));

@@ -244,7 +244,8 @@ async def business_overview(
             entry[intent_key] += row.cnt
         timeseries = sorted(daily_map.values(), key=lambda x: x["date"])
 
-        # 地域分布(从 country 字段聚合)
+        # 地域分布(从 country 字段聚合;#68 呈现门:仅权威来源值是地理事实,
+        # legacy Accept-Language 启发式存量不得进入地理分布)
         geo_q = (
             select(
                 Conversation.country,
@@ -254,6 +255,7 @@ async def business_overview(
                 Conversation.created_at >= start,
                 Conversation.created_at <= end,
                 Conversation.country.is_not(None),
+                Conversation.country_source.is_not(None),
             )
             .group_by(Conversation.country)
             .order_by(func.count().desc())
