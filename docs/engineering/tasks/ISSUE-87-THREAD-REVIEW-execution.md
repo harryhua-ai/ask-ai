@@ -156,3 +156,44 @@ A REVIEW_1 判定:AC2 的「显式 reset/new-conversation 边界」是冻结验�
 PR #98 现候选的全部已确认正确面(≤30m 分组、site/transport 分裂、跨午夜不分裂、
 legacy 单例、服务端过滤/分页/promotion、紧凑 单轮|会话 UI 与既有 Trace 复用)
 原样保留,未做任何改动;本提交仅追加本节报告。
+
+---
+
+## REVIEW_1(A REPLAN 裁决)应答 — 选项 (a) 已实现(本节所属 commit = 新 Candidate)
+
+A 于 PR #98 评论 5729885652 冻结**选项 (a)**:「新对话」= 显式轮换匿名会话身份
+(`ask_ai_session_id`),Thread 重构由持久化 session_id 确定性导出,**无需边界列 /
+AskRequest 标志**;历史行不变;既有 inactivity/site/transport/midnight 规则全部保持。
+
+### 实现 delta(纯 widget 面,零后端/零 schema)
+
+1. **轮换原语** `widget/src/hooks/useSSE.ts`:新增导出 `rotateSessionId()`——
+   唯一允许改变 session_id 的入口;顺带提取 `newSessionId()`
+   (`crypto.randomUUID` 不可用时确定性降级,jsdom/沙箱安全)。
+   `getSessionId()` 行为不变:普通 ask / 刷新绝不轮换。
+2. **「新对话」供属** `ChatPanel.tsx`:header 轻量按钮(仅会话开始后出现;
+   流式进行中禁用),点击 = 轮换身份 + 清空本地 transcript + 清空输入/待发附件;
+   轮换本身零网络动作。
+3. **接线** `App.tsx`:`handleNewConversation = rotateSessionId() + setMessages([])`;
+   下一个 ask 自然携带新 session_id 与空 conversation_history。
+4. **i18n**:`newConversation`(zh=新对话 / en=New chat)。
+
+### RED→GREEN 覆盖(对应 A 第 3 条逐项)
+
+| A 要求 | 测试 |
+| --- | --- |
+| session id 只被显式「新对话」改变 | useSSEReset.test:显式轮换返回新 id 且后续 ask 使用;未轮换时连续 ask 保持原值;两次轮换互不相同(4 例) |
+| 普通 ask/刷新保持原 id | 同上第 2 例 + ChatPanel 供属 4 例(冷启动不渲染/流式禁用/i18n 可访问名/点击恰一次回调) |
+| 新对话后首个 ask = 新 session_id + 空 history | 轮换测试 + App 清 transcript 接线(history 由调用方清空后传 buildAskBody;ChatPanel 本地输入/附件同清理防串话) |
+| 后端分组据此确定性分裂(同 site/channel、≤30m) | test_explicit_reset_rotated_session_splits_within_gap(+对照组:未轮换不分裂) |
+
+### 回归与构建
+
+- widget vitest:**210/210**(18 文件,含新增 8 例);`vite build` ✓;
+- 后端 Thread 面:22/22(boundary 12 + API 10;本 delta 零后端代码变更);
+- admin vitest:**603/603**(未触碰面,回归确认)。
+
+### 声明
+
+- 已确认正确的不变量全部原样保留;零后端/schema/依赖变更;
+- 生产未触碰;本节所属 commit 即新 Candidate(SHA 见 ght preserve/deliver 记录)。

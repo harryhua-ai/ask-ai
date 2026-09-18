@@ -37,9 +37,25 @@ const BUDGET_DECLINED = "服务繁忙,请稍后再试";
 function getSessionId(): string {
   let s = localStorage.getItem("ask_ai_session_id");
   if (!s) {
-    s = crypto.randomUUID();
+    s = newSessionId();
     localStorage.setItem("ask_ai_session_id", s);
   }
+  return s;
+}
+
+// 生成新的匿名会话标识;crypto.randomUUID 不可用(jsdom/沙箱)时确定性降级
+function newSessionId(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  return `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// #87 REPLAN(a):「新对话」= 显式轮换匿名会话身份;这是产品中唯一会改变
+// session_id 的入口 —— 普通 ask/页面刷新一律保持原值(Thread 边界因此确定)。
+// 轮换本身不发任何请求:下一个 ask 自然携带新 session_id 与空 conversation_history。
+export function rotateSessionId(): string {
+  const s = newSessionId();
+  localStorage.setItem("ask_ai_session_id", s);
   return s;
 }
 

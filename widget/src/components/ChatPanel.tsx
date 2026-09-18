@@ -26,6 +26,8 @@ interface Props {
   /** I-UX-001:动作点击 → 立即开始真实会话(整只动作上交,由 App 唯一路径绑定;绝不直发 query) */
   onColdAction: (action: TrustedActionRef) => void;
   onSend: (text: string, attachmentIds: string[]) => void;
+  /** #87 REPLAN(a):「新对话」→ App 轮换 session_id 并清空 transcript */
+  onNewConversation?: () => void;
   onClose: () => void;
   onFeedback: (msgId: string, feedback: "up" | "down") => void;
   onUpload: (files: File[]) => Promise<AttachmentRef[]>;
@@ -46,6 +48,7 @@ export function ChatPanel({
   coldActions,
   onColdAction,
   onSend,
+  onNewConversation,
   onClose,
   onFeedback,
   onUpload,
@@ -107,6 +110,16 @@ export function ChatPanel({
 
   const cold = messages.length === 0;
 
+  // #87 REPLAN(a):「新对话」= 轮换匿名 session_id + 清空当前 transcript;
+  // 本地输入/待发附件同属旧会话,一并清理,避免串话。
+  const handleNewConversation = () => {
+    if (isStreaming) return;
+    setInput("");
+    setPendingAttachments([]);
+    setUploadError(null);
+    onNewConversation?.();
+  };
+
   return (
     <div
       ref={panelRef}
@@ -119,6 +132,20 @@ export function ChatPanel({
     >
       <div className="ask-ai-header">
         <span className="ask-ai-header-title">{strings.chatTitle}</span>
+        {/* #87 REPLAN(a):轻量「新对话」;仅会话开始后出现(冷启动无意义) */}
+        {!cold && onNewConversation && (
+          <button
+            type="button"
+            className="ask-ai-header-new-chat"
+            onClick={handleNewConversation}
+            disabled={isStreaming}
+            aria-label={strings.newConversation}
+            title={strings.newConversation}
+            data-testid="new-conversation"
+          >
+            {strings.newConversation}
+          </button>
+        )}
         <button
           type="button"
           className="ask-ai-header-close"

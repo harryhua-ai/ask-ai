@@ -117,3 +117,39 @@ def test_thread_identity_is_stable_and_short():
     assert a.thread_id == b.thread_id
     assert a.thread_id.startswith("thread_") and len(a.thread_id) <= 20
     assert a.started_at == a.last_activity_at == _T0
+
+
+def test_explicit_reset_rotated_session_splits_within_gap():
+    """#87 REPLAN(a):「新对话」显式轮换 session_id ⇒ reset 前后两个 Turn
+    即使同 site/channel 且间隔 <=30min,也分属两个 Thread(AC2 澄清:
+    Thread 重构由持久化 session_id 确定性导出,无需边界列)。"""
+    rows = [
+        Turn("t1", _T0, session_id="s-before", site_id="site-1", channel="widget"),
+        Turn(
+            "t2",
+            _T0 + timedelta(minutes=10),
+            session_id="s-after",
+            site_id="site-1",
+            channel="widget",
+        ),
+    ]
+    threads = build_threads(rows)
+    assert {t.turn_ids for t in threads} == {("t1",), ("t2",)}
+
+
+def test_reset_within_same_session_does_not_split_without_rotation():
+    """对照组:未轮换 session_id 时,同 site/channel + <=30min 仍是一个 Thread
+    (reset 语义 = 轮换本身,不存在其它隐式分裂源)。"""
+    rows = [
+        Turn("t1", _T0, session_id="s1", site_id="site-1", channel="widget"),
+        Turn(
+            "t2",
+            _T0 + timedelta(minutes=10),
+            session_id="s1",
+            site_id="site-1",
+            channel="widget",
+        ),
+    ]
+    threads = build_threads(rows)
+    assert len(threads) == 1
+    assert threads[0].turn_ids == ("t1", "t2")

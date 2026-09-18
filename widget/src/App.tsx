@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import type { WidgetConfig, ChatMessage, SiteExperienceConfig, TrustedActionRef } from "./types";
-import { useSSE } from "./hooks/useSSE";
+import { useSSE, rotateSessionId } from "./hooks/useSSE";
 import { collectPageContext } from "./utils/pageContext";
 import {
   readBrowserLanguage,
@@ -325,6 +325,13 @@ export function App({ config }: { config: WidgetConfig }) {
 
   // 会话开始后的冷启动清理:C/nudge 表面退场(消息优先)
   const conversationStarted = messages.length > 0;
+
+  // #87 REPLAN(a):「新对话」= 显式轮换匿名会话身份 + 清空 transcript;
+  // 下一个 ask 携带新 session_id 与空 history ⇒ 服务端 Thread 确定性分裂。
+  const handleNewConversation = useCallback(() => {
+    rotateSessionId();
+    setMessages([]);
+  }, []);
   useEffect(() => {
     if (conversationStarted) {
       setMiniOpen(false);
@@ -520,6 +527,7 @@ export function App({ config }: { config: WidgetConfig }) {
       )}
       {isOpen && (
         <ChatPanel
+          onNewConversation={handleNewConversation}
           config={config}
           strings={strings}
           messages={messages}
