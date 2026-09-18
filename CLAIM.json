@@ -12,8 +12,8 @@
  "heartbeat_at": "2026-09-18T09:55:54Z",
  "contract_digest": "6b9d8260b3a938d38c08da162008ff544f4785561098fda24b02763656b317e6",
  "candidate": {
-  "branch": "agent/68/b740a638",
-  "sha": "76ade35c61a3729538f66031a32015d25b09ebfe",
+  "branch": "agent/68/1d32748e",
+  "sha": "04aa9c311643d35a74f9031c09dbe032015498d1",
   "scope": {
    "pass": true,
    "paths": {
@@ -50,7 +50,7 @@
     "FORBIDDEN": 0
    }
   },
-  "preserved_at": "2026-09-18T09:35:49Z"
+  "preserved_at": "2026-09-18T10:04:49Z"
  },
  "takeover_evidence": "same attempt continuation: A REQUEST_CHANGES received on candidate 76ade35; lease lapsed during review wait; continuing same task per v1 flow (no fresh ready needed)"
 }
