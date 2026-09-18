@@ -38,5 +38,11 @@
    }
   },
   "preserved_at": "2026-09-18T15:02:37Z"
+ },
+ "delivery": {
+  "pr": 99,
+  "sha": "c0a2b7883bebce5d0d4a59d34d46df9baf83c948",
+  "note": "Candidate c0a2b788: zero-semantic-chunk deterministic classification (third partition, mirrors #91); 17 new tests RED-GREEN; invariants 38/38; full backend 3002P/0F; report in PR #99",
+  "delivered_at": "2026-09-18T15:02:56Z"
  }
 }
