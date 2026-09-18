@@ -51,5 +51,11 @@
    }
   },
   "preserved_at": "2026-09-18T09:35:49Z"
+ },
+ "delivery": {
+  "pr": 97,
+  "sha": "76ade35c61a3729538f66031a32015d25b09ebfe",
+  "note": "Candidate 76ade35: country truth + site-backed entry; 40 new tests RED-to-GREEN; vitest 600/600; backend regression 2958P/2F (pre-existing baseline time-bomb); screenshots + report in PR #97",
+  "delivered_at": "2026-09-18T09:36:14Z"
  }
 }
