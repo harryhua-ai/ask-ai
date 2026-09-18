@@ -109,3 +109,50 @@
 
 - Branch: `agent/87/a8766a35`,Candidate SHA 见 ght preserve/deliver 记录(PR 评论区)。
 - **STOP:等待 Role A review;不自行 merge。**
+
+---
+
+## REVIEW_1(REQUEST_CHANGES)应答 — BLOCK-REPLAN 决策请求(candidate bae461d)
+
+A REVIEW_1 判定:AC2 的「显式 reset/new-conversation 边界」是冻结验收条件,缺失为 material blocker;并给出两个出口:①实现可信持久边界信号(RED→GREEN),或②若产品中不存在可持久化的可观测 reset 事件且实现它需要新的 Product/Architecture 决策,则**停止并回报 BLOCK-REPLAN 决策请求(带代码证据),不得静默窄化**。
+
+### 生命周期追踪(A 要求的第一步,代码证据)
+
+按 widget/session 创建 → 请求 ingress → 持久化全链追踪,结论:**产品中不存在任何可观测的显式 reset/new-conversation 事件**:
+
+1. **widget 会话身份终身不轮换**:`widget/src/hooks/useSSE.ts:36-44` `getSessionId()` —
+   localStorage UUID `ask_ai_session_id`,首次生成后永不更换;全 widget 该 key 仅此
+   get/set 两处引用,无 `removeItem`/rotation 调用。
+2. **widget 聊天面无任何重置入口**:`ChatPanel.tsx`/`App.tsx` 对
+   reset/新对话/新会话/新聊天/clear 全部零命中(用户没有任何产品动作能表达
+   「开始新对话」);`experience/session.ts` 的 sessionStorage 会话闸是 proactive
+   消息的页面加载闸,与对话语义无关。
+3. **API 面无边界标志**:`backend/api/schemas.py:82-110` `AskRequest` 全字段 =
+   message/language/channel/conversation_history/session_id,无 reset/new-conversation
+   任何承载;`conversation_history` 是客户端瞬态(页面刷新即空),不能作为确定性边界。
+4. **持久化无边界列**:`Conversation` 模型无 reset/boundary 字段;服务端从不知晓
+   「显式重置」发生过。
+
+### 为什么走出口②而不是①
+
+出口①的「可信持久边界信号」必然要求**新的产品面**:要么 widget 增加「新对话」
+可供性(改产品 UI 语义),要么 `/api/ask` 增加显式边界标志并落库(schema 变更 +
+语义决策:重置什么、匿名身份如何处理、历史行怎么算)。这些正是 READY 要求中
+禁止 B 在实现期自行发明的 Product/Architecture 语义;冻结契约的 UI 范围是 Admin
+对话审查,未冻结任何 widget/API 行为变更。按 A 的明示许可,停止并回报决策请求。
+
+### 请 A 裁决的决策菜单(供 REPLAN 参考)
+
+- **(a)** 冻结 widget「新对话」可供性:点击轮换会话标识(新 session_id → 现有
+  build_threads 已天然按 session 分裂,几乎零后端增量,但改访客可见行为);
+- **(b)** 冻结显式边界标志:`AskRequest.new_conversation: bool`(或等价),
+  持久化为该 Conversation 行上的边界标记,build_threads 消费之(需要一列 +
+  widget 发送语义);
+- **(c)** 修订 AC2:reset 语义收窄为「session_id 轮换即为显式边界」(现状已满足,
+  无增量;属 Product 语义修订,须 A 明示)。
+
+### 不变量保持声明
+
+PR #98 现候选的全部已确认正确面(≤30m 分组、site/transport 分裂、跨午夜不分裂、
+legacy 单例、服务端过滤/分页/promotion、紧凑 单轮|会话 UI 与既有 Trace 复用)
+原样保留,未做任何改动;本提交仅追加本节报告。
