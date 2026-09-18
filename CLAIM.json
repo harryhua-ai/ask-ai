@@ -38,8 +38,8 @@
  },
  "delivery": {
   "pr": 98,
-  "sha": "bae461d3523da353db861806f9bbccd768876dcd",
-  "note": "Candidate bae461d: bounded thread review (\u4f1a\u8bdd mode) \u2014 boundary service + server-side threads API + transcript-first UI; 20 new tests RED\u2192GREEN; vitest 603/603; regression 2982P/7F all classified non-candidate; screenshots + report in PR #98",
-  "delivered_at": "2026-09-18T11:43:15Z"
+  "sha": "d5efcdb08557859128d8105f1be365b83ae701b9",
+  "note": "REVIEW_1 response: BLOCK-REPLAN decision request for AC2 reset boundary (no observable reset event exists in product; evidence + decision menu a/b/c in report); new candidate d5efcdb, same PR #98, claim held awaiting A verdict",
+  "delivered_at": "2026-09-18T11:59:05Z"
  }
 }
