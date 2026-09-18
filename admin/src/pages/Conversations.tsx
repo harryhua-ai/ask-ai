@@ -9,6 +9,8 @@ import {
   useConversationDetail,
   useTagConversation,
   useBatchTag,
+  useEntryOptions,
+  useCountryOptions,
   type ConversationFilters,
 } from "@/hooks/useConversations";
 import { useAuth } from "@/hooks/useAuth";
@@ -17,6 +19,7 @@ import { fetchTraces, type TraceData } from "@/lib/api/traces";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import ToggleFilter from "@/components/observability/ToggleFilter";
+import { GeoEntryMeta } from "@/components/conversations/GeoEntryMeta";
 import { deriveOutcome } from "@/utils/outcome";
 import { conversationIdLabel } from "@/utils/conversationId";
 
@@ -74,6 +77,8 @@ export default function Conversations() {
     page: 1,
     intent_tag: searchParams.get("intent") ?? undefined,
     channel: searchParams.get("channel") ?? undefined,
+    entry: searchParams.get("entry") ?? undefined,
+    country: searchParams.get("country") ?? undefined,
     feedback: searchParams.get("feedback") ?? undefined,
     is_answered:
       searchParams.get("answered") === null
@@ -122,6 +127,9 @@ export default function Conversations() {
     }));
   }, [toggles.retry, toggles.failure, toggles.feedback, toggles.clarify]);
   const { data, isLoading, isError, error, refetch } = useConversations(filters);
+  // #68:Entry/Country 筛选候选(站点权威标签;仅可信来源国家码)
+  const { data: entryOptions } = useEntryOptions();
+  const { data: countryOptions } = useCountryOptions();
   const { data: detail } = useConversationDetail(selectedId);
   const tagMutation = useTagConversation();
   const batchTag = useBatchTag();
@@ -192,6 +200,40 @@ export default function Conversations() {
             <option value="">全部渠道</option>
             <option value="widget">widget</option>
             <option value="discord">discord</option>
+          </select>
+          {/* #68:访问入口(站点权威身份;独立于 transport channel 语义) */}
+          <select
+            className="h-9 rounded-md border px-3 text-sm"
+            value={filters.entry ?? ""}
+            data-filter="entry"
+            onChange={(e) =>
+              setFilters({ ...filters, entry: e.target.value || undefined, page: 1 })
+            }
+          >
+            <option value="">全部入口</option>
+            <option value="UNKNOWN">未知入口</option>
+            {(entryOptions ?? []).map((site) => (
+              <option key={site.site_id} value={site.site_id}>
+                {site.display_name}
+              </option>
+            ))}
+          </select>
+          {/* #68:国家/地区(权威 ISO 码;Unknown 为一等可筛值) */}
+          <select
+            className="h-9 rounded-md border px-3 text-sm"
+            value={filters.country ?? ""}
+            data-filter="country"
+            onChange={(e) =>
+              setFilters({ ...filters, country: e.target.value || undefined, page: 1 })
+            }
+          >
+            <option value="">全部国家/地区</option>
+            <option value="UNKNOWN">未知</option>
+            {(countryOptions?.countries ?? []).map((code) => (
+              <option key={code} value={code}>
+                {code}
+              </option>
+            ))}
           </select>
           <select
             className="h-9 rounded-md border px-3 text-sm"
@@ -293,7 +335,7 @@ export default function Conversations() {
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                         <span className="font-medium truncate">
                           {conv.question}
                         </span>
@@ -309,6 +351,8 @@ export default function Conversations() {
                             {INTENT_LABELS[conv.intent_tag] ?? conv.intent_tag}
                           </Badge>
                         )}
+                        {/* #68:Country/Entry 紧凑元数据(权威值;Unknown 中性呈现) */}
+                        <GeoEntryMeta country={conv.country} entry={conv.entry} />
                         {conv.trace_summary?.markers && (
                           <div className="flex items-center gap-1" data-markers>
                             {conv.trace_summary.markers.failure && (
@@ -479,6 +523,21 @@ export default function Conversations() {
                 {INTENT_LABELS[detail.intent_tag] ?? detail.intent_tag}
               </Badge>
             )}
+            {/* #68:详情与列表同源的权威 Country/Entry */}
+            <span
+              data-detail-country
+              className="rounded border px-1.5 py-0.5"
+              title={`权威来源：${detail.country_source ?? "无（Unknown）"}`}
+            >
+              国家/地区 {detail.country ?? "未知"}
+            </span>
+            <span
+              data-detail-entry
+              className="rounded border px-1.5 py-0.5"
+              title={detail.entry ? `站点标识：${detail.entry.site_id}` : "无站点身份"}
+            >
+              入口 {detail.entry?.display_name ?? "未知"}
+            </span>
             {detail.feedback === "up" && (
               <span className="flex items-center gap-0.5 text-[var(--ok)]">
                 <ThumbsUp className="h-3 w-3" /> 赞

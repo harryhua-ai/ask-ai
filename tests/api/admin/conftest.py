@@ -53,6 +53,10 @@ async def _setup_app_state():
     from scripts.migrate_add_membership_currency import migrate as _migrate_membership
 
     await _migrate_membership(engine)
+    # #68:共享测试库既有表补加性列 + legacy 启发式值隔离(幂等迁移)
+    from scripts.migrate_add_country_truth import migrate as _migrate_country_truth
+
+    await _migrate_country_truth(engine)
     factory = get_session_factory(engine)
     app.state.session_factory = factory
 

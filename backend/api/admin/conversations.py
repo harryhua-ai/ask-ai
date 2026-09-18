@@ -8,12 +8,26 @@ from sqlalchemy import Text, desc, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.auth.dependencies import CurrentUser, require_role
-from backend.db.models import Conversation, SourceClick, Trace
+from backend.db.models import Conversation, SiteExperience, SourceClick, Trace
 from backend.services.intent_tagger import tag_batch, tag_single
 
 router = APIRouter(prefix="/conversations", tags=["对话审查"])
 ViewerDep = Annotated[CurrentUser, Depends(require_role("admin", "editor", "viewer"))]
 EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
+
+# #68:country 筛选值 = ISO 3166-1 alpha-2 或显式 UNKNOWN(一等可筛值)
+_COUNTRY_PATTERN = r"^([A-Z]{2}|UNKNOWN)$"
+# #68:entry 筛选值 = 站点标识(site_id)或 UNKNOWN;不做 URL/文本猜测
+_ENTRY_PATTERN = r"^(UNKNOWN|[A-Za-z0-9][A-Za-z0-9._-]{0,99})$"
+
+
+def _surfaced_country(conv: Conversation) -> str | None:
+    """呈现门:country 仅在携带权威来源时才是地理事实。
+
+    legacy 启发式存量(source NULL)迁移已转 Unknown;呈现门兜底迁移窗口期
+    内旧代码写入的行 —— 任何无来源标记的值一律不作为地理事实呈现。
+    """
+    return conv.country if conv.country_source else None
 
 
 def _infer_markers(trace_type: str, stages: dict) -> dict:
@@ -76,12 +90,22 @@ async def list_conversations(
     has_clarify: bool | None = Query(
         default=None, description="Phase 2:触发澄清(trace type=clarify)"
     ),
+    country: str | None = Query(
+        default=None,
+        pattern=_COUNTRY_PATTERN,
+        description="#68:ISO 3166-1 alpha-2 或 UNKNOWN(一等可筛值)",
+    ),
+    entry: str | None = Query(
+        default=None,
+        pattern=_ENTRY_PATTERN,
+        description="#68:站点标识(site_id)或 UNKNOWN;入口维度独立于 transport channel",
+    ),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
 ) -> dict[str, Any]:
     """查询对话列表（viewer+ 可访问），支持 channel / is_answered / feedback /
     intent_tag / q(全文搜索) / date_from / date_to / has_retry / has_feedback /
-    has_clarify 多维过滤 + 分页。
+    has_clarify / country / entry 多维过滤 + 分页(#68 过滤在分页/计数前执行)。
     """
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
@@ -171,6 +195,29 @@ async def list_conversations(
                 )
             )
 
+        # #68 Country/Entry 过滤:服务端、在分页/计数之前;与既有过滤器组合。
+        # country 语义走呈现门 —— 仅权威来源值可命中具体国家码;UNKNOWN 覆盖
+        # 无权威值行(含 legacy 启发式遗留),不为其制造第二事实。
+        if country == "UNKNOWN":
+            unknown_country = (
+                Conversation.country_source.is_(None) | Conversation.country.is_(None)
+            )
+            stmt = stmt.where(unknown_country)
+            count_q = count_q.where(unknown_country)
+        elif country:
+            trusted_country = (
+                Conversation.country == country) & Conversation.country_source.is_not(
+                None
+            )
+            stmt = stmt.where(trusted_country)
+            count_q = count_q.where(trusted_country)
+        if entry == "UNKNOWN":
+            stmt = stmt.where(Conversation.site_id.is_(None))
+            count_q = count_q.where(Conversation.site_id.is_(None))
+        elif entry:
+            stmt = stmt.where(Conversation.site_id == entry)
+            count_q = count_q.where(Conversation.site_id == entry)
+
         total = (await session.execute(count_q)).scalar() or 0
         result = await session.execute(
             stmt.order_by(Conversation.created_at.desc()).offset((page - 1) * size).limit(size)
@@ -205,6 +252,24 @@ async def list_conversations(
                         ),
                     }
 
+        # #68:Entry 权威投影 —— site_id → 站点配置 display_name(服务端解析,
+        # 无 URL/transport 猜测);页面级批量解析站点标签。
+        site_ids = {c.site_id for c in convs if c.site_id}
+        entry_map: dict[str, dict] = {}
+        if site_ids:
+            site_rows = (
+                await session.execute(
+                    select(SiteExperience).where(SiteExperience.site_id.in_(site_ids))
+                )
+            ).scalars().all()
+            entry_map = {
+                s.site_id: {"site_id": s.site_id, "display_name": s.display_name}
+                for s in site_rows
+            }
+
+    def _entry_of(conv: Conversation) -> dict | None:
+        return entry_map.get(conv.site_id or "")
+
     items = [
         {
             "id": str(c.id),
@@ -219,10 +284,51 @@ async def list_conversations(
             "created_at": c.created_at.isoformat() if c.created_at else "",
             "intent_tag": c.intent_tag,
             "trace_summary": trace_map.get(c.id),
+            # #68:Country 权威值(呈现门后)+ 来源标记 + Entry 站点投影
+            "country": _surfaced_country(c),
+            "country_source": c.country_source,
+            "entry": _entry_of(c),
         }
         for c in convs
     ]
     return {"items": items, "total": total, "page": page, "size": size}
+
+
+@router.get("/entry-options")
+async def list_entry_options(_: ViewerDep, request: Request) -> list[dict[str, str]]:
+    """#68:Entry 筛选候选(站点标识 + 权威显示名)。
+
+    site_id 是标识符而非凭证;display_name 是站点配置的权威标签。
+    viewer+ 可读(筛选器是只读 UI 输入),独立于 Editor 专属的站点体验管理面。
+    """
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        sites = (
+            await session.execute(select(SiteExperience).order_by(SiteExperience.site_id))
+        ).scalars().all()
+    return [
+        {"site_id": s.site_id, "display_name": s.display_name}
+        for s in sites
+    ]
+
+
+@router.get("/country-options")
+async def list_country_options(_: ViewerDep, request: Request) -> dict[str, list[str]]:
+    """#68:Country 筛选候选(仅权威来源值;legacy 行不得借候选复活为事实)。"""
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        rows = (
+            await session.execute(
+                select(Conversation.country)
+                .where(
+                    Conversation.country.is_not(None),
+                    Conversation.country_source.is_not(None),
+                )
+                .distinct()
+                .order_by(Conversation.country)
+            )
+        ).scalars().all()
+    return {"countries": list(rows)}
 
 
 @router.get("/{conversation_id}")
@@ -252,6 +358,11 @@ async def get_conversation(
                 .limit(1)
             )
         ).scalar_one_or_none()
+        entry: dict | None = None
+        if conv.site_id:
+            site = await session.get(SiteExperience, conv.site_id)
+            if site is not None:
+                entry = {"site_id": site.site_id, "display_name": site.display_name}
     trace_stages = (latest_trace.stages if latest_trace else None) or {}
     return {
         "trace_type": latest_trace.type if latest_trace else None,
@@ -271,6 +382,10 @@ async def get_conversation(
         "response_time_ms": conv.response_time_ms,
         "created_at": conv.created_at.isoformat() if conv.created_at else "",
         "intent_tag": conv.intent_tag,
+        # #68:与列表同源的权威 Country/Entry 真相
+        "country": _surfaced_country(conv),
+        "country_source": conv.country_source,
+        "entry": entry,
         "clicks": [
             {
                 "url": c.source_url,

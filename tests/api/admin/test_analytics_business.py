@@ -102,7 +102,8 @@ async def test_business_overview_geo_pct_and_90d(business_seed):
     """geo 项含 pct(占比),range=90d 接受。"""
     factory = app.state.session_factory
     async with factory() as session:
-        # 补两条带 country 的对话(business_seed 创建的对话无 country)
+        # #68 呈现门:geo 分布只聚合权威来源值;补带 country_source 的对话,
+        # 另播种一条 legacy 启发式值(country 无来源)断言其被排除
         session.add(
             Conversation(
                 question="biz_test_geo_cn",
@@ -110,11 +111,22 @@ async def test_business_overview_geo_pct_and_90d(business_seed):
                 is_answered=True,
                 intent_tag="commercial",
                 country="CN",
+                country_source="ingress",
             )
         )
         session.add(
             Conversation(
                 question="biz_test_geo_us",
+                channel="widget",
+                is_answered=True,
+                intent_tag="commercial",
+                country="US",
+                country_source="ingress",
+            )
+        )
+        session.add(
+            Conversation(
+                question="biz_test_geo_legacy",
                 channel="widget",
                 is_answered=True,
                 intent_tag="commercial",
@@ -136,16 +148,21 @@ async def test_business_overview_geo_pct_and_90d(business_seed):
         for g in j["geo"]:
             assert "pct" in g
             assert 0 <= g["pct"] <= 100
-        # 含 CN/US 两条,占比相等(各 50%,因 fixture 只加这两条带 country)
+        # 含 CN/US 权威两条,占比相等;legacy 无来源行不得进入地理分布
         cn = [g for g in j["geo"] if g["name"] == "CN"]
         us = [g for g in j["geo"] if g["name"] == "US"]
         assert cn and us
         assert cn[0]["pct"] == us[0]["pct"]
+        # 各权威值恰计 1:legacy 无来源 US 行未被计入地理分布
+        assert cn[0]["count"] == 1
+        assert us[0]["count"] == 1
     finally:
         async with factory() as session:
             await session.execute(
                 Conversation.__table__.delete().where(
-                    Conversation.question.in_(["biz_test_geo_cn", "biz_test_geo_us"])
+                    Conversation.question.in_(
+                        ["biz_test_geo_cn", "biz_test_geo_us", "biz_test_geo_legacy"]
+                    )
                 )
             )
             await session.commit()

@@ -44,6 +44,7 @@ from backend.services.attachments import (
     validate_upload_file,
 )
 from backend.services.conversation_id import ConversationIdPolicyError, new_conversation_id
+from backend.services.geo_country import resolve_request_country
 from backend.services.lead_service import apply_lead_turn, load_lead_context
 from backend.services.site_experiences import (
     SiteDenied,
@@ -164,14 +165,14 @@ async def ask(
         except SiteDenied:
             raise HTTPException(403, SITE_DENIED_MSG)
 
-    # 地域:从 Accept-Language 提取地区码作为地域代理(无需 GeoIP 数据库)
-    country: str | None = None
-    accept_lang = request.headers.get("accept-language", "")
-    for part in accept_lang.split(","):
-        sub = part.strip().split(";")[0].split("-")
-        if len(sub) == 2:
-            country = sub[1].upper()
-            break
+    # #68 Country Truth:唯一权威国家解析(替代已废除的 Accept-Language 启发式)。
+    # 语言/locale/时区/问题文本不作地理依据;受信 ingress 头或服务端 GeoIP,
+    # 否则 Unknown。country_source 是呈现门:仅权威值才作为地理事实持久化。
+    # 防御式读取:lifespan 恒注入 settings;mock 测试面缺失时按 off 解析
+    # (fail-honest → Unknown),与未配置部署的语义一致。
+    country, country_source = resolve_request_country(
+        request, getattr(request.app.state, "settings", None)
+    )
 
     # 阶段⑯(语言前置):任何 user-visible fallback / Conversation 持久化
     # 之前,先用与 rag 相同的 authoritative resolver、相同输入确定性重算
@@ -209,6 +210,7 @@ async def ask(
                         is_answered=False,
                         response_time_ms=0,
                         country=country,
+                        country_source=country_source,
                         site_id=req.site_id if site else None,
                         session_id=req.session_id,
                     )
@@ -396,6 +398,8 @@ async def ask(
                     response_time_ms=elapsed,
                     intent_tag=intent,
                     country=country,
+                    # #68:仅权威值持久化来源标记;Unknown 保持 NULL
+                    country_source=country_source,
                     # MSW:仅记录已通过授权校验的站点标识(channel 语义不变)
                     site_id=req.site_id if site else None,
                     # 会话线程聚合(Lead 契约):跨轮 lead 状态读取的键
