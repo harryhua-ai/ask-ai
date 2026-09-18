@@ -11,5 +11,45 @@
  "branch": "agent/68/b740a638",
  "heartbeat_at": "2026-09-18T08:53:28Z",
  "contract_digest": "6b9d8260b3a938d38c08da162008ff544f4785561098fda24b02763656b317e6",
- "candidate": null
+ "candidate": {
+  "branch": "agent/68/b740a638",
+  "sha": "76ade35c61a3729538f66031a32015d25b09ebfe",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "admin/src/components/conversations/GeoEntryMeta.test.tsx": "ALLOWED",
+    "admin/src/components/conversations/GeoEntryMeta.tsx": "ALLOWED",
+    "admin/src/hooks/useConversations.ts": "ALLOWED",
+    "admin/src/pages/Conversations.tsx": "ALLOWED",
+    "admin/src/types/api.ts": "ALLOWED",
+    "admin/tests/ConversationsReview.test.tsx": "ALLOWED",
+    "admin/tests/FinalPolish.test.tsx": "ALLOWED",
+    "backend/api/admin/business.py": "ALLOWED",
+    "backend/api/admin/conversations.py": "ALLOWED",
+    "backend/api/routes.py": "ALLOWED",
+    "backend/config.py": "ALLOWED",
+    "backend/db/models.py": "ALLOWED",
+    "backend/services/geo_country.py": "ALLOWED",
+    "deploy/prod/migrations.json": "ALLOWED",
+    "docs/engineering/tasks/ISSUE-68-COUNTRY-ENTRY-execution.md": "ALLOWED",
+    "docs/engineering/tasks/evidence/issue68/01-list-with-country-entry.png": "ALLOWED",
+    "docs/engineering/tasks/evidence/issue68/02-filter-country-DE.png": "ALLOWED",
+    "docs/engineering/tasks/evidence/issue68/03-detail-country-entry-chips.png": "ALLOWED",
+    "docs/engineering/tasks/evidence/issue68/04-filter-entry-web.png": "ALLOWED",
+    "scripts/migrate_add_country_truth.py": "ALLOWED",
+    "tests/api/admin/conftest.py": "ALLOWED",
+    "tests/api/admin/test_analytics_business.py": "ALLOWED",
+    "tests/api/admin/test_conversations_country_entry.py": "ALLOWED",
+    "tests/api/test_routes_country_persistence.py": "ALLOWED",
+    "tests/db/test_country_truth_migration.py": "ALLOWED",
+    "tests/services/test_geo_country.py": "ALLOWED"
+   },
+   "violations": [],
+   "counts": {
+    "ALLOWED": 26,
+    "FORBIDDEN": 0
+   }
+  },
+  "preserved_at": "2026-09-18T09:35:49Z"
+ }
 }
