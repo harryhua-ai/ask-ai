@@ -12,8 +12,8 @@
  "heartbeat_at": "2026-09-18T13:00:32Z",
  "contract_digest": "e656cb6ae97f20b949e911c112172d7ec58dabdfc39d582bf94d6117149cce27",
  "candidate": {
-  "branch": "agent/87/a8766a35",
-  "sha": "d5efcdb08557859128d8105f1be365b83ae701b9",
+  "branch": "agent/87/f1afd855",
+  "sha": "07f2f005466e6a3459baa27024d31e914634f5ed",
   "scope": {
    "pass": true,
    "paths": {
@@ -26,15 +26,21 @@
     "docs/engineering/tasks/evidence/issue87/01-threads-mode-list.png": "ALLOWED",
     "docs/engineering/tasks/evidence/issue87/02-thread-transcript-detail.png": "ALLOWED",
     "tests/api/admin/test_conversation_threads_api.py": "ALLOWED",
-    "tests/services/test_conversation_threads.py": "ALLOWED"
+    "tests/services/test_conversation_threads.py": "ALLOWED",
+    "widget/src/App.tsx": "ALLOWED",
+    "widget/src/__tests__/newConversation.test.tsx": "ALLOWED",
+    "widget/src/components/ChatPanel.tsx": "ALLOWED",
+    "widget/src/hooks/__tests__/useSSEReset.test.ts": "ALLOWED",
+    "widget/src/hooks/useSSE.ts": "ALLOWED",
+    "widget/src/i18n.ts": "ALLOWED"
    },
    "violations": [],
    "counts": {
-    "ALLOWED": 10,
+    "ALLOWED": 16,
     "FORBIDDEN": 0
    }
   },
-  "preserved_at": "2026-09-18T11:58:46Z"
+  "preserved_at": "2026-09-18T13:12:35Z"
  },
  "takeover_evidence": "A REPLAN resolution (PR #98 comment 5729885652) freezes option (a): implement Widget \u65b0\u5bf9\u8bdd session-id rotation on this same attempt; prior lease expired 12:38:30Z; resuming per v1 flow (no fresh ready)"
 }
