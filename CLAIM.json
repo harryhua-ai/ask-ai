@@ -1,15 +1,15 @@
 {
  "v": 3,
  "task": 87,
- "claim_id": "harryhua-ai-20260918T104214-19d563e0",
+ "claim_id": "harryhua-ai-20260918T130032-918d009e",
  "github_principal": "harryhua-ai",
  "executor_id": "harryhua-ai",
- "claimed_at": "2026-09-18T10:43:05Z",
- "lease_expires_at": "2026-09-18T12:38:30Z",
+ "claimed_at": "2026-09-18T13:00:32Z",
+ "lease_expires_at": "2026-09-18T13:45:32Z",
  "execution_base": "db5ee9820b861494080c27caf372bb3584f82a9c",
  "status": "active",
- "branch": "agent/87/a8766a35",
- "heartbeat_at": "2026-09-18T11:53:30Z",
+ "branch": "agent/87/f1afd855",
+ "heartbeat_at": "2026-09-18T13:00:32Z",
  "contract_digest": "e656cb6ae97f20b949e911c112172d7ec58dabdfc39d582bf94d6117149cce27",
  "candidate": {
   "branch": "agent/87/a8766a35",
@@ -36,10 +36,5 @@
   },
   "preserved_at": "2026-09-18T11:58:46Z"
  },
- "delivery": {
-  "pr": 98,
-  "sha": "d5efcdb08557859128d8105f1be365b83ae701b9",
-  "note": "REVIEW_1 response: BLOCK-REPLAN decision request for AC2 reset boundary (no observable reset event exists in product; evidence + decision menu a/b/c in report); new candidate d5efcdb, same PR #98, claim held awaiting A verdict",
-  "delivered_at": "2026-09-18T11:59:05Z"
- }
+ "takeover_evidence": "A REPLAN resolution (PR #98 comment 5729885652) freezes option (a): implement Widget \u65b0\u5bf9\u8bdd session-id rotation on this same attempt; prior lease expired 12:38:30Z; resuming per v1 flow (no fresh ready)"
 }
