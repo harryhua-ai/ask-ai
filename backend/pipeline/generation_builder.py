@@ -22,6 +22,7 @@
 无并发需求(同步 cron 串行;#18 删除与同步互斥),Postgres 写用同步会话。
 """
 
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -77,6 +78,21 @@ class BuildAccounting:
     chunks_written: int = 0
     # #91:确定性永久安全排除(分区,非失败;已登记 ingestion_exclusions)
     excluded_docs: list[str] = field(default_factory=list)
+    # #94:确定性零语义分块(分区,非失败;已登记 zero_semantic_chunks;
+    # 是 excluded_docs 的子集,单独分列以满足 AC5 的如实分账)
+    zero_chunk_docs: list[str] = field(default_factory=list)
+
+
+def _chunker_policy_fingerprint(*, kind: str, max_tokens: int, overlap: int, max_chunk_chars: int) -> str:
+    """#94:chunker 策略的确定性版本身身份(sha256;类别+全部形状参数)。
+
+    任何影响分块结果的参数变化都会改变本指纹 ⇒ 新策略下首代构建即原位
+    换判定(仍为 [])或清除(产出分块),策略演进无需人工介入。
+    """
+    return hashlib.sha256(
+        f"chunk-policy:v1|kind={kind}|max_tokens={max_tokens}"
+        f"|overlap={overlap}|max_chars={max_chunk_chars}".encode()
+    ).hexdigest()
 
 
 @dataclass
@@ -195,6 +211,9 @@ class GenerationBuilder:
         accounting.generation_status = gen.status
         accounting.chunks_written = total_chunks_activated
         accounting.excluded_docs = [f.source_id for f in excluded]
+        accounting.zero_chunk_docs = [
+            f.source_id for f in excluded if f.error_class == "zero_semantic_chunk"
+        ]
         excluded_ids = {f.source_id for f in excluded}
         for d in rebuild_docs:
             if d.source_id in excluded_ids:
@@ -278,7 +297,37 @@ class GenerationBuilder:
                     chunks = chunk_document_semantic(doc, pipeline._max_tokens, pipeline._overlap)
                 chunks = _enforce_char_limit(chunks, pipeline._max_chunk_chars)
                 if not chunks:
-                    logger.info("文档 %s 切分为空,跳过本代构建", doc.source_id)
+                    # #94:确定性零语义分块(合格权威内容 + chunker 成功返回空)
+                    # ⇒ 独立可审计分类(内容指纹 + chunker 策略指纹),进
+                    # excluded 分区(非 failed,零嵌入,不入账本,不假收敛);
+                    # 本代重跑现行 chunker 即重评,本表只是记账,绝不是判定门。
+                    policy_fp = _chunker_policy_fingerprint(
+                        kind="semantic" if not _is_code(doc) else "code",
+                        max_tokens=pipeline._max_tokens,
+                        overlap=pipeline._overlap,
+                        max_chunk_chars=pipeline._max_chunk_chars,
+                    )
+                    from backend.services.zero_semantic_chunks import (
+                        record_zero_semantic_chunk,
+                    )
+
+                    record_zero_semantic_chunk(
+                        self._session_factory,
+                        source_id=doc.source_id,
+                        content_fingerprint=doc.content_hash,
+                        chunker_policy_fingerprint=policy_fp,
+                        detail="zero_semantic_chunk",
+                    )
+                    logger.info("文档 %s 零语义分块,登记分类并分区排除", doc.source_id)
+                    excluded.append(
+                        DocFailure(
+                            source_id=doc.source_id,
+                            stage=STAGE_CHUNK,
+                            error_class="zero_semantic_chunk",
+                            retryable=False,
+                            detail="zero semantic chunks",
+                        )
+                    )
                     continue
                 prepared.append(_PreparedDoc(doc=doc, chunks=chunks))
                 _progress(STAGE_CHUNK, done)
@@ -467,6 +516,15 @@ class GenerationBuilder:
                 from backend.services.ingestion_exclusions import delete_for_identities
 
                 delete_for_identities(
+                    session, [p.doc.source_id for p in prepared]
+                )
+                # #94:激活成功即清除零分块分类(内容重判产出有效分块 ⇒
+                # 分类作废;AC3「后来有效分块正常激活并清除分类」)。
+                from backend.services.zero_semantic_chunks import (
+                    delete_for_identities as delete_zero_semantic_for_identities,
+                )
+
+                delete_zero_semantic_for_identities(
                     session, [p.doc.source_id for p in prepared]
                 )
             lifecycle.mark_generation_ready(

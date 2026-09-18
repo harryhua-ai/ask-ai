@@ -1021,6 +1021,45 @@ class IngestionExclusion(Base):
     )
 
 
+class ZeroSemanticChunk(Base):
+    """零语义分块确定性分类登记(#94;与 #91 安全排除严格分表的独立面)。
+
+    RECONCILABLE AUTHORITY = AUTHORITATIVE MEMBERSHIP − 本表(窗口内且内容
+    指纹一致)− ingestion_exclusions(#91)。语义契约(#94 ght-contract):
+
+    - 发生在原子 eligible 生成代判定中:chunk_document_semantic 确定性产出
+      [] 的合格权威文档 ⇒ 登记(内容指纹 + chunker 策略指纹),进 excluded
+      分区(非 failed),绝不入账本/向量,绝不假收敛;
+    - **每身份恰一行 = 对其当前权威内容的判定**(PK = source_id);
+      builder 对到达它的内容每代永远重跑现行 chunker,本表只是记账;
+    - **指纹双轴**:content_fingerprint 变化或 chunker_policy_fingerprint
+      变化都 ⇒ 原位换判定;后来产出有效分块 ⇒ 激活事务清除本行;
+    - **压制有界**(ZERO_CHUNK_REEVALUATION_DAYS):membership 对账只在
+      窗口内且内容指纹一致时把该身份从 actionable missing 移入
+      zero_chunk_ids(单独暴露);过期 ⇒ 重回 missing ⇒ 重取重判;
+    - 失败类(chunker/parser 异常、物化失败、超时、embed/index 失败、
+      中断/未知)永远走 failed,绝不写本表(AC4);
+    - 本表不是 lifecycle 词表的一部分;核算与真值面单独如实计数。
+    """
+
+    __tablename__ = "zero_semantic_chunks"
+
+    # 复合文档身份(容量与 documents.source_id 同批,#92)
+    source_id: Mapped[str] = mapped_column(String(500), primary_key=True)
+    # 判定所针对的内容指纹(builder 判定内容变更后原位更新本列)
+    content_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    # chunker 策略指纹(确定性版本身份:分块器类别 + max_tokens/overlap/上限)
+    chunker_policy_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    times_confirmed: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_confirmed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class KnowledgeSettingsPreview(Base):
     """v1.6.3 Track C(U-13 高风险预览):知识设置变更预览快照。
 

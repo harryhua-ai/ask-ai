@@ -700,6 +700,7 @@ def _exclusion_delta(accounting: Any) -> dict[str, Any]:
     时返回空 dict(不制造无信息键)。
     """
     excluded_n = len(getattr(accounting, "excluded_docs", []) or [])
+    zero_chunk_n = len(getattr(accounting, "zero_chunk_docs", []) or [])
     total_n = (
         len(accounting.new_docs)
         + len(accounting.updated_docs)
@@ -709,12 +710,17 @@ def _exclusion_delta(accounting: Any) -> dict[str, Any]:
     )
     if not excluded_n and not total_n:
         return {}
-    return {
+    delta = {
         "eligible_count": total_n - excluded_n,
         "eligible_count_unit": "document",
         "permanent_excluded": excluded_n,
         "permanent_excluded_unit": "document",
     }
+    if zero_chunk_n:
+        # #94:零语义分块单独分列(是 excluded 的子集;如实分账,不假收敛)
+        delta["zero_semantic_chunk"] = zero_chunk_n
+        delta["zero_semantic_chunk_unit"] = "document"
+    return delta
 
 
 async def _backfill_missing_members(
