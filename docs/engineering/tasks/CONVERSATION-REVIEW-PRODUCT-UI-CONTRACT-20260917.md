@@ -1,6 +1,25 @@
-# Conversation Review Product/UI Contract — 2026-09-17
+# Conversation Review Product/UI Contract — 2026-09-18
 
-Authoritative Role A product/UI contract for GitHub Issues #68 and #87. This file freezes product semantics, IA, interaction boundaries, and acceptance. Engineering HOW remains open unless explicitly stated.
+Authoritative Role A product/UI contract for GitHub Issues #68 and #87, corrected against the real current Conversation Review UI supplied by Product Owner on 2026-09-17.
+
+This revision **SUPERSEDES** the 2026-09-17 layout proposal. Product semantics that are not explicitly changed remain valid. Engineering HOW remains open unless explicitly stated.
+
+---
+
+# Current UI Baseline
+
+The existing Admin → Conversation Review surface is a high-density compact review list, not a conventional data table and not a multi-pane observability workspace.
+
+Frozen baseline characteristics:
+- existing left navigation and page hierarchy remain;
+- page header + bulk Intent action remain;
+- existing search/filter row remains the primary filtering surface;
+- existing quick-filter chips remain;
+- each result remains a compact conversation card/row;
+- right-side confidence / answer state / latency treatment remains;
+- existing single-turn detail/Trace workflow remains available.
+
+**Hard UI principle: progressive enhancement. Do not redesign Conversation Review.**
 
 ---
 
@@ -10,12 +29,12 @@ Authoritative Role A product/UI contract for GitHub Issues #68 and #87. This fil
 
 - Type: Feature
 - Product contract: FROZEN
-- UI contract: FROZEN
+- UI contract: FROZEN against current UI baseline
 - Engineering implementation: READY AFTER fresh baseline/drift review
 
 ## Goal
 
-Conversation Review must expose authoritative visitor Country/Region and authoritative Entry Channel in both list and detail views, with server-side filtering across the complete result set.
+Expose authoritative visitor Country/Region and authoritative Entry Channel without reducing the scan density of the existing Conversation Review list. Both dimensions must be filterable server-side across the complete result set.
 
 ## Truth model
 
@@ -29,95 +48,99 @@ Authority order:
 3. otherwise `UNKNOWN`.
 
 Hard rules:
-- `Accept-Language` MUST NOT be used to infer country;
-- browser locale, timezone, UI language, hostname text, and free-form URL text are not geographic authority;
+- `Accept-Language`, locale, timezone and UI language MUST NOT infer country;
 - raw visitor IP is not required by this feature and must not be exposed in Admin UI;
-- if implementation uses IP transiently for geo resolution, persistence/retention is governed separately and must not be expanded by this feature;
-- historical rows may be backfilled only from an already persisted authoritative geo value. Otherwise they remain `UNKNOWN`.
+- historical rows may be backfilled only from already-persisted authoritative geo truth; otherwise `UNKNOWN`.
 
 ### Entry Channel
 
 Entry Channel means the user-facing ASK-AI entry surface, not transport semantics.
 
 Canonical authority:
-- persisted `site_id` / site identity that is bound to the request/session at conversation creation;
-- resolved through the authoritative site configuration into a stable entry-channel identity and display label.
-
-Examples of display labels may include Wiki, Website, Store, but the underlying key must be stable site identity, not URL-pattern inference.
+- persisted `site_id` / site identity bound at conversation creation;
+- resolved through authoritative site configuration to a stable display label such as Website / Wiki / Store.
 
 Hard rules:
-- `channel=widget` remains transport/channel semantics and MUST NOT be relabeled as Website/Wiki/Store;
-- URL substring/domain guessing is forbidden;
-- when no authoritative site identity exists, Entry Channel = `UNKNOWN`;
-- if authoritative site identity changes between turns, that is a real boundary and must be preserved rather than hidden by presentation grouping.
+- existing transport/channel semantics such as `widget`, WhatsApp or Discord remain distinct;
+- URL/domain substring guessing is forbidden;
+- no authoritative site identity => `UNKNOWN`.
+
+### Existing “Channel” filter compatibility gate
+
+The current real UI already contains an **“All Channels / 全部渠道”** filter. Before implementation, B must trace its exact backend semantic.
+
+- If it is transport/access technology, preserve it and name the new dimension unambiguously as **Entry / 访问入口**.
+- If it already represents authoritative site/entry identity, extend/reuse it rather than creating a duplicate filter.
+- No implementation may ship two visually different filters with the same semantic.
+
+This is a required baseline investigation, not permission to reinterpret Product semantics.
 
 ## API/filter semantics
 
-- Country and Entry Channel filters execute server-side before pagination.
+- Country and Entry filters execute server-side before pagination.
 - Total count and pagination reflect the filtered result set.
-- Filters compose with existing Conversation Review filters.
-- `UNKNOWN` is a first-class filter option.
-- list and detail read the same authoritative projection.
-- no client-page-only filtering is acceptable.
+- Filters compose with existing search/channel/intent/status/feedback filters.
+- `UNKNOWN` is first-class and filterable.
+- no client-page-only filtering.
 
-## UI information architecture
+## Frozen UI direction
 
-```mermaid
-flowchart LR
-    A[Conversation Review] --> B[Filter Bar]
-    B --> C[Country/Region]
-    B --> D[Entry Channel]
-    A --> E[Conversation List]
-    E --> F[Country/Region column]
-    E --> G[Entry Channel column]
-    E --> H[Conversation Detail]
-    H --> I[Same authoritative Country/Region]
-    H --> J[Same authoritative Entry Channel]
-```
+Do **not** convert the current card list into a table and do **not** add permanent table-style columns.
 
-## Desktop wireframe
+Extend the existing metadata line of each compact result card.
+
+Example:
 
 ```text
-Conversation Review
-┌────────────────────────────────────────────────────────────────────────────┐
-│ Search ...       Country/Region [All ▼]   Entry Channel [All ▼]   Reset  │
-├────────────────────────────────────────────────────────────────────────────┤
-│ Time │ Country/Region │ Entry Channel │ User │ Question │ Status │ ...    │
-│ ...  │ US             │ Website       │ ...  │ ...      │ ...    │        │
-│ ...  │ Unknown        │ Wiki          │ ...  │ ...      │ ...    │        │
-└────────────────────────────────────────────────────────────────────────────┘
+envios a argentina ?
+ID 01a0aec1…e048   商务咨询   Argentina   官网
+                                      置信 85%   已回答
+                                      7,9xxms
 ```
+
+The exact wrapping adapts to available width, but the current question-first hierarchy remains.
+
+Top filter row is extended in the current visual language:
+
+```text
+[搜索问题/回答…] [接入方式/现有渠道] [访问入口] [国家/地区] [全部意图] [全部状态] [全部反馈]
+```
+
+If the compatibility audit proves the existing Channel filter already equals Entry, reuse it and omit the extra Entry filter.
 
 ## Responsive behavior
 
-- desktop/tablet: both columns remain directly scannable when space permits;
-- narrow layout: secondary columns may collapse into row detail/metadata, but both filters remain reachable;
-- long labels truncate visually and expose full value via accessible title/detail;
-- Unknown uses neutral visual treatment and is not styled as an error.
+- desktop: Country/Region and Entry are compact metadata, not new table columns;
+- narrow width: secondary metadata may wrap/collapse into card metadata; filters remain reachable;
+- long labels truncate safely with full value available in detail/accessible title;
+- Unknown is neutral, not an error state;
+- do not reduce visibility of question, intent, confidence, answer status or latency.
 
 ## Acceptance
 
-1. List shows Country/Region and Entry Channel from authoritative backend values.
-2. Detail shows the exact same authoritative values.
-3. Both dimensions support server-side filtering over the full result set.
-4. Filtered pagination/counts are correct.
-5. Unknown is explicit and filterable.
-6. No country inference from language/locale/timezone.
-7. No Entry Channel inference from URL text or transport channel.
-8. No raw IP exposure; no unnecessary new PII surface.
-9. Historical missing truth remains Unknown unless authoritative persisted backfill exists.
-10. Existing Conversation ID/status/transport-channel semantics remain distinct.
-11. Responsive layout preserves access to both filters and values.
-12. Regression tests cover authority, Unknown, server filtering, pagination/counts, and old/new rows.
+1. Existing Conversation Review visual hierarchy and compact-card density are preserved.
+2. Country/Region and Entry are visible from authoritative backend values without converting the list to a table.
+3. Detail exposes the same authoritative values.
+4. Existing Channel semantic is audited; duplicate/ambiguous channel filters are forbidden.
+5. Country and Entry filters are server-side and operate before pagination.
+6. Filtered totals/pagination are correct and filters compose with existing filters.
+7. Unknown is explicit and filterable.
+8. No country inference from language/locale/timezone.
+9. No Entry inference from URL text or transport channel.
+10. No raw IP exposure or unnecessary new PII.
+11. Historical missing truth remains Unknown unless authoritative persisted backfill exists.
+12. Existing Conversation ID/status/intent/confidence/answer-state/latency semantics remain unchanged.
+13. Regression tests cover authority, Unknown, existing-channel compatibility, filtering, pagination/counts and old/new rows.
+14. Visual acceptance is performed against the real current Conversation Review baseline, not the superseded table mock.
 
 ## Non-goals
 
+- redesigning Conversation Review;
+- table conversion;
 - customer identity resolution;
-- attribution analytics dashboard;
-- campaign/UTM analytics;
+- attribution/campaign analytics;
 - raw IP display;
-- URL-derived channel heuristics;
-- rewriting historical Unknown values from guesses.
+- URL-derived channel heuristics.
 
 ---
 
@@ -127,162 +150,180 @@ Conversation Review
 
 - Type: Feature
 - Product contract: FROZEN
-- UI/IA contract: FROZEN
+- UI/IA contract: FROZEN against current UI baseline
 - Engineering implementation: READY AFTER fresh baseline/drift review
 
 ## Goal
 
-Add continuous conversation review on top of existing single-turn diagnostics so reviewers can inspect a bounded multi-turn consultation without losing the current Turn/Trace debugging model.
+Add bounded multi-turn review while preserving the current high-density single-turn Conversation Review experience.
 
 ## Canonical hierarchy
 
 ```mermaid
 flowchart TD
-    V[Visitor / anonymous session identity] --> T[Bounded Review Thread]
-    T --> U1[Turn 1 = existing Conversation record]
-    T --> U2[Turn 2 = existing Conversation record]
-    T --> U3[Turn N]
-    U1 --> R1[Trace / RAG diagnostics]
-    U2 --> R2[Trace / RAG diagnostics]
-    U3 --> R3[Trace / RAG diagnostics]
+    V[Anonymous session identity] --> T[Bounded Review Thread]
+    T --> U1[Turn 1 = existing Conversation]
+    T --> U2[Turn 2 = existing Conversation]
+    T --> UN[Turn N]
+    U1 --> R1[Existing Trace / RAG diagnostics]
+    U2 --> R2[Existing Trace / RAG diagnostics]
+    UN --> RN[Existing Trace / RAG diagnostics]
 ```
-
-Existing Conversation records remain the Turn truth. This feature adds a thread-level read model; it does not redefine Trace semantics.
 
 ## Thread boundary semantics
 
-A Thread is deterministic and bounded by all of the following:
-
+A Thread requires:
 1. same authoritative anonymous `session_id`;
-2. same authoritative site/Entry Channel identity when present;
-3. same transport channel where transport semantics materially differ;
+2. same authoritative site/Entry identity when present;
+3. compatible transport identity;
 4. inactivity gap <= 30 minutes;
 5. no explicit new-conversation/reset boundary.
 
-Split rules:
-- inactivity gap > 30 minutes => new Thread;
-- explicit new-conversation/reset => new Thread immediately;
-- site/Entry Channel change => new Thread;
-- transport-channel change => new Thread when identity semantics differ;
-- crossing midnight alone does NOT split if the gap remains <= 30 minutes.
+Split when:
+- gap > 30 minutes;
+- explicit reset/new conversation;
+- site/Entry identity changes;
+- transport identity changes where semantics are incompatible.
 
-Identity rules:
-- `session_id` is anonymous browser/session identity, not customer/person identity;
-- no cross-device joining;
-- no embedding similarity, LLM inference, email/name guessing, or semantic clustering for Thread identity;
-- historical rows without reliable session identity are shown as unthreaded/singleton legacy items, never guessed into another Thread.
+Midnight alone does not split within the inactivity window.
 
-## Stable thread identity
+`session_id` is anonymous browser/session identity, not person/customer identity. No cross-device joining, LLM/embedding identity guessing or semantic clustering.
 
-The read model must expose a deterministic `thread_id` stable for an unchanged underlying bounded segment. Engineering may persist it or derive it deterministically, but pagination/filtering must operate on that server-side thread identity rather than client grouping.
+Historical rows without reliable session identity remain honest singleton/unthreaded legacy records.
 
-## Aggregation/pagination semantics
+## Aggregation / pagination
 
-- Thread aggregation occurs server-side BEFORE pagination.
+- Thread aggregation occurs server-side before pagination.
 - Page-local `groupBy(session_id)` is forbidden.
-- Thread counts represent real bounded Threads, not Turns.
-- A Turn-level search match promotes its containing Thread into results.
-- Search result metadata should identify the matched Turn(s) where practical.
-- filters are applied using authoritative thread-stable dimensions; values that would violate stability (for example site change) already split the Thread.
+- Thread counts represent bounded Threads, not Turns.
+- a matching Turn may promote its containing Thread into Thread-mode search results;
+- filters operate on complete Thread results.
 
-## Conversation Review IA
+## Frozen UI information architecture
 
-```mermaid
-flowchart LR
-    A[Conversation Review] --> B[Threads]
-    A --> C[Turns]
-    B --> D[Thread List]
-    D --> E[Thread Transcript]
-    E --> F[Selected Turn]
-    F --> G[Existing Trace / RAG diagnostics]
-    C --> H[Existing single-turn workflow]
-```
-
-`Turns` preserves the existing review surface. `Threads` becomes the continuous-consultation view.
-
-## Thread list minimum projection
-
-Each Thread row must include:
-- deterministic Thread ID or short display identity;
-- first/representative question;
-- Turn count;
-- start time and last activity/time range;
-- authoritative site/Entry Channel when available;
-- Country/Region when stable/authoritative;
-- existing truthful review/failure signal where already available.
-
-Do NOT add in this scope:
-- LLM-generated topic/title as authority;
-- automatic “resolved” judgment;
-- inferred customer identity;
-- sentiment or quality scoring unless already governed elsewhere.
-
-## Desktop wireframe
+Conversation Review remains one product surface and gains a lightweight mode switch:
 
 ```text
-Conversation Review
-[ Threads ] [ Turns ]
-
-┌───────────────────────┬─────────────────────────────┬──────────────────────┐
-│ Threads               │ Transcript                  │ Turn / Trace         │
-│ Search / Filters      │ Thread T-10234             │ Turn 3               │
-│                       │                             │                      │
-│ T-10234  8 turns      │ 14:20 User                 │ Retrieval            │
-│ pricing question      │ Q1 ...                      │ Rerank               │
-│ last 14:31            │ 14:20 Assistant            │ Evidence             │
-│                       │ A1 ...                      │ Citation             │
-│ T-10233  3 turns      │ 14:24 User                 │ Reasoning/response   │
-│ ...                   │ Q2 ... [View Trace]         │ Existing diagnostics │
-└───────────────────────┴─────────────────────────────┴──────────────────────┘
+对话审查        [ 单轮 | 会话 ]
 ```
+
+### 单轮 / Turns
+
+**Preserve the current page behavior and visual structure.** No redesign is authorized.
+
+### 会话 / Threads
+
+Use the same compact list/card visual language as current Conversation Review.
+
+Example:
+
+```text
+如何配置 NeoMind webhook
+ID thread_xxx   技术支持   官网                    4轮
+                                              最近 10:31
+                                              有异常
+
+NeoMind 首次使用如何配网激活
+ID thread_yyy   产品咨询   Wiki                    3轮
+                                              最近 10:24
+                                              正常
+```
+
+Minimum Thread card projection:
+- stable/short Thread identity;
+- first/representative question;
+- Turn count;
+- start/last activity or concise time range;
+- authoritative Entry/site where available;
+- Country/Region where stable and authoritative;
+- existing truthful review/failure signal where derivable.
+
+No LLM-generated topic/title, automatic resolved judgment, inferred customer identity or new quality score.
+
+## Thread detail
+
+Clicking a Thread navigates to/opens a **transcript-first detail**, rather than rendering a permanent three-pane workspace.
+
+```text
+← 返回对话审查
+
+NeoMind webhook 配置
+4轮 · 10:21–10:31 · 官网 · 技术支持
+
+用户
+NeoMind 如何配置推送 webhook
+
+ASK-AI
+...
+
+用户
+签名怎么验证？
+
+ASK-AI
+...
+
+[select/open a Turn]
+        ↓
+existing Turn / Trace / RAG diagnostics
+```
+
+A selected Turn reaches/reuses the existing diagnostic surface. Do not duplicate or redefine Trace semantics.
+
+## Explicitly rejected UI direction
+
+The previous default:
+
+```text
+Thread List | Transcript | Turn/Trace
+```
+
+three-column workspace is **REVOKED**.
+
+Reason: it reduces information density and conflicts with the actual current Conversation Review interaction model.
+
+Wide screens may use an existing drawer/detail affordance for diagnostics if already established by the product, but implementation must not introduce a new permanent three-pane IA under this Issue.
 
 ## Responsive behavior
 
-- wide desktop: coordinated three-level layout is preferred;
-- medium width: Thread list + Transcript, with Trace in drawer/detail route;
-- narrow/mobile: stack as `Thread List → Transcript → Turn/Trace`; do not squeeze three panes horizontally;
-- back navigation preserves current selection/filter state.
-
-## Transcript behavior
-
-- strict chronological Turn order;
-- User and Assistant are visually distinct;
-- each Turn retains its existing Conversation ID for diagnostics;
-- Turn drill-down opens/reveals existing Trace data rather than duplicating it;
-- no generated summary may replace the actual transcript.
+- existing single-turn page remains unchanged;
+- Thread list uses the same responsive list/card language;
+- Thread detail stacks naturally;
+- narrow/mobile follows `Thread List → Transcript → Turn/Trace`;
+- back navigation preserves mode, filters and list position where practical.
 
 ## Acceptance
 
-1. Threads and Turns are distinct modes; existing Turn review remains available.
-2. Thread construction follows the deterministic boundary rules above.
-3. Same session with >30-minute gap is split.
-4. Same session with explicit reset is split.
-5. Site/Entry Channel change splits.
+1. Conversation Review exposes distinct Single-turn/单轮 and Thread/会话 modes.
+2. Single-turn mode preserves the current UI and behavior; no redesign regression.
+3. Thread list uses the current compact-card visual language, not a new table or three-pane workspace.
+4. Thread construction follows deterministic boundary rules.
+5. >30-minute gap, explicit reset, site/Entry change and incompatible transport split Threads correctly.
 6. Midnight alone does not split within the inactivity window.
-7. Historical rows without reliable session identity are not guessed into Threads.
-8. Thread aggregation and pagination are server-side and deterministic.
-9. Search/filter operates on complete Thread results, not current-page grouping.
-10. Transcript shows complete chronological Turns for the selected Thread.
-11. Any selected Turn can reach the existing Trace/RAG diagnostics.
-12. Current single-turn diagnostics and Conversation IDs remain unchanged.
-13. Desktop and narrow viewport behavior follows the frozen IA.
-14. Regression tests cover boundary splitting, pagination, search promotion, legacy rows, site/channel split, and Turn→Trace linkage.
+7. Historical unreliable identities are not guessed into Threads.
+8. Aggregation/pagination/search/filtering occur server-side over complete Thread results.
+9. Thread detail is transcript-first and chronologically complete.
+10. Each Turn retains its existing Conversation ID and can reach existing Trace/RAG diagnostics.
+11. Back navigation preserves review context where practical.
+12. No generated summary replaces the transcript.
+13. Regression tests cover boundaries, pagination, search promotion, legacy rows, site/channel split and Turn→Trace linkage.
+14. Visual acceptance is performed against the real current Conversation Review baseline supplied by Product Owner.
 
 ## Non-goals
 
+- redesigning the existing single-turn review page;
+- permanent three-pane observability workspace;
 - customer/person identity resolution;
 - cross-device merge;
 - LLM topic segmentation;
-- semantic clustering as primary boundary;
-- auto-resolution scoring;
-- replacing existing Trace diagnostics;
-- deleting/redefining existing Conversation records.
+- semantic clustering as Thread boundary;
+- automatic resolution scoring;
+- replacing existing Trace diagnostics.
 
 ---
 
 # Issue #48 — Citation Linkability UI State Reference
 
-This file also records the compact visual state reference already frozen in Issue #48. It does not expand #48 scope.
+No change. #48 remains a local Widget citation-state bug; it does not redesign Admin Conversation Review.
 
 | State | Clickable | Presentation | Navigation |
 |---|---:|---|---|
@@ -292,19 +333,14 @@ This file also records the compact visual state reference already frozen in Issu
 | stale | no | stale/unavailable label | none |
 | malformed/error/unsafe | no | unavailable/error label | none |
 
-```text
-[1] System Configuration Guide                 [Valid]      ↗
-[2] Internal Policy Document                  [No link]     —
-[3] Private Resource                          [Private]     —
-[4] Archived Guide                            [Stale]       —
-```
-
-Only `valid` enters link tab order. Non-clickable evidence remains visible when citation semantics permit. No empty href, self-navigation, file:// navigation, or fabricated public link.
+Only `valid` enters link tab order. No empty href, self-navigation, `file://`, or fabricated public link.
 
 ---
 
 # Role A Gate
 
-The contracts above are authoritative product/UI truth for Issues #68 and #87 as of 2026-09-17.
+This 2026-09-18 revision supersedes the 2026-09-17 UI layout proposal.
 
-Role B may choose implementation HOW only inside these semantics and boundaries. Fresh repository baseline/drift review is required before implementation authorization. Any material change to Thread boundary, authority source, privacy semantics, information hierarchy, or acceptance requires Role A re-freeze.
+Role B may choose implementation HOW only inside these semantics and boundaries. A fresh repository baseline/drift review is required before implementation authorization.
+
+Material changes to truth authority, Thread boundaries, privacy semantics, existing Channel semantics, or the current Conversation Review visual hierarchy require Role A re-freeze.
