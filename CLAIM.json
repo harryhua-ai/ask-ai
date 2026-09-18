@@ -35,5 +35,11 @@
    }
   },
   "preserved_at": "2026-09-18T11:42:57Z"
+ },
+ "delivery": {
+  "pr": 98,
+  "sha": "bae461d3523da353db861806f9bbccd768876dcd",
+  "note": "Candidate bae461d: bounded thread review (\u4f1a\u8bdd mode) \u2014 boundary service + server-side threads API + transcript-first UI; 20 new tests RED\u2192GREEN; vitest 603/603; regression 2982P/7F all classified non-candidate; screenshots + report in PR #98",
+  "delivered_at": "2026-09-18T11:43:15Z"
  }
 }
