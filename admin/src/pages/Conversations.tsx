@@ -1,7 +1,7 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Check, Copy, Lightbulb, ThumbsUp, ThumbsDown } from "lucide-react";
+import { ArrowLeft, Check, Copy, Lightbulb, ThumbsUp, ThumbsDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -20,6 +20,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import ToggleFilter from "@/components/observability/ToggleFilter";
 import { GeoEntryMeta } from "@/components/conversations/GeoEntryMeta";
+import {
+  useConversationThreads,
+  useConversationThread,
+  type ThreadItem,
+} from "@/hooks/useConversationThreads";
 import { deriveOutcome } from "@/utils/outcome";
 import { conversationIdLabel } from "@/utils/conversationId";
 
@@ -68,6 +73,221 @@ function TraceStageCard({
       {children && <div className="space-y-0.5">{children}</div>}
     </div>
   );
+}
+
+/** #87:trace 阶段面板(单轮详情与会话 transcript 共用同一套诊断呈现;
+ *  selector 插槽供单轮详情在页头与阶段卡之间渲染轮次切换)。 */
+function TraceStagePanels({
+  trace,
+  question,
+  selector,
+}: {
+  trace: TraceData;
+  question: string;
+  selector?: ReactNode;
+}) {
+  const st = trace.stages;
+  const total = trace.total_ms ?? 0;
+  const intentSt = st["intent"];
+  const rewriteSt = st["rewrite"];
+  const retrieveSt = st["retrieve"];
+  const rerankSt = st["rerank"];
+  const genSt = st["generate"];
+  const outSt = st["output"];
+  const cfg = trace.config_snapshot;
+
+  return (
+    <div className="space-y-2" data-trace-meta>
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="outline">
+          {trace.type === "rag"
+            ? "RAG 生成"
+            : trace.type === "clarify"
+              ? "澄清追问"
+              : trace.type === "override"
+                ? "人工覆盖"
+                : "短路拒答"}
+        </Badge>
+        {trace.intent && (
+          <Badge variant="outline">
+            {INTENT_LABELS[trace.intent] ?? trace.intent}
+          </Badge>
+        )}
+        {trace.confidence != null && (
+          <span className="text-xs text-muted-foreground">
+            置信 {(trace.confidence * 100).toFixed(0)}%
+          </span>
+        )}
+        <span className="text-xs text-muted-foreground ml-auto">
+          总耗时 {total.toLocaleString()}ms
+        </span>
+      </div>
+
+      {selector}
+
+      <TraceStageCard label="意图分类" ms={intentSt?.ms ?? 0} total={total}>
+        {intentSt?.category && (
+          <div className="text-[12px] text-muted-foreground">分类 {intentSt.category}</div>
+        )}
+        {intentSt?.reason && (
+          <div className="text-[12px] text-muted-foreground">{intentSt.reason}</div>
+        )}
+        <div className="text-[12px] text-muted-foreground">
+          置信度 {trace.confidence != null
+            ? `${(trace.confidence * 100).toFixed(0)}%`
+            : "—"}
+        </div>
+      </TraceStageCard>
+
+      <TraceStageCard label="查询改写" ms={rewriteSt?.ms ?? 0} total={total}>
+        <div className="space-y-0.5 text-[12px] text-muted-foreground">
+          <div><span className="text-muted-foreground/60">原文</span> {question}</div>
+          {rewriteSt?.extracted && (
+            <div><span className="text-muted-foreground/60">提取</span> {rewriteSt.extracted}</div>
+          )}
+          {rewriteSt?.rewritten && (
+            <div><span className="text-muted-foreground/60">改写</span> {rewriteSt.rewritten}</div>
+          )}
+        </div>
+      </TraceStageCard>
+
+      <TraceStageCard label="路由检索" ms={retrieveSt?.ms ?? 0} total={total}>
+        {retrieveSt?.hybrid_count !== undefined && (
+          <div className="text-[12px] text-muted-foreground">
+            三路 RRF 融合召回 {retrieveSt.hybrid_count} 条
+            {retrieveSt.effective_min !== undefined && (
+              <span className="text-muted-foreground/60"> (阈值 {retrieveSt.effective_min})</span>
+            )}
+          </div>
+        )}
+        {retrieveSt?.path_counts && (
+          <div className="text-[12px] text-muted-foreground/70">
+            hybrid {retrieveSt.path_counts.hybrid} · symbol {retrieveSt.path_counts.symbol} · boost {retrieveSt.path_counts.boost}
+          </div>
+        )}
+        {retrieveSt?.min_results_met === true && (
+          <div className="text-[12px] text-muted-foreground">已满足最低阈值</div>
+        )}
+        {retrieveSt?.min_results_met === false && (
+          <div className="text-[12px] text-orange-500">⚠ 未达最低阈值</div>
+        )}
+      </TraceStageCard>
+
+      <TraceStageCard label="精排重排" ms={rerankSt?.ms ?? 0} total={total}>
+        {rerankSt?.top_score != null && (
+          <div className="text-[12px] text-muted-foreground">top分 {rerankSt.top_score.toFixed(3)}</div>
+        )}
+        {rerankSt?.count !== undefined && (
+          <div className="text-[12px] text-muted-foreground">
+            rerank {rerankSt.count} 条
+            {rerankSt.pruned != null && rerankSt.pruned > 0 && (
+              <span className="text-orange-500"> (裁剪 {rerankSt.pruned})</span>
+            )}
+          </div>
+        )}
+        {rerankSt?.results && rerankSt.results.length > 0 && (
+          <div className="mt-1 space-y-1">
+            {rerankSt.results.map((r, i) => (
+              <details key={i} className="group rounded border border-border/50 p-1">
+                <summary className="flex cursor-pointer items-center gap-1.5 text-[11px]">
+                  <span className="text-muted-foreground/50 shrink-0">{i + 1}</span>
+                  <Badge variant="outline" className="shrink-0 text-[9px] px-1 py-0">
+                    {r.source_type}
+                  </Badge>
+                  {r.score != null && (
+                    <span className="shrink-0 text-muted-foreground tabular-nums">{r.score.toFixed(3)}</span>
+                  )}
+                  <span className="text-muted-foreground truncate">{r.title}</span>
+                </summary>
+                {r.text && (
+                  <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground/80 whitespace-pre-wrap">
+                    {r.text}
+                  </p>
+                )}
+              </details>
+            ))}
+          </div>
+        )}
+      </TraceStageCard>
+
+      <TraceStageCard label="LLM 生成" ms={genSt?.ms ?? 0} total={total}>
+        {genSt?.ttft_ms != null && (
+          <div className="text-[12px] text-muted-foreground">TTFT {genSt.ttft_ms.toLocaleString()}ms</div>
+        )}
+        {genSt?.latency_ms != null && (
+          <div className="text-[12px] text-muted-foreground">LLM 延迟 {genSt.latency_ms.toLocaleString()}ms</div>
+        )}
+        {genSt?.tokens_output != null && (
+          <div className="text-[12px] text-muted-foreground">输出 {genSt.tokens_output} token</div>
+        )}
+      </TraceStageCard>
+
+      <TraceStageCard label="输出构建" ms={outSt?.ms ?? 0} total={total}>
+        {outSt?.sources_count !== undefined && (
+          <div className="text-[12px] text-muted-foreground">来源 {outSt.sources_count} 条</div>
+        )}
+      </TraceStageCard>
+
+      {cfg && Object.keys(cfg).length > 0 && (
+        <div className="flex flex-wrap gap-x-3 gap-y-0.5 rounded-md bg-muted/50 p-2 text-[11px] text-muted-foreground">
+          {Object.entries(cfg).map(([k, v]) => (
+            <span key={k}>
+              {CONFIG_LABELS[k] ?? k}{" "}
+              <span className="font-medium text-foreground">{String(v)}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {trace.attachments && trace.attachments.length > 0 && (
+        <div className="rounded-md border p-2 space-y-1">
+          <div className="text-[11px] font-medium text-muted-foreground">附件 ({trace.attachments.length})</div>
+          {trace.attachments.map((att, i) => (
+            <details key={i} className="rounded border border-border/50 p-1">
+              <summary className="flex cursor-pointer items-center gap-1.5 text-[11px]">
+                <Badge variant="outline" className="shrink-0 text-[9px] px-1 py-0">
+                  {att.kind}
+                </Badge>
+                <span className="text-muted-foreground">{att.text_length} 字</span>
+              </summary>
+              {att.text_preview && (
+                <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground/80 whitespace-pre-wrap">
+                  {att.text_preview}
+                </p>
+              )}
+            </details>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** #87:会话 transcript 内的单 Turn 诊断块 —— 复用既有 fetchTraces 数据面
+ *  与 TraceStagePanels 呈现,不新增/不改写 Trace 语义。 */
+function ThreadTurnTraces({
+  conversationId,
+  question,
+}: {
+  conversationId: string;
+  question: string;
+}) {
+  const { data: traces, isLoading } = useQuery({
+    queryKey: ["thread-turn-traces", conversationId],
+    queryFn: () => fetchTraces(conversationId),
+  });
+  const current = traces?.find((t) => t.turn_index === 0) ?? traces?.[0];
+  if (isLoading) {
+    return <div className="text-[12px] text-muted-foreground">Trace 加载中...</div>;
+  }
+  if (!current) {
+    return (
+      <div className="rounded-md bg-muted/50 p-2 text-[12px] text-muted-foreground">
+        该轮无可用 Trace(如拒答/失败前中断)
+      </div>
+    );
+  }
+  return <TraceStagePanels trace={current} question={question} />;
 }
 
 export default function Conversations() {
@@ -130,6 +350,36 @@ export default function Conversations() {
   // #68:Entry/Country 筛选候选(站点权威标签;仅可信来源国家码)
   const { data: entryOptions } = useEntryOptions();
   const { data: countryOptions } = useCountryOptions();
+
+  // #87:单轮 | 会话 模式(默认单轮,完整保留既有行为)
+  const [mode, setMode] = useState<"turns" | "threads">("turns");
+  const [threadPage, setThreadPage] = useState(1);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [threadTurnId, setThreadTurnId] = useState<string | null>(null);
+  useEffect(() => {
+    setThreadPage(1);
+  }, [filters]);
+  const threadFilters = {
+    q: filters.q,
+    channel: filters.channel,
+    entry: filters.entry,
+    country: filters.country,
+    intent_tag: filters.intent_tag,
+    is_answered: filters.is_answered,
+    feedback: filters.feedback,
+    page: threadPage,
+  };
+  const {
+    data: threadData,
+    isLoading: threadsLoading,
+    isError: threadsError,
+    error: threadsErr,
+    refetch: threadsRefetch,
+  } = useConversationThreads(threadFilters, mode === "threads");
+  const { data: threadDetail } = useConversationThread(selectedThreadId);
+  useEffect(() => {
+    setThreadTurnId(null);
+  }, [selectedThreadId]);
   const { data: detail } = useConversationDetail(selectedId);
   const tagMutation = useTagConversation();
   const batchTag = useBatchTag();
@@ -161,9 +411,36 @@ export default function Conversations() {
       {/* 主列表 */}
       <div className="min-w-0 flex-[2] space-y-4 overflow-auto">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">对话审查</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold">对话审查</h1>
+            {/* #87:轻量模式切换;单轮为默认且行为不变 */}
+            <div className="flex items-center rounded-md border p-0.5 text-sm" data-mode-switch>
+              <button
+                type="button"
+                data-mode-turns
+                className={
+                  "rounded px-2.5 py-1 " +
+                  (mode === "turns" ? "bg-primary text-primary-foreground" : "text-muted-foreground")
+                }
+                onClick={() => setMode("turns")}
+              >
+                单轮
+              </button>
+              <button
+                type="button"
+                data-mode-threads
+                className={
+                  "rounded px-2.5 py-1 " +
+                  (mode === "threads" ? "bg-primary text-primary-foreground" : "text-muted-foreground")
+                }
+                onClick={() => setMode("threads")}
+              >
+                会话
+              </button>
+            </div>
+          </div>
           <div className="flex gap-2">
-            {canWrite && (
+            {canWrite && mode === "turns" && (
             <Button
               variant="outline"
               size="sm"
@@ -277,7 +554,8 @@ export default function Conversations() {
           </select>
         </div>
 
-        {/* Phase 2:快速筛选 toggle 栏 */}
+        {/* Phase 2:快速筛选 toggle 栏(轮级诊断,仅单轮模式) */}
+        {mode === "turns" && (
         <div className="flex gap-2 flex-wrap" data-toggle-bar>
           <ToggleFilter
             label="置信<0.6"
@@ -310,7 +588,9 @@ export default function Conversations() {
             color="var(--ok)"
           />
         </div>
+        )}
 
+        {mode === "turns" && (
         <div className="space-y-2">
           {isError && !data ? (
             <LoadError error={error} onRetry={refetch} />
@@ -458,8 +738,9 @@ export default function Conversations() {
             })
           )}
         </div>
+        )}
 
-        {data && (
+        {mode === "turns" && data && (
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
@@ -482,10 +763,163 @@ export default function Conversations() {
             </Button>
           </div>
         )}
+
+        {/* #87:会话模式列表(同一紧凑卡片语言;聚合/分页在服务端) */}
+        {mode === "threads" && (
+          <>
+            {threadsError && !threadData ? (
+              <LoadError error={threadsErr} onRetry={threadsRefetch} />
+            ) : threadsLoading ? (
+              <div className="text-center py-8 text-muted-foreground">加载中...</div>
+            ) : (threadData?.items ?? []).length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground" data-thread-empty>
+                {threadData?.total === 0
+                  ? "暂无会话数据。连续追问发生后将在此处按线程聚合呈现。"
+                  : "无匹配会话:当前筛选/搜索条件下没有结果,请调整条件后重试。"}
+              </div>
+            ) : (
+              (threadData?.items ?? []).map((t: ThreadItem) => (
+                <div
+                  key={t.thread_id}
+                  data-thread-card
+                  className={`cursor-pointer rounded-lg border p-3 text-sm transition-colors hover:bg-muted/50 ${
+                    selectedThreadId === t.thread_id ? "bg-muted/50 ring-1 ring-primary" : ""
+                  }`}
+                  onClick={() => setSelectedThreadId(t.thread_id)}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="font-medium truncate">{t.first_question}</span>
+                        <span
+                          data-testid="thread-id"
+                          className="shrink-0 font-mono text-[11px] text-muted-foreground"
+                        >
+                          ID {t.thread_id}
+                        </span>
+                        {t.intent_tag && (
+                          <Badge variant="outline">
+                            {INTENT_LABELS[t.intent_tag] ?? t.intent_tag}
+                          </Badge>
+                        )}
+                        <GeoEntryMeta country={t.country} entry={t.entry} />
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end gap-1 text-sm shrink-0">
+                      <Badge variant="outline" data-thread-turns>
+                        {t.turn_count} 轮
+                      </Badge>
+                      {t.has_abnormal && (
+                        <span className="text-[11px] text-[var(--err)]" data-thread-abnormal>
+                          有异常
+                        </span>
+                      )}
+                      {t.last_activity_at && (
+                        <span className="text-[11px] text-muted-foreground">
+                          {new Date(t.last_activity_at).toLocaleTimeString("zh-CN", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+            {threadData && (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={threadPage <= 1}
+                  onClick={() => setThreadPage(threadPage - 1)}
+                >
+                  上一页
+                </Button>
+                <span className="text-sm">
+                  第 {threadPage} 页（共 {Math.ceil(threadData.total / 20) || 1} 页，{threadData.total} 线程）
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={threadPage * 20 >= threadData.total}
+                  onClick={() => setThreadPage(threadPage + 1)}
+                >
+                  下一页
+                </Button>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
-      {/* 详情侧栏 */}
-      {selectedId && detail && (
+      {/* #87:会话 transcript 详情(transcript-first;Turn 复用既有 Trace 诊断) */}
+      {mode === "threads" && selectedThreadId && threadDetail && (
+        <div className="min-w-0 flex-1 space-y-3 overflow-auto rounded-lg border bg-card p-4" data-thread-detail>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setSelectedThreadId(null)}>
+                <ArrowLeft className="h-3.5 w-3.5" /> 返回
+              </Button>
+              <h2 className="text-lg font-semibold">会话详情</h2>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => setSelectedThreadId(null)}>
+              关闭
+            </Button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant="outline" data-thread-detail-turns>
+              {threadDetail.turn_count} 轮
+            </Badge>
+            <span>
+              {new Date(threadDetail.started_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
+              {" – "}
+              {new Date(threadDetail.last_activity_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
+            </span>
+            <span data-detail-entry>入口 {threadDetail.entry?.display_name ?? "未知"}</span>
+            <span data-detail-country>国家/地区 {threadDetail.country ?? "未知"}</span>
+            {threadDetail.channel && <span>渠道 {threadDetail.channel}</span>}
+          </div>
+          {threadDetail.turns.map((turn, idx) => (
+            <div key={turn.id} className="rounded-md border p-3 space-y-2" data-transcript-turn>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] text-muted-foreground">
+                  轮 {idx + 1} · {new Date(turn.created_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
+                  {!turn.is_answered && <span className="ml-1 text-[var(--err)]">未回答</span>}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    setThreadTurnId(threadTurnId === turn.id ? null : turn.id)
+                  }
+                >
+                  {threadTurnId === turn.id ? "收起 Trace" : "查看 Trace"}
+                </Button>
+              </div>
+              <div>
+                <h3 className="text-[11px] font-medium text-muted-foreground">用户</h3>
+                <p className="mt-0.5 text-sm">{turn.question}</p>
+              </div>
+              <div>
+                <h3 className="text-[11px] font-medium text-muted-foreground">ASK-AI</h3>
+                <div className="mt-0.5 text-sm [&_p]:my-1 [&_pre]:overflow-x-auto [&_code]:bg-muted [&_code]:px-1 [&_code]:rounded [&_code]:text-xs">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {turn.answer || "(无回答)"}
+                  </ReactMarkdown>
+                </div>
+              </div>
+              {threadTurnId === turn.id && (
+                <ThreadTurnTraces conversationId={turn.id} question={turn.question} />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 详情侧栏(单轮,行为不变) */}
+      {mode === "turns" && selectedId && detail && (
         <div className="min-w-0 flex-1 space-y-3 overflow-auto rounded-lg border bg-card p-4">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold">对话详情</h2>
@@ -568,46 +1002,13 @@ export default function Conversations() {
             </div>
           </div>
 
-          {/* trace 全链路 */}
-          {currentTrace && (() => {
-            const st = currentTrace.stages;
-            const total = currentTrace.total_ms ?? 0;
-            const intentSt = st["intent"];
-            const rewriteSt = st["rewrite"];
-            const retrieveSt = st["retrieve"];
-            const rerankSt = st["rerank"];
-            const genSt = st["generate"];
-            const outSt = st["output"];
-            const cfg = currentTrace.config_snapshot;
-
-            return (
-              <div className="space-y-2" data-trace-meta>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">
-                    {currentTrace.type === "rag"
-                      ? "RAG 生成"
-                      : currentTrace.type === "clarify"
-                        ? "澄清追问"
-                        : currentTrace.type === "override"
-                          ? "人工覆盖"
-                          : "短路拒答"}
-                  </Badge>
-                  {currentTrace.intent && (
-                    <Badge variant="outline">
-                      {INTENT_LABELS[currentTrace.intent] ?? currentTrace.intent}
-                    </Badge>
-                  )}
-                  {currentTrace.confidence != null && (
-                    <span className="text-xs text-muted-foreground">
-                      置信 {(currentTrace.confidence * 100).toFixed(0)}%
-                    </span>
-                  )}
-                  <span className="text-xs text-muted-foreground ml-auto">
-                    总耗时 {total.toLocaleString()}ms
-                  </span>
-                </div>
-
-                {traces && traces.length > 1 && (
+          {/* trace 全链路(阶段面板与 #87 会话 transcript 共用;轮次选择器为单轮专属) */}
+          {currentTrace && (
+            <TraceStagePanels
+              trace={currentTrace}
+              question={detail.question}
+              selector={
+                traces && traces.length > 1 ? (
                   <div className="flex gap-1" data-turn-selector>
                     {traces.map((t) => (
                       <button
@@ -624,145 +1025,10 @@ export default function Conversations() {
                       </button>
                     ))}
                   </div>
-                )}
-
-                <TraceStageCard label="意图分类" ms={intentSt?.ms ?? 0} total={total}>
-                  {intentSt?.category && (
-                    <div className="text-[12px] text-muted-foreground">分类 {intentSt.category}</div>
-                  )}
-                  {intentSt?.reason && (
-                    <div className="text-[12px] text-muted-foreground">{intentSt.reason}</div>
-                  )}
-                  <div className="text-[12px] text-muted-foreground">
-                    置信度 {currentTrace.confidence != null
-                      ? `${(currentTrace.confidence * 100).toFixed(0)}%`
-                      : "—"}
-                  </div>
-                </TraceStageCard>
-
-                <TraceStageCard label="查询改写" ms={rewriteSt?.ms ?? 0} total={total}>
-                  <div className="space-y-0.5 text-[12px] text-muted-foreground">
-                    <div><span className="text-muted-foreground/60">原文</span> {detail.question}</div>
-                    {rewriteSt?.extracted && (
-                      <div><span className="text-muted-foreground/60">提取</span> {rewriteSt.extracted}</div>
-                    )}
-                    {rewriteSt?.rewritten && (
-                      <div><span className="text-muted-foreground/60">改写</span> {rewriteSt.rewritten}</div>
-                    )}
-                  </div>
-                </TraceStageCard>
-
-                <TraceStageCard label="路由检索" ms={retrieveSt?.ms ?? 0} total={total}>
-                  {retrieveSt?.hybrid_count !== undefined && (
-                    <div className="text-[12px] text-muted-foreground">
-                      三路 RRF 融合召回 {retrieveSt.hybrid_count} 条
-                      {retrieveSt.effective_min !== undefined && (
-                        <span className="text-muted-foreground/60"> (阈值 {retrieveSt.effective_min})</span>
-                      )}
-                    </div>
-                  )}
-                  {retrieveSt?.path_counts && (
-                    <div className="text-[12px] text-muted-foreground/70">
-                      hybrid {retrieveSt.path_counts.hybrid} · symbol {retrieveSt.path_counts.symbol} · boost {retrieveSt.path_counts.boost}
-                    </div>
-                  )}
-                  {retrieveSt?.min_results_met === true && (
-                    <div className="text-[12px] text-muted-foreground">已满足最低阈值</div>
-                  )}
-                  {retrieveSt?.min_results_met === false && (
-                    <div className="text-[12px] text-orange-500">⚠ 未达最低阈值</div>
-                  )}
-                </TraceStageCard>
-
-                <TraceStageCard label="精排重排" ms={rerankSt?.ms ?? 0} total={total}>
-                  {rerankSt?.top_score != null && (
-                    <div className="text-[12px] text-muted-foreground">top分 {rerankSt.top_score.toFixed(3)}</div>
-                  )}
-                  {rerankSt?.count !== undefined && (
-                    <div className="text-[12px] text-muted-foreground">
-                      rerank {rerankSt.count} 条
-                      {rerankSt.pruned != null && rerankSt.pruned > 0 && (
-                        <span className="text-orange-500"> (裁剪 {rerankSt.pruned})</span>
-                      )}
-                    </div>
-                  )}
-                  {rerankSt?.results && rerankSt.results.length > 0 && (
-                    <div className="mt-1 space-y-1">
-                      {rerankSt.results.map((r, i) => (
-                        <details key={i} className="group rounded border border-border/50 p-1">
-                          <summary className="flex cursor-pointer items-center gap-1.5 text-[11px]">
-                            <span className="text-muted-foreground/50 shrink-0">{i + 1}</span>
-                            <Badge variant="outline" className="shrink-0 text-[9px] px-1 py-0">
-                              {r.source_type}
-                            </Badge>
-                            {r.score != null && (
-                              <span className="shrink-0 text-muted-foreground tabular-nums">{r.score.toFixed(3)}</span>
-                            )}
-                            <span className="text-muted-foreground truncate">{r.title}</span>
-                          </summary>
-                          {r.text && (
-                            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground/80 whitespace-pre-wrap">
-                              {r.text}
-                            </p>
-                          )}
-                        </details>
-                      ))}
-                    </div>
-                  )}
-                </TraceStageCard>
-
-                <TraceStageCard label="LLM 生成" ms={genSt?.ms ?? 0} total={total}>
-                  {genSt?.ttft_ms != null && (
-                    <div className="text-[12px] text-muted-foreground">TTFT {genSt.ttft_ms.toLocaleString()}ms</div>
-                  )}
-                  {genSt?.latency_ms != null && (
-                    <div className="text-[12px] text-muted-foreground">LLM 延迟 {genSt.latency_ms.toLocaleString()}ms</div>
-                  )}
-                  {genSt?.tokens_output != null && (
-                    <div className="text-[12px] text-muted-foreground">输出 {genSt.tokens_output} token</div>
-                  )}
-                </TraceStageCard>
-
-                <TraceStageCard label="输出构建" ms={outSt?.ms ?? 0} total={total}>
-                  {outSt?.sources_count !== undefined && (
-                    <div className="text-[12px] text-muted-foreground">来源 {outSt.sources_count} 条</div>
-                  )}
-                </TraceStageCard>
-
-                {cfg && Object.keys(cfg).length > 0 && (
-                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 rounded-md bg-muted/50 p-2 text-[11px] text-muted-foreground">
-                    {Object.entries(cfg).map(([k, v]) => (
-                      <span key={k}>
-                        {CONFIG_LABELS[k] ?? k}{" "}
-                        <span className="font-medium text-foreground">{String(v)}</span>
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                {currentTrace.attachments && currentTrace.attachments.length > 0 && (
-                  <div className="rounded-md border p-2 space-y-1">
-                    <div className="text-[11px] font-medium text-muted-foreground">附件 ({currentTrace.attachments.length})</div>
-                    {currentTrace.attachments.map((att, i) => (
-                      <details key={i} className="rounded border border-border/50 p-1">
-                        <summary className="flex cursor-pointer items-center gap-1.5 text-[11px]">
-                          <Badge variant="outline" className="shrink-0 text-[9px] px-1 py-0">
-                            {att.kind}
-                          </Badge>
-                          <span className="text-muted-foreground">{att.text_length} 字</span>
-                        </summary>
-                        {att.text_preview && (
-                          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground/80 whitespace-pre-wrap">
-                            {att.text_preview}
-                          </p>
-                        )}
-                      </details>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })()}
+                ) : undefined
+              }
+            />
+          )}
 
           {/* 引用来源 */}
           {detail.sources && detail.sources.length > 0 && (
