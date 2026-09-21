@@ -17,7 +17,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-from backend.connectors.base import DataSourceConnector, RawDocument
+from backend.connectors.base import DataSourceConnector, RawDocument, SourceRootUnavailable
 from backend.connectors.exclusion import ExclusionPolicy
 from backend.connectors.registry import ConnectorRegistry, SourceConfig
 from backend.connectors.safety import (
@@ -82,6 +82,31 @@ class FilesystemConnector(DataSourceConnector):
     @property
     def product(self) -> str:
         return self._config.product
+
+    def _ensure_root_enumerable(self) -> None:
+        """Issue #100 AC2:根对执行面不可用 ⇒ fail-closed,绝不静默空集。
+
+        Python 3.13 ``Path.rglob`` 对缺失根**静默返回空**(不抛错),会把
+        「配置根不可见(容器拓扑/挂载缺失/路径配错)」伪装成「合法空源」
+        —— 上传权威对 sync 执行面不可见的生产事故正源于此。根缺失/不可读
+        必须显式抛 :class:`SourceRootUnavailable`(携带配置值与解析后的
+        绝对路径,操作员可据此定位部署挂载缺口);根存在但无匹配文件 =
+        合法空源,不受此限。
+        """
+        if not self._root.is_dir():
+            raise SourceRootUnavailable(
+                f"数据源 {self._config.id} 根目录对执行面不可用: "
+                f"root_path={self._config.config.get('root_path')!r} "
+                f"(解析为 {self._root.resolve()})不存在或不是目录 —— "
+                f"检查该执行面的共享上传卷挂载/路径配置"
+            )
+        if not os.access(self._root, os.R_OK):
+            raise SourceRootUnavailable(
+                f"数据源 {self._config.id} 根目录对执行面不可读: "
+                f"root_path={self._config.config.get('root_path')!r} "
+                f"(解析为 {self._root.resolve()})无读权限 —— "
+                f"检查挂载卷权限"
+            )
 
     def _should_include(self, path: Path) -> bool:
         """判断给定路径是否应被纳入抓取范围。
@@ -216,6 +241,7 @@ class FilesystemConnector(DataSourceConnector):
         断裂符号链接等)记录 warning 后跳过,不阻断整体抓取;
         与 ``GitHubConnector`` 的单文件 try/except 模式一致。
         """
+        self._ensure_root_enumerable()
         for path in sorted(self._root.rglob("*")):
             if not (path.is_file() and self._should_include(path)):
                 continue
@@ -239,6 +265,7 @@ class FilesystemConnector(DataSourceConnector):
         Args:
             since: UTC 时间戳;文件 ``mtime`` 早于等于该时刻的文件会被跳过。
         """
+        self._ensure_root_enumerable()
         for path in sorted(self._root.rglob("*")):
             if not (path.is_file() and self._should_include(path)):
                 continue

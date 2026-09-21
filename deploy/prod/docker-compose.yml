@@ -23,6 +23,11 @@ volumes:
   weaviate_data:
     external: true
     name: tesla-t4_weaviate_data
+  # Issue #100 AC1:上传数据源权威持久共享卷(命名卷,容器重建存活)。
+  # backend(上传落盘写)与 sync / sync-executor / sync-cron(同步执行面
+  # 枚举读)挂同一卷,使上传权威单一、持久、执行面可见 —— 修复「上传只落
+  # backend 可写层,重建即丢失且同步面不可见」的生产事故拓扑。
+  uploads_data:
 
 # 后端类服务公共配置(YAML anchor,backend / sync / sync-cron 共享,DRY)
 x-backend-base: &backend-base
@@ -50,6 +55,8 @@ x-backend-base: &backend-base
     - /home/ubuntu/ask-ai-corpus:/home/ubuntu/ask-ai-corpus
     # filesystem 源(knowledge-support-cases)读取路径
     - /home/ubuntu/knowledge-support:/home/ubuntu/knowledge-support:ro
+    # Issue #100 AC1:上传数据源权威 = 持久共享卷(backend 写 / 同步执行面读)
+    - uploads_data:/app/data/uploads
     # BGE-m3 + reranker 权重(不打进镜像,挂载复用)
     - /home/ubuntu/ask-ai/models:/models:ro
   depends_on:
