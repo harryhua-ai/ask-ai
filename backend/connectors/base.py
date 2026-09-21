@@ -9,6 +9,17 @@ from datetime import datetime
 from typing import Any, Protocol
 
 
+class SourceRootUnavailable(RuntimeError):
+    """配置源根目录对当前执行面不可用/不可读(Issue #100 AC2 fail-closed)。
+
+    典型拓扑:上传权威只落在 backend 容器可写层,sync-executor/sync-cron
+    解析同一相对路径时目录不存在 —— Python 3.13 ``rglob`` 对缺失根静默
+    空集,会把「根不可见」伪装成「合法空源/无变更成功」。本异常由连接器
+    fetch 入口显式抛出,sync 侧必须记 failed(携带配置根路径的可执行错误),
+    绝不进入无变更/缺席分类路径。根存在但无匹配文件 = 合法空源,不受此限。
+    """
+
+
 @dataclass(frozen=True)
 class RawDocument:
     """从数据源抓取的原始文档(不可变)。

@@ -1,6 +1,7 @@
 """数据源 CRUD + 手动同步端点。"""
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -127,9 +128,17 @@ async def _load_source_discovery_rules(
     return []
 
 
+# Issue #100 AC1:上传数据源权威子树(仓库相对形态;镜像 CWD=/app,对应
+# 容器路径 /app/data/uploads/data-sources)。prod compose 以共享命名卷挂载
+# /app/data/uploads,使 backend(写)与 sync-executor/sync-cron/sync(读)
+# 面对同一份持久字节 —— 上传权威单一、持久、执行面可见。写侧(config
+# root_path 记录)与读侧(connector 枚举)一律由此常量派生,禁止字面漂移。
+UPLOADS_CORPUS_ROOT = Path("data/uploads/data-sources")
+
+
 def _upload_root(source_id: str) -> Path:
     """上传语料落盘根目录(相对仓库根,与 filesystem connector 同 CWD 语义)。"""
-    return Path("data/uploads/data-sources") / source_id
+    return UPLOADS_CORPUS_ROOT / source_id
 
 
 def _safe_upload_path(base: Path, rel: str) -> Path:
@@ -194,7 +203,7 @@ async def upload_source_files(
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
         saved += 1
-    return {"saved": saved, "root": f"data/uploads/data-sources/{source_id}"}
+    return {"saved": saved, "root": str(UPLOADS_CORPUS_ROOT / source_id)}
 
 
 # 系统目录/构建产物:预览子目录时一律过滤,避免噪音与深层爆炸。
@@ -550,7 +559,7 @@ async def create_data_source(
         await _check_clone_path_conflict(factory, source_id, req.config)
     if req.type == "filesystem" and (req.config or {}).get("upload_mode"):
         # C9 上传模式:root_path 由服务端指向落盘目录,用户不可见不可手填
-        req.config["root_path"] = f"data/uploads/data-sources/{source_id}"
+        req.config["root_path"] = str(UPLOADS_CORPUS_ROOT / source_id)
     async with factory() as session:
         existing = await session.execute(select(DataSource).where(DataSource.id == source_id))
         if existing.scalar_one_or_none():
@@ -581,7 +590,7 @@ async def update_data_source(
         if ds.type == "filesystem" and (ds.config or {}).get("upload_mode"):
             # C9 上传模式:root_path 始终由服务端指向落盘目录,与创建时同语义,
             # 防止前端提交的空值把同步根路径抹掉
-            ds.config["root_path"] = f"data/uploads/data-sources/{source_id}"
+            ds.config["root_path"] = str(UPLOADS_CORPUS_ROOT / source_id)
         await session.commit()
         # U-11:调度配置变化(sync_interval/enabled)→ 立即 reconcile 调度真值
         await schedule_truth_svc.reconcile_next_run_at(session, ds)
@@ -1677,6 +1686,25 @@ def _task_out(task: DocumentRepairTask) -> DocumentRepairTaskOut:
     )
 
 
+def _bulk_repair_idempotency_key(source_id: str, doc_source_id: str) -> str:
+    """批量修复确定性幂等键(Issue #100 AC5:有界 + 碰撞安全)。
+
+    - 短身份:保持既有 ``bulk-repair-v1:{source_id}:{doc.source_id}`` 全量
+      形态(向后连续 —— 既有任务行重试幂等不被键换代破坏);
+    - 长身份(v1 形态将超出 ``varchar(100)``):``bulk-repair-v2:`` 前缀 +
+      全身份 SHA-256 截断 128bit 十六进制(47 字符,恒有界)。确定性:
+      同身份恒同键 ⇒ 重试幂等;128bit 截断对实际身份空间碰撞可忽略。
+
+    生产事故(2026-09-21):v1 全量拼接遇长嵌套/Unicode 路径首行 INSERT 即
+    ``StringDataRightTruncationError``,repair-all 确定性 500 且整批中止。
+    """
+    legacy = f"bulk-repair-v1:{source_id}:{doc_source_id}"
+    if len(legacy) <= 100:
+        return legacy
+    digest = hashlib.sha256(f"{source_id}:{doc_source_id}".encode("utf-8")).hexdigest()[:32]
+    return f"bulk-repair-v2:{digest}"
+
+
 @router.post("/{source_id}/documents/repair-all", response_model=BulkDocumentRepairOut)
 async def repair_all_source_documents(
     source_id: str, user: EditorDep, request: Request
@@ -1738,43 +1766,66 @@ async def repair_all_source_documents(
             )
             items: list[BulkDocumentRepairItem] = []
             succeeded = 0
+            failed = 0
             rebuild_requested = 0
             for doc in docs:
-                async with factory() as task_session:
-                    task, _created = await create_repair_task(
-                        task_session,
-                        source_id,
-                        doc.source_id,
-                        requested_by=requested_by,
-                        idempotency_key=f"bulk-repair-v1:{source_id}:{doc.source_id}",
+                # Issue #100 AC6:逐文档隔离 —— 单文档受理/执行失败只降级
+                # 该项 failed(携带 error 明细),整批继续处理完全部资格集。
+                # 现状缺陷:任一异常(如长身份键宽溢出)传播出循环,整批
+                # 500 中止,操作员批量恢复原语确定性不可用。
+                task = None
+                try:
+                    async with factory() as task_session:
+                        task, _created = await create_repair_task(
+                            task_session,
+                            source_id,
+                            doc.source_id,
+                            requested_by=requested_by,
+                            idempotency_key=_bulk_repair_idempotency_key(source_id, doc.source_id),
+                        )
+                    if task.status == "pending":
+                        task = await execute_repair_task(
+                            factory,
+                            weaviate_client=weaviate_client,
+                            embedder=embedder,
+                            class_name=request.app.state.weaviate_class_name,
+                            task_id=task.id,
+                            # INC-WEB-EMBED-413:重放载荷嵌入契约预检(超契约路由
+                            # 权威源重建交接,见 document_repair)
+                            max_chunk_chars=getattr(
+                                getattr(request.app.state, "settings", None),
+                                "embedder_max_length",
+                                None,
+                            ),
+                        )
+                    status = str(task.status)
+                    sync_request_id = (task.result or {}).get("sync_request_id")
+                    error = task.error or (
+                        "已有修复任务正在执行" if status in {"pending", "running"} else None
                     )
-                if task.status == "pending":
-                    task = await execute_repair_task(
-                        factory,
-                        weaviate_client=weaviate_client,
-                        embedder=embedder,
-                        class_name=request.app.state.weaviate_class_name,
-                        task_id=task.id,
-                        # INC-WEB-EMBED-413:重放载荷嵌入契约预检(超契约路由
-                        # 权威源重建交接,见 document_repair)
-                        max_chunk_chars=getattr(
-                            getattr(request.app.state, "settings", None),
-                            "embedder_max_length",
-                            None,
-                        ),
+                    # AC6 aggregate truth: pending/running 任务既不计 succeeded/rebuild_requested,
+                    # 也不入显式 failed 会破坏 eligible == succeeded + rebuild_requested + failed。
+                    # 规约:pending/running 视为 non-completed → 计入 failed,保持聚合守恒。
+                    if status == "succeeded":
+                        succeeded += 1
+                    elif status == "rebuild_requested":
+                        rebuild_requested += 1
+                    else:  # failed / pending / running
+                        failed += 1
+                except Exception as exc:  # noqa: BLE001 - 隔离到单项,批不中断
+                    logger.exception(
+                        "批量修复单文档失败 %s/%s", source_id, doc.source_id
                     )
-                status = str(task.status)
-                sync_request_id = (task.result or {}).get("sync_request_id")
-                if status == "succeeded":
-                    succeeded += 1
-                elif status == "rebuild_requested":
-                    rebuild_requested += 1
+                    status = "failed"
+                    sync_request_id = None
+                    error = str(exc)[:300]
+                    failed += 1
                 items.append(
                     BulkDocumentRepairItem(
                         doc_source_id=doc.source_id,
                         status=status,
-                        task_id=str(task.id) if task.id else None,
-                        error=(task.error or ("已有修复任务正在执行" if status in {"pending", "running"} else None)),
+                        task_id=str(task.id) if getattr(task, "id", None) else None,
+                        error=error,
                         sync_request_id=int(sync_request_id) if sync_request_id else None,
                     )
                 )
@@ -1782,7 +1833,7 @@ async def repair_all_source_documents(
                 source_id=source_id,
                 eligible=len(docs),
                 succeeded=succeeded,
-                failed=len(docs) - succeeded - rebuild_requested,
+                failed=failed,
                 rebuild_requested=rebuild_requested,
                 items=items,
             )
