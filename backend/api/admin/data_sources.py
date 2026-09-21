@@ -1715,6 +1715,12 @@ async def repair_all_source_documents(
     或没有可解析现行版本的 active;healthy current 和 retired 永不入选。
     数据源行 ``FOR UPDATE NOWAIT`` 保证跨 worker 不重入,进程内锁覆盖 SQLite
     等不提供行锁的运行时。任务使用确定幂等键,重复请求不会制造重复执行记录。
+
+    Issue #102(批级协调锁纪律):guard 会话整批存活以持有 data_sources 行锁
+    (跨 worker 批互斥契约不变),因此 guard 事务内**只允许**这一条行锁语句,
+    绝不触碰 documents 等业务表 —— 长开事务触碰的任何表都会成为并发 DDL 与
+    逐文档工作的锁队列枢纽(#102 生产三方停摆机制)。documents 资格快照在
+    独立短事务中读取(读完即释放);逐文档任务本就每文档独立短事务(#100)。
     """
     lock = _BULK_REPAIR_LOCKS.setdefault(source_id, asyncio.Lock())
     if lock.locked():
@@ -1722,17 +1728,17 @@ async def repair_all_source_documents(
     await lock.acquire()
     try:
         factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
-        async with factory() as lock_session:
+        async with factory() as guard_session:
             try:
                 source = (
-                    await lock_session.execute(
+                    await guard_session.execute(
                         select(DataSource)
                         .where(DataSource.id == source_id)
                         .with_for_update(nowait=True)
                     )
                 ).scalar_one_or_none()
             except DBAPIError as exc:
-                await lock_session.rollback()
+                await guard_session.rollback()
                 if _is_nowait_lock_conflict(exc):
                     raise HTTPException(
                         status_code=409, detail="该数据源已有批量修复正在执行"
@@ -1741,17 +1747,21 @@ async def repair_all_source_documents(
             if source is None:
                 raise HTTPException(status_code=404, detail="数据源不存在")
 
-            docs = (
-                (
-                    await lock_session.execute(
-                        select(Document)
-                        .where(_document_scope(source_id), _bulk_repair_eligibility())
-                        .order_by(Document.source_id)
+            # 资格快照:独立短事务(与 guard 行锁同批窗口内一致;读完即释放
+            # documents 锁)。快照后文档被删/退役由 create_repair_task 逐文档
+            # 再校验兜底(404/#83 门),与既有语义一致。
+            async with factory() as eligibility_session:
+                docs = (
+                    (
+                        await eligibility_session.execute(
+                            select(Document)
+                            .where(_document_scope(source_id), _bulk_repair_eligibility())
+                            .order_by(Document.source_id)
+                        )
                     )
+                    .scalars()
+                    .all()
                 )
-                .scalars()
-                .all()
-            )
             if not docs:
                 return BulkDocumentRepairOut(
                     source_id=source_id, eligible=0, succeeded=0, failed=0, items=[]

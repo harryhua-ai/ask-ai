@@ -7,7 +7,10 @@
 - init_db: 基于模型元数据初始化表结构
 """
 
+from typing import Any
+
 from sqlalchemy import create_engine as _create_sync_engine
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -15,8 +18,57 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import text
 
 from backend.db.models import Base
+
+# Issue #102:真缺列时的兼容性 DDL 锁等待上限 —— 与长事务重叠时有界失败
+# (55P03 → 可执行错误),绝不无限排队(生产实证:56min+ 三方停摆)。
+_DDL_LOCK_TIMEOUT = "5s"
+
+
+def _is_lock_unavailable(exc: BaseException) -> bool:
+    orig = getattr(exc, "orig", None)
+    return str(getattr(orig, "sqlstate", "") or getattr(orig, "pgcode", "")) == "55P03"
+
+
+async def _table_column_exists(conn: Any, table: str, column: str) -> bool:
+    """catalog 存在性探测:不申请目标表锁,绝不排队于任何长事务之后(#102 AC3)。"""
+    row = await conn.execute(
+        text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = :t AND column_name = :c"
+        ),
+        {"t": table, "c": column},
+    )
+    return row.first() is not None
+
+
+async def _index_exists(conn: Any, table: str, index: str) -> bool:
+    row = await conn.execute(
+        text(
+            "SELECT 1 FROM pg_indexes "
+            "WHERE schemaname = current_schema() AND tablename = :t AND indexname = :i"
+        ),
+        {"t": table, "i": index},
+    )
+    return row.first() is not None
+
+
+async def _execute_compat_ddl(conn: Any, statements: tuple[str, ...], *, label: str) -> None:
+    """在有界 lock_timeout 下执行真实兼容性 DDL;锁竞争 ⇒ 可执行失败(绝不静默)。"""
+    await conn.execute(text(f"SET LOCAL lock_timeout = '{_DDL_LOCK_TIMEOUT}'"))
+    try:
+        for stmt in statements:
+            await conn.execute(text(stmt))
+    except DBAPIError as exc:
+        if _is_lock_unavailable(exc):
+            raise RuntimeError(
+                f"#102: schema compatibility DDL could not acquire locks within "
+                f"{_DDL_LOCK_TIMEOUT} ({label}); a concurrent long transaction holds the "
+                f"table. Bounded failure — the migration retries on the next init round."
+            ) from exc
+        raise
 
 
 def get_engine(dsn: str) -> AsyncEngine:
@@ -97,12 +149,17 @@ async def ensure_sync_request_kind_column(engine: AsyncEngine) -> None:
 
     NULL = 既有增量同步语义;"rebuild" = 源全量生成重建(执行面透传
     --reindex)。旧行安全默认 NULL,零回填。生产执行窗口:任意(纯加列)。
-    """
-    from sqlalchemy import text
 
+    Issue #102:列已存在 ⇒ 零 DDL(catalog 探测,稳态无阻塞语句);
+    真缺列 ⇒ 有界 lock_timeout 下执行,锁竞争时可执行失败。
+    """
     async with engine.begin() as conn:
-        await conn.execute(
-            text("ALTER TABLE sync_requests ADD COLUMN IF NOT EXISTS kind VARCHAR(20)")
+        if await _table_column_exists(conn, "sync_requests", "kind"):
+            return
+        await _execute_compat_ddl(
+            conn,
+            ("ALTER TABLE sync_requests ADD COLUMN IF NOT EXISTS kind VARCHAR(20)",),
+            label="ensure_sync_request_kind_column",
         )
 
 
@@ -117,9 +174,14 @@ async def ensure_track_c_columns(engine: AsyncEngine) -> None:
     幂等:列已存在时 ADD COLUMN IF NOT EXISTS 为 no-op;旧行安全默认
     (全 NULL,零回填)。新表(document_repair_tasks / document_recovery_events /
     knowledge_settings_previews)由 init_db create_all 补齐。生产执行窗口:任意。
-    """
-    from sqlalchemy import text
 
+    Issue #102(#102 AC3):**ADDA COLUMN IF NOT EXISTS 在列已存在时仍先取
+    ACCESS EXCLUSIVE 再判 no-op** —— 生产死锁源(每轮 init_db 的 no-op DDL
+    排队在 repair-all 长事务之后)。因此先做 catalog 存在性探测(只读
+    pg_catalog,不申请目标表锁):schema 已兼容 ⇒ **零 DDL 语句**直接返回;
+    真缺列 ⇒ 仍执行真实兼容性 DDL,但在有界 ``lock_timeout`` 下,与长事务
+    重叠时以可执行错误有界失败(下一轮重试),绝不无限排队、绝不静默跳过。
+    """
     statements = (
         "ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_type VARCHAR(30)",
         "ALTER TABLE data_sources ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMPTZ",
@@ -128,8 +190,15 @@ async def ensure_track_c_columns(engine: AsyncEngine) -> None:
         "CREATE INDEX IF NOT EXISTS ix_documents_content_type ON documents (content_type)",
     )
     async with engine.begin() as conn:
-        for stmt in statements:
-            await conn.execute(text(stmt))
+        if (
+            await _table_column_exists(conn, "documents", "content_type")
+            and await _table_column_exists(conn, "data_sources", "next_run_at")
+            and await _table_column_exists(conn, "data_sources", "knowledge_role")
+            and await _table_column_exists(conn, "data_sources", "freshness_hours")
+            and await _index_exists(conn, "documents", "ix_documents_content_type")
+        ):
+            return
+        await _execute_compat_ddl(conn, statements, label="ensure_track_c_columns")
 
 
 async def ensure_sync_delta_columns(engine: AsyncEngine) -> None:
@@ -137,12 +206,16 @@ async def ensure_sync_delta_columns(engine: AsyncEngine) -> None:
 
     生产发布仍须先执行 ``scripts/migrate_add_sync_delta_counts.py``；这里
     的启动期守卫只让开发/测试中已经存在的旧表安全加载新读写代码。
-    """
-    from sqlalchemy import text
 
+    Issue #102:同 ensure_track_c_columns —— 稳态零 DDL;真缺列时有界。
+    """
     async with engine.begin() as conn:
-        await conn.execute(
-            text("ALTER TABLE sync_log ADD COLUMN IF NOT EXISTS delta_counts JSONB")
+        if await _table_column_exists(conn, "sync_log", "delta_counts"):
+            return
+        await _execute_compat_ddl(
+            conn,
+            ("ALTER TABLE sync_log ADD COLUMN IF NOT EXISTS delta_counts JSONB",),
+            label="ensure_sync_delta_columns",
         )
 
 
