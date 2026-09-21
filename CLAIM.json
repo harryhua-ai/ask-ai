@@ -31,5 +31,11 @@
    }
   },
   "preserved_at": "2026-09-21T19:39:36Z"
+ },
+ "delivery": {
+  "pr": 103,
+  "sha": "7b7007b1f4d312dfff4f2259038afc6caef4621d",
+  "note": "Candidate 7b7007b: AC2 guard split (row-lock-only coordination tx + short eligibility tx), AC3 init_db existence-probe (steady state zero DDL) + bounded lock_timeout for genuine DDL; 6 RED->GREEN tests incl. pure-PG three-way lock-ordering reproduction; #100 invariants preserved (81P), broader = baseline set only.",
+  "delivered_at": "2026-09-21T19:40:28Z"
  }
 }
