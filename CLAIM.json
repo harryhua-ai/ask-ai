@@ -12,5 +12,30 @@
  "heartbeat_at": "2026-09-21T07:42:29Z",
  "supersedes": null,
  "contract_digest": "bb996fa063cdcfd7eadae3a5f55541e4c896bdb7bfb827d237d6cf9bdb7003f8",
- "candidate": null
+ "candidate": {
+  "branch": "agent/100/f789af7c",
+  "sha": "9d41db61f0b779034d4b4bb7b34b2b55aa0d5a24",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "backend/api/admin/data_sources.py": "ALLOWED",
+    "backend/connectors/base.py": "ALLOWED",
+    "backend/connectors/filesystem.py": "ALLOWED",
+    "deploy/prod/docker-compose.yml": "ALLOWED",
+    "docs/engineering/tasks/issue100-upload-durability-sync-visibility-bulk-repair.md": "ALLOWED",
+    "scripts/sync.py": "ALLOWED",
+    "tests/api/admin/test_bulk_repair_bounded_idempotency.py": "ALLOWED",
+    "tests/api/admin/test_upload_connector_visibility.py": "ALLOWED",
+    "tests/connectors/test_filesystem_unavailable_root.py": "ALLOWED",
+    "tests/deploy/test_shared_uploads_volume.py": "ALLOWED",
+    "tests/scripts/test_source_unavailable_failclosed.py": "ALLOWED"
+   },
+   "violations": [],
+   "counts": {
+    "ALLOWED": 11,
+    "FORBIDDEN": 0
+   }
+  },
+  "preserved_at": "2026-09-21T07:51:37Z"
+ }
 }
