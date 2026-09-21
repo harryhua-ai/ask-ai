@@ -14,30 +14,40 @@
  "contract_digest": "037288e88626263b95584ed299915d36d8a33dfb643c74581d14f588b44f2939",
  "candidate": {
   "branch": "agent/94/e64b331f",
-  "sha": "c0a2b7883bebce5d0d4a59d34d46df9baf83c948",
+  "sha": "1d5f57db9897abd12287aa1e486b61e56420b744",
   "scope": {
    "pass": true,
    "paths": {
+    "backend/api/admin/data_sources.py": "ALLOWED",
+    "backend/connectors/base.py": "ALLOWED",
+    "backend/connectors/filesystem.py": "ALLOWED",
     "backend/db/models.py": "ALLOWED",
     "backend/pipeline/generation_builder.py": "ALLOWED",
     "backend/services/membership_currency.py": "ALLOWED",
     "backend/services/zero_semantic_chunks.py": "ALLOWED",
+    "deploy/prod/docker-compose.yml": "ALLOWED",
     "deploy/prod/migrations.json": "ALLOWED",
     "docs/engineering/tasks/ISSUE-94-ZERO-CHUNK-execution.md": "ALLOWED",
+    "docs/engineering/tasks/issue100-upload-durability-sync-visibility-bulk-repair.md": "ALLOWED",
     "scripts/migrate_add_zero_semantic_chunks.py": "ALLOWED",
     "scripts/sync.py": "ALLOWED",
     "tests/api/admin/conftest.py": "ALLOWED",
+    "tests/api/admin/test_bulk_repair_bounded_idempotency.py": "ALLOWED",
+    "tests/api/admin/test_upload_connector_visibility.py": "ALLOWED",
+    "tests/connectors/test_filesystem_unavailable_root.py": "ALLOWED",
+    "tests/deploy/test_shared_uploads_volume.py": "ALLOWED",
     "tests/pipeline/test_issue94_zero_chunk_builder.py": "ALLOWED",
+    "tests/scripts/test_source_unavailable_failclosed.py": "ALLOWED",
     "tests/services/test_issue94_membership_zero_chunk.py": "ALLOWED",
     "tests/services/test_issue94_zero_chunk_service.py": "ALLOWED"
    },
    "violations": [],
    "counts": {
-    "ALLOWED": 12,
+    "ALLOWED": 22,
     "FORBIDDEN": 0
    }
   },
-  "preserved_at": "2026-09-18T15:02:37Z"
+  "preserved_at": "2026-09-21T17:07:23Z"
  },
  "delivery": {
   "pr": 99,
