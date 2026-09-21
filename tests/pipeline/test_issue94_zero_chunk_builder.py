@@ -260,3 +260,102 @@ def test_chunker_exception_stays_failed_never_zero_chunk_truth(stack, monkeypatc
         stack.builder.build_generation(source_id=SRC, docs=[_zero_doc()])
     assert "chunker boom" in str(excinfo.value)
     assert _zero_rows(stack.sync_factory) == []
+
+
+# --------------------------------------------------------------------------- #
+# REVIEW_1 accounting correction:零分块 ≠ 永久安全排除,两桶不相交,
+# eligible_count 不扣除零分块(zero-chunk 仍是 eligible authoritative content)。
+# --------------------------------------------------------------------------- #
+
+
+def _accounting(**kw):
+    from backend.pipeline.generation_builder import BuildAccounting
+
+    defaults = dict(
+        source_id=SRC,
+        new_docs=[],
+        updated_docs=[],
+        unchanged_docs=[],
+        metadata_docs=[],
+        excluded_docs=[],
+        zero_chunk_docs=[],
+    )
+    defaults.update(kw)
+    return BuildAccounting(**defaults)
+
+
+def test_review1_only_zero_chunk_not_permanent_excluded_and_stays_eligible():
+    """REVIEW_1:仅零分块批次 ⇒ permanent_excluded 不出现(0),零分块独立分列,
+    eligible_count **包含**零分块(它们仍是 eligible authoritative content)。"""
+    from scripts.sync import _exclusion_delta
+
+    acc = _accounting(
+        new_docs=["d1"],
+        excluded_docs=[ZERO_CHUNK, "z2"],
+        zero_chunk_docs=[ZERO_CHUNK, "z2"],
+    )
+    delta = _exclusion_delta(acc)
+    assert delta.get("permanent_excluded", 0) == 0, (
+        "零分块绝不是 #91 永久安全排除 —— permanent_excluded 只统计 #91 safety"
+    )
+    assert delta["zero_semantic_chunk"] == 2, "零分块独立分列"
+    assert delta["eligible_count"] == 3, (
+        "eligible = new(1) + zero_chunk(2);零分块不得按永久排除从 eligible 扣除"
+    )
+    assert "permanent_excluded" not in delta or delta["permanent_excluded"] == 0
+
+
+def test_review1_mixed_safety_and_zero_chunk_buckets_disjoint():
+    """REVIEW_1:混合批次 ⇒ permanent_excluded=仅 #91 safety;zero_semantic_chunk=仅零分块;
+    两桶不相交,且 eligible = total − safety(零分块保留在 eligible 侧)。"""
+    from scripts.sync import _exclusion_delta
+
+    acc = _accounting(
+        new_docs=["n1"],
+        unchanged_docs=["u1"],
+        excluded_docs=["safety1", ZERO_CHUNK],
+        zero_chunk_docs=[ZERO_CHUNK],
+    )
+    delta = _exclusion_delta(acc)
+    assert delta["permanent_excluded"] == 1, "只有 #91 safety exclusion 计入永久排除"
+    assert delta["zero_semantic_chunk"] == 1, "零分块独立分列,与 permanent_excluded 不相交"
+    assert delta["eligible_count"] == 3, "eligible = n1 + u1 + zero_chunk(1) (total 4 − safety 1)"
+    # 守恒算术:eligible + permanent_excluded == 全部参与判定的文档数
+    assert delta["eligible_count"] + delta["permanent_excluded"] == 4
+
+
+def test_review1_pure_safety_accounting_unchanged():
+    """既有 #91 行为零回归:纯 safety 排除 ⇒ permanent_excluded=N,eligible 扣除之。"""
+    from scripts.sync import _exclusion_delta
+
+    acc = _accounting(
+        new_docs=["ok1", "ok2"],
+        excluded_docs=["bin1"],
+        zero_chunk_docs=[],
+    )
+    delta = _exclusion_delta(acc)
+    assert delta["permanent_excluded"] == 1
+    assert delta["eligible_count"] == 2
+    assert "zero_semantic_chunk" not in delta, "无零分块 ⇒ 不制造无信息键"
+
+
+def test_review1_accounting_arithmetic_truthful_over_all_partitions():
+    """REVIEW_1:任意分区组合下 eligible+permanent_excluded == 参与判定总数,
+    且 zero_semantic_chunk ∈ eligible 侧、与 permanent_excluded 恒不相交。"""
+    from scripts.sync import _exclusion_delta
+
+    acc = _accounting(
+        new_docs=["n1", "n2"],
+        updated_docs=["up1"],
+        unchanged_docs=["u1", "u2", "u3"],
+        metadata_docs=["m1"],
+        excluded_docs=["s1", "s2", "z1", "z2", "z3"],
+        zero_chunk_docs=["z1", "z2", "z3"],
+    )
+    delta = _exclusion_delta(acc)
+    total_input = 7 + 5  # new2 + updated1 + unchanged3 + metadata1 + safety2 + zero3
+    assert delta["eligible_count"] + delta["permanent_excluded"] == total_input
+    assert delta["permanent_excluded"] == 2, "safety-only"
+    assert delta["zero_semantic_chunk"] == 3
+    # disjoint: 永久排除与零分块两桶之和无歧义(z 们在 eligible 侧,不在 permanent 侧)
+    assert delta["eligible_count"] == total_input - 2

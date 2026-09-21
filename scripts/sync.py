@@ -694,31 +694,43 @@ async def _reconcile_membership_for_source(
 
 
 def _exclusion_delta(accounting: Any) -> dict[str, Any]:
-    """#91:由 BuildAccounting 构造 eligible/永久排除加性记账键(AC10/AC12)。
+    """#91/#94:由 BuildAccounting 构造 eligible/排除加性记账键(AC10/AC12;REVIEW_1 修正)。
 
-    eligible = 进入本轮构建判定的文档中未被分区排除的部分(有资格参与
-    原子生成的候选);permanent_excluded = 确定性安全排除分区数。零排除
-    时返回空 dict(不制造无信息键)。
+    三个**互不相交**的账目桶:
+      - eligible_count:有资格参与原子生成的权威候选 —— **包含**零语义分块
+        (它们仍是 eligible authoritative content,只是本代产出 [] 不入服);
+      - permanent_excluded:仅 #91 确定性安全排除(零分块绝不计入);
+      - zero_semantic_chunk:#94 零语义分块独立分列(非失败、非安全排除)。
+
+    守恒算术:eligible_count + permanent_excluded == 参与判定文档总数
+    (= new+updated+unchanged+metadata+safety+zero_chunk)。零值键省略
+    (不制造无信息键);全空批次返回空 dict。
     """
-    excluded_n = len(getattr(accounting, "excluded_docs", []) or [])
-    zero_chunk_n = len(getattr(accounting, "zero_chunk_docs", []) or [])
+    zero_chunk_ids = set(getattr(accounting, "zero_chunk_docs", []) or [])
+    safety_n = sum(
+        1 for sid in (getattr(accounting, "excluded_docs", []) or []) if sid not in zero_chunk_ids
+    )
+    zero_chunk_n = len(zero_chunk_ids)
     total_n = (
         len(accounting.new_docs)
         + len(accounting.updated_docs)
         + len(accounting.unchanged_docs)
         + len(accounting.metadata_docs)
-        + excluded_n
+        + safety_n
+        + zero_chunk_n
     )
-    if not excluded_n and not total_n:
+    if not total_n:
         return {}
-    delta = {
-        "eligible_count": total_n - excluded_n,
+    delta: dict[str, Any] = {
+        # eligible 侧 = 参与判定 − 永久安全排除(零分块保留在 eligible 侧)
+        "eligible_count": total_n - safety_n,
         "eligible_count_unit": "document",
-        "permanent_excluded": excluded_n,
-        "permanent_excluded_unit": "document",
     }
+    if safety_n:
+        delta["permanent_excluded"] = safety_n
+        delta["permanent_excluded_unit"] = "document"
     if zero_chunk_n:
-        # #94:零语义分块单独分列(是 excluded 的子集;如实分账,不假收敛)
+        # #94:零语义分块单独分列(与 permanent_excluded 不相交;如实分账)
         delta["zero_semantic_chunk"] = zero_chunk_n
         delta["zero_semantic_chunk_unit"] = "document"
     return delta

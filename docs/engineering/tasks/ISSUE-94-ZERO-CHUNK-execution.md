@@ -1,9 +1,36 @@
 # Issue #94 执行报告 — 零语义分块确定性分类(RECONCILABLE AUTHORITY 第三分区)
 
 - Claim: `harryhua-ai-20260918T135924-627de129`(mode=implement,authority=allowed)
-- Branch: `agent/94/e64b331f`(base = `14735859` = main tip,含 #68/#97)
+- Branch: `agent/94/e64b331f`(Candidate 1 base = `14735859`;**REVIEW_1 续轨已同步 main `1093c93`** = #100 merge)
 - Contract: #94 body `ght-contract` v1(AC1–AC6,depends_on #91 已 CLOSED)
-- 状态: **CANDIDATE READY — 待 Role A review**(STOP;不自行 merge)
+- 状态: **CANDIDATE READY(REVIEW_1 R2)— 待 Role A review**(STOP;不自行 merge)
+
+## 0. REVIEW_1 R2 修正(2026-09-21,同 lineage)
+
+Role A REVIEW_1(REQUEST_CHANGES)blocker:零分块被计入 `permanent_excluded`
+且从 `eligible_count` 扣除 —— 违反「零分块 ≠ #91 永久安全排除;零分块仍是
+eligible authoritative content」。
+
+**修正**(`scripts/sync.py::_exclusion_delta`,最小 diff):
+- `permanent_excluded` = **仅** #91 safety exclusion(`excluded_docs − zero_chunk_docs`);
+- `zero_semantic_chunk` 独立分列(与 permanent_excluded **不相交**);
+- `eligible_count` = 参与判定总数 − safety(零分块**保留在 eligible 侧**);
+- 守恒算术:`eligible_count + permanent_excluded == new+updated+unchanged
+  +metadata+safety+zero_chunk`;
+- 零值键省略(「不制造无信息键」风格保持);全空批次返回空 dict。
+
+RED→GREEN(4 新例,`test_issue94_zero_chunk_builder.py::test_review1_*`):
+1. only-zero-chunk:permanent_excluded 缺席(0)、zero_semantic_chunk=2、
+   eligible 含零分块(=3)—— RED 实证旧实现把零分块计入 permanent 并扣 eligible;
+2. mixed(safety+zero):permanent=1/zero=1 不相交,eligible=total−safety,
+   守恒 `3+1==4`;
+3. pure-safety:既有 #91 行为零回归(permanent=N、eligible 扣除、无 zero 键);
+4. 全分区组合算术:eligible+permanent == 全部参与判定数(7+5=12)。
+
+同步 main 说明:merge `origin/main`(1093c93,#100)零冲突;#100 的
+`SourceRootUnavailable` fail-closed seams 与 #94 分区逻辑共存,
+`tests/scripts/test_source_unavailable_failclosed.py` 等 #100 回归全绿
+(见 §7 R2)。
 
 ## 1. 基线审计(缺陷确认,与生产只读取证一致)
 
@@ -56,7 +83,8 @@
    zero_chunk_ids` 分列;对账压制(窗口+内容指纹一致)/漂移失效/过期重开;
    卫生 purge;`truth_detail_of` 增 `zero_chunk_sample`;
 5. `scripts/sync.py`:`_exclusion_delta` 增加性键
-   `zero_semantic_chunk(+_unit)`(仅非零时输出;既有键不变);
+   `zero_semantic_chunk(+_unit)`(仅非零时输出;既有键不变;
+   **R2 修正:三桶不相交,permanent_excluded 仅 #91,eligible 含零分块**);
 6. `scripts/migrate_add_zero_semantic_chunks.py`(幂等,CREATE TABLE IF NOT
    EXISTS + 窗口过滤索引)+ 登记进 `deploy/prod/migrations.json`(第 14 条);
    `tests/api/admin/conftest.py` 迁移链同步。
@@ -105,3 +133,19 @@
 
 - Branch: `agent/94/e64b331f`;本报告随代码同 commit force-add。
 - **STOP:等待 Role A review;不自行 merge。**
+
+## 9. REVIEW_1 R2 验证记录(2026-09-21)
+
+- Targeted #91/#94 accounting/lifecycle:tests/pipeline/test_issue91_convergence +
+  test_issue94_zero_chunk_builder + tests/services/test_issue91_membership_exclusion
+  + test_issue94_membership_zero_chunk + test_issue94_zero_chunk_service =
+  **28 passed / 0 failed**;
+- #100 sync/source-unavailable 回归(不回归门):test_source_unavailable_failclosed
+  + test_filesystem_unavailable_root + test_bulk_repair_bounded_idempotency
+  + test_shared_uploads_volume + test_upload_connector_visibility + tests/scripts 全目录 =
+  **393 passed / 5 skipped / 0 failed**;
+- Broader backend 全量(R2 合并 main 1093c93 后):**2964 passed / 4 failed / 6 skipped** —
+  4 失败 = 既定基线既有(gap_export×2 / gap_observation / tech_answer_gaps,#100 轮
+  已在纯净 base 逐一复现分类),与本 diff 零因果;#100 面 393 用例全绿 = 不回归门 PASS;
+- Membership 侧既有正确行为零改动:excluded_ids/zero_chunk_ids 分列、指纹失效、
+  fail-closed、激活清除、无 dummy serving truth(既有 17 例全绿背书)。
