@@ -60,6 +60,7 @@ import backend.connectors.local_git  # 触发 @register 装饰器
 import backend.connectors.web_crawl  # 触发 @register 装饰器
 import backend.connectors.woocommerce  # noqa: F401 - 触发 @register 装饰器
 from backend.config import Settings, load_settings
+from backend.connectors.base import SourceRootUnavailable
 from backend.connectors.db_adapter import to_source_config
 from backend.connectors.github import GitTransportError  # #34:传输失败证据化分类
 from backend.connectors.registry import ConnectorRegistry, SourceConfig
@@ -837,6 +838,10 @@ async def _handle_no_change(
                 pipeline,
                 sync_run_id=getattr(telemetry, "run_id", None),
             )
+        except SourceRootUnavailable:
+            # Issue #100 AC2:根不可用必须向上穿透(最终 SyncLog failed)。
+            # 并入下方通用 no-op 会让「根不可见」伪装成无变更成功。
+            raise
         except Exception as exc:  # noqa: BLE001 - 缺席确认失败不阻断同步业务
             logger.warning(
                 "数据源 %s 缺席确认失败(本轮 no-op): %s", source_id, str(exc)[:160]
@@ -1092,6 +1097,11 @@ def _discover_source_docs(connector: Any) -> tuple[list[Any], bool, set[str] | N
     """
     try:
         docs = list(connector.fetch_all())
+    except SourceRootUnavailable:
+        # Issue #100 AC2:根不可用 = 拓扑级失败,必须向上穿透(最终 SyncLog
+        # failed + 可执行错误)。绝不并入「不完整发现」no-op —— 那会让
+        # 「根不可见」伪装成合法空源/无变更成功,并把账本行送进缺席分类。
+        raise
     except Exception as exc:  # noqa: BLE001 - 发现失败 → 不完整
         logger.warning(
             "源发现失败(%s),孤儿向量一律保留不删除",
@@ -1845,6 +1855,10 @@ async def _sync_one(
     except Exception as exc:  # noqa: BLE001 - 单源失败不中断批次
         log_entry.status = "failed"
         log_entry.error_detail = str(exc)
+        if isinstance(exc, SourceRootUnavailable):
+            # Issue #100 AC2:源根不可用 = 可执行拓扑错误,操作员按详情
+            # 修复共享挂载/路径配置;绝非业务空源,绝不推进成功窗口。
+            log_entry.error_detail = f"[source-unavailable] {log_entry.error_detail}"
         # #45:IngestFailures 携带结构化逐文档失败(.failures)—— 计入
         # SyncRun.counters.docs_failed(零迁移),error_detail 已含逐文档
         # 明细行(stage/分类/可重试性),操作员无需再翻日志定位。
