@@ -36,13 +36,19 @@ from typing import Any
 
 from sqlalchemy import select
 
-from backend.db.models import DataSource, Document, IngestionExclusion
+from backend.db.models import DataSource, Document, IngestionExclusion, ZeroSemanticChunk
 from backend.services.document_lifecycle import DocLifecycle, tombstone_document, utcnow
 from backend.services.ingestion_exclusions import (
     purge_expired_out_of_authority,
 )
 from backend.services.ingestion_exclusions import (
     suppression_cutoff as exclusion_suppression_cutoff,
+)
+from backend.services.zero_semantic_chunks import (
+    purge_expired_out_of_authority as purge_zero_chunk_out_of_authority,
+)
+from backend.services.zero_semantic_chunks import (
+    suppression_cutoff as zero_chunk_suppression_cutoff,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,6 +91,10 @@ class MembershipReconciliation:
     # 这些身份**不再**计入 missing(不反复补灌、不反复嵌入),但必须单独
     # 如实暴露 —— 不假收敛(绝不插成在服账本行)。
     excluded_ids: tuple[str, ...] = field(default_factory=tuple)
+    # #94:确定性零语义分块(authority ∩ zero_semantic_chunks,窗口内且内容
+    # 指纹一致,非在服)。与 #91 excluded_ids **分列**:零分块不是安全排除,
+    # 也不是在服/失败;单独如实暴露,不计入 missing(不假收敛)。
+    zero_chunk_ids: tuple[str, ...] = field(default_factory=tuple)
     status: str = "completed"  # completed / failed
     error: str | None = None
 
@@ -183,16 +193,58 @@ def reconcile_membership(
                         str(row.content_hash)[:12],
                         current_fp[:12],
                     )
+        # #94:确定性零语义分块的压制**有界且指纹失效**(与 #91 同构,但
+        # 单独分列):窗口内登记默认压制 missing;连接器能提供权威内容指纹
+        # 时逐身份比对 —— 一致 ⇒ 窗口内继续压制;漂移 ⇒ 立即失效重回
+        # actionable missing(内容已变,重取重分块)。builder 每代重跑现行
+        # chunker 并原位刷新/清除本行,策略演进由构建面天然重评估。
+        zc_cutoff = zero_chunk_suppression_cutoff(utcnow())
+        zc_in_window = session.execute(
+            select(ZeroSemanticChunk).where(
+                ZeroSemanticChunk.source_id.like(f"{source_id}/%"),
+                ZeroSemanticChunk.last_confirmed_at >= zc_cutoff,
+            )
+        ).scalars().all()
+        zc_candidates = [row for row in zc_in_window if row.source_id not in active]
+        zero_chunk_set: set[str] = set()
+        if zc_candidates:
+            fingerprint_fn = getattr(connector, "membership_content_fingerprints", None)
+            zc_current: dict[str, str] = {}
+            if callable(fingerprint_fn):
+                try:
+                    zc_current = dict(
+                        fingerprint_fn([row.source_id for row in zc_candidates]) or {}
+                    )
+                except Exception as exc:  # noqa: BLE001 - 指纹不可得 ⇒ 窗口内压制兜底
+                    logger.warning(
+                        "数据源 %s 零分块内容指纹查询失败(按窗口内压制兜底): %s",
+                        source_id,
+                        str(exc)[:200],
+                    )
+            for row in zc_candidates:
+                current_fp = zc_current.get(row.source_id)
+                if current_fp is None or current_fp == row.content_fingerprint:
+                    zero_chunk_set.add(row.source_id)
+                else:
+                    logger.info(
+                        "零分块登记内容指纹漂移 %s(%s → %s):立即失效压制,"
+                        "身份重回 actionable missing 重评估",
+                        row.source_id,
+                        str(row.content_fingerprint)[:8],
+                        current_fp[:8],
+                    )
         # #82:补灌方向 —— 权威成员 − 账本在服成员 − 压制中的确定性永久排除。
         # 覆盖两类缺口:从未灌入(分支 scope 扩大后新纳入的既有内容)与
         # 墓碑后重回权威(上游删除后重新出现);排除物是第三类「不可灌入」,
         # 窗口内不作为 actionable missing 反复补灌(#91)。retirement 语义
         # 不变,可灌缺失成员的灌入归调用方既有路径。
         excluded_ids = tuple(sorted(excluded_set & enumeration))
-        missing = sorted((enumeration - active) - excluded_set)
+        zero_chunk_ids = tuple(sorted(zero_chunk_set & enumeration))
+        missing = sorted((enumeration - active) - excluded_set - zero_chunk_set)
         # 卫生(同事务,幂等):清除「窗口过期 ∘ 已不在权威枚举」的登记;
         # 枚举内的过期行保留 —— 它们正是重评估请求(过期 ⇒ 重回 missing)。
         purge_expired_out_of_authority(session, source_id, enumeration, cutoff=cutoff)
+        purge_zero_chunk_out_of_authority(session, source_id, enumeration, cutoff=zc_cutoff)
         retired = 0
         for sid in stale:
             if tombstone_document(session, sid, reason=reason or "membership_reconcile"):
@@ -204,7 +256,7 @@ def reconcile_membership(
     residual_ids = tuple(sorted(residual - enumeration))
     logger.info(
         "成员对账完成 %s: authoritative=%d ledger_serving=%d stale=%d retired=%d"
-        " missing=%d permanent_excluded=%d residual=%d",
+        " missing=%d permanent_excluded=%d zero_chunk=%d residual=%d",
         source_id,
         len(enumeration),
         len(active),
@@ -212,6 +264,7 @@ def reconcile_membership(
         retired,
         len(missing),
         len(excluded_ids),
+        len(zero_chunk_ids),
         len(residual_ids),
     )
     return MembershipReconciliation(
@@ -223,6 +276,7 @@ def reconcile_membership(
         residual_ids=residual_ids,
         missing_ids=tuple(missing),
         excluded_ids=excluded_ids,
+        zero_chunk_ids=zero_chunk_ids,
         status="completed",
     )
 
@@ -286,4 +340,6 @@ def truth_detail_of(result: MembershipReconciliation) -> dict[str, Any]:
         "missing_sample": list(result.missing_ids[:_DETAIL_SAMPLE]),
         # #91 加性审计键:确定性永久排除样例(不可灌入,非 actionable missing)
         "excluded_sample": list(result.excluded_ids[:_DETAIL_SAMPLE]),
+        # #94 加性审计键:确定性零语义分块样例(与安全排除分列,不假收敛)
+        "zero_chunk_sample": list(result.zero_chunk_ids[:_DETAIL_SAMPLE]),
     }

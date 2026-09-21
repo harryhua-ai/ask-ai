@@ -57,6 +57,12 @@ async def _setup_app_state():
     from scripts.migrate_add_country_truth import migrate as _migrate_country_truth
 
     await _migrate_country_truth(engine)
+    # #94:零语义分块分类表(共享测试库补加性建表,幂等)
+    from scripts.migrate_add_zero_semantic_chunks import (
+        migrate as _migrate_zero_semantic,
+    )
+
+    await _migrate_zero_semantic(engine)
     factory = get_session_factory(engine)
     app.state.session_factory = factory
 
