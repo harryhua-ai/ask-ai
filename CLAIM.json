@@ -7,7 +7,7 @@
  "claimed_at": "2026-09-18T14:00:19Z",
  "lease_expires_at": "2026-09-21T17:39:01Z",
  "execution_base": "14735859df9a8c8d379677238d1599f7f4dbb03b",
- "status": "active",
+ "status": "delivered",
  "branch": "agent/94/e64b331f",
  "heartbeat_at": "2026-09-21T16:54:01Z",
  "supersedes": null,
@@ -54,5 +54,12 @@
   "sha": "1d5f57db9897abd12287aa1e486b61e56420b744",
   "note": "R2 Candidate 1d5f57d: REVIEW_1 accounting correction (three disjoint buckets \u2014 permanent_excluded=#91-only, zero_semantic_chunk separate, eligible keeps zero-chunk; conservation arithmetic) + branch synced to main 1093c93 (#100 seams preserved, 393P non-regression gate). RED->GREEN: 4 new tests. Targeted 28P; broader 2964P/4F (baseline pre-existing).",
   "delivered_at": "2026-09-21T17:07:55Z"
+ },
+ "completed": {
+  "pr": 99,
+  "merge_commit": "47f33046bcd3bf6c4acb7d7f4fc63dffc077102d",
+  "candidate_sha": "1d5f57db9897abd12287aa1e486b61e56420b744",
+  "completed_by": "harryhua-ai",
+  "completed_at": "2026-09-21T17:51:45Z"
  }
 }
