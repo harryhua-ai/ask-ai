@@ -34,8 +34,8 @@
  },
  "delivery": {
   "pr": 103,
-  "sha": "7b7007b1f4d312dfff4f2259038afc6caef4621d",
-  "note": "Candidate 7b7007b: AC2 guard split (row-lock-only coordination tx + short eligibility tx), AC3 init_db existence-probe (steady state zero DDL) + bounded lock_timeout for genuine DDL; 6 RED->GREEN tests incl. pure-PG three-way lock-ordering reproduction; #100 invariants preserved (81P), broader = baseline set only.",
-  "delivered_at": "2026-09-21T19:40:28Z"
+  "sha": "a5fdf07dd688616a76d79d44261d202faedf1d63",
+  "note": "R2 Candidate a5fdf07: REVIEW_1 evidence-only correction \u2014 new-test count 6\u21928 in PR body and report (5 init_db lock-safety + 3 repair-all lock-progress, table unchanged); implementation and semantics untouched from 7b7007b.",
+  "delivered_at": "2026-09-21T23:31:28Z"
  }
 }
