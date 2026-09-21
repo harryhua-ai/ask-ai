@@ -1803,6 +1803,15 @@ async def repair_all_source_documents(
                     error = task.error or (
                         "已有修复任务正在执行" if status in {"pending", "running"} else None
                     )
+                    # AC6 aggregate truth: pending/running 任务既不计 succeeded/rebuild_requested,
+                    # 也不入显式 failed 会破坏 eligible == succeeded + rebuild_requested + failed。
+                    # 规约:pending/running 视为 non-completed → 计入 failed,保持聚合守恒。
+                    if status == "succeeded":
+                        succeeded += 1
+                    elif status == "rebuild_requested":
+                        rebuild_requested += 1
+                    else:  # failed / pending / running
+                        failed += 1
                 except Exception as exc:  # noqa: BLE001 - 隔离到单项,批不中断
                     logger.exception(
                         "批量修复单文档失败 %s/%s", source_id, doc.source_id
@@ -1810,11 +1819,6 @@ async def repair_all_source_documents(
                     status = "failed"
                     sync_request_id = None
                     error = str(exc)[:300]
-                if status == "succeeded":
-                    succeeded += 1
-                elif status == "rebuild_requested":
-                    rebuild_requested += 1
-                elif status == "failed":
                     failed += 1
                 items.append(
                     BulkDocumentRepairItem(

@@ -100,12 +100,12 @@ class FilesystemConnector(DataSourceConnector):
                 f"(解析为 {self._root.resolve()})不存在或不是目录 —— "
                 f"检查该执行面的共享上传卷挂载/路径配置"
             )
-        if not os.access(self._root, os.R_OK):
+        if not os.access(self._root, os.R_OK | os.X_OK):
             raise SourceRootUnavailable(
-                f"数据源 {self._config.id} 根目录对执行面不可读: "
+                f"数据源 {self._config.id} 根目录对执行面不可遍历: "
                 f"root_path={self._config.config.get('root_path')!r} "
-                f"(解析为 {self._root.resolve()})无读权限 —— "
-                f"检查挂载卷权限"
+                f"(解析为 {self._root.resolve()})缺少读/执行权限 —— "
+                f"POSIX 目录枚举需要 R_OK|X_OK,检查挂载卷权限"
             )
 
     def _should_include(self, path: Path) -> bool:

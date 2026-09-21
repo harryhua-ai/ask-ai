@@ -100,3 +100,37 @@ def test_unreadable_root_raises_source_unavailable(tmp_path):
             list(connector.fetch_all())
     finally:
         root.chmod(0o755)
+
+
+def test_traversal_denied_root_raises_source_unavailable(tmp_path, monkeypatch):
+    """AC2:根存在且可读但不可遍历(无 X_OK)⇒ fail-closed。
+
+    POSIX 目录枚举需要 R_OK|X_OK。仅有 R_OK 无 X_OK 时,Python glob/rglob
+    可能静默空/不完整枚举 —— 正是 AC2 要消除的 failure class。
+
+    由于测试运行身份可能为 root(不受权限约束),使用 monkeypatch 模拟
+    ``os.access`` 返回可读但不可执行的受控语义,验证 fail-closed 逻辑。
+    """
+    import os
+
+    root = tmp_path / "no-traverse"
+    root.mkdir()
+
+    # 受控 probe:模拟目录可读但不可遍历
+    original_access = os.access
+
+    def mock_access(path, mode):
+        if str(path) == str(root):
+            if mode & os.R_OK and not (mode & os.X_OK):
+                return True  # 仅 R_OK
+            if mode & os.X_OK:
+                return False  # X_OK 被拒绝
+            return original_access(path, mode)
+        return original_access(path, mode)
+
+    monkeypatch.setattr(os, "access", mock_access)
+
+    connector = _connector(root)
+    with pytest.raises(SourceRootUnavailable) as excinfo:
+        list(connector.fetch_all())
+    assert "不可遍历" in str(excinfo.value) or "缺少读/执行权限" in str(excinfo.value)
