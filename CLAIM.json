@@ -12,5 +12,24 @@
  "heartbeat_at": "2026-09-21T19:31:28Z",
  "supersedes": null,
  "contract_digest": "fff0edb961dee3a52bca0700e2f8da33ba781afbe354d911e2d31cfeae252b69",
- "candidate": null
+ "candidate": {
+  "branch": "agent/102/87ec48e6",
+  "sha": "7b7007b1f4d312dfff4f2259038afc6caef4621d",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "backend/api/admin/data_sources.py": "ALLOWED",
+    "backend/db/session.py": "ALLOWED",
+    "docs/engineering/tasks/ISSUE-102-LOCK-PROGRESS-execution.md": "ALLOWED",
+    "tests/api/admin/test_repair_all_lock_progress.py": "ALLOWED",
+    "tests/db/test_init_db_lock_safety.py": "ALLOWED"
+   },
+   "violations": [],
+   "counts": {
+    "ALLOWED": 5,
+    "FORBIDDEN": 0
+   }
+  },
+  "preserved_at": "2026-09-21T19:39:36Z"
+ }
 }
