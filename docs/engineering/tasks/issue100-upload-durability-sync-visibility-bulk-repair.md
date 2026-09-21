@@ -3,7 +3,7 @@
 - **Issue**: harryhua-ai/ask-ai#100(P0:Uploaded knowledge is not durable/visible to sync workers; bulk repair fails on long document paths)
 - **Execution mode**: implement(claim `harryhua-ai-20260921T062357-53c4799f`)
 - **Execution base**: `14735859df9a8c8d379677238d1599f7f4dbb03b`(契约冻结基线,精确)
-- **STATUS**: CANDIDATE READY — STOP = Role A exact-SHA Review
+- **STATUS**: CANDIDATE READY (20 tests) — STOP = Role A exact-SHA Review
 - **Production mutations**: 0(全程只读;部署应用属后续授权范畴,见 LIMITATIONS)
 
 ## 1. RCA → 修复映射
@@ -32,17 +32,17 @@
 | AC3 | 无桥接契约(字面漂移风险无锁定) | 上传落盘 → 以记录 `root_path` 实例化的 connector 枚举到上传语料(含中文嵌套路径);可读源正常摄取由既有 619 scripts/connectors 契约背书 |
 | AC4 | —(护栏) | 根存在但空 = 合法 no-change(不误伤);`policy_absence_reason` 词表与 #82/#91/#94 语义零改动;repair 不复活、不动 lifecycle 门 |
 | AC5 | `ImportError: _bulk_repair_idempotency_key` → 实现前接口不存在;既有代码长身份 INSERT 即 `StringDataRightTruncationError`(事故形态,资格集构造见测试) | 有界 ≤100(47/100)、确定(重试同键 → 原任务)、碰撞安全(不同身份不同键)、短身份保持 v1 连续性 — 3/3;API 级长 Unicode 身份 repair-all 200 — 1/1 |
-| AC6 | 无隔离:任一单文档异常传播即整批 500 | monkeypatch 首文档执行失败 → 200,eligible=3 全处理,failed≥1 携带 error,聚合守恒 `succeeded+rebuild_requested+failed==eligible` — 1/1 |
+| AC6 | 无隔离:任一单文档异常传播即整批 500;pending/running 任务破坏聚合守恒 | monkeypatch 首文档执行失败 → 200,eligible=3 全处理,failed≥1 携带 error,聚合守恒;已有 running 任务 → status=running 诚实、计入 failed 聚合,eligible=3 守恒 — 2/2 |
 | AC7 | —(护栏) | `create_repair_task` 的 #83 退役门/幂等/开放任务语义零改动;repair 仍=持久 chunk 回放,不碰源摄取/权威成员资格 |
-| AC8 | — | 新增 18 测试(4+3+2+3+6);回归:connectors+scripts 619P/5S/0F,api+services 1001P/1S/**4F(基线既有**,纯净 14735859 上逐一复现,见 §4) |
+| AC8 | — | 新增 20 测试(5+3+2+3+7);回归:connectors+scripts 619P/5S/0F,api+services 1001P/1S/**4F(基线既有**,纯净 14735859 上逐一复现,见 §4) |
 
 ## 4. TESTS
 
-**新增(18,全 GREEN)**:
+**新增(20,全 GREEN)**:
 
-- `tests/connectors/test_filesystem_unavailable_root.py`(4):missing root fetch_all/fetch_changes 抛 `SourceRootUnavailable` 且错误含根路径;existing-empty-root 合法 no-change(AC4);unreadable root(权限不可证环境诚实 skip)。
+- `tests/connectors/test_filesystem_unavailable_root.py`(5):missing root fetch_all/fetch_changes 抛 `SourceRootUnavailable` 且错误含根路径;existing-empty-root 合法 no-change(AC4);unreadable root(权限不可证环境诚实 skip);**traversal-denied root(monkeypatch 受控 probe 验证 R_OK|X_OK fail-closed)**。
 - `tests/scripts/test_source_unavailable_failclosed.py`(3,真实 PG + 真实 FilesystemConnector + 缺失根):fail-closed 非 pseudo-success;缺席/政策分类/退休零推进;成功窗口零推进。
-- `tests/api/admin/test_bulk_repair_bounded_idempotency.py`(6,真实 PG):键有界/确定/碰撞安全/短身份 v1 连续性;长 Unicode 嵌套身份 repair-all 200;重试幂等(同文档不产生第二把键);逐文档失败隔离与聚合守恒。
+- `tests/api/admin/test_bulk_repair_bounded_idempotency.py`(7,真实 PG):键有界/确定/碰撞安全/短身份 v1 连续性;长 Unicode 嵌套身份 repair-all 200;重试幂等(同文档不产生第二把键);逐文档失败隔离与聚合守恒;**已有 running 任务聚合守恒(status=running 诚实、计入 failed)**。
 - `tests/deploy/test_shared_uploads_volume.py`(3):uploads 持久卷声明;四 backend 类服务全部挂载;同卷单一权威。
 - `tests/api/admin/test_upload_connector_visibility.py`(2):`_upload_root` ≡ 常量派生;记录 `root_path` 枚举可见上传语料。
 

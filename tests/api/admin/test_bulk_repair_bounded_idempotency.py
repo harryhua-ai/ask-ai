@@ -321,57 +321,56 @@ async def test_bulk_repair_continues_after_per_document_failure(
 async def test_bulk_repair_aggregate_truth_pending_running_task(
     admin_headers, bulk_seed, vector_stack
 ):
-    """AC6 aggregate truth:既有 pending/running 任务不得破坏 eligible == succeeded + rebuild_requested + failed。
+    """AC6 aggregate truth:既有 running 任务不得破坏 eligible == succeeded + rebuild_requested + failed。
 
-    RED(当前改动前):create_repair_task() 返回 pending/running 任务时,该项
-    既不计 succeeded、rebuild_requested,也不计 failed(显式 failed 才计),
+    RED(9d41db61):create_repair_task() 返回 running 任务时,endpoint 不再执行它,
+    但该项既不计 succeeded/rebuild_requested,也不计 failed(显式 failed 才计),
     导致 succeeded + rebuild_requested + failed < eligible,破坏批量聚合守恒/可审计真值。
 
-    修复后:pending/running 视为 non-completed → 计入 failed,保持聚合守恒。
+    GREEN(修复后):running 视为 non-completed → 计入 failed,保持聚合守恒;
+    item status 诚实为 running,error/detail 诚实。
     """
     from backend.db.models import DocumentRepairTask
-    from backend.services.document_repair import STATUS_PENDING
+    from backend.services.document_repair import STATUS_RUNNING, STAGE_PLAN
 
-    # 先对同一数据源的同一文档建立一个 pending 任务(模拟并发/重试场景)
+    # 先对同一数据源的同一文档建立一个 running 任务(模拟并发执行中场景)
     factory = app.state.session_factory
     async with factory() as session:
-        pending_task = DocumentRepairTask(
+        running_task = DocumentRepairTask(
             source_id=SRC,
             doc_source_id=DOC_SHORT,
-            status=STATUS_PENDING,
-            stage=None,
+            status=STATUS_RUNNING,
+            stage=STAGE_PLAN,
             requested_by="test",
-            idempotency_key=f"test-pending-{SRC}",
+            idempotency_key=f"test-running-{SRC}",
         )
-        session.add(pending_task)
+        session.add(running_task)
         await session.commit()
-        await session.refresh(pending_task)
+        await session.refresh(running_task)
 
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
             resp = await client.post(BULK_URL, headers=admin_headers)
         assert resp.status_code == 200
         body = resp.json()
-        # 聚合守恒
+        # 聚合守恒:eligible == succeeded + rebuild_requested + failed
         assert body["eligible"] == 3, "资格集不变"
         assert body["succeeded"] + body["rebuild_requested"] + body["failed"] == body["eligible"], (
-            f"pending/running 必须计入 failed 以保持聚合守恒: {body}"
+            f"running 必须计入 failed 以保持聚合守恒: {body}"
         )
-        # 该 pending 任务对应的项应在 items 中;bulk repair 会执行 pending 任务,
-        # 因此 status 可能变为 rebuild_requested/succeeded/failed,但聚合守恒必须成立
+        # 该 running 任务对应的项在 items 中,status 诚实为 running,未被执行
         by_doc = {i["doc_source_id"]: i for i in body["items"]}
         assert DOC_SHORT in by_doc
         item = by_doc[DOC_SHORT]
-        # 聚合守恒成立即可;error 可能为 None(执行后无 error)
-        assert body["succeeded"] + body["rebuild_requested"] + body["failed"] == body["eligible"], (
-            f"聚合守恒必须成立: {body}"
-        )
-        # 只要该项在 items 中且聚合守恒,即证明 pending/running 未破坏聚合
-        assert item["doc_source_id"] == DOC_SHORT
+        assert item["status"] == "running", "item status 必须诚实呈现 running(未执行)"
+        assert item["error"] == "已有修复任务正在执行"
+        assert item["task_id"] == str(running_task.id)
+        # failed 聚合包含该 running 项
+        assert body["failed"] >= 1
     finally:
-        # 清理测试产生的 pending 任务
+        # 清理测试产生的 running 任务
         async with factory() as session:
             await session.execute(
-                DocumentRepairTask.__table__.delete().where(DocumentRepairTask.id == pending_task.id)
+                DocumentRepairTask.__table__.delete().where(DocumentRepairTask.id == running_task.id)
             )
             await session.commit()
