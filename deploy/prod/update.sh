@@ -101,6 +101,29 @@ EXPECTED_VERSION="${TAG#v}"   # RELEASE.json 内为无前缀 SemVer
 
 echo "=== ask-ai 部署:$IMAGE:$TAG(期望 version=$EXPECTED_VERSION)==="
 
+# ---------- post-deploy 回退指引(#46 REVIEW_2;AC4 条件化) ----------
+# post-deploy operator guidance 必须遵循【本次已部署发布】冻结声明的 rollback
+# verdict(由 [3.5/6] 从镜像内 compatibility manifest 读取):
+#   previous_compatible=true  ⇒ 普通 previous-tag 回滚指引照常输出;
+#   previous_compatible=false ⇒ 绝不输出普通回滚指引,改为输出所声明的
+#                                remediation gate 与显式恢复路径指向;
+#   pre_contract 时代          ⇒ 普通指引 + 显式「回退兼容性未证明」deferred 注记。
+# 本脚本永不执行自动回滚(只输出指引)。
+print_postdeploy_rollback_guidance() {
+    if [ "${PREFLIGHT_ERA:-contract}" = "pre_contract" ]; then
+        echo "回滚:./deploy/prod/update.sh <上一个不可变版本 tag>(同一契约;前契约发布,回退兼容性未证明 —— 显式 deferred)"
+        return 0
+    fi
+    if [ "${ROLLBACK_COMPATIBLE:-true}" = "true" ]; then
+        echo "回滚:./deploy/prod/update.sh <上一个不可变版本 tag>(同一契约)"
+    else
+        echo "⚠️ 回退兼容:本发布声明 previous_compatible=false —— 普通 previous-tag 回滚不适用。"
+        echo "   本发布声明的修复门(remediation gate): ${ROLLBACK_GATE:-<未声明>}"
+        echo "   如需回退/恢复,必须先按该门指向的 remediation/recovery path 显式执行后再评估;"
+        echo "   本脚本不执行自动回滚。"
+    fi
+}
+
 # ---------- [2/6] 拉取镜像 ----------
 echo "[2/6] 拉取镜像 $IMAGE:$TAG ..."
 docker compose -f "$COMPOSE_FILE" pull
@@ -149,6 +172,10 @@ echo "  ✅ 镜像身份: version=$ACTUAL_VERSION git_sha=$ACTUAL_SHA"
 #   - pre_contract 时代:有界兼容路径,显式留痕(AC4)。
 # 本步骤只是调用者,不是 policy engine。
 echo "[3.5/6] 发布兼容性 preflight..."
+# rollback verdict 缺省 = 前契约语境未证明(指引函数对 pre_contract 有专门分支;
+# contract 时代由下方 manifest 读取覆盖)
+ROLLBACK_COMPATIBLE="true"
+ROLLBACK_GATE=""
 PREFLIGHT_CID=$(docker create "$IMAGE:$TAG")
 PREFLIGHT_MAN="$(mktemp /tmp/askai-compat.XXXXXX.json)"
 PREFLIGHT_EVAL="$(mktemp /tmp/askai-preflight.XXXXXX.py)"
@@ -175,7 +202,11 @@ if [ "$PREFLIGHT_ERA" = "contract" ]; then
         --env-file "$(dirname "$COMPOSE_FILE")/../../.env" \
         "${ACK_ARGS[@]}" \
         || { rm -f "$PREFLIGHT_MAN" "$PREFLIGHT_EVAL"; exit 1; }
-    echo "  ✅ 兼容性 preflight 通过(先于 migration/rollout,零 mutation)"
+    # REVIEW_2:把本发布的 rollback verdict 保留到部署完成阶段 ——
+    # post-deploy 指引据此条件化(stdlib 读取,值绝不外泄;manifest 内无密值)
+    ROLLBACK_COMPATIBLE=$(python3 -c "import json,sys;m=json.load(open(sys.argv[1]));print('true' if m.get('rollback',{}).get('previous_compatible', True) else 'false')" "$PREFLIGHT_MAN")
+    ROLLBACK_GATE=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('rollback',{}).get('remediation_gate','') or '')" "$PREFLIGHT_MAN")
+    echo "  ✅ 兼容性 preflight 通过(先于 migration/rollout,零 mutation;rollback verdict 已保留)"
 else
     # 前契约时代:有界兼容路径,显式留痕(各类未证明,deferred)
     docker rm "$PREFLIGHT_CID" >/dev/null 2>&1 || true
@@ -236,7 +267,7 @@ echo ""
 echo "=== 部署完成:$TAG(version=$EXPECTED_VERSION,git_sha=$ACTUAL_SHA)==="
 docker compose -f "$COMPOSE_FILE" ps
 echo ""
-echo "回滚:./deploy/prod/update.sh <上一个不可变版本 tag>(同一契约)"
+print_postdeploy_rollback_guidance
 echo "手动同步 / reindex(按需):"
 echo "  docker compose -f $COMPOSE_FILE run --rm sync python scripts/sync.py            # 增量同步"
 echo "  docker compose -f $COMPOSE_FILE run --rm sync python scripts/sync.py --reindex  # ⚠️ 删 collection 全量重灌"

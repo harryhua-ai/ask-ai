@@ -3,7 +3,7 @@
 - Claim: `harryhua-ai-20260922T010024-dd28e4dd`(mode=implement,authority=allowed)
 - Branch: `agent/46/2db2ed53`(base = `434ddece` = main tip,#102 merge)
 - Contract: #46 body `ght-contract`(AC1–AC6;design_refs #100/#101)
-- 状态: **CANDIDATE READY(REVIEW_1 R2)— 待 Role A exact-SHA review**(STOP;不自行 merge)
+- 状态: **CANDIDATE READY(REVIEW_2 R3)— 待 Role A exact-SHA review**(STOP;不自行 merge)
 - 生产 mutation: **0**(零部署;全程只读)
 
 ## 1. 现状审计 → 缺陷定位(AC1 RED 的实现依据)
@@ -120,3 +120,32 @@ forbidden)。break-glass 路径本身同样接入 preflight(update.sh [3.5/6] �
 | 6. Evidence hygiene | `pytest --collect-only` 机械统计:**新增 37 tests**(boundary 11 + evaluator 26;含参数化负向形态);release domain 回归 **275 passed / 0 failed**(原 268P + 新 7 例);PR body 数字同步 | 本节即采集记录 |
 
 **保持不变**:migration ownership(release_migration_plan/migrations.json 原样);preflight 位置(update.sh [3.5/6] 在 rollout 前、workflow step 3.5 在 migrate 前,机械断言保持);secret 值零外泄(26 例含植入密值负向);有界/非 mutation 探针;无 shell-in-manifest(封闭词表不变,JSON 化后更强);无 CI/CD 重设计(既有 workflow-contract 不变量零修改全绿)。
+
+
+## 9. REVIEW_2 R3 修正(2026-09-22;唯一 blocker:post-deploy 回退指引违反 AC4)
+
+**缺陷**:update.sh 成功结束后无条件打印
+`回滚:./deploy/prod/update.sh <上一个不可变版本 tag>(同一契约)` —— 当已部署
+发布声明 `rollback.previous_compatible=false` 时,向操作员宣传了不成立的
+ordinary previous-tag 回滚。
+
+**修正**(`deploy/prod/update.sh`,实现面非注释面):
+- 新增 `print_postdeploy_rollback_guidance()`(纯 shell 函数,零外部依赖):
+  - `previous_compatible=true` ⇒ 普通 previous-tag 回滚指引照常输出;
+  - `previous_compatible=false` ⇒ **不输出普通回滚指引**;改为输出该发布声明的
+    remediation gate 名称、显式 remediation/recovery path 指向、「不执行自动回滚」声明;
+  - pre_contract 时代 ⇒ 普通指引 + 「回退兼容性未证明(显式 deferred)」注记;
+- [3.5/6] 从镜像内 compatibility manifest(stdlib 读取,manifest 无密值)把
+  `ROLLBACK_COMPATIBLE`/`ROLLBACK_GATE` 保留到部署完成阶段;
+- 部署完成输出改调该函数,无条件 echo 删除(机械断言:该字符串全文件仅存在于函数分支内)。
+
+**RED→GREEN(5 新例;修复前 5/5 RED,修复后 5/5 GREEN)**:
+- 行为级:从 update.sh 机械提取函数体经真实 bash 执行 —— compatible=true 存在
+  普通指引;compatible=false 普通指引**不存在**且输出声明 gate(`release_mig_002_reindex`
+  形态)+ remediation 指向 + 不自动回滚声明;pre_contract = 普通指引 + deferred 注记;
+- 机械接线:[3.5/6] verdict 读取存在;部署完成阶段调用存在;无条件 echo 零残留。
+
+**保持不变**:evaluator/manifest frozen-image ownership;exact `$IMAGE:$TAG`;
+RELEASE.json era 语义;stdlib-only bootstrap;workflow fail-closed;migration
+ownership;零生产 mutation。回归:release domain **280 passed / 0 failed**
+(275 + 5 新);collect-only 机械计数 = **42 tests**(boundary 16 + evaluator 26)。

@@ -201,3 +201,84 @@ def test_update_sh_forwards_remediation_ack_and_documents_rollback_contract():
         "runbook 必须显式声明 rollback 兼容契约(previous_compatible=false ⇒ "
         "普通 previous-tag 回滚不再适用,需确认 remediation gate)"
     )
+
+
+# --------------------------------------------------------------------------- #
+# REVIEW_2:post-deploy operator guidance 条件化(AC4 端到端行为级)
+# --------------------------------------------------------------------------- #
+
+
+def _guidance_fn_bash() -> str:
+    """从 update.sh 机械提取 print_postdeploy_rollback_guidance 函数体
+    (纯 shell、零外部依赖,可在测试中真实执行)。"""
+    text = UPDATE_SH.read_text()
+    start = text.index("print_postdeploy_rollback_guidance() {")
+    end = text.index("\n}", start) + 2
+    return text[start:end]
+
+
+def _run_guidance(env: dict) -> str:
+    import subprocess
+
+    proc = subprocess.run(
+        ["bash", "-c", f"{_guidance_fn_bash()}\nprint_postdeploy_rollback_guidance"],
+        env={"PATH": "/usr/bin:/bin", **env},
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout
+
+
+def test_postdeploy_guidance_compatible_true_keeps_ordinary_rollback():
+    """compatible=true ⇒ 普通 previous-tag 回滚指引存在(既有行为保持)。"""
+    out = _run_guidance({"ROLLBACK_COMPATIBLE": "true", "ROLLBACK_GATE": ""})
+    assert "回滚:./deploy/prod/update.sh <上一个不可变版本 tag>(同一契约)" in out
+
+
+def test_postdeploy_guidance_compatible_false_removes_ordinary_and_names_gate():
+    """compatible=false ⇒ 普通回滚指引不得出现;必须输出声明的 remediation gate
+    与显式恢复路径指向,且声明不自动回滚。"""
+    out = _run_guidance({
+        "PREFLIGHT_ERA": "contract",
+        "ROLLBACK_COMPATIBLE": "false",
+        "ROLLBACK_GATE": "release_mig_002_reindex",
+    })
+    assert "回滚:./deploy/prod/update.sh <上一个不可变版本 tag>" not in out, (
+        "声明不兼容的发布不得向操作员宣传 ordinary previous-tag rollback"
+    )
+    assert "previous_compatible=false" in out
+    assert "release_mig_002_reindex" in out, "必须输出该 release 声明的修复门"
+    assert "remediation" in out.lower(), "必须指向显式 remediation/recovery path"
+    assert "不执行自动回滚" in out
+
+
+def test_postdeploy_guidance_defaults_to_ordinary_without_verdict():
+    """verdict 缺省(理论不可达:contract 时代必经 [3.5/6])保持既有普通指引。"""
+    out = _run_guidance({})
+    assert "回滚:./deploy/prod/update.sh" in out
+
+
+def test_postdeploy_guidance_pre_contract_notes_deferred():
+    """前契约时代:普通指引 + 显式「回退兼容性未证明」注记。"""
+    out = _run_guidance({"PREFLIGHT_ERA": "pre_contract"})
+    assert "回滚:./deploy/prod/update.sh" in out
+    assert "回退兼容性未证明" in out
+
+
+def test_update_sh_wires_verdict_from_manifest_and_calls_guidance():
+    """机械接线断言:[3.5/6] 必须从镜像内 manifest 读取 verdict(stdlib),
+    部署完成阶段必须调用条件化指引函数;无条件的普通回滚 echo 不得残存。"""
+    text = UPDATE_SH.read_text()
+    assert "previous_compatible', True" in text or "previous_compatible\", True" in text, (
+        "[3.5/6] 必须从镜像内 compatibility manifest 读取 rollback verdict"
+    )
+    assert "print_postdeploy_rollback_guidance" in text
+    # 部署完成阶段的调用必须存在,且普通回滚指引字符串只存在于指引函数内部
+    call_idx = text.rfind("print_postdeploy_rollback_guidance")
+    assert call_idx > text.index("=== 部署完成:"), "部署完成后必须调用条件化指引"
+    body_start = text.index("print_postdeploy_rollback_guidance() {")
+    body_end = text.index("\n}", body_start)
+    fn_body = text[body_start:body_end]
+    assert text.count("回滚:./deploy/prod/update.sh <上一个不可变版本 tag>(同一契约)") == (
+        fn_body.count("回滚:./deploy/prod/update.sh <上一个不可变版本 tag>(同一契约)")
+    ), "普通回滚指引不得残留在指引函数之外的任何位置"
