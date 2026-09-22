@@ -12,5 +12,22 @@
  "heartbeat_at": "2026-09-22T06:44:24Z",
  "supersedes": null,
  "contract_digest": "9fc43e52bcc2161eb66646adece5b61686b8c7fd02353a36b2f86c2e71e6ea3f",
- "candidate": null
+ "candidate": {
+  "branch": "agent/105/984124c3",
+  "sha": "1bd54ab0bbde5289752b3a9470bda07d39ed510e",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "backend/pipeline/generation_builder.py": "ALLOWED",
+    "docs/engineering/tasks/issue105-commerce-metadata-convergence-execution.md": "ALLOWED",
+    "tests/pipeline/test_issue105_commerce_metadata_convergence.py": "ALLOWED"
+   },
+   "violations": [],
+   "counts": {
+    "ALLOWED": 3,
+    "FORBIDDEN": 0
+   }
+  },
+  "preserved_at": "2026-09-22T06:51:14Z"
+ }
 }
