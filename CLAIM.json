@@ -12,5 +12,26 @@
  "heartbeat_at": "2026-09-22T01:18:12Z",
  "supersedes": null,
  "contract_digest": "b9e5058e506bcbf1e41374ec97dfb8d3d8946041c6115d061614847631a4535d",
- "candidate": null
+ "candidate": {
+  "branch": "agent/46/2db2ed53",
+  "sha": "e7f829bdeb20385ed89c60ab7c2f104c666e14c1",
+  "scope": {
+   "pass": true,
+   "paths": {
+    ".github/workflows/deploy-production.yml": "ALLOWED",
+    "deploy/prod/compatibility.yml": "ALLOWED",
+    "deploy/prod/update.sh": "ALLOWED",
+    "docs/engineering/tasks/ISSUE-46-UPGRADE-PREFLIGHT-execution.md": "ALLOWED",
+    "scripts/release_preflight.py": "ALLOWED",
+    "tests/deploy/test_preflight_boundary.py": "ALLOWED",
+    "tests/deploy/test_release_preflight.py": "ALLOWED"
+   },
+   "violations": [],
+   "counts": {
+    "ALLOWED": 7,
+    "FORBIDDEN": 0
+   }
+  },
+  "preserved_at": "2026-09-22T01:24:36Z"
+ }
 }
