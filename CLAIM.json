@@ -33,5 +33,11 @@
    }
   },
   "preserved_at": "2026-09-22T01:24:36Z"
+ },
+ "delivery": {
+  "pr": 104,
+  "sha": "e7f829bdeb20385ed89c60ab7c2f104c666e14c1",
+  "note": "Candidate e7f829b: release-owned compatibility.yml + fail-closed pre-mutation evaluator (release_preflight.py); boundary seams in update.sh [3.5/6] (before rollout) and deploy-production.yml step 3.5 (before migrate); 13 new RED->GREEN tests; release domain regression 268P/0F; gate boundary matrix + #100 GHCR dimension in report.",
+  "delivered_at": "2026-09-22T01:25:43Z"
  }
 }
