@@ -451,6 +451,85 @@ def test_production_shape_stock_flip_then_repeat_sync_stays_converged(stack):
 
 
 # --------------------------------------------------------------------------- #
+# REVIEW_2 blocker(AC6):存量 mirror-drift 行必须被 normal sync 泛化自愈
+# --------------------------------------------------------------------------- #
+
+
+def test_historical_mirror_drift_reconciled_by_normal_sync(stack):
+    """生产现存残形(REVIEW_2 #109 评论 5773201820)端到端复现与自愈。
+
+    步骤 1-2 用真实连接器文档正常灌 v1 / 激活 v2;步骤 3 **只把
+    documents.metadata_ 恢复成 v1** —— 模拟旧代码已制造出的持久状态
+    (active version/serving 均为 v2,行镜像滞后),绝非伪造 connector
+    output;步骤 4 输入同一真实 v2 文档。
+
+    RED(R2 树):classifier 判 UNCHANGED ⇒ 行镜像永远 stale。
+    GREEN:bounded reconciliation 只修行镜像(零重嵌/零新版本/零新代/
+    serving 与 chunk 真值不退化),再跑同轮 = 真正 UNCHANGED 零写入。
+    """
+    t1 = _fetch_variation_doc({})
+    t2 = _fetch_variation_doc({"stock_status": "outofstock", "date_modified": D2})
+
+    # 1) v1 首灌;2) v2 正常激活(version hashes + serving = v2)
+    stack.builder.build_generation([t1], source_id=SRC)
+    stack.builder.build_generation([t2], source_id=SRC)
+    versions = _versions(stack.sync_factory)
+    assert len(versions) == 2
+    active = versions[1]
+    assert active.content_hash == t2.content_hash
+
+    # 3) 模拟历史 bug 的持久状态:仅行镜像退回 v1(version/serving 不动)
+    with stack.sync_factory() as s:
+        row = s.execute(select(Document).where(Document.source_id == SID)).scalar_one()
+        stale = dict(row.metadata_)
+        stale["stock_status"] = "instock"
+        stale["date_modified"] = D1
+        row.metadata_ = stale
+        s.commit()
+    gens_before = _generation_count(stack.sync_factory)
+    stack.embedder.calls.clear()
+
+    # 4) 同一真实 v2 文档再来一轮
+    accounting = stack.builder.build_generation([t2], source_id=SRC)
+    assert accounting.metadata_docs == [SID], (
+        "RED(REVIEW_2): version 两 hash 均等但行镜像滞后时不得判完全 UNCHANGED —— "
+        "必须进入 bounded reconciliation(生产现存 5110:5950/5951 残形)"
+    )
+    assert accounting.updated_docs == [] and accounting.new_docs == []
+    assert stack.embedder.calls == [], "mirror 对账零重嵌"
+    versions_after = _versions(stack.sync_factory)
+    assert len(versions_after) == 2 and versions_after[1].id == active.id, "零版本分叉"
+    assert _generation_count(stack.sync_factory) == gens_before, "零新代"
+
+    row2 = _row(stack.sync_factory)
+    assert row2.metadata_["stock_status"] == "outofstock", "行镜像必须收敛到 v2 真值"
+    assert row2.metadata_["date_modified"] == D2
+
+    # serving 真值不退化(仍是 v2,且不被 mirror 对账破坏)
+    for obj in _serving_objects(stack, versions_after[1]):
+        assert obj.properties.get("stock_status") == "outofstock"
+        assert obj.properties.get("commerce_synced_at") == D2
+    for c in _chunk_copies(stack.sync_factory, versions_after[1]):
+        assert c.props.get("stock_status") == "outofstock"
+
+    # 5) 同一 v2 再跑:真正 UNCHANGED,零写入(幂等)
+    repeat = stack.builder.build_generation([t2], source_id=SRC)
+    assert repeat.unchanged_docs == [SID]
+    assert repeat.metadata_docs == [] and repeat.updated_docs == []
+    assert stack.embedder.calls == []
+    assert _generation_count(stack.sync_factory) == gens_before
+
+
+def _generation_count(sf) -> int:
+    with sf() as s:
+        return len(
+            s.execute(
+                select(IndexGeneration).where(IndexGeneration.source_id == SRC)
+            ).scalars().all()
+        )
+
+
+# --------------------------------------------------------------------------- #
 # R2 blocker 2:metadata-only serving 失败 ⇒ fail-closed + 下轮可重试
 # --------------------------------------------------------------------------- #
 

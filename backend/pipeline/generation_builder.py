@@ -96,6 +96,25 @@ def _chunker_policy_fingerprint(*, kind: str, max_tokens: int, overlap: int, max
     ).hexdigest()
 
 
+def _row_mirror_drifted(doc_row: Document, doc: Any) -> bool:
+    """#105(R3):行镜像字段是否滞后于 connector 现行真值。
+
+    仅在 classifier 双 hash 均判相等(= version 权威与 incoming 一致)时
+    调用;此时任何分歧都只能是历史 mirror drift(旧激活代码不回写行 JSONB
+    的时代产物,生产实证 5110:5950/5951)。比较集 = 激活/metadata-only
+    两条路径写入的行真值全集。纯函数、零 IO;判定宽松方向安全 —— 误报
+    只会把文档送进幂等的 metadata reconciliation(写相同值,净零效果)。
+    """
+    incoming_meta = dict(doc.metadata or {})
+    row_meta = doc_row.metadata_ if isinstance(doc_row.metadata_, dict) else {}
+    return (
+        row_meta != incoming_meta
+        or doc_row.product != doc.product
+        or doc_row.branch != (doc.branch or "")
+        or doc_row.source_type != doc.source_type
+    )
+
+
 @dataclass
 class _PreparedDoc:
     """单文档构建中间态:chunk 切分结果(线程内先切分,后跨文档批量 embed)。"""
@@ -191,7 +210,18 @@ class GenerationBuilder:
                 metadata_targets.append((doc, doc_row, version_row))
                 accounting.metadata_docs.append(doc.source_id)
             elif change == lifecycle.ChangeClass.UNCHANGED:
-                accounting.unchanged_docs.append(doc.source_id)
+                # Issue #105(R3,REVIEW_2 #109 评论 5773201820):version
+                # 双 hash 均与 incoming 相等但**行镜像字段滞后**的历史残形
+                # (旧激活代码只同步 content_hash/chunk_count/title/url 的时代
+                # 产物;生产实证 5110:5950/5951)不得判完全 UNCHANGED ——
+                # 路由进既有 retry-safe metadata reconciliation:只修行
+                # 镜像 + 经 fail-closed 语义对账 serving/chunk,零重嵌、
+                # 零新版本、零新代、泛化于一切 source(非 woo 专属)。
+                if doc_row is not None and _row_mirror_drifted(doc_row, doc):
+                    metadata_targets.append((doc, doc_row, version_row))
+                    accounting.metadata_docs.append(doc.source_id)
+                else:
+                    accounting.unchanged_docs.append(doc.source_id)
             else:
                 rebuild_docs.append(doc)  # NEW_VERSION(首灌)
 
