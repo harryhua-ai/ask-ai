@@ -62,3 +62,43 @@ ROLLBACK_TARGET:    v1.6.3-r9 @ 926dfb7a08bf506a635a259a41b9a60ebfdb62b1 (host-l
 ## FINAL VERDICT
 
 PRODUCTION_ACCEPTED
+
+## Addendum — v1.6.4-r2: solutions-segment boundary fix + acceptance re-run
+
+Observation closure (the #106 acceptance observation above): the official
+Solution page's exclusion was traced to two generic metadata boundaries,
+both fixed with configuration/vocabulary only (PR #111, #112):
+
+- product metadata: `solutions` shared bucket (applies_to = the device
+  product lines, mirroring the #29 /tools/ precedent) + website
+  derivation rule `/solutions/` -> solutions;
+- authority metadata: `_has_solution_signal` now accepts the
+  `/solutions/` URL-segment structural signal (mirrors the case
+  predicate's URL signals; trailing-slash segment form does not match
+  body-style slugs).
+- migration tool: explicit `--label-override` so rows frozen to
+  `unknown` before a rule existed can be re-derived through their source
+  rule group (dry-run -> human review -> apply contract unchanged).
+
+Production rollout: v1.6.4-r1 (7742890, tag CI 35737323278, deploy all
+green) and v1.6.4-r2 (8052b358, tag CI 35741161481, deploy run
+35743261909 all green; /health version=1.6.4-r2 git_sha=8052b358 exact;
+three services on the same tag). Backfill: dry-run `changed=4`
+(unknown -> solutions: 4 — exactly the /solutions/ segment chunks;
+267 genuine unknowns untouched), apply applied, serving chunk for
+`solutions/infrastructure-monitoring` now `product=solutions`.
+
+Frozen EN/ZH acceptance re-run (only the frozen pair, per instruction):
+
+- ZH (wave164r2-zh-acc, pool 35): official Solution page **rank 4 via
+  `role:solution`** AND first-party Case rank 10 via `role:case` — both
+  authority pages in the same pool.
+- EN (wave164r2-en-acc, pool 79): first-party Case rank 1
+  (hybrid+boost+role:case) and official Solution page admitted via
+  `role:solution`.
+- EN/ZH parity holds; pool sizes normal; product isolation unchanged
+  (bucket expands only via applies_to; 267 unknown chunks untouched).
+
+Verdict: the recorded observation is CLOSED; #106 production acceptance
+remains PASS, now with the official Solution page provably admitted
+through the bounded role lane in both languages.
