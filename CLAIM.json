@@ -14,25 +14,27 @@
  "contract_digest": "b9e5058e506bcbf1e41374ec97dfb8d3d8946041c6115d061614847631a4535d",
  "candidate": {
   "branch": "agent/46/2db2ed53",
-  "sha": "e7f829bdeb20385ed89c60ab7c2f104c666e14c1",
+  "sha": "270315e681ac8d7c2de64f357b39cff1df9dc9dc",
   "scope": {
    "pass": true,
    "paths": {
     ".github/workflows/deploy-production.yml": "ALLOWED",
-    "deploy/prod/compatibility.yml": "ALLOWED",
+    "Dockerfile": "ALLOWED",
+    "deploy/prod/compatibility.json": "ALLOWED",
     "deploy/prod/update.sh": "ALLOWED",
     "docs/engineering/tasks/ISSUE-46-UPGRADE-PREFLIGHT-execution.md": "ALLOWED",
+    "scripts/generate_release_manifest.sh": "ALLOWED",
     "scripts/release_preflight.py": "ALLOWED",
     "tests/deploy/test_preflight_boundary.py": "ALLOWED",
     "tests/deploy/test_release_preflight.py": "ALLOWED"
    },
    "violations": [],
    "counts": {
-    "ALLOWED": 7,
+    "ALLOWED": 9,
     "FORBIDDEN": 0
    }
   },
-  "preserved_at": "2026-09-22T01:24:36Z"
+  "preserved_at": "2026-09-22T02:20:42Z"
  },
  "delivery": {
   "pr": 104,
