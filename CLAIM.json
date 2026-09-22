@@ -14,20 +14,24 @@
  "contract_digest": "9fc43e52bcc2161eb66646adece5b61686b8c7fd02353a36b2f86c2e71e6ea3f",
  "candidate": {
   "branch": "agent/105/984124c3",
-  "sha": "ee5cd22f15faa7da2a67738bc119f53b1c1a9079",
+  "sha": "66473dfbcf78e1d30846dcdb5eb2f07fb58c2e93",
   "scope": {
    "pass": true,
    "paths": {
     "backend/pipeline/generation_builder.py": "ALLOWED",
+    "backend/services/sync_delta.py": "ALLOWED",
     "docs/engineering/tasks/issue105-commerce-metadata-convergence-execution.md": "ALLOWED",
-    "tests/pipeline/test_issue105_commerce_metadata_convergence.py": "ALLOWED"
+    "scripts/sync.py": "ALLOWED",
+    "tests/pipeline/test_issue105_commerce_metadata_convergence.py": "ALLOWED",
+    "tests/scripts/test_issue105_mirror_drift_reachability.py": "ALLOWED",
+    "tests/services/test_sync_delta_counts.py": "ALLOWED"
    },
    "violations": [],
    "counts": {
-    "ALLOWED": 3,
+    "ALLOWED": 7,
     "FORBIDDEN": 0
    }
   },
-  "preserved_at": "2026-09-22T08:27:45Z"
+  "preserved_at": "2026-09-22T09:10:03Z"
  }
 }
