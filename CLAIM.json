@@ -33,5 +33,11 @@
    }
   },
   "preserved_at": "2026-09-22T09:40:12Z"
+ },
+ "delivery": {
+  "pr": 109,
+  "sha": "812d0b431fa471851d96e7d4d31c3e101054ff5d",
+  "note": "R5 FINAL PASS accepted (comment 5774356990); merged as PR #109 merge commit dc5c0a0 into main",
+  "delivered_at": "2026-09-22T09:59:23Z"
  }
 }
