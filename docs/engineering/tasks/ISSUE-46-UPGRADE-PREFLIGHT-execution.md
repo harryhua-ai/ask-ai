@@ -22,8 +22,9 @@ config/host/topology 要求的发布可以一路到达 DB migration(首个不可
 
 ## 2. 实现(最小;两个新文件 + 两个既有文件的窄调用缝)
 
-1. **`deploy/prod/compatibility.yml`**(新):release-owned manifest,随 tag 冻结于
-   发布树。v1 词表封闭:`config[]`(name/required/shape∈{non_empty_string,integer,
+1. **`deploy/prod/compatibility.json`**(新):release-owned manifest,随 tag 冻结于
+   发布树,**stdlib-JSON 格式**(宿主侧 evaluator 零第三方依赖,REVIEW_1 blocker 4)。
+   v1 词表封闭:`config[]`(name/required/shape∈{non_empty_string,integer,
    boolean}/secret)、`host[]`(capability∈{docker_compose_v2,nvidia_gpu})、
    `topology[]`(requirement∈{same_tag_all_services})、`dependencies[]`
    (probe∈{tcp_connect}/host/port/timeout_s≤30)、`rollback`(previous_compatible/
@@ -33,6 +34,8 @@ config/host/topology 要求的发布可以一路到达 DB migration(首个不可
    topology: same_tag_all_services(显式 defer 到 update.sh [6/6])、dependencies 空
    (postgres/weaviate 宿主侧不可达,其证明属迁移步骤与 /health 门,见 §5)、
    rollback: previous_compatible true(#100/#102 均为加性,无 destructive 变更)。
+   **打包契约**:Dockerfile `COPY` 该文件进镜像(REVIEW_1 blocker 1;三路路径一致
+   机械锁定),契约期镜像缺文件 = 打包违约 fail-closed。
 2. **`scripts/release_preflight.py`**(新):有界 fail-closed pre-mutation evaluator。
    只读(文件/socket connect/有界子进程),零写副作用;stdout=机器可读 JSON
    verdict,退出码 0=pass/pass_with_deferred、2=fail-closed。
@@ -56,22 +59,30 @@ config/host/topology 要求的发布可以一路到达 DB migration(首个不可
 5. **DB migration 所有权不变**:`release_migration_plan.py` + migrations.json +
    历史桥原样;preflight 不复制任何迁移逻辑(AC5)。
 
-## 3. 证据(RED→GREEN;新增 13 例:5 边界 + 8 evaluator 行为)
+## 3. 证据(RED→GREEN)
+
+**当前 truth(collect-only 机械统计 = 42 tests:boundary 16 + evaluator 26)**:
 
 | AC | RED | GREEN |
 | --- | --- | --- |
-| AC1 | 边界 5 例:发布树无 manifest/evaluator;update.sh 无 preflight;workflow 无 preflight 步骤 ⇒ 不兼容声明可直抵 mutation | `release_preflight.py` 调用存在且位置先于 update.sh rollout 与 workflow migrate 步骤;fail-closed(无 `\|\| true` 吞错);evaluator 级:缺 config/不可达依赖/rollback 缺 gate ⇒ exit 2 + class/reason + **零 mutation**(全程只读) |
-| AC2 | manifest/evaluator 不存在 | 显式空 section=pass;契约期缺 manifest=fail;7 类非法 manifest(version/未知 section/未知 capability/未知 probe/越界超时/rollback 残缺×2)全 fail-closed;显式路径加载,cwd 冲突 manifest 不参与判定(冻结树所有权) |
+| AC1 | 边界例:发布树无 manifest/evaluator;update.sh 无 preflight;workflow 无 preflight 步骤 ⇒ 不兼容声明可直抵 mutation | evaluator 调用存在且位置先于 update.sh rollout 与 workflow migrate 步骤;fail-closed(无 `\|\| true` 吞错);evaluator 级:缺 config/不可达依赖/rollback 缺 gate ⇒ exit 2 + class/reason + **零 mutation**(全程只读) |
+| AC2 | manifest/evaluator 不存在 | 显式空 section=pass;契约期缺 manifest=fail;非法 manifest(未知 section/字段/枚举/越界超时/rollback 残缺/非 JSON)全 fail-closed;显式路径加载,cwd 冲突 manifest 不参与判定(冻结树所有权) |
 | AC3 | — | 密值植入(config_missing 与 invalid_shape 两路径)断言值不出现在 stdout/stderr;capability 探针有界且命令封闭;TCP 探针可达/不可达/有界;topology 显式 deferred |
-| AC4 | — | compatible=true 无需 ack;incompatible 缺 ack=exit 2 且 reason 指明 gate 名;ack 精确匹配=pass;错 ack=exit 2;前契约=pass_with_deferred 且五类逐条列出 |
-| AC5 | — | release domain 回归 **268 passed / 0 failed**(§4);migration 计划/DSN guard/manifest 不变量原样 |
-| AC6 | — | §5 gate 边界矩阵;无 framework/shell-in-manifest/自动回退/CI 重设计(既有 workflow-contract 不变量测试全绿背书) |
+| AC4 | — | compatible=true 无需 ack;incompatible 缺 ack=exit 2 且 reason 指明 gate 名;ack 精确匹配=pass;错 ack=exit 2;pre-contract=pass_with_deferred 且五类逐条列出 |
+| AC5 | — | release domain 回归 **280 passed / 0 failed**(§4);migration 计划/DSN guard/manifest 不变量原样 |
+| AC6 | — | §5 gate 边界矩阵;无 framework/shell-in-manifest/自动回退/CI 重设计 |
 
+行为级 REVIEW_2 证据(§9):post-deploy 回退指引函数经**真实 bash 执行**的
+5 例 RED→GREEN(修复前 5/5 RED)。
+
+> **历史轮次标注(SUPERSEDED)**:R1 交付时的快照为「13 tests / 268P /
+> compatibility.yml / era 由工件缺失推断」—— 已被 §8(R2)与 §9(R3)全面取代,
+> 不构成当前 truth;历史原文见 git 历史(本文件在该轮的版本)。
 ## 4. 回归
 
-- 新增:`tests/deploy/test_preflight_boundary.py`(5)+ `tests/deploy/test_release_preflight.py`(8,含参数化非法 manifest 7 形态);
-- Release domain 全绿 **268P/0F**:`test_release_identity` / `test_release_migration_plan` / `test_release_integrity_check` / `test_release_tooling` / `test_deploy_orchestration`(部署原语唯一性/无自动回退等 #10 冻结不变量)/ `test_system_release` + `test_system_runtime`(/health 身份门)/ `tests/deploy/` / `test_migration_dsn_guard` / `test_membership_migration_manifest`;
-- 过程修正:preflight 步骤初稿用 `docker compose pull` 触碰了 "docker compose 属迁移步骤专有" 的既有不变量、回退兼容文案含 ASCII "rollback" 触碰 "无自动回退" 不变量 —— 改为 `docker pull` 只读模式与中文措辞,**既有不变量测试零修改**。
+- **当前(§9 R3 后)**:release domain **280 passed / 0 failed**;collect-only **42 tests**;
+- **历史(SUPERSEDED,§8/§9 之前各轮快照)**:R1 = 268P;R2 = 275P/37 tests ——
+  数字演进来自逐轮新增用例,不构成并列 truth。
 
 ## 5. Gate 边界矩阵(AC6:各门证明什么/不证明什么)
 
@@ -99,11 +110,28 @@ forbidden)。break-glass 路径本身同样接入 preflight(update.sh [3.5/6] �
 1. **宿主陈旧 update.sh 不含 [3.5/6]**:break-glass 手动路径若宿主脚本未刷新,
    该次调用无 preflight(审计类 3 的既有限制;部署原语刷新属运营 runbook,
    非本候选代码范围)。workflow 正规路径不受影响。
-2. 前契约镜像的有界路径依赖"镜像内无 evaluator"这一机械事实 —— 语义上等价于
-   "该 release 早于 #46 契约",无需外部时代知识。
+2. era 判定源 = 镜像内不可变 RELEASE.json 的 `compatibility_contract` 旗标
+   (R2 修正;前 #46 构建天然无键 ⇒ pre_contract 有界路径)。风险面:若某契约期
+   构建的 RELEASE.json 意外缺旗标,该镜像会被当作前契约走有界路径 —— 缓解 =
+   生成器写入已由机械测试锁定(`test_release_manifest_generator_emits_era_flag`),
+   且 Dockerfile 打包与旗标同树同 commit 产生,二者脱节属仓库级 CI 违约而非
+   部署面可静默态。
 3. manifest v1 词表刻意最小(docker_compose_v2/nvidia_gpu/tcp_connect/
    same_tag_all_services + config shapes);扩展 = 显式 schema 演进(version 迁移),
    拒绝 speculative 检查(Non-goals)。
+
+## 10. REVIEW_3 R4 修正(2026-09-22;evidence/documentation consistency)
+
+- evaluator operator-facing 文案:`module docstring`/`--manifest` help/`_invalid`
+  标签/usage 示例中的 `compatibility.yml` 残留全部统一为 `compatibility.json`(零
+  `.yml` 引用;语义零改动);
+- 报告 §§2–4 统一为当前 truth:`compatibility.json`、era = 不可变 RELEASE.json
+  `compatibility_contract` 旗标、契约期缺工件 = fail-closed、collect-only
+  **42 tests**、release regression **280P/0F**;R1 快照(13 tests/268P/yml/工件
+  缺失推断 era)显式标注 **SUPERSEDED**,不再与当前状态并列;
+- 已接受语义零改动:frozen-image ownership / exact $IMAGE:$TAG / era flag /
+  conditional rollback guidance / remediation ack / workflow fail-closed /
+  migration ownership。
 
 **STOP:等待 Role A exact-SHA review;不自行 merge;零生产 mutation。**
 

@@ -1,6 +1,6 @@
 """#46 Release Compatibility Preflight(fail-closed、有界、零 mutation)。
 
-消费**发布树自带**的 ``deploy/prod/compatibility.yml``(release-owned
+消费**发布树自带**的 ``deploy/prod/compatibility.json``(release-owned
 manifest,随 tag 冻结),在任何生产 mutation(DB migration / application
 rollout)之前给出确定性升级兼容性判定:
 
@@ -22,7 +22,7 @@ rollout)之前给出确定性升级兼容性判定:
 本脚本全程零写副作用(只读文件/socket/有界子进程)。
 
 用法:
-    python3 scripts/release_preflight.py --manifest /path/compatibility.yml \
+    python3 scripts/release_preflight.py --manifest /path/compatibility.json \
         [--env-file /path/.env] [--env K=V ...] [--probe-timeout 7] \
         [--remediation-ack GATE] [--pre-contract-release]
 """
@@ -109,9 +109,9 @@ def _shape_actual_class(value: str, shape: str) -> str:
 
 def _invalid(checks: list[dict], reason: str) -> tuple[dict, int]:
     checks.append(
-        _check("manifest", "compatibility.yml", "manifest_invalid", "fail", reason)
+        _check("manifest", "compatibility.json", "manifest_invalid", "fail", reason)
     )
-    return _fail_verdict("compatibility.yml", checks), 2
+    return _fail_verdict("compatibility.json", checks), 2
 
 
 def _validate_manifest(raw: Any, checks: list[dict]) -> tuple[dict | None, int | None]:
@@ -419,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="release_preflight",
         description="#46 发布兼容性 preflight(fail-closed;先于任何生产 mutation)",
     )
-    parser.add_argument("--manifest", required=True, help="发布树内 compatibility.yml 路径")
+    parser.add_argument("--manifest", required=True, help="发布树内 compatibility.json 路径(stdlib JSON;宿主零第三方依赖)")
     parser.add_argument("--env-file", default=None, help="生产 env 文件(值绝不输出)")
     parser.add_argument(
         "--env", action="append", default=[], metavar="K=V",
