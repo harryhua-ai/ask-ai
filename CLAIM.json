@@ -38,8 +38,8 @@
  },
  "delivery": {
   "pr": 104,
-  "sha": "270315e681ac8d7c2de64f357b39cff1df9dc9dc",
-  "note": "R2 Candidate 270315e: REVIEW_1 six blockers closed \u2014 image packaging contract (Dockerfile COPY + 3-way path consistency), exact-tag extraction, RELEASE.json compatibility_contract era flag (independent/immutable/deterministic; contract-era missing artifacts fail-closed), stdlib-JSON manifest (zero host deps), --remediation-ack pass-through + RELEASE-ROLLBACK-COMPATIBILITY runbook, collect-only count 37 tests + 275P release regression.",
-  "delivered_at": "2026-09-22T02:21:31Z"
+  "sha": "29227a242ae551644bef5ef65ae0800f4ff55c94",
+  "note": "R3 Candidate 29227a2: REVIEW_2 sole blocker closed \u2014 post-deploy rollback guidance conditional on the deployed release's frozen rollback verdict (compatible=false: ordinary rollback not advertised; declared remediation gate + recovery path surfaced; no auto rollback; pre-contract: deferred note). Behavioral RED->GREEN 5 tests via real bash execution of the extracted function; release domain 280P/0F; collect-only 42.",
+  "delivered_at": "2026-09-22T03:00:34Z"
  }
 }
