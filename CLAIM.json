@@ -7,7 +7,7 @@
  "claimed_at": "2026-09-22T01:01:31Z",
  "lease_expires_at": "2026-09-22T03:56:10Z",
  "execution_base": "434ddecea5b8f2e0e3dc34d3c673121e1a54773b",
- "status": "active",
+ "status": "delivered",
  "branch": "agent/46/2db2ed53",
  "heartbeat_at": "2026-09-22T03:11:10Z",
  "supersedes": null,
@@ -41,5 +41,12 @@
   "sha": "0c52d0b55fe724e012cedff06b9689cbef6b0506",
   "note": "R4 Candidate 0c52d0b: REVIEW_3 evidence/documentation consistency only \u2014 evaluator .yml text refs unified to compatibility.json, report \u00a7\u00a72-4 consolidated to current truth (42 tests / 280P / era-flag semantics), R1 snapshots marked SUPERSEDED; accepted semantics untouched; collect-only 42 unchanged; release domain green.",
   "delivered_at": "2026-09-22T03:15:15Z"
+ },
+ "completed": {
+  "pr": 104,
+  "merge_commit": "926dfb7a08bf506a635a259a41b9a60ebfdb62b1",
+  "candidate_sha": "0c52d0b55fe724e012cedff06b9689cbef6b0506",
+  "completed_by": "harryhua-ai",
+  "completed_at": "2026-09-22T03:35:46Z"
  }
 }
