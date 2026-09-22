@@ -52,6 +52,16 @@ def main() -> int:
         help="原位应用迁移(缺省 = dry-run,零写入)",
     )
     parser.add_argument("--class-name", default=None, help="Weaviate collection(默认读配置)")
+    parser.add_argument(
+        "--label-override",
+        default=None,
+        help=(
+            "以显式源标签为规则组 key 重推导(Issue #106):历史规则缺失时代"
+            "固化为 unknown 的 chunk,其固化标签会被当作规则组 key,源规则组"
+            "永不适用。给出源真实标签(如 website)即按该组规则重推导;必须"
+            "先 dry-run 人工核对映射与 unknown 明细后再 --apply。"
+        ),
+    )
     parser.add_argument("--weaviate-url", default=None, help="覆盖 WEAVIATE_URL(如 http://localhost:8080)")
     parser.add_argument("--json", dest="json_out", default=None, help="报告 JSON 输出路径")
     args = parser.parse_args()
@@ -69,17 +79,28 @@ def main() -> int:
     host, port = _parse_weaviate_endpoint(weaviate_url)
     taxonomy = get_taxonomy()
     mode = "APPLY(in-place property update)" if args.apply else "DRY-RUN(零写入)"
-    logger.info("product metadata migration | mode=%s | sources=%s | class=%s", mode, source_ids, class_name)
+    logger.info(
+        "product metadata migration | mode=%s | sources=%s | class=%s | label_override=%s",
+        mode, source_ids, class_name, args.label_override or "(none)",
+    )
 
     client = weaviate.connect_to_local(host=host, port=port)
     try:
         if args.apply:
             report = apply_migration(
-                client, class_name=class_name, source_ids=source_ids, taxonomy=taxonomy
+                client,
+                class_name=class_name,
+                source_ids=source_ids,
+                taxonomy=taxonomy,
+                label_override=args.label_override,
             )
         else:
             report = plan_migration(
-                client, class_name=class_name, source_ids=source_ids, taxonomy=taxonomy
+                client,
+                class_name=class_name,
+                source_ids=source_ids,
+                taxonomy=taxonomy,
+                label_override=args.label_override,
             )
     finally:
         client.close()
