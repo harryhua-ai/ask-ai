@@ -39,9 +39,16 @@ from backend.pipeline.citation import (
     validate_citations,
 )
 from backend.pipeline.claim_validation import build_claim_validation
-from backend.pipeline.evidence_planning import ROLE_SOLUTION_GUIDE, derive_evidence_plan
+from backend.pipeline.evidence_planning import (
+    EVIDENCE_INTENT_RECOMMENDATION,
+    ROLE_CASE_EVIDENCE,
+    ROLE_SOLUTION_GUIDE,
+    derive_evidence_plan,
+)
 from backend.pipeline.evidence_reservation import reserve_plan_evidence
 from backend.pipeline.evidence_selection import (
+    _has_solution_signal,
+    _is_published_case_page,
     build_coverage_report,
     build_evidence_stage,
     context_id_sets,
@@ -503,6 +510,48 @@ INTENT_BOOST_FILTERS: dict[str, list[dict]] = {
     "commercial": [{"source_types": ["woocommerce"]}, dict(_USER_FACING_BUCKET)],
 }
 
+# Issue #106(role-aware pre-pool recall lane):方案/选型类查询的权威
+# first-party Solution / Case 页在全局相似度竞争中常整页落榜(生产实证
+# v1.6.3-r9 #31 wave:EN 0/78、ZH 0/85,SOLUTION_RETENTION_FLOOR 保位
+# 只能作用于池内成员,上游 recall 缺失使其无从发力)。role lane 让这些
+# 页面凭**页面结构身份**(URL 段信号,与 post-pool authority 谓词
+# _has_solution_signal / _is_published_case_page 同词表纪律、语言无关)
+# 获得类内确定性准入机会 —— 非精确 URL 规则、非语言特定、有界预算。
+# 成员入池后仍须通过同一 authority 谓词校验(结构信号不冒充角色)。
+ROLE_RECALL_LANES: dict[str, dict] = {
+    "solution": {
+        "source_types": ["web_crawl", "website"],
+        "url_substrings": ["solution"],
+        "use_hybrid": True,
+        "limit": 10,
+        "admit": "_has_solution_signal",
+    },
+    "case": {
+        "source_types": ["web_crawl", "website"],
+        "url_substrings": ["case-stud"],
+        "use_hybrid": True,
+        "limit": 10,
+        "admit": "_is_published_case_page",
+    },
+}
+
+
+def _role_lane_gates(plan: Any) -> dict[str, bool]:
+    """#106:方案/选型意图(recommendation)且计划含 SOLUTION_GUIDE /
+    CASE_EVIDENCE 槽时启用对应 role lane。纯函数、确定性;意图不符或槽
+    缺席一律关闭 —— 负面边界:仅方案/选型类查询扩大召回面(support /
+    factual / commercial 查询零 lane 触发,#78 既有桶契约零漂移)。"""
+    intent = getattr(plan, "evidence_intent", "")
+    if intent != EVIDENCE_INTENT_RECOMMENDATION:
+        return {"solution": False, "case": False}
+    slots = getattr(plan, "slots", ()) or ()
+    return {
+        "solution": any(
+            getattr(s, "role", "") == ROLE_SOLUTION_GUIDE for s in slots
+        ),
+        "case": any(getattr(s, "role", "") == ROLE_CASE_EVIDENCE for s in slots),
+    }
+
 
 def _bucket_specs(cfg: "dict | list[dict] | None") -> list[dict]:
     """桶配置归一:历史单 dict 值 → 单元素列表(单桶调用语义逐字节保留)。"""
@@ -887,21 +936,33 @@ class RAGOrchestrator:
         product_filter: str | None,
         channel: str,
         product_labels: list[str] | None = None,
+        role_lanes: dict[str, bool] | None = None,
     ) -> tuple[list[SearchResult], dict[str, int], list[dict], list[dict]]:
         """统一检索 + 三路 RRF 融合(answer / stream_answer 共用,保证 parity)。
 
         主 hybrid(search_query) + 符号 BM25(extracted) + intent boost 桶(extracted)
-        → 单次 rrf_fuse 三路融合。任一路异常 / 为空均降级,不中断主流程。
+        + role-recall lane(#106,门控开启时)→ rrf_fuse 融合。任一路异常 /
+        为空均降级,不中断主流程。
 
         ``product_labels`` = taxonomy 资格标签集(Issue #5 契约 §5):非空时
         作为硬过滤 AND 进三路检索 —— sibling 在 Weaviate 侧即被排除,rerank /
         兜底 / boost 桶没有任何一路能把 sibling 塞回来。
 
+        ``role_lanes``(#106)= ``{lane 名: 是否启用}``;启用 lane 以 URL 段
+        结构信号做类内准入(first-party Solution / Case 页),成员经同一
+        authority 谓词校验后并入 RRF —— 让权威页面在全局相似度竞争落榜时
+        仍有确定性准入机会(有界:每 lane 一次检索、limit ≤ 配置预算)。
+
         Returns:
             (融合去重后的 SearchResult 列表, 各路命中数 dict, 有序候选身份表,
              桶归因列表 —— 每桶规格(name/source_types/chunk_types/use_hybrid/
-             limit/hits;Issue #78 权威召回路径出账))
+             limit/hits;Issue #78 权威召回路径出账;role lane 以
+             ``role:<名>`` 记名))
         """
+        _admit_fn = {
+            "solution": _has_solution_signal,
+            "case": _is_published_case_page,
+        }
         results = self._searcher.search(
             query=search_query,
             alpha=self._alpha,
@@ -958,6 +1019,49 @@ class RAGOrchestrator:
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("boost 桶召回失败,降级:%s", str(exc)[:200])
                     bucket_attrition.append({"name": _spec_name, "error": str(exc)[:120]})
+
+        # Issue #106 role-recall lane:门控开启时为 first-party Solution /
+        # Case 页提供类内确定性准入(URL 段结构信号 + authority 谓词校验;
+        # 与查询相似度解耦,语言无关;每 lane 一次有界检索)。异常/为空
+        # 降级同既有桶纪律,不阻断主流程。
+        for _lane_name, _enabled in (role_lanes or {}).items():
+            if not _enabled:
+                continue
+            _lane_cfg = ROLE_RECALL_LANES.get(_lane_name)
+            if not _lane_cfg:
+                continue
+            _lane_kw = {
+                k: v for k, v in _lane_cfg.items()
+                if k in ("source_types", "chunk_types", "url_substrings", "use_hybrid", "alpha")
+            }
+            _lane_limit = int(_lane_cfg.get("limit", self._recall_limit))
+            try:
+                lane_hits = self._searcher.search_bucket(
+                    query=extracted,
+                    limit=_lane_limit,
+                    channel=channel,
+                    product_labels=product_labels,
+                    **_lane_kw,
+                )
+                admitted = [r for r in lane_hits if _admit_fn[_lane_name](r)]
+                bucket_results.extend(admitted)
+                bucket_result_groups.append((f"role:{_lane_name}", admitted))
+                bucket_attrition.append(
+                    {
+                        "name": f"role:{_lane_name}",
+                        "source_types": _lane_cfg.get("source_types"),
+                        "url_substrings": _lane_cfg.get("url_substrings"),
+                        "use_hybrid": bool(_lane_cfg.get("use_hybrid", False)),
+                        "limit": _lane_limit,
+                        "hits": len(admitted),
+                        "recalled": len(lane_hits),
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("role lane %s 召回失败,降级:%s", _lane_name, str(exc)[:200])
+                bucket_attrition.append(
+                    {"name": f"role:{_lane_name}", "error": str(exc)[:120]}
+                )
 
         from backend.retrieval.rrf import rrf_fuse
 
@@ -1754,6 +1858,7 @@ class RAGOrchestrator:
                 product_filter=product_filter,
                 channel=channel,
                 product_labels=scope_labels,
+                role_lanes=_role_lane_gates(plan),
             )
             stages["retrieve"] = {
                 "ms": int((time.monotonic() - t_ret) * 1000),
@@ -2547,6 +2652,7 @@ class RAGOrchestrator:
                 product_filter=product_filter,
                 channel=channel,
                 product_labels=scope_labels,
+                role_lanes=_role_lane_gates(plan),
             )
             search_ms = int((time.monotonic() - t1) * 1000)
 
