@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from pathlib import Path
 
@@ -38,9 +39,32 @@ LOCK_TIMEOUT_SECONDS = 5
 PROBE_TIMEOUT = 20  # 有界失败判定上限(≫ lock_timeout,≪ 生产 56min 停滞)
 
 
+def _test_dsn() -> str:
+    """canonical 测试库 DSN(Issue #107;口径与 conftest db_engine 一致):
+
+    ``TEST_DATABASE_URL`` 是测试执行的权威 DSN(release CI 注入口);
+    无 env 时仅允许非 prod 形状回落 settings —— ``APP_MODE=prod`` 且无
+    显式测试 DSN ⇒ fail-closed 拒绝,绝不把 init_db/DDL/LOCK 测试静默
+    打在 settings(生产库)上(镜像 #20 ``resolve_migration_dsn`` 语义)。
+    """
+    dsn = os.environ.get("TEST_DATABASE_URL")
+    if not dsn:
+        if os.environ.get("APP_MODE", "dev") == "prod":
+            raise RuntimeError(
+                "APP_MODE=prod without TEST_DATABASE_URL: refusing to run "
+                "lock-safety tests against the settings DSN (production "
+                "database shape). Provide TEST_DATABASE_URL or run outside "
+                "prod mode."
+            )
+        dsn = load_settings(
+            config_dir=Path(__file__).parents[2] / "config"
+        ).postgres_dsn
+    return dsn
+
+
 def _sync_dsn() -> str:
-    dsn = load_settings(config_dir=Path(__file__).parents[2] / "config").postgres_dsn
-    return dsn.replace("+asyncpg", "+psycopg2").replace("+psycopg2", "")
+    """psycopg2 形态的 canonical 测试库 DSN(锁序构造连接用)。"""
+    return _test_dsn().replace("+asyncpg", "+psycopg2").replace("+psycopg2", "")
 
 
 def _foreign_lock(table: str, mode: str = "ACCESS EXCLUSIVE"):
@@ -63,8 +87,7 @@ def ddl_counter():
 @pytest.fixture()
 def ddl_counting_engine(ddl_counter):
     """带 DDL 语句计数器的引擎(独立于共享 db_engine,控制自己的生命周期)。"""
-    dsn = load_settings(config_dir=Path(__file__).parents[2] / "config").postgres_dsn
-    engine = get_engine(dsn)
+    engine = get_engine(_test_dsn())
 
     def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
         up = statement.upper()
@@ -76,6 +99,25 @@ def ddl_counting_engine(ddl_counter):
     event.remove(engine.sync_engine, "before_cursor_execute", _before_cursor_execute)
     ddl_counter["count"] = 0
     engine.sync_engine.dispose()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _schema_present():
+    """锁序/零 DDL 契约的前提 = schema 已兼容(#102 稳态)。
+
+    #107 修复后本文件执行于 ``TEST_DATABASE_URL`` 指向的 canonical 测试库
+    (此前裸读 settings DSN 时是静默打在某个 schema 持久的外部库上——该
+    隐含依赖正是缺陷的一部分)。共享测试库的表会被其他测试的 db_engine
+    fixture drop_all,故本文件自足:进入前幂等 ``init_db`` 确保 documents
+    等表存在。稳态 init_db 零 DDL(#102 AC3),此预热不污染任何计数器
+    (计数器只挂在 ddl_counting_engine 自己的 event 上)。
+    """
+    engine = get_engine(_test_dsn())
+    try:
+        asyncio.run(init_db(engine))
+    finally:
+        engine.sync_engine.dispose()
+    yield
 
 
 # --------------------------------------------------------------------------- #
