@@ -40,6 +40,7 @@ from backend.db.models import (
 from backend.pipeline.chunk import Chunk
 from backend.pipeline.chunk_code import LANG_MAP as _CODE_LANG_MAP  # noqa: F401 (与 ingest 同源)
 from backend.pipeline.ingest import (
+    COMMERCE_PROPS,
     DocFailure,
     IngestFailures,
     IngestionPipeline,
@@ -657,9 +658,23 @@ class GenerationBuilder:
                 "channel_visibility": list(doc.channel_visibility),
             }
             try:
-                from backend.pipeline.ingest import _evidence_props
+                from backend.pipeline.ingest import _commerce_props, _evidence_props
 
                 stale_props.update(_evidence_props(doc))
+                # Issue #105:metadata-only 路径必须同步投影 commerce 真值 ——
+                # content equality ≠ commerce metadata equality(生产实证
+                # 5110:5950/5951,父证据 #28 评论 5771553047):账本收敛而
+                # serving/vector commerce props 残留旧值,等于没收敛。
+                # commerce_synced_at 仍由 COMMERCE_PROPS 映射自 connector
+                # date_modified(Store snapshot 真值,不伪造时间)。
+                stale_props.update(_commerce_props(doc))
+                # 诚实缺席收敛:端点停止管理的字段(现词表仅 stock_quantity,
+                # 缺省 None)在 merge update 下「省略」= 残留,须显式清空,
+                # 与 ingest 侧「整键省略、不写 0 伪装」同语义。
+                meta = doc.metadata or {}
+                for prop, (_dtype, key, default) in COMMERCE_PROPS.items():
+                    if default is None and meta.get(key, default) is None:
+                        stale_props[prop] = None
                 for start in range(0, len(uuids), 500):
                     batch = uuids[start : start + 500]
                     resp = collection.query.fetch_objects(
