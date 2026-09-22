@@ -40,6 +40,7 @@ from backend.db.models import (
 from backend.pipeline.chunk import Chunk
 from backend.pipeline.chunk_code import LANG_MAP as _CODE_LANG_MAP  # noqa: F401 (与 ingest 同源)
 from backend.pipeline.ingest import (
+    COMMERCE_PROPS,
     DocFailure,
     IngestFailures,
     IngestionPipeline,
@@ -95,12 +96,48 @@ def _chunker_policy_fingerprint(*, kind: str, max_tokens: int, overlap: int, max
     ).hexdigest()
 
 
+def _row_mirror_drifted(doc_row: Document, doc: Any) -> bool:
+    """#105(R3):行镜像字段是否滞后于 connector 现行真值。
+
+    仅在 classifier 双 hash 均判相等(= version 权威与 incoming 一致)时
+    调用;此时任何分歧都只能是历史 mirror drift(旧激活代码不回写行 JSONB
+    的时代产物,生产实证 5110:5950/5951)。比较集 = 激活/metadata-only
+    两条路径写入的行真值全集。纯函数、零 IO;判定宽松方向安全 —— 误报
+    只会把文档送进幂等的 metadata reconciliation(写相同值,净零效果)。
+    """
+    incoming_meta = dict(doc.metadata or {})
+    row_meta = doc_row.metadata_ if isinstance(doc_row.metadata_, dict) else {}
+    return (
+        row_meta != incoming_meta
+        or doc_row.product != doc.product
+        or doc_row.branch != (doc.branch or "")
+        or doc_row.source_type != doc.source_type
+    )
+
+
 @dataclass
 class _PreparedDoc:
     """单文档构建中间态:chunk 切分结果(线程内先切分,后跨文档批量 embed)。"""
 
     doc: Any
     chunks: list[Chunk]
+
+
+def incoming_metadata_hash(doc: Any) -> str:
+    """incoming 文档的 metadata 指纹(classify 与 mirror-drift 预筛共用口径)。
+
+    与 :meth:`GenerationBuilder.classify_docs` 及 ``_apply_metadata_only``
+    的计算严格同式 —— 唯一权威公式,调用方不得自行内联复制。
+    """
+    return lifecycle.compute_metadata_hash(
+        title=doc.title,
+        url=doc.url,
+        branch=doc.branch or "",
+        source_type=doc.source_type,
+        product=doc.product,
+        metadata={k: v for k, v in (doc.metadata or {}).items() if k != "channel_visibility"},
+        channel_visibility=doc.channel_visibility,
+    )
 
 
 class GenerationBuilder:
@@ -131,17 +168,8 @@ class GenerationBuilder:
                 doc_row, version_row = lifecycle.load_document_and_current_version(
                     session, doc.source_id
                 )
-                meta_hash = lifecycle.compute_metadata_hash(
-                    title=doc.title,
-                    url=doc.url,
-                    branch=doc.branch or "",
-                    source_type=doc.source_type,
-                    product=doc.product,
-                    metadata={k: v for k, v in (doc.metadata or {}).items() if k != "channel_visibility"},
-                    channel_visibility=doc.channel_visibility,
-                )
                 change = lifecycle.classify_change(
-                    doc_row, version_row, doc.content_hash, meta_hash
+                    doc_row, version_row, doc.content_hash, incoming_metadata_hash(doc)
                 )
                 out[doc.source_id] = (doc, change, doc_row, version_row)
         return out
@@ -190,7 +218,18 @@ class GenerationBuilder:
                 metadata_targets.append((doc, doc_row, version_row))
                 accounting.metadata_docs.append(doc.source_id)
             elif change == lifecycle.ChangeClass.UNCHANGED:
-                accounting.unchanged_docs.append(doc.source_id)
+                # Issue #105(R3,REVIEW_2 #109 评论 5773201820):version
+                # 双 hash 均与 incoming 相等但**行镜像字段滞后**的历史残形
+                # (旧激活代码只同步 content_hash/chunk_count/title/url 的时代
+                # 产物;生产实证 5110:5950/5951)不得判完全 UNCHANGED ——
+                # 路由进既有 retry-safe metadata reconciliation:只修行
+                # 镜像 + 经 fail-closed 语义对账 serving/chunk,零重嵌、
+                # 零新版本、零新代、泛化于一切 source(非 woo 专属)。
+                if doc_row is not None and _row_mirror_drifted(doc_row, doc):
+                    metadata_targets.append((doc, doc_row, version_row))
+                    accounting.metadata_docs.append(doc.source_id)
+                else:
+                    accounting.unchanged_docs.append(doc.source_id)
             else:
                 rebuild_docs.append(doc)  # NEW_VERSION(首灌)
 
@@ -471,19 +510,24 @@ class GenerationBuilder:
                     )
                     session.add(doc_row)
                     session.flush()
+                else:
+                    # Issue #105(R2 根因,#109 评论 5772503175;生产实证
+                    # 5110:5950/5951):内容变更激活路径此前只同步
+                    # content_hash/chunk_count/title/url —— documents.metadata_
+                    # (及 product/branch/source_type)永远停留在首灌值;分类器
+                    # 权威是 DocumentVersion.metadata_hash(激活时已写新值),
+                    # 账本行 JSONB 永不追平 ⇒ 之后每轮 UNCHANGED,商业真值
+                    # (stock_status/price/date_modified…)永久陈旧。现与
+                    # metadata-only 路径同口径回写行真值。
+                    doc_row.metadata_ = dict(p.doc.metadata or {})
+                    doc_row.product = p.doc.product
+                    doc_row.branch = p.doc.branch or ""
+                    doc_row.source_type = p.doc.source_type
                 version = DocumentVersion(
                     source_id=p.doc.source_id,
                     version_seq=lifecycle.next_version_seq(session, p.doc.source_id),
                     content_hash=p.doc.content_hash,
-                    metadata_hash=lifecycle.compute_metadata_hash(
-                        title=p.doc.title,
-                        url=p.doc.url,
-                        branch=p.doc.branch or "",
-                        source_type=p.doc.source_type,
-                        product=p.doc.product,
-                        metadata={k: v for k, v in (p.doc.metadata or {}).items() if k != "channel_visibility"},
-                        channel_visibility=p.doc.channel_visibility,
-                    ),
+                    metadata_hash=incoming_metadata_hash(p.doc),
                     source_version=lifecycle.extract_source_version(p.doc.metadata),
                     generation_id=gen.id,
                     generation_ordinal=gen_ordinal,
@@ -632,15 +676,7 @@ class GenerationBuilder:
         pipeline._ensure_collection()
         collection = pipeline._collection
         for doc, doc_row, version in targets:
-            new_meta_hash = lifecycle.compute_metadata_hash(
-                title=doc.title,
-                url=doc.url,
-                branch=doc.branch or "",
-                source_type=doc.source_type,
-                product=doc.product,
-                metadata={k: v for k, v in (doc.metadata or {}).items() if k != "channel_visibility"},
-                channel_visibility=doc.channel_visibility,
-            )
+            new_meta_hash = incoming_metadata_hash(doc)
             # 1) 对象文档级 props 原位更新(merge update,向量不动)
             uuids = chunk_uuids_for_version(
                 doc_row.source_id,
@@ -656,24 +692,36 @@ class GenerationBuilder:
                 "product": doc.product,
                 "channel_visibility": list(doc.channel_visibility),
             }
-            try:
-                from backend.pipeline.ingest import _evidence_props
+            from backend.pipeline.ingest import _commerce_props, _evidence_props
 
-                stale_props.update(_evidence_props(doc))
-                for start in range(0, len(uuids), 500):
-                    batch = uuids[start : start + 500]
-                    resp = collection.query.fetch_objects(
-                        filters=Filter.by_id().contains_any(batch), limit=len(batch)
-                    )
-                    for obj in resp.objects:
-                        collection.data.update(uuid=str(obj.uuid), properties=stale_props)
-            except Exception as exc:  # noqa: BLE001 - 对象侧失败:账本已真,下轮 metadata 变更自愈
-                logger.warning(
-                    "metadata-only 对象更新失败 %s(账本先行,残留下轮自愈): %s",
-                    doc.source_id,
-                    str(exc)[:160],
+            stale_props.update(_evidence_props(doc))
+            # Issue #105:metadata-only 路径必须同步投影 commerce 真值 ——
+            # content equality ≠ commerce metadata equality(R1):账本收敛而
+            # serving/vector commerce props 残留旧值,等于没收敛。
+            # commerce_synced_at 仍由 COMMERCE_PROPS 映射自 connector
+            # date_modified(Store snapshot 真值,不伪造时间)。
+            stale_props.update(_commerce_props(doc))
+            # 诚实缺席收敛:端点停止管理的字段(现词表仅 stock_quantity,
+            # 缺省 None)在 merge update 下「省略」= 残留,须显式清空,
+            # 与 ingest 侧「整键省略、不写 0 伪装」同语义。
+            meta = doc.metadata or {}
+            for prop, (_dtype, key, default) in COMMERCE_PROPS.items():
+                if default is None and meta.get(key, default) is None:
+                    stale_props[prop] = None
+            # R2 blocker 2(#109 评论 5772503175):fail-closed —— serving
+            # 对象更新失败**绝不推进任何权威状态**(version.metadata_hash/
+            # 账本行/chunk 副本),异常直接向上传播使本轮 fail-closed;
+            # 下一轮 normal sync 仍判 METADATA_CHANGED 并完整重试。旧实现
+            # 「吞异常 + 账本先行、残留下轮自愈」会记录假收敛,且 metadata
+            # 不再变化时永不自愈 —— 非收敛保证。
+            for start in range(0, len(uuids), 500):
+                batch = uuids[start : start + 500]
+                resp = collection.query.fetch_objects(
+                    filters=Filter.by_id().contains_any(batch), limit=len(batch)
                 )
-            # 2) 账本 + 版本 metadata_hash(权威先行)
+                for obj in resp.objects:
+                    collection.data.update(uuid=str(obj.uuid), properties=stale_props)
+            # 2) serving 成功后:账本 + 版本 metadata_hash + chunk 副本(单一事务)
             with self._session_factory() as session:
                 row = session.execute(
                     select(Document).where(Document.source_id == doc.source_id)
