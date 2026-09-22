@@ -141,6 +141,93 @@ jobs:
           echo "created=true"        >> "$GITHUB_OUTPUT"
           echo "deployment_id=$DEPLOYMENT_ID" >> "$GITHUB_OUTPUT"
 
+      # ---- 3.5 生产兼容性 preflight(#46;fail-closed;先于任何生产 mutation) ----
+      # evaluator 与 manifest 都从冻结镜像内提取(release-owned;mutable main
+      # 无法重解释历史发布)。本步骤只调用、不裁决(update.sh 不变 policy
+      # engine);非零退出 ⇒ 在 DB migration(首个不可逆 mutation)之前中止,
+      # 零生产变更。前契约镜像(镜像内无 evaluator)走有界兼容路径并显式留痕。
+      - name: Production compatibility preflight (fail-closed; pre-mutation)
+        id: preflight
+        env:
+          SSH_KEY: ${{ secrets.PROD_DEPLOY_SSH_KEY }}
+          SSH_HOST: ${{ vars.PROD_SSH_HOST }}
+          SSH_USER: ${{ vars.PROD_SSH_USER }}
+          SSH_KNOWN_HOSTS_B64: ${{ vars.PROD_SSH_KNOWN_HOSTS_B64 }}
+          DEPLOY_TAG: ${{ steps.identity.outputs.tag }}
+        run: |
+          set -euo pipefail
+          KEY_FILE="$RUNNER_TEMP/prod_deploy_key"
+          KH_FILE="$RUNNER_TEMP/prod_known_hosts"
+          cleanup() { rm -f "$KEY_FILE" "$KH_FILE"; }
+          trap cleanup EXIT
+          for v in SSH_KEY SSH_HOST SSH_USER SSH_KNOWN_HOSTS_B64; do
+            if [ -z "${!v}" ]; then
+              echo "❌ $v 未配置(production Environment secret / repository variables)" >&2
+              exit 2
+            fi
+          done
+          install -m 600 /dev/null "$KEY_FILE"
+          printf '%s\n' "$SSH_KEY" > "$KEY_FILE"
+          printf '%s' "$SSH_KNOWN_HOSTS_B64" | base64 -d > "$KH_FILE"
+          chmod 644 "$KH_FILE"
+          if [ ! -s "$KH_FILE" ] || ! grep -q "$SSH_HOST" "$KH_FILE"; then
+            echo "❌ known_hosts 钉扎缺失或与 PROD_SSH_HOST 不匹配(绝不关闭严格主机键校验)" >&2
+            exit 2
+          fi
+          # 脚本本体经 stdin 原样传递(与迁移步骤同一无注入面模式);主机侧
+          # flock 与迁移/rollout 互斥。评估全程只读(pull/create/cp/探针)。
+          ssh -i "$KEY_FILE" \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$KH_FILE" \
+              -o BatchMode=yes \
+              -o ConnectTimeout=15 \
+              -o ServerAliveInterval=30 \
+              "${SSH_USER}@${SSH_HOST}" \
+              "DEPLOY_TAG='$DEPLOY_TAG' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd ~/ask-ai
+          exec 9>/tmp/askai-deploy.lock
+          flock -w 0 9 || { echo "❌ 部署锁被占用(另一生产变更在执行)" >&2; exit 1; }
+          # 只读探针模式:直接 docker pull/create/cp(不经 compose 载体 ——
+          # 该载体属迁移步骤专有,部署原语唯一性不变量不破)
+          IMAGE="ghcr.io/harryhua-ai/ask-ai:$DEPLOY_TAG"
+          docker pull "$IMAGE" >/dev/null
+          CID=$(docker create "$IMAGE")
+          # 时代判定(blocker 3):镜像内不可变 RELEASE.json 的
+          # compatibility_contract 旗标,独立于门禁工件存在性
+          REL_TMP="$(mktemp /tmp/askai-release.XXXXXX.json)"
+          docker cp "$CID:/app/RELEASE.json" "$REL_TMP" >/dev/null 2>&1 || {
+              docker rm "$CID" >/dev/null 2>&1 || true
+              echo "❌ 镜像内无 RELEASE.json:非版本化镜像,拒绝部署" >&2
+              exit 1
+          }
+          ERA="$(python3 -c "import json,sys;print('contract' if json.load(open(sys.argv[1])).get('compatibility_contract') else 'pre_contract')" "$REL_TMP")"
+          rm -f "$REL_TMP"
+          MAN_TMP="$(mktemp /tmp/askai-compat.XXXXXX.json)"
+          EVAL_TMP="$(mktemp /tmp/askai-preflight.XXXXXX.py)"
+          EVAL_OK=1
+          docker cp "$CID:/app/scripts/release_preflight.py" "$EVAL_TMP" >/dev/null 2>&1 || EVAL_OK=0
+          if [ "$ERA" = "contract" ]; then
+            # 契约期:evaluator/manifest 必须真实打包(REVIEW_1 blocker 1/3)
+            if [ "$EVAL_OK" != 1 ]; then
+              docker rm "$CID" >/dev/null 2>&1 || true
+              rm -f "$MAN_TMP" "$EVAL_TMP"
+              echo "❌ 契约期镜像缺失 scripts/release_preflight.py(打包违约)—— fail-closed" >&2
+              exit 1
+            fi
+            docker cp "$CID:/app/deploy/prod/compatibility.json" "$MAN_TMP" >/dev/null 2>&1 || true
+            docker rm "$CID" >/dev/null
+            python3 "$EVAL_TMP" --manifest "$MAN_TMP" --env-file "$HOME/ask-ai/.env"
+            rm -f "$MAN_TMP" "$EVAL_TMP"
+            echo "PREFLIGHT PASS:$DEPLOY_TAG(先于迁移/rollout;零 mutation)"
+          else
+            docker rm "$CID" >/dev/null 2>&1 || true
+            rm -f "$MAN_TMP" "$EVAL_TMP"
+            echo "PRE-CONTRACT RELEASE:$DEPLOY_TAG(镜像 RELEASE.json 无 compatibility_contract 旗标)——"
+            echo "有界兼容路径(config/host/topology/dependencies/回退兼容 各类未证明,显式 deferred)"
+          fi
+          REMOTE
+
       # ---- 4. 数据库迁移(发布绑定;先于依赖新 schema 的应用 rollout;失败绝不 rollout) ----
       - name: Migrate database (release-bound; before dependent app rollout)
         id: migrate

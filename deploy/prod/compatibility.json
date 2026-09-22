@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "config": [],
+  "host": [
+    {
+      "capability": "nvidia_gpu"
+    }
+  ],
+  "topology": [
+    {
+      "requirement": "same_tag_all_services"
+    }
+  ],
+  "dependencies": [],
+  "rollback": {
+    "previous_compatible": true
+  }
+}
