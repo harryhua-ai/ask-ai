@@ -7,7 +7,7 @@
  "claimed_at": "2026-09-22T05:57:20Z",
  "lease_expires_at": "2026-09-22T10:32:07Z",
  "execution_base": "926dfb7a08bf506a635a259a41b9a60ebfdb62b1",
- "status": "active",
+ "status": "delivered",
  "branch": "agent/105/984124c3",
  "heartbeat_at": "2026-09-22T09:47:07Z",
  "supersedes": null,
@@ -39,5 +39,12 @@
   "sha": "812d0b431fa471851d96e7d4d31c3e101054ff5d",
   "note": "R5 FINAL PASS accepted (comment 5774356990); merged as PR #109 merge commit dc5c0a0 into main",
   "delivered_at": "2026-09-22T09:59:23Z"
+ },
+ "completed": {
+  "pr": 109,
+  "merge_commit": "dc5c0a0391aaf0740f6dc5bb064be570255cedfc",
+  "candidate_sha": "812d0b431fa471851d96e7d4d31c3e101054ff5d",
+  "completed_by": "harryhua-ai",
+  "completed_at": "2026-09-22T13:44:57Z"
  }
 }
