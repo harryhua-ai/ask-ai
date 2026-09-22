@@ -472,6 +472,19 @@ class GenerationBuilder:
                     )
                     session.add(doc_row)
                     session.flush()
+                else:
+                    # Issue #105(R2 根因,#109 评论 5772503175;生产实证
+                    # 5110:5950/5951):内容变更激活路径此前只同步
+                    # content_hash/chunk_count/title/url —— documents.metadata_
+                    # (及 product/branch/source_type)永远停留在首灌值;分类器
+                    # 权威是 DocumentVersion.metadata_hash(激活时已写新值),
+                    # 账本行 JSONB 永不追平 ⇒ 之后每轮 UNCHANGED,商业真值
+                    # (stock_status/price/date_modified…)永久陈旧。现与
+                    # metadata-only 路径同口径回写行真值。
+                    doc_row.metadata_ = dict(p.doc.metadata or {})
+                    doc_row.product = p.doc.product
+                    doc_row.branch = p.doc.branch or ""
+                    doc_row.source_type = p.doc.source_type
                 version = DocumentVersion(
                     source_id=p.doc.source_id,
                     version_seq=lifecycle.next_version_seq(session, p.doc.source_id),
@@ -657,38 +670,36 @@ class GenerationBuilder:
                 "product": doc.product,
                 "channel_visibility": list(doc.channel_visibility),
             }
-            try:
-                from backend.pipeline.ingest import _commerce_props, _evidence_props
+            from backend.pipeline.ingest import _commerce_props, _evidence_props
 
-                stale_props.update(_evidence_props(doc))
-                # Issue #105:metadata-only 路径必须同步投影 commerce 真值 ——
-                # content equality ≠ commerce metadata equality(生产实证
-                # 5110:5950/5951,父证据 #28 评论 5771553047):账本收敛而
-                # serving/vector commerce props 残留旧值,等于没收敛。
-                # commerce_synced_at 仍由 COMMERCE_PROPS 映射自 connector
-                # date_modified(Store snapshot 真值,不伪造时间)。
-                stale_props.update(_commerce_props(doc))
-                # 诚实缺席收敛:端点停止管理的字段(现词表仅 stock_quantity,
-                # 缺省 None)在 merge update 下「省略」= 残留,须显式清空,
-                # 与 ingest 侧「整键省略、不写 0 伪装」同语义。
-                meta = doc.metadata or {}
-                for prop, (_dtype, key, default) in COMMERCE_PROPS.items():
-                    if default is None and meta.get(key, default) is None:
-                        stale_props[prop] = None
-                for start in range(0, len(uuids), 500):
-                    batch = uuids[start : start + 500]
-                    resp = collection.query.fetch_objects(
-                        filters=Filter.by_id().contains_any(batch), limit=len(batch)
-                    )
-                    for obj in resp.objects:
-                        collection.data.update(uuid=str(obj.uuid), properties=stale_props)
-            except Exception as exc:  # noqa: BLE001 - 对象侧失败:账本已真,下轮 metadata 变更自愈
-                logger.warning(
-                    "metadata-only 对象更新失败 %s(账本先行,残留下轮自愈): %s",
-                    doc.source_id,
-                    str(exc)[:160],
+            stale_props.update(_evidence_props(doc))
+            # Issue #105:metadata-only 路径必须同步投影 commerce 真值 ——
+            # content equality ≠ commerce metadata equality(R1):账本收敛而
+            # serving/vector commerce props 残留旧值,等于没收敛。
+            # commerce_synced_at 仍由 COMMERCE_PROPS 映射自 connector
+            # date_modified(Store snapshot 真值,不伪造时间)。
+            stale_props.update(_commerce_props(doc))
+            # 诚实缺席收敛:端点停止管理的字段(现词表仅 stock_quantity,
+            # 缺省 None)在 merge update 下「省略」= 残留,须显式清空,
+            # 与 ingest 侧「整键省略、不写 0 伪装」同语义。
+            meta = doc.metadata or {}
+            for prop, (_dtype, key, default) in COMMERCE_PROPS.items():
+                if default is None and meta.get(key, default) is None:
+                    stale_props[prop] = None
+            # R2 blocker 2(#109 评论 5772503175):fail-closed —— serving
+            # 对象更新失败**绝不推进任何权威状态**(version.metadata_hash/
+            # 账本行/chunk 副本),异常直接向上传播使本轮 fail-closed;
+            # 下一轮 normal sync 仍判 METADATA_CHANGED 并完整重试。旧实现
+            # 「吞异常 + 账本先行、残留下轮自愈」会记录假收敛,且 metadata
+            # 不再变化时永不自愈 —— 非收敛保证。
+            for start in range(0, len(uuids), 500):
+                batch = uuids[start : start + 500]
+                resp = collection.query.fetch_objects(
+                    filters=Filter.by_id().contains_any(batch), limit=len(batch)
                 )
-            # 2) 账本 + 版本 metadata_hash(权威先行)
+                for obj in resp.objects:
+                    collection.data.update(uuid=str(obj.uuid), properties=stale_props)
+            # 2) serving 成功后:账本 + 版本 metadata_hash + chunk 副本(单一事务)
             with self._session_factory() as session:
                 row = session.execute(
                     select(Document).where(Document.source_id == doc.source_id)

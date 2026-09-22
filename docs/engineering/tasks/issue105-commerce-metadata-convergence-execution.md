@@ -1,158 +1,87 @@
-# Issue #105 Execution — WooCommerce incremental sync: commerce metadata freshness when content_hash unchanged
+# Issue #105 Execution (R2) — commerce metadata freshness along the REAL connector paths
 
 - Claim: `harryhua-ai-20260922T055616-f5e6c1ac` (branch `agent/105/984124c3`)
 - Execution base: `926dfb7a08bf506a635a259a41b9a60ebfdb62b1` (frozen main, exact)
-- Implementation commit: `ce3dbfa` (GREEN + focused suite); candidate = final commit of this branch (exact SHA in PR description / delivery message)
+- R1 candidate (reviewed, REQUEST_CHANGES): `1bd54ab0bbde5289752b3a9470bda07d39ed510e`
+- R2 implementation: `ce3dbfa`(R1, retained: metadata-only commerce projection) + R2 commits (see PR head = exact Candidate SHA)
 - Authority: implementation allowed; candidate only — no deploy, no production mutation
-- Parent evidence: #28 comment `5771553047` (production repro identities `5110:5950` / `5110:5951`)
+- Review being remediated: PR #109 durable review `5772503175` (Role A, REQUEST_CHANGES, 2 blockers)
+- Parent production evidence: #28 comment `5771553047` (identities `5110:5950` / `5110:5951`)
 
-## 1. RCA — code ownership mechanically confirmed from main (not assumed)
+## 0. REVIEW_1 remediation summary
 
-Incremental path audited end-to-end: `scripts/sync.py:_sync_one` →
-`connector.fetch_changes(since)` → `GenerationBuilder.build_generation` →
-`classify_docs` → `lifecycle.classify_change(doc_row, version_row, content_hash, meta_hash)`.
+| Blocker | Resolution |
+|---------|-----------|
+| B1: RED used a synthetic state (`VARIANT_CONTENT` + hand-changed `stock_status`); real connector puts stock/price/sale/qty in content ⇒ those changes are `CONTENT_CHANGED`, not `METADATA_CHANGED`; reconcile the production repro against the true classifier authority | Production forensics performed read-only (§1): the real path for `5110:5950/5951` is **`CONTENT_CHANGED`**, and the true root cause is that **the activation path never writes `documents.metadata_` for existing rows** — fixed (§3 Fix-1). Test suite rewritten: **all** builder tests now feed real `_variation_to_document` output (mock HTTP, zero network, zero synthetic content states) and cover both natural classes (§4) |
+| B2: metadata-only serving update failed open (exception swallowed, ledger still advanced) ⇒ false convergence + non-retryable | `_apply_metadata_only` reordered fail-closed (§3 Fix-2): Weaviate objects update first, exceptions propagate **before any authority advance**; ledger/version-hash/chunk-copies commit only after serving success; next normal sync reclassifies `METADATA_CHANGED` and retries. Failure-injection regression added (§4 T6) |
 
-- `classify_change` (backend/services/document_lifecycle.py:377) **does** compare
-  `metadata_hash`: equal content hash + changed metadata ⇒ `METADATA_CHANGED` ⇒
-  metadata-only path (`_apply_metadata_only`), zero re-embed, zero version fork.
-  There is no sync-side content-hash pre-filter.
-- `compute_metadata_hash` covers the full metadata dict (all commerce keys included),
-  symmetric on the ledger side (`metadata_hash_of_version_row`).
-- **Defect ownership = `GenerationBuilder._apply_metadata_only`
-  (backend/pipeline/generation_builder.py)**: its Weaviate object merge-update built
-  `stale_props` from doc-level identity fields + evidence props only — the commerce
-  projection (`_commerce_props`, the same projection the ingest/content-changed path
-  uses via `_build_props`) was **never applied**. The persisted `DocumentVersionChunk.props`
-  sync used the same commerce-less dict. Consequence: when a document takes the
-  metadata-only path, the ledger converges but the **serving/vector commerce truth —
-  including `commerce_synced_at` (mapped from connector `date_modified`) — stays stale**,
-  and any later `repair_documents` rebuild resurrects the stale commerce props from the
-  persisted chunk copies. This is exactly the production-observed class: content
-  equality treated as full equality while authoritative commerce metadata diverges.
+R1's metadata-only commerce projection (`_commerce_props` on serving objects + chunk copies, explicit `stock_quantity` honest-absence clear, `commerce_synced_at` from connector `date_modified`) is **retained** — it remains the correct convergence mechanism for the metadata-only natural class, now proven with real connector documents (§4 T2).
 
-Connector semantics corroborate the class is real, not synthetic: in
-`_variation_to_document`, `purchasable` / `on_sale` / `permalink` / `date_modified`
-are **not** part of the retrievable text lines, so those Store-side changes naturally
-produce a new fetch with **identical `content_hash`** and different commerce metadata.
+## 1. Production forensics (read-only, 2026-09-22) — the REAL path and root cause
 
-## 2. RED (on base `926dfb7a`, T1/T2 per contract; content byte-identical in T1→T2)
+Queries against production `documents` + `document_versions` for the repro identities:
 
-New focused suite `tests/pipeline/test_issue105_commerce_metadata_convergence.py`:
+| source_id | row JSONB `stock_status` | row JSONB `date_modified` | row/content_hash | versions |
+|---|---|---|---|---|
+| `woocommerce-mall/5110/5950` | `instock` | `2026-09-18T14:02:32` | `1233ac443ffb5b31…` (= v2) | v1 `8bad56f9…` (09-18, superseded) → v2 `1233ac44…` (09-21 20:25, active) |
+| `woocommerce-mall/5110:5951` | `instock` | `2026-09-18T14:02:32` | `71b08703141de2a2…` (= v2) | v1 `7eada0d8…` (09-18, superseded) → v2 `71b08703…` (09-21 20:25, active) |
 
-- Connector leg (unit, zero network) — `test_content_equality_does_not_imply_commerce_metadata_equality`:
-  real connector semantics, T1 purchasable=true/on_sale=false/permalink P1/date D1 vs
-  T2 purchasable=false/on_sale=true/permalink P2/date D2 with identical price/stock/sku/attrs
-  ⇒ **same `content_hash`**, incremental `fetch_changes` **returns** T2, metadata differs.
-  PASSED on base (premise proof: the class arises naturally).
-- Builder leg (real Postgres + real Weaviate):
-  - `test_metadata_only_converges_serving_commerce_props` — **FAILED on base** with
-    `AssertionError: assert 'instock' == 'outofstock'` (serving `stock_status` residual T1
-    value after a successful metadata-only round; ledger metadata converged, zero re-embed,
-    zero version fork — the failure isolates serving commerce props as the stale surface).
-  - `test_metadata_only_clears_unmanaged_stock_quantity` — **FAILED on base**
-    (`assert not 5` — endpoint stopped managing stock, serving kept the old quantity;
-    merge-update "omit" semantics = residual, must converge to honest absence).
-  - `test_repeat_sync_idempotent_after_convergence` — PASSED on base (UNCHANGED fast path
-    already idempotent; kept as a regression guard for the fix).
+Reading with the classifier's true authority (`DocumentVersion.content_hash` / `metadata_hash`, exactly as Role A required):
 
-No content text was modified to manufacture RED; the T1/T2 pair differs only in
-authoritative commerce metadata at the classify boundary.
+1. Store flipped the variations `outofstock` at `2026-09-21T17:31:44` (Store `date_modified`, wave evidence). The connector writes stock into the retrievable text (`Stock:` line) ⇒ the 09-21 20:25 sync took **`CONTENT_CHANGED`** and activated v2 with the outofstock content hash.
+2. **The activation transaction synced only `content_hash/chunk_count/title/url` onto the documents row** (`_build_and_activate` writes `metadata_` solely on the new-row branch; `lifecycle.activate_document_version` docstring + code confirm the four-field sync set). The row JSONB therefore still carries **v1-era** `stock_status=instock` / `date_modified=2026-09-18T14:02:32` while the row's `content_hash` is already v2.
+3. v2's `metadata_hash` was computed from the incoming (fresh) metadata, so every later sync compares equal on both hashes ⇒ **`UNCHANGED` forever** ⇒ the ledger-row commerce truth never converges. This reproduces the entire production observation (successful re-syncs, "126 unchanged", stale `stock_status`) **without** involving the metadata-only path.
 
-## 3. GREEN design (minimal surface, frozen semantics preserved)
+Conclusion: R1's RCA attributed the production incident to the wrong path. The production root cause is the activation-path row-JSONB lag (Fix-1). The metadata-only serving-commerce gap (R1's finding) is a real but **separate** convergence hole on the `purchasable`/`on_sale`/`permalink`/`date_modified` natural class — its fix is retained and now covered by real-connector regressions.
 
-`backend/pipeline/generation_builder.py::_apply_metadata_only`, metadata-only path only:
+## 2. Code ownership (mechanically confirmed from main, per path)
 
-1. `stale_props.update(_commerce_props(doc))` — the exact projection used by the
-   ingest/content-changed path (`_build_props`), so both surfaces write the same
-   commerce vocabulary (`commerce_type`, `product_id`, `variation_id`,
-   `variation_identity_key`, `sku`, `price`, `regular_price`, `sale_price`, `on_sale`,
-   `stock_status`, `stock_quantity`, `purchasable`, `variation_attributes`, `permalink`,
-   `commerce_synced_at`). `commerce_synced_at` stays mapped from connector
-   `date_modified` (Store snapshot truth — never fabricated).
-2. Honest-absence convergence: for props whose default is `None` (current vocabulary:
-   `stock_quantity` only), an absent/None value is written **explicitly** so the
-   merge-update clears the residual instead of silently keeping the old value —
-   same semantics as ingest's "整键省略、不写 0 伪装".
-3. The same merged dict continues to flow into the `DocumentVersionChunk.props`
-   sync, so persisted chunk copies (the `repair_documents` truth source) converge too.
+- `scripts/sync.py:_sync_one` → `fetch_changes(since)` → `GenerationBuilder.build_generation` → `classify_docs` → `lifecycle.classify_change(doc_row, version_row, content_hash, meta_hash)` (compares `DocumentVersion.content_hash` then `DocumentVersion.metadata_hash`; no sync-side pre-filter).
+- **CONTENT_CHANGED path**: `_build_and_activate` — version row gets fresh content/metadata hashes; Weaviate objects + `DocumentVersionChunk.props` rebuilt via `_build_props` (commerce included); **documents row JSONB not synced for existing rows ⇒ Fix-1**.
+- **METADATA_CHANGED path**: `_apply_metadata_only` — R1 commerce projection retained; **failure semantics were fail-open ⇒ Fix-2**.
+- Connector: `_variation_to_document` — fields in retrievable text (⇒ content-hash-changing): `sku`, `price`, `regular_price` (when ≠ price), `sale_price` (when ≠ price), `stock_status`, `stock_quantity` (when not None), attributes; fields outside text (⇒ metadata-only class): `purchasable`, `on_sale`, `permalink`, `date_modified`.
 
-No connector change; no schema change (commerce props already exist since #28 B1-3);
-no prompt/rerank/citation/retrieval change; no reindex; no manual data path.
+## 3. GREEN design (both fixes; frozen semantics preserved)
 
-## 4. Metadata update semantics / idempotency / embedding churn
+**Fix-1 — activation path converges the ledger row** (`_build_and_activate`, existing-row branch):
+`doc_row.metadata_ = dict(p.doc.metadata)` plus `product` / `branch` / `source_type` — the same row-truth field set the metadata-only path already writes (title/url/content_hash/chunk_count were already synced via `activate_document_version`). One transaction with version activation: serving rebuild and ledger row converge atomically.
 
-- Metadata-only updates remain exactly FC-5: zero re-embed, zero version fork,
-  single generation; ledger (`documents.metadata_`) and version `metadata_hash`
-  update as before; serving objects + chunk copies now converge.
-- Idempotency: after convergence the next identical sync classifies `UNCHANGED`
-  (meta_hash equal) and performs zero writes — asserted by
-  `test_repeat_sync_idempotent_after_convergence`.
-- Embedding churn: `stack.embedder.calls == []` asserted across all metadata-only
-  rounds; vectors untouched (merge update only). Content that did not change never
-  re-embeds merely to refresh structured commerce metadata (AC3).
+**Fix-2 — metadata-only fail-closed/retryable** (`_apply_metadata_only`):
+Order is now serving-first: Weaviate object merge-update runs **without** a swallowing handler; any exception propagates out of `build_generation` (existing round fail-closed semantics — `SyncLog failed`, window not advanced) **before** the ledger transaction. Only after serving success does the single transaction update `documents.metadata_`, `DocumentVersion.metadata_hash`, and chunk-copy props. A failed round advances no authority ⇒ the next normal sync reclassifies `METADATA_CHANGED` and retries to full convergence. The old "账本先行,残留下轮自愈" comment was removed together with its behavior (it recorded false convergence and could never self-heal once metadata stopped changing).
 
-## 5. Focused results
+No connector change; no schema change; no prompt/rerank/citation/retrieval change; no reindex; no manual data path; commerce props vocabulary unchanged (`COMMERCE_PROPS`); `commerce_synced_at` remains mapped from connector `date_modified` (Store snapshot truth, never fabricated).
 
-`tests/pipeline/test_issue105_commerce_metadata_convergence.py`: **4 passed** post-fix
-(2 RED→GREEN, 2 premise/guard legs stable). RED evidence on base recorded in §2.
+## 4. RED → GREEN evidence (all builder tests use real connector output)
 
-## 6. Regression battery
+Suite `tests/pipeline/test_issue105_commerce_metadata_convergence.py` (7 tests). Documents are produced by the **real `_variation_to_document`** through mocked HTTP (same idiom as `tests/connectors/test_woocommerce_variations.py`); no test constructs a content/metadata state by hand.
+
+- **T1 premise (unit, passes on base and candidate)** — `test_content_equality_does_not_imply_commerce_metadata_equality`: real payloads show `purchasable`/`on_sale`/`permalink`/`date_modified` changes keep `content_hash` identical, while a `stock_status` change necessarily changes it. Both natural classes established from connector semantics.
+- **T2 metadata-only natural class** — `test_metadata_only_natural_class_converges_serving_and_ledger`: same-hash commerce change ⇒ `METADATA_CHANGED`, zero re-embed, zero version fork; serving commerce props (`purchasable`/`on_sale`/`commerce_synced_at`), ledger row, and chunk copies all converge.
+- **T3 stock class (RED on R1 candidate, GREEN after Fix-1)** — `test_content_changed_stock_class_converges_ledger_and_serving`: real stock_status flip ⇒ `CONTENT_CHANGED` ⇒ re-embed + v2; serving converges via rebuild **and `documents.metadata_` now converges** (RED on R1 tree: `assert 'instock' == 'outofstock'` — row JSONB frozen at v1).
+- **T4 price/sale/qty class** — `test_content_changed_price_sale_qty_class_converges`: real price/sale/on_sale/quantity change ⇒ `CONTENT_CHANGED`; ledger + serving converge on all fields incl. `commerce_synced_at`.
+- **T5 production shape** — `test_production_shape_stock_flip_then_repeat_sync_stays_converged`: ingest(instock) → flip(outofstock) → repeat(UNCHANGED); row JSONB converges at the flip round and does not regress — the exact incident timeline, guarded permanently.
+- **T6 blocker-2 failure injection (RED on R1 candidate, GREEN after Fix-2)** — `test_metadata_only_serving_failure_is_fail_closed_and_retryable`: injected `collection.data.update` outage ⇒ round raises; `DocumentVersion.metadata_hash`, row JSONB, chunk copies **all unadvanced** (no false convergence); second normal sync reclassifies `METADATA_CHANGED`, retries, converges serving + ledger + chunk copies; zero embed and one version across both rounds.
+- **T7 idempotency guard** — `test_repeat_sync_idempotent_after_convergence`: post-convergence repeat ⇒ `UNCHANGED`, zero writes.
+
+R2 RED (recorded on the R1 candidate tree before these fixes): T3/T4/T5 failed on the row-JSONB assertions (root cause), T6 failed on `pytest.raises` (fail-open behavior). T1/T2/T7 passed (R1 fix retained and correct for its class).
+
+## 5. Regression battery
 
 | # | Suite | Result |
 |---|-------|--------|
-| 1 | #105 focused | 4/4 passed |
-| 2 | `tests/connectors/test_woocommerce_variations.py` + `tests/scripts/test_migrate_add_commerce_variation_props.py` + `tests/pipeline/test_generation_builder.py` + `tests/pipeline/test_issue94_zero_chunk_builder.py` | 36 passed |
-| 3 | `tests/scripts/` + `tests/services/` + `tests/retrieval/` | 862 passed; 5 failures reproduced identically on the candidate tree without the new tests (pre-existing; see §6.1) |
-| 4 | `tests/pipeline/` + `tests/api/admin/test_trackb_composition_u28_u31.py` | 822 passed after exclusive re-run |
-| 5 | Broad backend regression (`backend/ tests/`, full) | see §6.1 |
-| 6 | scope-check (`ght scope-check 105`) | `pass: true`, 0 violations |
+| 1 | #105 focused R2 | 7/7 passed (4/7 were RED on the R1 tree pre-fix) |
+| 2 | `tests/pipeline/` + `tests/api/admin/test_trackb_composition_u28_u31.py` | 830 passed, 0 failed |
+| 3 | Woo variation + commerce migration + generation-builder + issue94 combos | passed (22/22 combined run) |
+| 4 | **Broad full suite, pristine-base diff** (identical venv/env, complete logs) | base `926dfb7a`: 4 failed / 3078 passed / 0 errors — candidate R2: **4 failed / 3086 passed / 0 errors**; failure sets **item-for-item identical** (known baseline: `gap_export`×2, `gap_observation`×1, `tech_answer_gaps`×1); delta = +8 passed (7 new focused tests + 1 environment skip difference), **zero new failures** |
+| 5 | scope-check + preserve | `ght scope-check 105` pass / 0 violations; preserve ACTIVE |
 
-### 6.1 Broad regression + pristine-base attribution (authoritative)
+Process honesty notes: an R1-era broad attempt was invalidated by concurrent pytest runs sharing `ask_ai_test` PG/Weaviate (cross-contaminated generation ordinals) — all R2 runs executed exclusively. A worktree-local model-cache symlink pitfall (nested `models/models`) produced transient bge/lifespan errors in one R1 run — environment, not code; the R2 full-suite log shows zero such errors. A test-only ordering bug (UUID-PK `versions[1]` nondeterminism in my own helper) was fixed to order by `version_seq`.
 
-Both runs full suite `backend/ tests/`, `HF_HUB_OFFLINE=1`, identical venv, complete logs:
+## 6. Scope-check & boundaries
 
-| Run | Result |
-|-----|--------|
-| **Pristine base** `926dfb7a` (detached temp worktree) | **4 failed, 3078 passed, 8 skipped, 0 errors** |
-| **Candidate** (implementation `ce3dbfa` + this report) | **4 failed, 3082 passed, 8 skipped, 0 errors** |
+`ght scope-check 105` → pass, 0 violations. Frozen boundaries untouched: variation identity `{product_id}:{variation_id}`, parent documents, endpoint-truth-only variations, no Cartesian synthesis, product isolation, citation integrity, retrieval fail-closed, prompt/rerank semantics, no hard-coded store/product truth in code (probe fixture values are generic). No reindex, no manual SQL, no vector-DB surgery, no deploy, no production mutation (production access this round = the read-only forensic queries in §1, as required by the review).
 
-Failure sets are **item-for-item identical** and pre-existing at base (known baseline):
-`test_gap_export.py::test_export_action_audited_and_queryable`,
-`test_gap_export.py::test_export_scope_window_inheritance`,
-`test_gap_observation.py::test_window_not_elapsed_no_recurrence_noop`,
-`test_tech_answer_gaps.py::test_answer_gaps_window_honest_four_states`.
-The candidate passes exactly **+4** tests (the focused #105 suite) with **zero new
-failures** — regression equivalence proven by direct base-vs-candidate diff.
+## 7. Remaining limitations
 
-Process notes (instrumentation honesty): an earlier broad attempt was invalidated
-(a concurrently executed targeted suite shared the same `ask_ai_test` Postgres/Weaviate
-and cross-contaminated generation-ordinal state) and re-run exclusively. A second
-candidate run initially showed bge-reranker×4 errors + `test_lifespan_smoke` —
-traced to a **broken local model-cache symlink in the scratch worktree** (nested
-`models/models`), i.e. environment, not code: the pristine-base run with a correct
-symlink passes all of them, and after repairing the symlink the candidate run shows
-zero such failures. Neither artifact relates to the candidate diff.
-
-## 7. Scope-check
-
-`ght scope-check 105` → `{"pass": true, "violations": [], "counts": {"ALLOWED": 0, "FORBIDDEN": 0}}`.
-Frozen boundaries untouched: variation identity `{product_id}:{variation_id}`, parent
-documents, endpoint-truth-only variations (no Cartesian synthesis), product isolation,
-citation integrity, retrieval fail-closed, prompt/rerank semantics. No hard-coded
-product/store identities in code or tests (the 5110/5950 numbers appear only as
-arbitrary probe fixture values in the test file, mirroring the production repro shape).
-
-## 8. Remaining limitations
-
-1. Convergence requires the incremental path to **see** the changed metadata
-   (`fetch_changes` must return the product). Store-side payload staleness/caching at
-   the Store API boundary is outside this corrective's reach (production probe proved
-   `fetch_changes` returns the fresh truth; AC6 re-verification after deploy will
-   confirm end-to-end on the live identities).
-2. Serving rows whose ledger metadata already equals Store truth but whose Weaviate
-   commerce props pre-date B1-3 remain untouched by normal syncs (UNCHANGED path);
-   the deployed commerce-props migration already covers that population, and AC6
-   production acceptance will verify.
-3. The five environment-dependent baseline failures in recovery/executor tests
-   pre-date this candidate (attributed at base) and are proposed as a follow-up
-   hygiene task for Role A triage.
+1. Convergence requires the incremental path to **see** the change (`fetch_changes` must return the product); Store-API-side payload staleness remains out of scope. AC6 production acceptance (post-merge/deploy, normal Woo re-sync on `5110:5950/5951`) will verify end-to-end: after Fix-1 the next content-changed or metadata-changed round converges the row; for the current production rows specifically, the *first* post-deploy sync will classify `UNCHANGED` on both hashes — **note**: their ledger JSONB is stale while their version hashes are current, so convergence for these two identities requires the row-JSONB repair surface (deploy-time migration or a Role A-authorized correction) rather than the incremental classifier, which cannot see a row/version divergence it does not compare. This is flagged honestly for the AC6 plan.
+2. The four known-baseline failures (`gap_export`×2 / `gap_observation` / `tech_answer_gaps`) pre-date this candidate (proven at pristine base) — proposed for hygiene triage.

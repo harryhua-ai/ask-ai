@@ -1,32 +1,32 @@
-"""Issue #105 RED — content equality ≠ commerce metadata equality(增量同步新鲜度)。
+"""Issue #105 (R2) — commerce metadata freshness along the REAL connector paths.
 
-生产实证(#28 验收波,#28 评论 5771553047):Store 变体 5110:5950/5951 已
-``outofstock``,canonical re-sync 成功后账本 ``stock_status`` 仍 ``instock``、
-``commerce_synced_at`` 恒空 —— content_hash 相等被当作「无变化」,authoritative
-commerce metadata 的差异被系统性丢弃。
+Role A REVIEW_1(#109 评论 5772503175)整改:全部测试改用**真实
+`_variation_to_document` 输出**(mock HTTP,零外网)喂 builder,禁止合成
+VARIANT_CONTENT + 手改 metadata 的状态。
 
-本文件按任务 RED 规格构造 T1/T2:
+生产机械事实(#28 评论 5771553047 + R2 只读取证,2026-09-22):
 
-- T1:content_hash = H;commerce metadata:stock_status=instock、
-  purchasable=true、date_modified=D1、stock_quantity=5;
-- T2:content_hash **仍 = H**(内容一字不改);authoritative Store metadata
-  改变(stock_status=outofstock、purchasable=false、date_modified=D2)。
+- `5110:5950/5951`:documents 行 JSONB 仍 `stock_status=instock`、
+  `date_modified=2026-09-18T14:02:32`(v1 时代),而行 `content_hash` 已是
+  v2(1233ac44…,2026-09-21 20:25 激活,outofstock 内容);
+- 根因(代码 + 生产 dual-proven):**内容变更激活路径不回写
+  `documents.metadata_`** —— `activate_document_version` 只同步
+  content_hash/chunk_count/title/url;`metadata_` 仅存在于
+  `_build_and_activate` 的「新行」分支。分类器权威是
+  `DocumentVersion.metadata_hash`(激活时已写新值)⇒ 之后每轮 UNCHANGED,
+  账本行 JSONB 商业真值永久陈旧 —— **不是 metadata-only 路径**。
 
-缺陷核心 = **content equality != commerce metadata equality**:正常增量
-sync 必须在 content 未变时仍把 serving/vector commerce props(含
-commerce_synced_at)收敛到 Store 真值 —— 零重嵌、零版本分叉、幂等,
-绝不用 --reindex/手工修数充当正确性机制。
+两类自然路径都必须收敛(R2 契约):
 
-两条腿:
+- metadata-only natural class:purchasable / on_sale / permalink /
+  date_modified 变化 **不改变** content_hash ⇒ METADATA_CHANGED ⇒
+  零重嵌收敛 serving + ledger + chunk 副本;
+- content-changing commerce class:stock_status / stock_quantity / price /
+  sale 变化**天然改变** content(连接器把这些写进可检索文本)⇒
+  CONTENT_CHANGED ⇒ 重建收敛 serving 真值 **且账本行 JSONB 同步追平**。
 
-- 连接器腿(纯单元):真实连接器语义下,purchasable/on_sale/permalink/
-  date_modified 变化**天然不改变 content**(这些字段本就不在可检索文本
-  行内)⇒ 同 content_hash + 异 commerce metadata 是真实存在类,非合成;
-- 构建器腿(真 PG + 真 Weaviate,不可达 skip):T1→T2 走增量分类路径,
-  证明当前 main 的 serving/vector commerce metadata 不收敛(RED),
-  修复后收敛且幂等(GREEN)。
-
-零外网;不硬编码任何真实产品/SKU。
+另含 R2 blocker 2:metadata-only 的 Weaviate 失败必须 fail-closed ——
+serving 更新失败不得推进任何权威状态,下一轮 normal sync 必须重试并收敛。
 """
 
 import os
@@ -39,7 +39,6 @@ import weaviate
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from backend.connectors.base import RawDocument
 from backend.connectors.registry import ConnectorRegistry, SourceConfig
 from backend.db.models import (
     Base,
@@ -58,71 +57,103 @@ TEST_DSN = os.environ.get(
 WEAVIATE_PORT = int(os.environ.get("P1_WEAVIATE_PORT", "8080"))
 CLASS_NAME = "Issue105Probe"
 SRC = "issue105-src"
-PREFIX = "issue105/"
-SID = PREFIX + "5110/5950"
-
-# T1/T2 **同一** content(缺陷核心:content 相等;禁止改文本来制造 RED)
-VARIANT_CONTENT = (
-    "# Probe Camera — Wi-Fi\n\n"
-    "SKU: 76.001.000042\n\n"
-    "Price: $199.9\n\n"
-    "Stock: instock (5)\n\n"
-    "Attributes: pa_model=wi-fi"
-)
+PREFIX = "issue105-src/"
+SID = PREFIX + "5110/5950"  # = 连接器 source_id `{config.id}/{pid}/{vid}`
 
 D1 = "2026-09-20T10:00:00"
 D2 = "2026-09-21T17:31:44"
+PERMALINK_V1 = "https://www.example.com/store/probe/?attribute_pa_model=wi-fi"
+PERMALINK_V2 = "https://www.example.com/store/probe-v2/?attribute_pa_model=wi-fi"
 
 
-def _woo_meta(
-    *,
-    stock_status: str,
-    purchasable: bool,
-    date_modified: str,
-    stock_quantity: int | None,
-    permalink: str = "https://www.example.com/store/probe/?attribute_pa_model=wi-fi",
-    on_sale: bool = False,
-) -> dict:
-    """变体 commerce metadata(键 = 连接器 `_variation_to_document` 词表)。"""
+def _make_connector():
+    import backend.connectors.woocommerce  # noqa: F401 - 触发 @register
+
+    return ConnectorRegistry.create(
+        SourceConfig(
+            id=SRC,
+            type="woocommerce",
+            product="commercial",
+            enabled=True,
+            config={
+                "store_url": "https://www.example.com",
+                "consumer_key": "ck_test",
+                "consumer_secret": "cs_test",
+            },
+            sync_interval="1h",
+        )
+    )
+
+
+def _parent() -> dict:
     return {
-        "product_id": 5110,
-        "variation_id": 5950,
-        "variation_identity_key": "5110:5950",
-        "commerce_type": "variation",
+        "id": 5110,
+        "name": "Probe Camera",
+        "slug": "probe-camera",
+        "permalink": "https://www.example.com/store/probe-camera/",
+        "type": "variable",
+        "status": "publish",
+        "stock_status": "instock",
+        "date_modified": D2,
+        "categories": [{"id": 1, "name": "Probe", "slug": "probe"}],
+        "variations": [5950],
+    }
+
+
+def _variation(**overrides) -> dict:
+    """真实 wc/v3 variation payload 形态(通用探针产品,零硬编码商业真值)。"""
+    v: dict = {
+        "id": 5950,
         "sku": "76.001.000042",
         "price": "199.9",
         "regular_price": "199.9",
         "sale_price": "",
-        "on_sale": on_sale,
-        "stock_status": stock_status,
-        "stock_quantity": stock_quantity,
-        "purchasable": purchasable,
-        "attributes": [{"slug": "pa_model", "option": "wi-fi"}],
-        "variation_attributes": ["pa_model=wi-fi"],
-        "permalink": permalink,
-        "date_modified": date_modified,
-        "categories": ["Probe"],
-        "type": "variation",
+        "on_sale": False,
+        "purchasable": True,
+        "stock_status": "instock",
+        "stock_quantity": 5,
+        "permalink": PERMALINK_V1,
+        "date_modified": D1,
+        "attributes": [
+            {"id": 1, "name": "Model", "slug": "pa_model", "option": "wi-fi"}
+        ],
         "status": "publish",
     }
+    v.update(overrides)
+    return v
 
 
-def _woo_doc(metadata: dict, content: str = VARIANT_CONTENT) -> RawDocument:
-    import hashlib
+def _fetch_variation_doc(overrides: dict):
+    """经真实连接器管线(mock HTTP)产出 variation RawDocument。
 
-    return RawDocument(
-        source_id=SID,
-        source_type="woocommerce",
-        product="probe-camera",
-        title="Probe Camera — Wi-Fi",
-        content=content,
-        url=metadata["permalink"],
-        metadata=metadata,
-        content_hash=hashlib.sha256(content.encode()).hexdigest(),
-        channel_visibility=("widget", "api"),
-        branch="",
-        content_type="variation",
-    )
+    content / content_hash / metadata 全部由 `_variation_to_document`
+    权威生成 —— 测试不手工构造内容状态。
+    """
+    connector = _make_connector()
+
+    def _fake_get(path: str, *, params=None):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        if path.endswith("/products"):
+            resp.json.return_value = [_parent()]
+        else:
+            assert path.endswith("/products/5110/variations")
+            resp.json.return_value = [_variation(**overrides)]
+        return resp
+
+    with patch.object(connector, "_get", side_effect=_fake_get):
+        docs = [
+            d
+            for d in connector.fetch_changes(datetime(2026, 9, 1, tzinfo=UTC))
+            if d.metadata.get("variation_id") == 5950
+        ]
+    assert len(docs) == 1
+    return docs[0]
+
+
+# --------------------------------------------------------------------------- #
+# 真实栈 fixture(真 PG + 真 Weaviate;不可达 skip,与门测试套件同模式)
+# --------------------------------------------------------------------------- #
 
 
 class _FakeEmbedder:
@@ -197,13 +228,33 @@ def _purge(s) -> None:
     s.commit()
 
 
-def _current_version(sf):
+def _versions(sf):
     with sf() as s:
         ver = s.execute(
-            select(DocumentVersion).where(DocumentVersion.source_id == SID)
+            select(DocumentVersion)
+            .where(DocumentVersion.source_id == SID)
+            .order_by(DocumentVersion.version_seq)  # id 是 UUID 无序;seq 才是版本序
         ).scalars().all()
         s.expunge_all()
     return ver
+
+
+def _row(sf):
+    with sf() as s:
+        row = s.execute(select(Document).where(Document.source_id == SID)).scalar_one()
+        s.expunge(row)
+    return row
+
+
+def _chunk_copies(sf, version):
+    with sf() as s:
+        chunks = s.execute(
+            select(DocumentVersionChunk).where(
+                DocumentVersionChunk.version_id == version.id
+            )
+        ).scalars().all()
+        s.expunge_all()
+    return chunks
 
 
 def _serving_objects(ns, version):
@@ -217,216 +268,268 @@ def _serving_objects(ns, version):
 
 
 # --------------------------------------------------------------------------- #
-# 连接器腿:同 content_hash + 异 commerce metadata 是真实语义类(零外网)
+# 前提腿:content equality ≠ commerce metadata equality(真实连接器语义)
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.unit
 def test_content_equality_does_not_imply_commerce_metadata_equality():
-    """AC1 前提:authoritative commerce metadata 变化**不必**改变 content。
+    """authoritative commerce metadata 变化**不必**改变 content_hash。
 
-    purchasable / on_sale / permalink / date_modified 均不在可检索文本行内:
-    两个真实 Store variation payload 可以 content 逐字节相等而商业真值相反
-    ⇒ content_hash 相等是这些字段变化时的**常态**,不是合成场景。
+    purchasable / on_sale / permalink / date_modified 均不在连接器可检索
+    文本行内:两个真实 Store payload 可以 content 逐字节相等而商业真值相反
+    ⇒ 同 hash + 异 commerce metadata 是连接器**天然产出**,非合成状态。
+    对照组:stock_status 在 Stock 行内 ⇒ 真实连接器下必改 content_hash。
     """
-    import backend.connectors.woocommerce  # noqa: F401 - 触发 @register
-
-    connector = ConnectorRegistry.create(
-        SourceConfig(
-            id="woocommerce-mall",
-            type="woocommerce",
-            product="commercial",
-            enabled=True,
-            config={
-                "store_url": "https://www.example.com",
-                "consumer_key": "ck_test",
-                "consumer_secret": "cs_test",
-            },
-            sync_interval="1h",
-        )
+    d1 = _fetch_variation_doc({})
+    d2 = _fetch_variation_doc(
+        {
+            "purchasable": False,
+            "on_sale": True,
+            "permalink": PERMALINK_V2,
+            "date_modified": D2,
+        }
     )
-    parent = {
-        "id": 5110,
-        "name": "Probe Camera",
-        "slug": "probe-camera",
-        "permalink": "https://www.example.com/store/probe-camera/",
-        "type": "variable",
-        "status": "publish",
-        "stock_status": "instock",
-        "date_modified": D2,
-        "categories": [{"id": 1, "name": "Probe", "slug": "probe"}],
-        "variations": [5950],
-    }
-    # T1:在售可购;T2:下架不可购 + permalink 改版 + date_modified 推进。
-    # price/stock/attrs/sku 全部不变 ⇒ content 逐字节相等。
-    v_t1 = {
-        "id": 5950,
-        "sku": "76.001.000042",
-        "price": "199.9",
-        "regular_price": "199.9",
-        "sale_price": "",
-        "on_sale": False,
-        "purchasable": True,
-        "stock_status": "instock",
-        "stock_quantity": 5,
-        "permalink": "https://www.example.com/store/probe/?attribute_pa_model=wi-fi",
-        "date_modified": D1,
-        "attributes": [{"id": 1, "name": "Model", "slug": "pa_model", "option": "wi-fi"}],
-        "status": "publish",
-    }
-    v_t2 = {
-        **v_t1,
-        "purchasable": False,
-        "on_sale": True,
-        "permalink": "https://www.example.com/store/probe-v2/?attribute_pa_model=wi-fi",
-        "date_modified": D2,
-    }
-
-    with patch.object(
-        connector,
-        "_get",
-        side_effect=lambda path, *, params=None: _resp(
-            [parent] if path.endswith("/products") else [v_t1]
-        ),
-    ):
-        t1_docs = [d for d in connector.fetch_changes(datetime(2026, 9, 20, 10, 0, 0, tzinfo=UTC)) if d.metadata.get("variation_id") == 5950]
-    with patch.object(
-        connector,
-        "_get",
-        side_effect=lambda path, *, params=None: _resp(
-            [parent] if path.endswith("/products") else [v_t2]
-        ),
-    ):
-        t2_docs = [d for d in connector.fetch_changes(datetime(2026, 9, 21, 17, 0, 0, tzinfo=UTC)) if d.metadata.get("variation_id") == 5950]
-
-    assert len(t1_docs) == 1 and len(t2_docs) == 1
-    d1, d2 = t1_docs[0], t2_docs[0]
-    # 增量抓取**看得见** T2(fetch_changes 返回了它)…
+    assert d1.content_hash == d2.content_hash, "purchasable/on_sale/permalink/date 不改内容 ⇒ 同 hash"
+    assert d2.metadata["purchasable"] is False and d1.metadata["purchasable"] is True
     assert d2.metadata["date_modified"] == D2
-    # …且 content_hash 与 T1 完全相等(content equality):
-    assert d1.content_hash == d2.content_hash
-    # …而 authoritative commerce metadata 已变(metadata equality 不成立):
-    assert d1.metadata["purchasable"] is True and d2.metadata["purchasable"] is False
-    assert d1.metadata["on_sale"] is False and d2.metadata["on_sale"] is True
-    assert d1.metadata["permalink"] != d2.metadata["permalink"]
-
-
-def _resp(payload) -> MagicMock:
-    resp = MagicMock()
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = payload
-    return resp
+    d3 = _fetch_variation_doc({"stock_status": "outofstock", "date_modified": D2})
+    assert d3.content_hash != d1.content_hash, (
+        "stock_status 变化经真实连接器必然改变 content(Stock 行)⇒ CONTENT_CHANGED 类"
+    )
 
 
 # --------------------------------------------------------------------------- #
-# 构建器腿:T1→T2(同 hash)增量路径必须收敛 serving commerce 真值
+# Class M:metadata-only natural class(同 hash)零重嵌全收敛
 # --------------------------------------------------------------------------- #
 
 
-def test_metadata_only_converges_serving_commerce_props(stack):
-    """AC1+AC2:content 未变、Store 商业真值变化 ⇒ 正常增量 sync 收敛。
-
-    RED(当前 main):账本 metadata 收敛,但 Weaviate 对象 props 与持久
-    chunk 副本的 commerce props(stock_status/purchasable/commerce_synced_at)
-    残留 T1 旧值 —— serving 真值不收敛。
-    GREEN:同一 metadata-only 路径同步刷新 commerce props(向量不动)。
+def test_metadata_only_natural_class_converges_serving_and_ledger(stack):
+    """purchasable/on_sale/permalink/date_modified(真实连接器输出,同 hash)
+    ⇒ METADATA_CHANGED ⇒ 零重嵌收敛 serving commerce props + 账本行 + chunk 副本。
     """
-    t1 = _woo_doc(
-        _woo_meta(
-            stock_status="instock",
-            purchasable=True,
-            date_modified=D1,
-            stock_quantity=5,
-        )
+    t1 = _fetch_variation_doc({})
+    t2 = _fetch_variation_doc(
+        {
+            "purchasable": False,
+            "on_sale": True,
+            "permalink": PERMALINK_V2,
+            "date_modified": D2,
+        }
     )
-    t2 = _woo_doc(
-        _woo_meta(
-            stock_status="outofstock",
-            purchasable=False,
-            date_modified=D2,
-            stock_quantity=5,
-        )
-    )
-    assert t1.content_hash == t2.content_hash, "T1/T2 必须同 content_hash(缺陷前提)"
+    assert t1.content_hash == t2.content_hash
 
-    first = stack.builder.build_generation([t1], source_id=SRC)
-    assert first.new_docs == [SID]
-    versions = _current_version(stack.sync_factory)
-    assert len(versions) == 1
-    v1 = versions[0]
+    stack.builder.build_generation([t1], source_id=SRC)
+    v1 = _versions(stack.sync_factory)[0]
     stack.embedder.calls.clear()
 
-    # T2:同 content_hash,authoritative commerce metadata 已变 → 增量分类
-    second = stack.builder.build_generation([t2], source_id=SRC)
-    assert second.metadata_docs == [SID], "T2 必须走 metadata-only 路径(FC-5:不重嵌不分叉)"
+    accounting = stack.builder.build_generation([t2], source_id=SRC)
+    assert accounting.metadata_docs == [SID], "同 hash 商业真值变化必须走 metadata-only 路径"
+    assert accounting.updated_docs == [] and accounting.new_docs == []
     assert stack.embedder.calls == [], "metadata-only 零重嵌(AC3)"
-    versions = _current_version(stack.sync_factory)
-    assert len(versions) == 1 and versions[0].id == v1.id, "零版本分叉(AC3)"
+    versions = _versions(stack.sync_factory)
+    assert len(versions) == 1 and versions[0].id == v1.id, "零版本分叉"
 
-    # 账本收敛(此半在当前 main 已真:metadata-only 全量替换 metadata_)
-    with stack.sync_factory() as s:
-        row = s.execute(select(Document).where(Document.source_id == SID)).scalar_one()
-        assert row.metadata_["stock_status"] == "outofstock"
-        assert row.metadata_["commerce_type"] == "variation"
-
-    # serving/vector commerce props 收敛(RED:当前 main 残留 T1 旧值)
-    objects = _serving_objects(stack, versions[0])
-    assert objects, "在服对象必须存在"
-    for obj in objects:
-        assert obj.properties.get("stock_status") == "outofstock", (
-            "RED(#105): metadata-only 路径不投影 commerce props —— serving "
-            "stock_status 残留 T1 旧值,生产 5110:5950/5951 缺陷的机制级复现"
-        )
+    for obj in _serving_objects(stack, versions[0]):
         assert obj.properties.get("purchasable") is False
+        assert obj.properties.get("on_sale") is True
         assert obj.properties.get("commerce_synced_at") == D2, (
-            "commerce_synced_at 必须如实取 Store snapshot date_modified(不伪造时间)"
+            "commerce_synced_at 必须如实取 Store snapshot date_modified"
         )
-        assert obj.properties.get("variation_identity_key") == "5110:5950"
-
-    # 持久 chunk 副本(repair 重建真值源)同步收敛
-    with stack.sync_factory() as s:
-        chunks = s.execute(
-            select(DocumentVersionChunk).where(
-                DocumentVersionChunk.version_id == versions[0].id
-            )
-        ).scalars().all()
-    assert chunks
-    for c in chunks:
-        assert c.props.get("stock_status") == "outofstock", (
-            "持久 chunk 副本 commerce props 必须同步(否则 repair 重建会复活陈旧商业真值)"
-        )
+    row = _row(stack.sync_factory)
+    assert row.metadata_["purchasable"] is False and row.metadata_["on_sale"] is True
+    assert row.metadata_["date_modified"] == D2
+    assert row.url == PERMALINK_V2
+    for c in _chunk_copies(stack.sync_factory, versions[0]):
+        assert c.props.get("purchasable") is False
+        assert c.props.get("commerce_synced_at") == D2
 
 
-def test_metadata_only_clears_unmanaged_stock_quantity(stack):
-    """AC2(诚实缺席):端点停止管理库存(None)⇒ serving 不得残留旧数量。
+# --------------------------------------------------------------------------- #
+# Class C:content-changing commerce class(真实 STOCK/PRICE/SALE/QTY 变化)
+#   —— 生产 5110:5950/5951 的真实路径;账本行 JSONB 必须随激活追平(RED 根因)
+# --------------------------------------------------------------------------- #
 
-    COMMERCE_PROPS 词表:stock_quantity None = 端点未管理库存 → 键省略
-    (不写 0 伪装)。merge update 语义下「省略」= 残留 ⇒ 必须显式收敛到缺席。
+
+def test_content_changed_stock_class_converges_ledger_and_serving(stack):
+    """stock_status 变化(真实连接器:改 Stock 行 ⇒ hash 变)⇒ CONTENT_CHANGED
+    ⇒ 重建收敛 serving **且 documents.metadata_ 追平**。
+
+    RED(整改前):激活只同步 content_hash/chunk_count/title/url,
+    行 JSONB 永久停留 v1 的 instock/D1 —— 生产 5110:5950/5951 实录。
     """
-    t1 = _woo_doc(
-        _woo_meta(stock_status="instock", purchasable=True, date_modified=D1, stock_quantity=5)
-    )
-    t2 = _woo_doc(
-        _woo_meta(stock_status="instock", purchasable=True, date_modified=D2, stock_quantity=None)
-    )
+    t1 = _fetch_variation_doc({})
+    t2 = _fetch_variation_doc({"stock_status": "outofstock", "date_modified": D2})
+    assert t2.content_hash != t1.content_hash, "真实连接器下 stock_status 变化必改 content_hash"
+
     stack.builder.build_generation([t1], source_id=SRC)
     stack.embedder.calls.clear()
 
     accounting = stack.builder.build_generation([t2], source_id=SRC)
-    assert accounting.metadata_docs == [SID]
-    assert stack.embedder.calls == []
-    versions = _current_version(stack.sync_factory)
-    objects = _serving_objects(stack, versions[0])
-    for obj in objects:
-        assert not obj.properties.get("stock_quantity"), (
-            "RED(#105): 端点已不管理库存,serving 不得残留 T1 的 stock_quantity"
-        )
+    assert accounting.updated_docs == [SID], "内容变更必须走 CONTENT_CHANGED 重建路径"
+    assert accounting.metadata_docs == []
+    assert len(stack.embedder.calls) >= 1, "内容变更必须真实重嵌(非 metadata-only)"
+    versions = _versions(stack.sync_factory)
+    assert len(versions) == 2, "内容变更 ⇒ 新版本(v2)"
+
+    row = _row(stack.sync_factory)
+    assert row.content_hash == versions[1].content_hash == t2.content_hash
+    assert row.metadata_["stock_status"] == "outofstock", (
+        "RED(#105 R2 根因): 激活路径必须回写 documents.metadata_ —— "
+        "分类器权威(version.metadata_hash)已新而行 JSONB 停在 v1,永久陈旧"
+    )
+    assert row.metadata_["date_modified"] == D2
+    assert versions[1].metadata_hash != versions[0].metadata_hash
+
+    for obj in _serving_objects(stack, versions[1]):
+        assert obj.properties.get("stock_status") == "outofstock"
+        assert obj.properties.get("commerce_synced_at") == D2
+    for c in _chunk_copies(stack.sync_factory, versions[1]):
+        assert c.props.get("stock_status") == "outofstock"
 
 
+def test_content_changed_price_sale_qty_class_converges(stack):
+    """price/sale/stock_quantity 变化(真实连接器:改 Price/Sale/Stock 行)
+    ⇒ CONTENT_CHANGED ⇒ 账本 + serving 商业真值收敛。
+    """
+    t1 = _fetch_variation_doc({})
+    stack.builder.build_generation([t1], source_id=SRC)
+
+    t2 = _fetch_variation_doc(
+        {
+            "price": "179.9",
+            "regular_price": "199.9",
+            "sale_price": "179.9",
+            "on_sale": True,
+            "stock_quantity": 3,
+            "date_modified": D2,
+        }
+    )
+    assert t2.content_hash != t1.content_hash, "price/sale/qty 变化经真实连接器必改 content"
+
+    accounting = stack.builder.build_generation([t2], source_id=SRC)
+    assert accounting.updated_docs == [SID]
+    versions = _versions(stack.sync_factory)
+    assert len(versions) == 2
+
+    row = _row(stack.sync_factory)
+    assert row.metadata_["price"] == "179.9"
+    assert row.metadata_["sale_price"] == "179.9"
+    assert row.metadata_["on_sale"] is True
+    assert row.metadata_["stock_quantity"] == 3
+    assert row.metadata_["date_modified"] == D2
+
+    for obj in _serving_objects(stack, versions[1]):
+        assert obj.properties.get("price") == "179.9"
+        assert obj.properties.get("sale_price") == "179.9"
+        assert obj.properties.get("on_sale") is True
+        assert obj.properties.get("stock_quantity") == 3
+
+
+def test_production_shape_stock_flip_then_repeat_sync_stays_converged(stack):
+    """生产事故三连形状:T0 首灌(instock)→ T1 翻 outofstock(内容变更轮)
+    → T2 重复同步(UNCHANGED)—— 账本行商业真值必须在 T1 追平且 T2 保持。
+
+    RED(整改前):T1 轮行 JSONB 不追平 ⇒ T2 起 UNCHANGED ⇒ 永久陈旧
+    (生产 2026-09-22 实录:行 date_modified 停在 v1 时代)。
+    """
+    t0 = _fetch_variation_doc({})
+    t1 = _fetch_variation_doc({"stock_status": "outofstock", "date_modified": D2})
+
+    stack.builder.build_generation([t0], source_id=SRC)
+    stack.builder.build_generation([t1], source_id=SRC)
+    row = _row(stack.sync_factory)
+    assert row.metadata_["stock_status"] == "outofstock", "翻 stock 轮必须追平行 JSONB(根因)"
+    assert row.metadata_["date_modified"] == D2
+
+    repeat = stack.builder.build_generation([t1], source_id=SRC)
+    assert repeat.unchanged_docs == [SID], "收敛后重复同步必须判 UNCHANGED"
+    assert repeat.metadata_docs == [] and repeat.updated_docs == []
+    row_after = _row(stack.sync_factory)
+    assert row_after.metadata_["stock_status"] == "outofstock", "UNCHANGED 轮不得回退已收敛真值"
+    assert row_after.metadata_["date_modified"] == D2
+
+
+# --------------------------------------------------------------------------- #
+# R2 blocker 2:metadata-only serving 失败 ⇒ fail-closed + 下轮可重试
+# --------------------------------------------------------------------------- #
+
+
+def test_metadata_only_serving_failure_is_fail_closed_and_retryable(
+    stack, monkeypatch
+):
+    """Weaviate 对象更新失败 ⇒ **不推进任何权威状态**(version.metadata_hash /
+    账本行 / chunk 副本原样),下一轮 normal sync 仍判 METADATA_CHANGED 重试并
+    三面收敛;全程零重嵌、零版本分叉。旧实现「吞异常 + 账本先行」记录假收敛
+    且永不自愈 —— 本测试锁定 fail-closed 语义。
+    """
+    t1 = _fetch_variation_doc({})
+    t2 = _fetch_variation_doc(
+        {
+            "purchasable": False,
+            "on_sale": True,
+            "permalink": PERMALINK_V2,
+            "date_modified": D2,
+        }
+    )
+    stack.builder.build_generation([t1], source_id=SRC)
+    v1 = _versions(stack.sync_factory)[0]
+    row1 = _row(stack.sync_factory)
+    v1_meta_hash = v1.metadata_hash
+    stack.embedder.calls.clear()
+
+    # 第一轮:serving 对象更新注入失败
+    collection = stack.pipeline._collection
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("injected weaviate update outage")
+
+    monkeypatch.setattr(collection.data, "update", _boom)
+    with pytest.raises(RuntimeError, match="injected weaviate update outage"):
+        stack.builder.build_generation([t2], source_id=SRC)
+    monkeypatch.undo()
+
+    # 失败轮:权威不前推(无假收敛)
+    failed_versions = _versions(stack.sync_factory)
+    assert len(failed_versions) == 1 and failed_versions[0].id == v1.id
+    assert failed_versions[0].metadata_hash == v1_meta_hash, (
+        "serving 失败绝不推进 DocumentVersion.metadata_hash(否则下轮 UNCHANGED 永不重试)"
+    )
+    row_failed = _row(stack.sync_factory)
+    assert row_failed.metadata_ == row1.metadata_, "serving 失败不得记录假账本收敛"
+    for c in _chunk_copies(stack.sync_factory, failed_versions[0]):
+        assert c.props.get("purchasable") is True, "chunk 副本不得在失败轮前推"
+    assert stack.embedder.calls == [], "重试路径同样零重嵌"
+
+    # 第二轮:normal sync 自动重试(分类器仍见 metadata 差异)→ 三面收敛
+    accounting = stack.builder.build_generation([t2], source_id=SRC)
+    assert accounting.metadata_docs == [SID], "失败轮不前推权威 ⇒ 下轮仍 METADATA_CHANGED 可重试"
+    versions = _versions(stack.sync_factory)
+    assert len(versions) == 1 and versions[0].id == v1.id, "零版本分叉"
+    assert stack.embedder.calls == [], "全程零重嵌"
+
+    for obj in _serving_objects(stack, versions[0]):
+        assert obj.properties.get("purchasable") is False
+        assert obj.properties.get("commerce_synced_at") == D2
+    row2 = _row(stack.sync_factory)
+    assert row2.metadata_["purchasable"] is False
+    assert row2.metadata_["date_modified"] == D2
+    assert versions[0].metadata_hash != v1_meta_hash, "成功轮才前推权威"
+    for c in _chunk_copies(stack.sync_factory, versions[0]):
+        assert c.props.get("purchasable") is False
+        assert c.props.get("commerce_synced_at") == D2
+
+
+@pytest.mark.unit
 def test_repeat_sync_idempotent_after_convergence(stack):
-    """AC4:收敛后重复相同 sync ⇒ UNCHANGED、零写入、props 不再抖动。"""
-    t2 = _woo_doc(
-        _woo_meta(stock_status="outofstock", purchasable=False, date_modified=D2, stock_quantity=5)
+    """AC4:收敛后重复相同 sync ⇒ UNCHANGED、零写入(守卫,真实连接器文档)。"""
+    t2 = _fetch_variation_doc(
+        {
+            "purchasable": False,
+            "on_sale": True,
+            "permalink": PERMALINK_V2,
+            "date_modified": D2,
+        }
     )
     stack.builder.build_generation([t2], source_id=SRC)
     stack.embedder.calls.clear()
@@ -435,8 +538,8 @@ def test_repeat_sync_idempotent_after_convergence(stack):
     assert repeat.unchanged_docs == [SID], "收敛后重复 sync 必须判 UNCHANGED(幂等)"
     assert repeat.metadata_docs == [] and repeat.new_docs == [] and repeat.updated_docs == []
     assert stack.embedder.calls == [], "UNCHANGED 零 embed"
-    versions = _current_version(stack.sync_factory)
+    versions = _versions(stack.sync_factory)
     assert len(versions) == 1
     for obj in _serving_objects(stack, versions[0]):
-        assert obj.properties.get("stock_status") == "outofstock"
+        assert obj.properties.get("purchasable") is False
         assert obj.properties.get("commerce_synced_at") == D2
