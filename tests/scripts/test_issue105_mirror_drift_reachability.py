@@ -135,8 +135,8 @@ def _fake_get_for(variation_payload: dict):
     return _fake_get
 
 
-def _variation_doc(connector):
-    docs = [d for d in connector.fetch_all() if d.metadata.get("variation_id") == 5950]
+def _variation_doc(connector, vid: int = 5950):
+    docs = [d for d in connector.fetch_all() if d.metadata.get("variation_id") == vid]
     assert len(docs) == 1
     return docs[0]
 
@@ -424,3 +424,210 @@ async def test_empty_incremental_sync_reconciles_mirror_drift(stack, monkeypatch
     assert stack.embedder.calls == [], "全程零重嵌"
     assert len(_versions(stack.sync_factory)) == 2
     assert _generation_count(stack.sync_factory) == gens_before
+
+
+# --------------------------------------------------------------------------- #
+# R5(REVIEW_R4):no-change 钩子必须严格 mirror-drift-only
+# --------------------------------------------------------------------------- #
+
+
+def _base_variation(vid: int, **overrides) -> dict:
+    v = {
+        "id": vid,
+        "sku": f"76.001.0000{vid}",
+        "price": "199.9",
+        "regular_price": "199.9",
+        "sale_price": "",
+        "on_sale": False,
+        "purchasable": True,
+        "stock_status": "instock",
+        "stock_quantity": 5,
+        "permalink": f"https://www.example.com/store/probe/?attribute_pa_model={vid}",
+        "date_modified": D1,
+        "attributes": [
+            {"id": 1, "name": "Model", "slug": "pa_model", "option": "wi-fi"}
+        ],
+        "status": "publish",
+    }
+    v.update(overrides)
+    return v
+
+
+def _multi_connector():
+    """四形状探针源:5950 drift / 5951 healthy / 5952 METADATA_CHANGED / 5953 CONTENT_CHANGED。"""
+    import backend.connectors.woocommerce  # noqa: F401 - 触发 @register
+
+    return ConnectorRegistry.create(_source_config())
+
+
+def _multi_fake_get(current_variations: list[dict]):
+    parent = {
+        "id": 5110,
+        "name": "Probe Camera",
+        "slug": "probe-camera",
+        "permalink": "https://www.example.com/store/probe-camera/",
+        "type": "variable",
+        "status": "publish",
+        "stock_status": "instock",
+        "date_modified": D2,
+        "categories": [{"id": 1, "name": "Probe", "slug": "probe"}],
+        "variations": [5950, 5951, 5952, 5953],
+    }
+
+    def _fake_get(path: str, *, params=None):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        if path.endswith("/products"):
+            if params and params.get("modified_after"):
+                resp.json.return_value = []  # 空增量(blocker 形状)
+            else:
+                resp.json.return_value = [parent]
+        else:
+            assert path.endswith("/products/5110/variations")
+            resp.json.return_value = current_variations
+        return resp
+
+    return _fake_get
+
+
+async def test_no_change_hook_is_strictly_mirror_drift_only(stack, monkeypatch):
+    """REVIEW_R4 冻结语义:no-change 钩子只处理
+    「ledger 存在 + ACTIVE + classifier==UNCHANGED + _row_mirror_drifted」
+    的有界集;真实 METADATA_CHANGED / CONTENT_CHANGED **不归本钩子**
+    (零 embed/零新版本/零新代,mirror_reconciled_count 只计真对账)。
+    """
+    conn = _multi_connector()
+    builder = GenerationBuilder(stack.pipeline, stack.sync_factory)
+    gen0 = _generation_count(stack.sync_factory)
+
+    # --- 种子 ---
+    # 5950: v1 → v2 正常激活(随后仅回滚行镜像 = drift+UNCHANGED)
+    monkeypatch.setattr(conn, "_get", _multi_fake_get([_base_variation(5950)]))
+    d5950_v1 = _variation_doc(conn)
+    monkeypatch.setattr(
+        conn, "_get", _multi_fake_get([
+            _base_variation(5950, stock_status="outofstock", date_modified=D2)
+        ])
+    )
+    d5950_v2 = _variation_doc(conn)
+    assert d5950_v1.content_hash != d5950_v2.content_hash
+    builder.build_generation([d5950_v1], source_id=SRC)
+    builder.build_generation([d5950_v2], source_id=SRC)
+
+    # 5951: v1 灌入,当前真值不变(healthy UNCHANGED)
+    monkeypatch.setattr(conn, "_get", _multi_fake_get([_base_variation(5951)]))
+    d5951 = _variation_doc(conn, vid=5951)
+    builder.build_generation([d5951], source_id=SRC)
+
+    # 5952: v1 灌入(purchasable=true);当前真值 purchasable=false(同 hash)
+    # ⇒ active version 视角 = METADATA_CHANGED
+    monkeypatch.setattr(conn, "_get", _multi_fake_get([_base_variation(5952)]))
+    d5952 = _variation_doc(conn, vid=5952)
+    builder.build_generation([d5952], source_id=SRC)
+
+    # 5953: v1 灌入(instock 默认);当前真值 outofstock(hash 不同)⇒ CONTENT_CHANGED
+    monkeypatch.setattr(conn, "_get", _multi_fake_get([_base_variation(5953)]))
+    d5953 = _variation_doc(conn, vid=5953)
+    builder.build_generation([d5953], source_id=SRC)
+
+    seeded_generations = _generation_count(stack.sync_factory)
+    assert seeded_generations >= 1
+
+    # 仅 5950 行镜像回滚 v1(历史残形);5951/5952/5953 行保持激活时真值
+    def _sid(vid):
+        return f"{SRC}/5110/{vid}"
+
+    with stack.sync_factory() as s:
+        row = s.execute(
+            select(Document).where(Document.source_id == f"{SRC}/5110/5950")
+        ).scalar_one()
+        stale = dict(row.metadata_)
+        stale["stock_status"] = "instock"
+        stale["date_modified"] = D1
+        row.metadata_ = stale
+        s.commit()
+    row_healthy_before = _row_metadata_of(stack.sync_factory, f"{SRC}/5110/5951")
+    row_meta_before = _row_metadata_of(stack.sync_factory, f"{SRC}/5110/5952")
+    row_content_before_hash = _row_hash_of(stack.sync_factory, f"{SRC}/5110/5953")
+    total_versions_before = _total_version_count(stack.sync_factory)
+    stack.embedder.calls.clear()
+
+    # --- 空增量轮 + 全量发现含全部四形状 → 正常 sync ---
+    from backend.connectors.woocommerce import WooCommerceConnector
+
+    def _create(config):
+        c = WooCommerceConnector(config)
+        monkeypatch.setattr(
+            c,
+            "_get",
+            _multi_fake_get([
+                # Store 当前真值:5950 已是 v2(UNCHANGED+drift);
+                _base_variation(5950, stock_status="outofstock", date_modified=D2),
+                # 5951 healthy;
+                _base_variation(5951),
+                # 5952 同 hash 异 metadata ⇒ METADATA_CHANGED;
+                _base_variation(5952, purchasable=False),
+                # 5953 异 hash ⇒ CONTENT_CHANGED
+                _base_variation(5953, stock_status="outofstock", date_modified=D2),
+            ]),
+        )
+        return c
+
+    monkeypatch.setattr("scripts.sync.ConnectorRegistry.create", _create)
+    await _sync_one(stack.cfg, stack.pipeline, stack.async_factory, triggered_by="test")
+
+    log = await _latest_sync_log(stack.async_factory)
+    assert log is not None and log.status == "success", (
+        f"error_detail={getattr(log, 'error_detail', None)}"
+    )
+    assert (log.delta_counts or {}).get("mirror_reconciled_count") == 1, (
+        "RED(REVIEW_R4): 钩子必须只对账真 mirror-drift 行(不得 churn "
+        "METADATA_CHANGED/CONTENT_CHANGED 文档)"
+    )
+
+    # drift 行:追平
+    row_drift = _row_metadata_of(stack.sync_factory, f"{SRC}/5110/5950")
+    assert row_drift["stock_status"] == "outofstock"
+    assert row_drift["date_modified"] == D2
+
+    # healthy 行:零写入
+    assert _row_metadata_of(stack.sync_factory, f"{SRC}/5110/5951") == row_healthy_before
+
+    # METADATA_CHANGED 行:不归本钩子(保持原状,归属正常抓取轮)
+    assert _row_metadata_of(stack.sync_factory, f"{SRC}/5110/5952") == row_meta_before, (
+        "no-change 钩子不得处理真实 METADATA_CHANGED"
+    )
+
+    # CONTENT_CHANGED 行:零 embed/零新版本/行不变
+    assert _row_hash_of(stack.sync_factory, f"{SRC}/5110/5953") == row_content_before_hash
+    assert _row_metadata_of(stack.sync_factory, f"{SRC}/5110/5953")["stock_status"] == "instock"
+    assert stack.embedder.calls == [], "钩子零重嵌(含对 CONTENT_CHANGED 的未处理)"
+    assert _total_version_count(stack.sync_factory) == total_versions_before, "零新版本"
+    assert _generation_count(stack.sync_factory) == seeded_generations, "零新代"
+
+    # --- 第二轮:幂等,计数归零 ---
+    await _sync_one(stack.cfg, stack.pipeline, stack.async_factory, triggered_by="test")
+    log2 = await _latest_sync_log(stack.async_factory)
+    assert log2 is not None and log2.status == "success"
+    assert (log2.delta_counts or {}).get("mirror_reconciled_count") == 0
+    assert stack.embedder.calls == []
+
+
+def _row_metadata_of(sync_factory, sid) -> dict:
+    with sync_factory() as s:
+        row = s.execute(select(Document).where(Document.source_id == sid)).scalar_one()
+        meta = dict(row.metadata_ or {})
+    return meta
+
+
+def _row_hash_of(sync_factory, sid) -> str:
+    with sync_factory() as s:
+        row = s.execute(select(Document).where(Document.source_id == sid)).scalar_one()
+        return row.content_hash
+
+
+def _total_version_count(sync_factory) -> int:
+    with sync_factory() as s:
+        return len(
+            s.execute(select(DocumentVersion)).scalars().all()
+        )

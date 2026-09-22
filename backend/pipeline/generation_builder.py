@@ -123,6 +123,23 @@ class _PreparedDoc:
     chunks: list[Chunk]
 
 
+def incoming_metadata_hash(doc: Any) -> str:
+    """incoming 文档的 metadata 指纹(classify 与 mirror-drift 预筛共用口径)。
+
+    与 :meth:`GenerationBuilder.classify_docs` 及 ``_apply_metadata_only``
+    的计算严格同式 —— 唯一权威公式,调用方不得自行内联复制。
+    """
+    return lifecycle.compute_metadata_hash(
+        title=doc.title,
+        url=doc.url,
+        branch=doc.branch or "",
+        source_type=doc.source_type,
+        product=doc.product,
+        metadata={k: v for k, v in (doc.metadata or {}).items() if k != "channel_visibility"},
+        channel_visibility=doc.channel_visibility,
+    )
+
+
 class GenerationBuilder:
     """生成构建器:包装 IngestionPipeline 的 chunk/embed/写能力,叠加
     版本/生成/激活语义。Postgres 写用同步 session(与管道惯例一致)。"""
@@ -151,17 +168,8 @@ class GenerationBuilder:
                 doc_row, version_row = lifecycle.load_document_and_current_version(
                     session, doc.source_id
                 )
-                meta_hash = lifecycle.compute_metadata_hash(
-                    title=doc.title,
-                    url=doc.url,
-                    branch=doc.branch or "",
-                    source_type=doc.source_type,
-                    product=doc.product,
-                    metadata={k: v for k, v in (doc.metadata or {}).items() if k != "channel_visibility"},
-                    channel_visibility=doc.channel_visibility,
-                )
                 change = lifecycle.classify_change(
-                    doc_row, version_row, doc.content_hash, meta_hash
+                    doc_row, version_row, doc.content_hash, incoming_metadata_hash(doc)
                 )
                 out[doc.source_id] = (doc, change, doc_row, version_row)
         return out
@@ -519,15 +527,7 @@ class GenerationBuilder:
                     source_id=p.doc.source_id,
                     version_seq=lifecycle.next_version_seq(session, p.doc.source_id),
                     content_hash=p.doc.content_hash,
-                    metadata_hash=lifecycle.compute_metadata_hash(
-                        title=p.doc.title,
-                        url=p.doc.url,
-                        branch=p.doc.branch or "",
-                        source_type=p.doc.source_type,
-                        product=p.doc.product,
-                        metadata={k: v for k, v in (p.doc.metadata or {}).items() if k != "channel_visibility"},
-                        channel_visibility=p.doc.channel_visibility,
-                    ),
+                    metadata_hash=incoming_metadata_hash(p.doc),
                     source_version=lifecycle.extract_source_version(p.doc.metadata),
                     generation_id=gen.id,
                     generation_ordinal=gen_ordinal,
@@ -676,15 +676,7 @@ class GenerationBuilder:
         pipeline._ensure_collection()
         collection = pipeline._collection
         for doc, doc_row, version in targets:
-            new_meta_hash = lifecycle.compute_metadata_hash(
-                title=doc.title,
-                url=doc.url,
-                branch=doc.branch or "",
-                source_type=doc.source_type,
-                product=doc.product,
-                metadata={k: v for k, v in (doc.metadata or {}).items() if k != "channel_visibility"},
-                channel_visibility=doc.channel_visibility,
-            )
+            new_meta_hash = incoming_metadata_hash(doc)
             # 1) 对象文档级 props 原位更新(merge update,向量不动)
             uuids = chunk_uuids_for_version(
                 doc_row.source_id,

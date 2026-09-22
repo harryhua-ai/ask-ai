@@ -64,7 +64,7 @@ from backend.connectors.base import SourceRootUnavailable
 from backend.connectors.db_adapter import to_source_config
 from backend.connectors.github import GitTransportError  # #34:传输失败证据化分类
 from backend.connectors.registry import ConnectorRegistry, SourceConfig
-from backend.db.models import DataSource, Document, SyncLog
+from backend.db.models import DataSource, Document, DocumentVersion, SyncLog
 from backend.db.session import (
     get_engine,
     get_session_factory,
@@ -784,31 +784,61 @@ async def _reconcile_mirror_drift(
     session_factory: Any,
     builder: GenerationBuilder,
 ) -> int:
-    """#105(R4,REVIEW_R3):空增量轮 mirror-drift 可达性对账。
+    """#105(R5,REVIEW_R4):空增量轮 mirror-drift 可达性对账(**严格有界**)。
 
     历史残形(active version 双 hash 现行 + serving 现行,**仅行镜像滞后**;
     生产实证 5110:5950/5951)在增量抓取为空(last_success > Store
     date_modified ⇒ ``fetch_changes`` 恒空)时永远进不了 builder。本函数把
-    本轮缺席确认**已经物化**的权威全量发现(fs/woo 类,零额外抓取)过滤到
-    账本现存成员后喂给 builder:精确判定仍由
-    ``GenerationBuilder._row_mirror_drifted`` 把关 —— 健康行零写入,漂移行
-    走既有 retry-safe metadata reconciliation(零重嵌/零新版本/零新代/
-    serving 失败即本轮 fail-closed 下轮重试)。
+    本轮缺席确认**已经物化**的权威全量发现(fs/woo 类,零额外抓取)过筛后
+    喂给 builder。过筛条件(**全部满足**才进入对账,REVIEW_R4 冻结):
+
+    1. 账本行存在;
+    2. lifecycle = ACTIVE(可服务/可镜像对账;WITHDRAWN/宽限态不在内);
+    3. canonical classifier == UNCHANGED(incoming 双 hash 均与现行 version
+       相等 —— 真实 METADATA_CHANGED / CONTENT_CHANGED **不属于本钩子**,
+       其收敛归属正常抓取轮,绝不在此产生 embed/版本/代churn 或伪 no_change
+       记账);
+    4. ``_row_mirror_drifted(doc_row, incoming)`` 为真。
+
+    命中文档走既有 retry-safe metadata reconciliation(零重嵌/零新版本/
+    零新代/serving 失败即本轮 fail-closed 下轮重试)。
 
     Returns:
         对账篇数(加性投影修复计数 ``mirror_reconciled_count``,不入变更桶)。
     """
+    from backend.pipeline.generation_builder import (
+        _row_mirror_drifted,
+        incoming_metadata_hash,
+    )
+
     async with session_factory() as session:
-        ledger_ids = set(
-            (
-                await session.execute(
-                    select(Document.source_id).where(
-                        Document.source_id.startswith(f"{source_id}/", autoescape=True)
-                    )
-                )
-            ).scalars()
-        )
-    candidates = [d for d in discovery_docs if d.source_id in ledger_ids]
+        pairs = (
+            await session.execute(
+                select(Document, DocumentVersion)
+                .join(DocumentVersion, DocumentVersion.id == Document.current_version_id)
+                .where(Document.source_id.startswith(f"{source_id}/", autoescape=True))
+            )
+        ).all()
+    ledger = {doc.source_id: (doc, ver) for doc, ver in pairs}
+
+    candidates: list[Any] = []
+    for d in discovery_docs:
+        pair = ledger.get(d.source_id)
+        if pair is None:
+            continue  # 条件 1:账本行存在
+        doc_row, version_row = pair
+        if doc_row.lifecycle != lifecycle.DocLifecycle.ACTIVE:
+            continue  # 条件 2:仅 active 行可镜像对账
+        if (
+            lifecycle.classify_change(
+                doc_row, version_row, d.content_hash, incoming_metadata_hash(d)
+            )
+            != lifecycle.ChangeClass.UNCHANGED
+        ):
+            continue  # 条件 3:canonical classifier 必须判 UNCHANGED
+        if not _row_mirror_drifted(doc_row, d):
+            continue  # 条件 4:行镜像确有滞后
+        candidates.append(d)
     if not candidates:
         return 0
     accounting = await asyncio.to_thread(
