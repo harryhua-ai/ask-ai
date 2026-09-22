@@ -5,6 +5,15 @@
 #   ssh tesla-t4 'cd ~/ask-ai && ./deploy/prod/update.sh <version-tag>'   # 如 v1.0.0
 #   回滚 = 同一命令 + 上一个不可变版本 tag(如 ./deploy/prod/update.sh v0.9.0)
 #
+# 回滚兼容契约(#46 RELEASE-ROLLBACK-COMPATIBILITY):
+#   - 回滚兼容性由【目标发布】冻结镜像内的 compatibility manifest 声明权威裁定;
+#   - 目标发布声明 previous_compatible: true ⇒ 普通 previous-tag 回滚照常可用;
+#   - 目标发布声明 previous_compatible: false ⇒ 普通 previous-tag 回滚不再适用,
+#     必须显式确认该发布声明的修复门:
+#       ./deploy/prod/update.sh <tag> --remediation-ack <declared-gate>
+#     (evaluator 精确匹配;缺失/不匹配 ⇒ 在任何 mutation 之前 fail-closed);
+#   - 本脚本不自行判定回退安全性,也不自动回滚 —— 只执行目标发布的冻结声明。
+#
 # 契约(#10 冻结):
 #   - 缺少 tag 参数 → 失败(禁止隐式升级);
 #   - latest → 拒绝(生产部署/回滚必须显式不可变版本 tag);
@@ -47,7 +56,33 @@
 set -euo pipefail
 
 IMAGE="ghcr.io/harryhua-ai/ask-ai"
-TAG="${1:-}"
+
+# 参数解析(#46 REVIEW_1 blocker 5):位置参数 = 不可变 tag;可选
+# --remediation-ack <gate> 仅在目标发布的 compatibility manifest 声明
+# previous_compatible=false 时由 preflight evaluator 消费(精确匹配其
+# remediation_gate)。普通 previous-tag 回滚不受影响;声明不兼容的发布
+# 必须显式确认所声明的修复门才能继续(见文末 RELEASE-ROLLBACK-COMPATIBILITY)。
+TAG=""
+REMEDIATION_ACK=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --remediation-ack)
+            [ -n "${2:-}" ] || { echo "❌ --remediation-ack 需要 gate 名称" >&2; exit 2; }
+            REMEDIATION_ACK="$2"; shift 2 ;;
+        --remediation-ack=*)
+            REMEDIATION_ACK="${1#*=}"; shift ;;
+        --*)
+            echo "❌ 未知选项: $1" >&2; exit 2 ;;
+        *)
+            if [ -z "$TAG" ]; then TAG="$1"; shift; else
+                echo "❌ 多余位置参数: $1(用法: $0 <version-tag> [--remediation-ack <gate>])" >&2; exit 2
+            fi ;;
+    esac
+done
+if [ -z "$TAG" ]; then
+    echo "❌ 缺少版本 tag 参数。用法: $0 <version-tag>(如 v1.0.0;回滚传上一个不可变 tag)" >&2
+    exit 2
+fi
 
 # ---------- [1/6] 版本化契约守卫 ----------
 if [ -z "$TAG" ]; then
@@ -82,6 +117,17 @@ docker cp "$CID:/app/RELEASE.json" "$RELEASE_TMP" || {
 docker rm "$CID" >/dev/null
 ACTUAL_VERSION=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['version'])" "$RELEASE_TMP")
 ACTUAL_SHA=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['git_sha'])" "$RELEASE_TMP")
+# Issue #46 REVIEW_1 blocker 3:时代判定源 = 镜像内不可变 RELEASE.json 的
+# compatibility_contract 旗标(构建期由 generate_release_manifest.sh 写入),
+# 独立于门禁工件(evaluator/manifest)自身的存在性 —— 打包回归不得把契约期
+# 发布静默降级为有界路径。前 #46 构建无此键 ⇒ 天然 pre_contract。
+COMPATIBILITY_CONTRACT=$(python3 -c "import json,sys;print('true' if json.load(open(sys.argv[1])).get('compatibility_contract') else 'false')" "$RELEASE_TMP")
+if [ "$COMPATIBILITY_CONTRACT" = "true" ]; then
+    PREFLIGHT_ERA="contract"
+else
+    PREFLIGHT_ERA="pre_contract"
+fi
+echo "  兼容性契约时代: $PREFLIGHT_ERA(来源 = 镜像内 RELEASE.json)"
 rm -f "$RELEASE_TMP"
 if [ "$ACTUAL_VERSION" != "$EXPECTED_VERSION" ]; then
     echo "❌ 镜像内 version=$ACTUAL_VERSION ≠ 请求 $EXPECTED_VERSION,拒绝部署"
@@ -92,6 +138,51 @@ if [ -z "$ACTUAL_SHA" ]; then
     exit 1
 fi
 echo "  ✅ 镜像身份: version=$ACTUAL_VERSION git_sha=$ACTUAL_SHA"
+
+# ---------- [3.5/6] 发布兼容性 preflight(#46;fail-closed;先于任何 mutation) ----------
+# evaluator 与 manifest 都从**请求的精确不可变镜像** "$IMAGE:$TAG" 内提取
+# (REVIEW_1 blocker 2:绝不允许 untagged/latest 引用)。时代判定来自 [3/6]
+# 已核验的镜像内 RELEASE.json compatibility_contract 旗标(独立/不可变/确定性;
+# blocker 3:禁止以门禁工件存在性推断时代):
+#   - contract 时代:evaluator 与 manifest 必须真实存在(打包回归 ⇒ fail-closed),
+#     判定全部由 evaluator 给出;--remediation-ack 贯通 rollback 修复门;
+#   - pre_contract 时代:有界兼容路径,显式留痕(AC4)。
+# 本步骤只是调用者,不是 policy engine。
+echo "[3.5/6] 发布兼容性 preflight..."
+PREFLIGHT_CID=$(docker create "$IMAGE:$TAG")
+PREFLIGHT_MAN="$(mktemp /tmp/askai-compat.XXXXXX.json)"
+PREFLIGHT_EVAL="$(mktemp /tmp/askai-preflight.XXXXXX.py)"
+PREFLIGHT_EVAL_OK=1
+docker cp "$PREFLIGHT_CID:/app/scripts/release_preflight.py" "$PREFLIGHT_EVAL" >/dev/null 2>&1 || PREFLIGHT_EVAL_OK=0
+if [ "$PREFLIGHT_ERA" = "contract" ]; then
+    # 契约期:evaluator 缺失 = 打包违约,显式 fail-closed(绝不降级为有界路径)
+    if [ "$PREFLIGHT_EVAL_OK" != 1 ]; then
+        docker rm "$PREFLIGHT_CID" >/dev/null 2>&1 || true
+        rm -f "$PREFLIGHT_MAN" "$PREFLIGHT_EVAL"
+        echo "❌ 契约期镜像缺失 scripts/release_preflight.py(打包违约,#46 blocker 1)—— 在任何 mutation 之前 fail-closed" >&2
+        exit 1
+    fi
+    docker cp "$PREFLIGHT_CID:/app/deploy/prod/compatibility.json" "$PREFLIGHT_MAN" >/dev/null 2>&1 || true
+    docker rm "$PREFLIGHT_CID" >/dev/null
+    # manifest 缺失由 evaluator 自身 manifest_missing fail-closed(AC2);
+    # --remediation-ack 仅当目标发布声明 rollback 不兼容时被 evaluator 消费。
+    ACK_ARGS=()
+    if [ -n "$REMEDIATION_ACK" ]; then
+        ACK_ARGS=(--remediation-ack "$REMEDIATION_ACK")
+    fi
+    python3 "$PREFLIGHT_EVAL" \
+        --manifest "$PREFLIGHT_MAN" \
+        --env-file "$(dirname "$COMPOSE_FILE")/../../.env" \
+        "${ACK_ARGS[@]}" \
+        || { rm -f "$PREFLIGHT_MAN" "$PREFLIGHT_EVAL"; exit 1; }
+    echo "  ✅ 兼容性 preflight 通过(先于 migration/rollout,零 mutation)"
+else
+    # 前契约时代:有界兼容路径,显式留痕(各类未证明,deferred)
+    docker rm "$PREFLIGHT_CID" >/dev/null 2>&1 || true
+    echo "  ⚠️ PRE-CONTRACT RELEASE:$TAG(镜像 RELEASE.json 无 compatibility_contract 旗标)——"
+    echo "     有界兼容路径(config/host/topology/dependencies/回退兼容 各类未证明,显式 deferred)"
+fi
+rm -f "$PREFLIGHT_MAN" "$PREFLIGHT_EVAL"
 
 # ---------- [4/6] GPU 预检(基础设施不受影响,仅提示) ----------
 echo "[4/6] GPU 预检..."

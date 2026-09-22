@@ -75,6 +75,10 @@ RUN echo "git_sha=$GIT_SHA" > /app/.git-sha
 COPY backend/ ./backend/
 COPY scripts/ ./scripts/
 COPY config/ ./config/
+# Issue #46:发布兼容性 manifest 属冻结发布树 —— 必须真实打进镜像
+# (packaging contract:契约期镜像缺此文件 = preflight fail-closed,而非静默
+# 有界路径;test_preflight_boundary 机械锁定本 COPY 与三路路径一致)
+COPY deploy/prod/compatibility.json /app/deploy/prod/compatibility.json
 
 # #10 版本与发布治理:构建期生成的发布清单(CI 总是先生成;本地构建请先跑
 # scripts/generate_release_manifest.sh)。backend 启动 fail-closed:

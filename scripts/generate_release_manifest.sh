@@ -51,6 +51,12 @@ manifest = {
     "built_at": built_at,
     "image": image,
     **({"ci_run_id": run_id} if run_id else {}),
+    # Issue #46:契约时代旗标(不可变、确定性的 era 判定源)。部署面的
+    # preflight 据此区分「契约期发布(缺 evaluator/manifest = fail-closed)」
+    # 与「历史前契约发布(有界兼容路径)」—— 绝不以门禁工件自身的存在性
+    # 推断时代(打包回归不得静默降级)。前 #46 构建的 RELEASE.json 无此键
+    # ⇒ 天然 = pre_contract。
+    "compatibility_contract": True,
 }
 with open(out, "w", encoding="utf-8") as fh:
     json.dump(manifest, fh, ensure_ascii=False, indent=2)
