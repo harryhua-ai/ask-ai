@@ -7,7 +7,7 @@
  "claimed_at": "2026-09-21T17:58:51Z",
  "lease_expires_at": "2026-09-22T00:14:43Z",
  "execution_base": "47f33046bcd3bf6c4acb7d7f4fc63dffc077102d",
- "status": "active",
+ "status": "delivered",
  "branch": "agent/102/87ec48e6",
  "heartbeat_at": "2026-09-21T23:29:43Z",
  "supersedes": null,
@@ -37,5 +37,12 @@
   "sha": "a5fdf07dd688616a76d79d44261d202faedf1d63",
   "note": "R2 Candidate a5fdf07: REVIEW_1 evidence-only correction \u2014 new-test count 6\u21928 in PR body and report (5 init_db lock-safety + 3 repair-all lock-progress, table unchanged); implementation and semantics untouched from 7b7007b.",
   "delivered_at": "2026-09-21T23:31:28Z"
+ },
+ "completed": {
+  "pr": 103,
+  "merge_commit": "434ddecea5b8f2e0e3dc34d3c673121e1a54773b",
+  "candidate_sha": "a5fdf07dd688616a76d79d44261d202faedf1d63",
+  "completed_by": "harryhua-ai",
+  "completed_at": "2026-09-22T00:51:23Z"
  }
 }
