@@ -63,6 +63,7 @@ def _scan(
     class_name: str,
     source_ids: set[str],
     taxonomy: Taxonomy,
+    label_override: str | None = None,
 ) -> tuple[MigrationReport, list[tuple[str, str]]]:
     """遍历候选 chunk,计算 (报告, 待更新列表)。
 
@@ -87,7 +88,12 @@ def _scan(
         first = source_id.split("/", 1)[0]
         report = per_source[first]
         report.scanned += 1
-        derived = taxonomy.derive_product(old_label, source_id, str(props.get("url", "")))
+        # Issue #106:规则组 key 默认 = chunk 现存标签;对历史规则缺失时代
+        # 固化为 unknown 的行,规则组永不适用。label_override = 调用方显式
+        # 声明的源标签(人工核对 dry-run 后使用),以源标签为组 key 重推导。
+        derived = taxonomy.derive_product(
+            label_override or old_label, source_id, str(props.get("url", ""))
+        )
         new_slug = derived.slug
         bucket = report.mapping.setdefault(old_label, {})
         bucket[new_slug] = bucket.get(new_slug, 0) + 1
@@ -117,12 +123,17 @@ def plan_migration(
     class_name: str,
     source_ids: list[str],
     taxonomy: Taxonomy | None = None,
+    label_override: str | None = None,
 ) -> MigrationReport:
     """dry-run:计算迁移计划与报告,零写入。"""
     if taxonomy is None:
         taxonomy = get_taxonomy()
     report, _ = _scan(
-        client, class_name=class_name, source_ids=set(source_ids), taxonomy=taxonomy
+        client,
+        class_name=class_name,
+        source_ids=set(source_ids),
+        taxonomy=taxonomy,
+        label_override=label_override,
     )
     return report
 
@@ -134,6 +145,7 @@ def apply_migration(
     source_ids: list[str],
     taxonomy: Taxonomy | None = None,
     batch_size: int = 200,
+    label_override: str | None = None,
 ) -> MigrationReport:
     """原位迁移:仅更新变化的 ``product`` 属性(不触向量,零 re-embed)。
 
@@ -142,7 +154,11 @@ def apply_migration(
     if taxonomy is None:
         taxonomy = get_taxonomy()
     report, updates = _scan(
-        client, class_name=class_name, source_ids=set(source_ids), taxonomy=taxonomy
+        client,
+        class_name=class_name,
+        source_ids=set(source_ids),
+        taxonomy=taxonomy,
+        label_override=label_override,
     )
     collection = client.collections.get(class_name)
     for start in range(0, len(updates), batch_size):
