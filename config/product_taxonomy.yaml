@@ -66,6 +66,15 @@ shared_buckets:
     display_name: "官方工具(共享:电池计算器等)"
     aliases: []
     applies_to: [ne101, ne301, ne302, ne503, ng4500]
+  - slug: solutions
+    kind: shared
+    display_name: "官方方案(共享:solutions 段跨机型方案证据)"
+    aliases: []
+    # Issue #106 生产验收 observation:官方 /solutions/ 段是跨机型第一方
+    # 方案证据(与 #29 /tools/ 同构);unknown 会被产品资格闸拦截,造成
+    # 方案答案假性缺失。applies_to = 方案段实际服务的设备产品线(与 tools
+    # 同集合;平台类产品不适用)。
+    applies_to: [ne101, ne301, ne302, ne503, ng4500]
   - slug: release-notes
     kind: shared
     display_name: "发布说明(共享)"
@@ -125,6 +134,11 @@ document_derivation:
       - {url_any: ["ne302"], product: ne302}
       - {url_any: ["ng4500"], product: ng4500}
       - {url_any: ["/product/neomind", "product-category/neomind"], product: neomind}
+      # Issue #106:官方方案段(/solutions/)= 跨机型第一方方案证据,共享桶
+      # 身份(镜像 #29 /tools/:URL 显式路径 + taxonomy 桶身份,非兄弟页
+      # 推断;段外页面不命中 = unknown)。缺失时 unknown 被产品资格闸
+      # 拦截 —— 官方 Solution 页在方案查询中假性缺失的生产实证。
+      - {url_any: ["/solutions/"], product: solutions}
       # Unknown Closure(#5,2026-09-03):AI ToolStack 官方工具页 = 平台身份
       # (URL 显式路径 + taxonomy 别名身份,非兄弟页推断;工具族其余页面不命中)
       - {url_any: ["/tools/ai-tool-stack"], product: aitoolstack}

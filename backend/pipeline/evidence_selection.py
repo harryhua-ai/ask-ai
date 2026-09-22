@@ -77,6 +77,15 @@ _SOLUTION_SIGNALS: tuple[str, ...] = (
     "deployment",
 )
 
+#: 第一方官方方案段 URL 结构信号(#106;小写包含;与
+#: _PUBLISHED_CASE_URL_SIGNALS 同一词表纪律 —— 段级路径信号,非 exact-URL)。
+#: 生产实证:官方 Solution 页标题是描述性命名(不含 "solution" 字样),
+#: 词面信号天然缺席;/solutions/ 段结构是仅存的 generic authority 事实。
+#: 带斜杠段形态避免误命中正文式 slug(如 /blog/our-solution-to-delivery/)。
+_SOLUTION_URL_SIGNALS: tuple[str, ...] = (
+    "/solutions/",
+)
+
 #: 案例证据连接器类型(support 案例存为 filesystem,product=knowledge)
 _SOURCE_CASE = "filesystem"
 
@@ -180,7 +189,13 @@ def resolved_scope(slot: EvidenceSlot, resolution_targets: tuple[str, ...]) -> t
 
 def _has_solution_signal(result) -> bool:
     hay = f"{result.title or ''}\n{result.doc_section or ''}".lower()
-    return any(signal in hay for signal in _SOLUTION_SIGNALS)
+    if any(signal in hay for signal in _SOLUTION_SIGNALS):
+        return True
+    # Issue #106:URL 段结构信号(与 case 谓词的 URL 信号同构)—— 官方
+    # /solutions/ 段页面 title 是描述性命名,词面信号天然缺席;段结构是
+    # 第一方方案身份的 generic 强信号(非 exact-URL,词表纪律不变)。
+    url = (getattr(result, "url", None) or "").lower()
+    return any(signal in url for signal in _SOLUTION_URL_SIGNALS)
 
 
 def _is_published_case_page(result) -> bool:
