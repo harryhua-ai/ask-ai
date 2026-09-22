@@ -29,6 +29,9 @@ def test_document_delta_counts_use_one_stable_unit_without_double_counting():
         "ledger_rebuilt_unit": "document",
         "orphan_vectors_retired": 0,
         "orphan_vectors_retired_unit": "chunk",
+        # #105 加性事实键:行镜像滞后残形的无变更轮对账(投影修复计数)
+        "mirror_reconciled_count": 0,
+        "mirror_reconciled_unit": "document",
     }
 
 

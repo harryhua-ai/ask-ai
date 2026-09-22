@@ -778,6 +778,54 @@ async def _backfill_missing_members(
     )
 
 
+async def _reconcile_mirror_drift(
+    source_id: str,
+    discovery_docs: list[Any],
+    session_factory: Any,
+    builder: GenerationBuilder,
+) -> int:
+    """#105(R4,REVIEW_R3):空增量轮 mirror-drift 可达性对账。
+
+    历史残形(active version 双 hash 现行 + serving 现行,**仅行镜像滞后**;
+    生产实证 5110:5950/5951)在增量抓取为空(last_success > Store
+    date_modified ⇒ ``fetch_changes`` 恒空)时永远进不了 builder。本函数把
+    本轮缺席确认**已经物化**的权威全量发现(fs/woo 类,零额外抓取)过滤到
+    账本现存成员后喂给 builder:精确判定仍由
+    ``GenerationBuilder._row_mirror_drifted`` 把关 —— 健康行零写入,漂移行
+    走既有 retry-safe metadata reconciliation(零重嵌/零新版本/零新代/
+    serving 失败即本轮 fail-closed 下轮重试)。
+
+    Returns:
+        对账篇数(加性投影修复计数 ``mirror_reconciled_count``,不入变更桶)。
+    """
+    async with session_factory() as session:
+        ledger_ids = set(
+            (
+                await session.execute(
+                    select(Document.source_id).where(
+                        Document.source_id.startswith(f"{source_id}/", autoescape=True)
+                    )
+                )
+            ).scalars()
+        )
+    candidates = [d for d in discovery_docs if d.source_id in ledger_ids]
+    if not candidates:
+        return 0
+    accounting = await asyncio.to_thread(
+        builder.build_generation,
+        candidates,
+        source_id=source_id,
+    )
+    reconciled = len(accounting.metadata_docs)
+    if reconciled:
+        logger.info(
+            "数据源 %s mirror-drift 对账:%d 篇行镜像追平(零重嵌/零新版本)",
+            source_id,
+            reconciled,
+        )
+    return reconciled
+
+
 async def _handle_no_change(
     source_id: str,
     existing: int,
@@ -858,6 +906,16 @@ async def _handle_no_change(
             logger.warning(
                 "数据源 %s 缺席确认失败(本轮 no-op): %s", source_id, str(exc)[:160]
             )
+    # #105(R4,REVIEW_R3):mirror-drift 可达性 —— last_success > Store
+    # date_modified 时空增量轮 fetch_changes 恒空,历史残形(行镜像滞后而
+    # version/serving 现行)进不了 builder。复用本轮缺席确认已物化的权威
+    # 全量发现(零额外抓取)喂 builder 对账;异常**不吞**(fail-closed:
+    # 对账失败 = 本轮失败,窗口不推进,下轮重试),与 R2 语义一致。
+    mirror_reconciled = 0
+    if absence.get("complete") and absence.get("docs"):
+        mirror_reconciled = await _reconcile_mirror_drift(
+            source_id, absence["docs"], session_factory, builder
+        )
     report = await verify_source_vectors(session_factory, pipeline, source_id)
     if telemetry is not None:
         await telemetry.progress(session_factory, STAGE_CONSISTENCY, None, None)
@@ -870,6 +928,7 @@ async def _handle_no_change(
         log_entry.delta_counts = build_document_delta(
             unchanged_count=existing,
             reason="no_change",
+            mirror_reconciled_count=mirror_reconciled,
         )
         if telemetry is not None:
             # ⑫ short-circuit 机器事实(run-local 可证明):本轮无上游变更、
@@ -1054,6 +1113,7 @@ async def _handle_no_change(
             reason="consistency_repair",
             ledger_rebuilt_count=orphan_repaired,
             orphan_vectors_retired=retired,
+            mirror_reconciled_count=mirror_reconciled,
         )
         gap_parts.append(
             f"复验:{report2.actual_chunks}/{report2.expected_chunks} chunks,"
@@ -1358,6 +1418,9 @@ def _reconcile_source_absence(
             "candidates": [],
             "policy_absent": [],
             "restored": [],
+            # #105(R4):完整发现时携带本轮已物化的权威文档,供 mirror-drift
+            # 对账复用(零额外抓取);不完整/不适用为 []。
+            "docs": [],
         }
 
     if getattr(connector, "DECLARES_DELETIONS", True):
@@ -1382,6 +1445,7 @@ def _reconcile_source_absence(
     reason_fn = getattr(connector, "policy_absence_reason", None)
     now = lifecycle.utcnow()
     result = _empty(True)
+    result["docs"] = docs
     with sync_factory() as session:
         rows = (
             session.execute(

@@ -30,12 +30,14 @@ def build_document_delta(
     reason: str | None = None,
     ledger_rebuilt_count: int = 0,
     orphan_vectors_retired: int = 0,
+    mirror_reconciled_count: int = 0,
 ) -> dict[str, Any]:
     """构造 document 级增量；一个文档只进入一个变更桶。
 
     加性事实键(#71 授权契约第 13 条):``ledger_rebuilt_count``(文档;
-    孤儿向量对应的账本行重建)与 ``orphan_vectors_retired``(chunk;孤儿
-    向量精确退休)是投影修复计数,绝不混入 document 变更桶或 items_*。
+    孤儿向量对应的账本行重建)、``orphan_vectors_retired``(chunk;孤儿
+    向量精确退休)与 ``mirror_reconciled_count``(#105;行镜像滞后残形的
+    无变更轮对账)是投影修复计数,绝不混入 document 变更桶或 items_*。
     """
     result: dict[str, Any] = {
         "schema_version": DELTA_SCHEMA_VERSION,
@@ -52,6 +54,10 @@ def build_document_delta(
         "ledger_rebuilt_unit": ADMIN_DELTA_UNIT,
         "orphan_vectors_retired": _non_negative("orphan_vectors_retired", orphan_vectors_retired),
         "orphan_vectors_retired_unit": "chunk",
+        "mirror_reconciled_count": _non_negative(
+            "mirror_reconciled_count", mirror_reconciled_count
+        ),
+        "mirror_reconciled_unit": ADMIN_DELTA_UNIT,
     }
     if reason:
         result["reason"] = reason
