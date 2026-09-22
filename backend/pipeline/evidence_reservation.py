@@ -48,6 +48,7 @@ import time
 from typing import Any, Awaitable, Callable
 
 from backend.pipeline.evidence_planning import (
+    ROLE_CASE_EVIDENCE,
     ROLE_PRODUCT_SPEC,
     ROLE_SOLUTION_GUIDE,
     ROLE_STORE_OFFICIAL,
@@ -55,6 +56,7 @@ from backend.pipeline.evidence_planning import (
     EvidenceSlot,
 )
 from backend.pipeline.evidence_selection import (
+    _is_published_case_page,
     _product_slug,
     evidence_matches_slot,
     resolved_scope,
@@ -206,17 +208,60 @@ def reserve_required_slots(
             }
         )
 
-    # R1:required 槽 × 目标保位
+    # R1:required 槽 × 目标保位。
+    # Issue #106 扩展:CASE_EVIDENCE 槽(optional 亦参与)在 first-party
+    # published case **池内可得**而幸存者中无 first-party 形态时,晋升最优
+    # first-party case —— 内部支持案例不得仅因 first-party 页在全局相似度
+    # 竞争中落榜(经 role lane 入池后仍处阈下)而独占 case 证明位;阈值
+    # 门控放宽为正相关下限(与 SOLUTION_GUIDE 保位同一纪律)。first-party
+    # 页不存在(池内不可得)时既有语义零变化:required 槽按通用路径晋升
+    # 任意合法 case 证据,optional 槽零动作。
     for slot in plan.slots:
         if len(fired) >= max_total:
             break
-        if not slot.required:
+        if not slot.required and slot.role != ROLE_CASE_EVIDENCE:
             continue
         scope = resolved_scope(slot, plan.resolution_targets)
         for target in scope if scope else (None,):
             surv_m = _matching(
                 slot, current, plan=plan, taxonomy=taxonomy, target=target
             )
+            if slot.role == ROLE_CASE_EVIDENCE:
+                if any(_is_published_case_page(s) for s in surv_m):
+                    continue  # first-party case 已在终局上下文:零动作
+                pool_pub = [
+                    r
+                    for r in _matching(
+                        slot,
+                        [r for r, _ in pool_scores],
+                        plan=plan,
+                        taxonomy=taxonomy,
+                        target=target,
+                    )
+                    if _is_published_case_page(r)
+                ]
+                if pool_pub:
+                    _promote(
+                        "R1_first_party_case",
+                        slot,
+                        target,
+                        pool_pub,
+                        floor=SOLUTION_RETENTION_FLOOR,
+                    )
+                    continue
+                if not slot.required:
+                    continue  # first-party 不可得:optional 槽既有语义零动作
+                if surv_m:
+                    continue
+                pool_m = _matching(
+                    slot,
+                    [r for r, _ in pool_scores],
+                    plan=plan,
+                    taxonomy=taxonomy,
+                    target=target,
+                )
+                _promote("R1_required_slot_target", slot, target, pool_m)
+                continue
             if slot.role == ROLE_STORE_OFFICIAL:
                 met = any(title_anchored(s, taxonomy) for s in surv_m)
             else:

@@ -390,6 +390,7 @@ class HybridSearcher:
         product_labels: list[str] | None = None,
         use_hybrid: bool = False,
         alpha: float = 0.5,
+        url_substrings: list[str] | None = None,
     ) -> list[SearchResult]:
         """BM25 召回(对 text 字段),按 source_type / chunk_type 过滤(boost 桶)。
 
@@ -408,6 +409,11 @@ class HybridSearcher:
             limit: 返回结果数上限。
             product_filter: 可选产品名过滤(boost 桶通常跨产品,调用方一般不传)。
             channel: 可选渠道过滤;非空时附加 channel_visibility contains_any。
+            url_substrings: 可选 URL 子串白名单(Issue #106 role-recall lane;
+                like 通配过滤,any_of 合并 OR 语义)—— 让权威页面段(如官方
+                Solution / Case-study 段)凭**页面结构身份**获得类内准入,与
+                查询相似度竞争解耦。仅在其它过滤同场时使用(段信号是收窄,
+                不单独开桶)。
 
         Returns:
             :class:`SearchResult` 列表。
@@ -418,8 +424,8 @@ class HybridSearcher:
         if not query or not query.strip():
             logger.info("空 query,跳过 boost 桶 BM25 检索")
             return []
-        if not source_types and not chunk_types:
-            logger.info("boost 桶无 source_types/chunk_types 过滤,跳过(无意义)")
+        if not source_types and not chunk_types and not url_substrings:
+            logger.info("boost 桶无 source_types/chunk_types/url 过滤,跳过(无意义)")
             return []
 
         # P1 服务选择(fail-closed,先于检索):空权威集 → 零结果;provider
@@ -443,6 +449,12 @@ class HybridSearcher:
         if chunk_types:
             filters_list.append(
                 Filter.any_of([Filter.by_property("chunk_type").equal(ct) for ct in chunk_types])
+            )
+        if url_substrings:
+            filters_list.append(
+                Filter.any_of(
+                    [Filter.by_property("url").like(f"*{s}*") for s in url_substrings]
+                )
             )
         if product_filter:
             filters_list.append(Filter.by_property("product").equal(product_filter))
