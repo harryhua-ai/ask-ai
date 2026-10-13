@@ -218,13 +218,6 @@ def explicit_purchase_signal(text: str) -> bool:
     """Deterministic G002 safety net for unambiguous strong purchase signals."""
     if not text:
         return False
-    # Join only the tightly coupled commitment + deadline construction. Other
-    # signal and veto checks remain scoped to the comma-delimited clauses below.
-    if any(
-        _PURCHASE_TIMELINE_RE.search(sentence)
-        for sentence in re.split(r"[.!?。！？;；]+", text)
-    ):
-        return True
     # Keep informational/documentation vetoes local to the clause they describe;
     # a separate purchase commitment in the same message remains actionable.
     clauses = re.split(
@@ -245,6 +238,30 @@ def explicit_purchase_signal(text: str) -> bool:
         r"|(?:来自|根据)(?:用户)?(?:手册|文档|源码)|(?:引用|摘录)(?:用户)?(?:手册|文档|源码)",
         re.IGNORECASE,
     )
+    timeline_explanation = re.compile(
+        r"\bwhat\s+does\b.{0,160}\bmean\b"
+        r"|\bplease\s+quote\s+(?:the\s+)?(?:user\s+)?manual\s*:"
+        r"|(?:是什么意思|是指什么)",
+        re.IGNORECASE,
+    )
+
+    def timeline_is_vetoed(sentence: str, start: int, end: int) -> bool:
+        # A quoted commitment is an object of discussion, not the user's own
+        # purchase intent. Check common paired quote marks around this match.
+        quote_pairs = (("\"", "\""), ("'", "'"), ("“", "”"), ("「", "」"))
+        for opening, closing in quote_pairs:
+            left = sentence.rfind(opening, 0, start + 1)
+            right = sentence.find(closing, end - 1)
+            if left >= 0 and right >= end - 1:
+                return True
+        return bool(timeline_explanation.search(sentence))
+
+    # The comma-joined matcher spans only the commitment and its deadline.
+    # Apply quote/explanation vetoes to that local sentence before accepting it.
+    for sentence in re.split(r"(?<=[.!?。！？;；])\s*", text):
+        match = _PURCHASE_TIMELINE_RE.search(sentence)
+        if match and not timeline_is_vetoed(sentence, match.start(), match.end()):
+            return True
     return any(
         not explanation_clause.search(clause)
         and not documentation_clause.search(clause)

@@ -288,6 +288,7 @@ def test_explicit_purchase_signals_are_qualified_without_promoting_information_q
         "We need 120 pcs, and please quote the source code example for integration.",
         "我们计划采购，时间是下季度",
         "我们计划采购, 时间是下季度",
+        "我们计划采购，时间是下季度",
         "请给 120 台正式报价",
         "请给我们正式报价",
         "我们需要项目经销合作，请联系销售",
@@ -312,6 +313,9 @@ def test_explicit_purchase_signals_are_qualified_without_promoting_information_q
         "我想了解项目需求是什么意思？",
         "请报价是什么意思？",
         "I want a formal quote from the user manual",
+        'What does "We will purchase, next quarter" mean?',
+        'Please quote the user manual: "We will purchase, next quarter".',
+        '“我们计划采购, 时间是下季度”是什么意思？',
     ):
         assert explicit_purchase_signal(query) is False
 
