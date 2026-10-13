@@ -14,22 +14,23 @@
  "contract_digest": "742603087914622b4fedecf70ecc63b744c9b676dc5384568d12c07e01815f61",
  "candidate": {
   "branch": "agent/122/700846e6",
-  "sha": "d4f15ffee40e6ee747c84f79df88cdeb61991adf",
+  "sha": "02b6e0a3445c12b86958d8c8ec711cd76f090736",
   "scope": {
    "pass": true,
    "paths": {
     "backend/pipeline/rag.py": "ALLOWED",
+    "tests/pipeline/test_issue122_hardware_replay.py": "ALLOWED",
     "tests/pipeline/test_rag_trust_boundary.py": "ALLOWED"
    },
    "violations": [],
    "main_attributed_paths": [],
    "counts": {
-    "ALLOWED": 2,
+    "ALLOWED": 3,
     "FORBIDDEN": 0,
     "MAIN_ATTRIBUTED": 0
    }
   },
-  "preserved_at": "2026-10-13T07:38:38Z"
+  "preserved_at": "2026-10-13T09:43:50Z"
  },
  "runtime": {
   "digest": "743a713193def2e7afd5c9c614e05968a1ea50b2c6249d6c5ff219cbc5441096",
