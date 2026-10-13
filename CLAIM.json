@@ -14,22 +14,24 @@
  "contract_digest": "572016a305578a8773c5ec6b42a5355578e64908c735535f420901fd580f26b0",
  "candidate": {
   "branch": "agent/119/6cf3f18f",
-  "sha": "ae60c7ab5277e520329b89c93cf5c8871055432f",
+  "sha": "262b3b7ec3d7d7e4895e09cd6e3763a055335bc3",
   "scope": {
    "pass": true,
    "paths": {
+    "backend/api/routes.py": "ALLOWED",
+    "tests/api/test_routes.py": "ALLOWED",
     "widget/src/utils/__tests__/pageContext.test.ts": "ALLOWED",
     "widget/src/utils/pageContext.ts": "ALLOWED"
    },
    "violations": [],
    "main_attributed_paths": [],
    "counts": {
-    "ALLOWED": 2,
+    "ALLOWED": 4,
     "FORBIDDEN": 0,
     "MAIN_ATTRIBUTED": 0
    }
   },
-  "preserved_at": "2026-10-13T10:52:41Z"
+  "preserved_at": "2026-10-13T10:55:55Z"
  },
  "runtime": {
   "digest": "743a713193def2e7afd5c9c614e05968a1ea50b2c6249d6c5ff219cbc5441096",
