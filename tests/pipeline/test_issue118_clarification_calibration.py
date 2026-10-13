@@ -1,151 +1,140 @@
-"""Frozen EN/ZH clarification calibration cases for Issue #118."""
+"""Paired real-provider calibration replay for Issue #118.
 
+Run explicitly with ISSUE118_LIVE_REPLAY=1 and provider credentials. No model
+decision or retrieval result is supplied by this test: both prompt versions are
+sent to the configured task-understanding provider. Authority eligibility is
+separate and fail-closed; an unverified case never enters the AC1 denominator.
+"""
+
+import asyncio
 import json
-from unittest.mock import MagicMock
+import os
+import subprocess
+from collections import Counter
 
 import pytest
 
-from backend.llm.base import LLMResponse
-from backend.pipeline.rag import RAGOrchestrator
+from backend.llm.deepseek import DeepseekProvider
+from backend.pipeline import task_understanding as task_module
 from backend.pipeline.task_understanding import understand_task
-from backend.retrieval.search import SearchResult
 
-GENERIC_ANSWERABLE = (
-    "Is there a subscription fee?",
-    "where to buy in australia",
-    "I need night vision x2",
-    "分辨率最高的产品是哪个？价格如何？",
-    "how to hide this inside a vehicle?",
+BASELINE = "b4be4da"
+
+# Frozen calibration cases. These are deliberately marked no-authority until an
+# exact, reviewed official corpus source is mapped to the claim being tested.
+# The presence of an answerable-sounding query is not evidence of authority.
+CASES = (
+    ("en_subscription", "Is there a subscription fee?", "positive", None),
+    ("en_australia", "where to buy in australia", "positive", None),
+    ("en_night_vision", "I need night vision x2", "positive", None),
+    ("zh_compare", "分辨率最高的产品是哪个？价格如何？", "positive", None),
+    ("en_vehicle", "how to hide this inside a vehicle?", "positive", None),
+    ("en_selector", "Which product fits my project?", "negative", None),
+    ("zh_revision", "这台设备应该刷哪个硬件版本？", "negative", None),
+    ("zh_deixis", "这个设备支持什么？", "negative", None),
 )
-NECESSARY_CLARIFICATION = (
-    "Which product fits my project?",
-    "这台设备应该刷哪个硬件版本？",
-    "这个设备支持什么？",
-)
 
 
-class CapturingLLM:
-    def __init__(self, payload):
-        self.payload = payload
-        self.prompt = ""
+def _baseline_prompt() -> str:
+    source = subprocess.check_output(
+        ["git", "show", f"{BASELINE}:backend/pipeline/task_understanding.py"],
+        text=True,
+    )
+    marker = "_UNDERSTANDING_PROMPT = \"\"\""
+    start = source.index(marker) + len(marker)
+    end = source.index('\n"""', start)
+    return source[start:end]
 
-    async def generate(self, messages, **kwargs):
-        task = kwargs.get("task")
-        if task == "task_understanding":
-            self.prompt = messages[-1]["content"]
-            content = json.dumps(self.payload)
+
+def _provider() -> DeepseekProvider:
+    required = ("DEEPSEEK_API_BASE", "DEEPSEEK_API_KEY", "DEEPSEEK_MODEL")
+    missing = [name for name in required if not os.getenv(name)]
+    if missing:
+        pytest.skip("live replay requires provider settings: " + ", ".join(missing))
+    return DeepseekProvider(
+        provider_id="issue118-replay",
+        api_base=os.environ["DEEPSEEK_API_BASE"],
+        api_key=os.environ["DEEPSEEK_API_KEY"],
+        model=os.environ["DEEPSEEK_MODEL"],
+        temperature=0,
+    )
+
+
+@pytest.mark.integration
+def test_issue118_paired_prompt_replay_reports_decisions_and_authority_buckets():
+    """Use actual structured task_understanding responses, never scripted modes."""
+    if os.getenv("ISSUE118_LIVE_REPLAY") != "1":
+        pytest.skip("set ISSUE118_LIVE_REPLAY=1 to call the configured real provider")
+
+    provider = _provider()
+    candidate_prompt = task_module._UNDERSTANDING_PROMPT
+    prompts = (("before", _baseline_prompt()), ("after", candidate_prompt))
+    decisions: dict[str, dict[str, str]] = {name: {} for name, _ in prompts}
+
+    async def run_one(prompt_name: str, prompt: str, case_id: str, query: str) -> None:
+        task_module._UNDERSTANDING_PROMPT = prompt
+        result = await understand_task(query, None, provider)
+        decisions[prompt_name][case_id] = result.interaction_mode
+        assert result.parse_ok, f"{prompt_name}/{case_id}: provider did not return structured JSON"
+        if any("\u4e00" <= char <= "\u9fff" for char in query):
+            assert any("\u4e00" <= char <= "\u9fff" for char in result.extracted_query)
+            assert any("\u4e00" <= char <= "\u9fff" for char in result.rewritten_query)
         else:
-            content = "Supported answer [1]"
-        return LLMResponse(
-            content=content,
-            model="test",
-            tokens_input=1,
-            tokens_output=1,
-            latency_ms=1,
-        )
+            assert any(char.isascii() and char.isalpha() for char in result.extracted_query)
+            assert any(char.isascii() and char.isalpha() for char in result.rewritten_query)
+        assert (result.category == "off_topic") == (result.interaction_mode == "off_topic")
+        if not any(token in query for token in ("NE101", "NE301", "NE302", "NE503")):
+            assert not any(
+                token in result.extracted_query or token in result.rewritten_query
+                for token in ("NE101", "NE301", "NE302", "NE503")
+            ), f"{prompt_name}/{case_id}: model introduced an unsupported product identity"
 
-    def stream(self, messages, **kwargs):
-        async def _stream():
-            yield "Supported answer [1]"
+    async def replay() -> None:
+        for prompt_name, prompt in prompts:
+            for case_id, query, _, _ in CASES:
+                await run_one(prompt_name, prompt, case_id, query)
 
-        return _stream()
+    original_prompt = task_module._UNDERSTANDING_PROMPT
+    try:
+        asyncio.run(replay())
+    finally:
+        task_module._UNDERSTANDING_PROMPT = original_prompt
 
+    summary = {}
+    for prompt_name, _ in prompts:
+        by_kind: dict[str, list[str]] = {"positive": [], "negative": [], "no_authority": []}
+        for case_id, _, kind, authority_ref in CASES:
+            bucket = "negative" if kind == "negative" else (
+                "positive" if authority_ref else "no_authority"
+            )
+            by_kind[bucket].append(decisions[prompt_name][case_id])
+        positive = by_kind["positive"]
+        negative = by_kind["negative"]
+        summary[prompt_name] = {
+            "authority_supported_positive_n": len(positive),
+            "positive_standard_rate": (
+                sum(mode == "standard" for mode in positive) / len(positive) if positive else None
+            ),
+            "necessary_clarification_n": len(negative),
+            "negative_clarification_rate": (
+                sum(mode == "clarification_required" for mode in negative) / len(negative)
+                if negative
+                else None
+            ),
+            "no_authority_n": len(by_kind["no_authority"]),
+            "no_authority_modes": dict(Counter(by_kind["no_authority"])),
+        }
 
-def _rag_for_payload(payload):
-    llm = CapturingLLM(payload)
-    evidence = SearchResult(
-        text="Official public policy and product information.",
-        source_id="official/public-info",
-        source_type="website",
-        product="unknown",
-        title="Official information",
-        url="https://example.com/official-info",
-        score=0.9,
-        chunk_index=0,
-    )
-    searcher = MagicMock()
-    searcher.search.return_value = [evidence]
-    searcher.search_symbols.return_value = []
-    searcher.search_bucket.return_value = []
-    reranker = MagicMock()
-    reranker.rerank.return_value = [evidence]
-    reranker.rerank_scored.return_value = ([evidence], [])
-    rag = RAGOrchestrator(searcher, reranker, llm, system_prompt="test", min_results_to_answer=1)
-    return rag, searcher
+    print(json.dumps({"before_after": summary, "decisions": decisions}, ensure_ascii=False))
+    # This calibration set has no authority mappings yet. Refuse to imply AC1
+    # was measured from answerable-looking but unsupported cases.
+    assert all(row["authority_supported_positive_n"] == 0 for row in summary.values())
+    assert all(row["positive_standard_rate"] is None for row in summary.values())
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("query", GENERIC_ANSWERABLE)
-async def test_generic_answerable_calibration_cases_do_not_use_unconditional_model_clarify(query):
-    llm = CapturingLLM(
-        {
-            "category": "product",
-            "reason": "generic question can be searched without selecting one product",
-            "confidence": 0.9,
-            "interaction_mode": "standard",
-            "evidence_intent": "factual",
-            "extracted_query": query,
-            "rewritten_query": query,
-        }
-    )
-
-    result = await understand_task(query, None, llm)
-
-    assert result.interaction_mode == "standard"
-    assert query in llm.prompt
-
-    rag, searcher = _rag_for_payload(llm.payload)
-    answer = await rag.answer(query, "widget")
-
-    assert searcher.search.called
-    assert answer.is_answered is True
-    assert answer.result_key != "clarification_required"
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("query", NECESSARY_CLARIFICATION)
-async def test_selector_deixis_and_version_calibration_cases_remain_clarifications(query):
-    llm = CapturingLLM(
-        {
-            "category": "product",
-            "reason": "answer depends on missing product, device, or version",
-            "confidence": 0.9,
-            "interaction_mode": "clarification_required",
-            "evidence_intent": "recommendation",
-            "extracted_query": query,
-            "rewritten_query": query,
-        }
-    )
-
-    result = await understand_task(query, None, llm)
-
-    assert result.interaction_mode == "clarification_required"
-    assert query in llm.prompt
-
-    rag, searcher = _rag_for_payload(llm.payload)
-    answer = await rag.answer(query, "widget")
-
-    assert answer.result_key in ("clarification_required", "product_ambiguous")
-    assert searcher.search.call_count == 0
-
-
-@pytest.mark.unit
-async def test_understanding_prompt_distinguishes_generic_evidence_questions_from_selectors():
-    query = "Is there a subscription fee?"
-    llm = CapturingLLM(
-        {
-            "category": "commercial",
-            "reason": "public purchase policy question",
-            "confidence": 0.9,
-            "interaction_mode": "standard",
-            "extracted_query": query,
-            "rewritten_query": query,
-        }
-    )
-
-    await understand_task(query, None, llm)
-
-    assert "公共事实、购买政策、泛能力或有证据的横向对比" in llm.prompt
-    assert "Which product fits my project?" in llm.prompt
-    assert "产品型号、具体场景或硬件版本" in llm.prompt
-    assert "缺少产品型号)→ clarification_required" not in llm.prompt
+def test_frozen_calibration_cases_cover_bilingual_positive_and_clarification_intents():
+    assert {kind for _, _, kind, _ in CASES} == {"positive", "negative"}
+    assert any(any("a" <= char.lower() <= "z" for char in query) for _, query, _, _ in CASES)
+    assert any(any("\u4e00" <= char <= "\u9fff" for char in query) for _, query, _, _ in CASES)
+    assert all(authority_ref is None for _, _, _, authority_ref in CASES)
