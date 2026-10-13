@@ -169,12 +169,46 @@ async def test_stream_reservation_stages_are_sanitized_and_match_answer(monkeypa
     assert stream_stages["evidence_reservation"] == {
         "promotion_count": 2,
         "promotion_roles": {"solution_guide": 1, "product_spec": 1},
+        "checks_not_fired": 0,
     }
     assert stream_stages["solution_retention"] == {"retained_count": 1}
     assert answer_stages["evidence_reservation"]["promotions"] == private_info["promotions"]
     assert answer_stages["evidence_reservation"]["solution_retention"] == private_info["solution_retention"]
     assert "private/source" not in json.dumps(stream_stages)
     assert "secret-marker" not in json.dumps(stream_stages)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("events", "expected"),
+    [
+        (
+            [{"rule": "R3_spec_rescue", "fired": False, "reason": "slot_met"}],
+            {"promotion_count": 0, "promotion_roles": {}, "checks_not_fired": 1},
+        ),
+        (
+            [
+                {"rule": "R1_required_slot_target", "role": "solution_guide", "target": "ne503",
+                 "source_id": "private/r1", "chunk_index": 2, "score": 0.4},
+                {"rule": "R2_page_completion", "role": "product_spec", "target": "ne503",
+                 "source_id": "private/r2", "chunk_index": 3, "score": 0.8},
+                {"rule": "R3_spec_rescue", "fired": False, "reason": "slot_met"},
+            ],
+            {"promotion_count": 2,
+             "promotion_roles": {"product_spec": 1, "solution_guide": 1},
+             "checks_not_fired": 1},
+        ),
+    ],
+)
+def test_public_reservation_trace_counts_only_successful_res_info_events(events, expected):
+    """真实 R1/R2/R3 audit 事件形状不会把未触发检查算作晋升。"""
+    raw = {"promotions": events, "solution_retention": [
+        {"source_id": "private/retained", "chunk_index": 9}
+    ]}
+    public = rag_module._public_reservation_trace({"evidence_reservation": raw})
+    assert public["evidence_reservation"] == expected
+    assert public["solution_retention"] == {"retained_count": 1}
+    assert "private/" not in json.dumps(public)
 
 
 @pytest.mark.asyncio

@@ -108,13 +108,28 @@ def _public_reservation_trace(stages: dict[str, Any]) -> dict[str, Any]:
     reservation = stages.get("evidence_reservation")
     if isinstance(reservation, dict) and reservation.get("promotions"):
         promotions = reservation["promotions"]
-        roles = sorted({p.get("role") for p in promotions if isinstance(p, dict) and p.get("role")})
+        # ``reserve_plan_evidence`` stores audit events here, including R3
+        # checks with ``fired=False``. Count only successful promotion records.
+        successful = [
+            p for p in promotions
+            if isinstance(p, dict)
+            and p.get("fired") is not False
+            and (
+                p.get("rule") in {"R1_required_slot_target", "R1_first_party_case", "R2_page_completion", "R3a_spec_pool"}
+                or (p.get("rule") == "R3b_spec_rescue" and p.get("promoted"))
+            )
+        ]
+        roles = sorted({p.get("role") for p in successful if p.get("role")})
+        checks_not_fired = sum(
+            1 for p in promotions if isinstance(p, dict) and p.get("fired") is False
+        )
         public["evidence_reservation"] = {
-            "promotion_count": len(promotions),
+            "promotion_count": len(successful),
             "promotion_roles": {
-                role: sum(1 for p in promotions if isinstance(p, dict) and p.get("role") == role)
+                role: sum(1 for p in successful if p.get("role") == role)
                 for role in roles
             },
+            "checks_not_fired": checks_not_fired,
         }
     if isinstance(reservation, dict) and reservation.get("solution_retention"):
         public["solution_retention"] = {
