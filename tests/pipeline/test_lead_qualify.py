@@ -222,6 +222,58 @@ def test_date_is_not_phone() -> None:
     assert detect_contact("项目启动日期是 2026-09-02") is None
 
 
+def test_log_timestamp_is_not_phone() -> None:
+    assert detect_contact("[2026-10-03 15:17:27] camera pipeline timeout") is None
+
+
+def test_ipv4_is_not_phone() -> None:
+    assert detect_contact("连接 192.168.10.101 失败") is None
+
+
+def test_version_identifier_is_not_phone() -> None:
+    assert detect_contact("固件版本 v1.2.3 build 202610031517") is None
+
+
+def test_technical_noise_mixed_with_text_does_not_become_phone() -> None:
+    assert detect_contact("日志 [2026-10-03 15:17:27] host=192.168.10.101 fw=v1.2.3") is None
+
+
+def test_technical_noise_does_not_hide_a_real_phone_or_email() -> None:
+    phone = detect_contact("日志 [2026-10-03 15:17:27] 请联系我 13812345678")
+    email = detect_contact("host=192.168.10.101 请联系 john@example.com")
+
+    assert phone is not None and phone.type == "phone" and phone.value == "13812345678"
+    assert email is not None and email.type == "email" and email.value == "john@example.com"
+
+
+def test_technical_support_message_does_not_advance_contact_status() -> None:
+    message = "[2026-10-03 15:17:27] host=192.168.10.101 fw=v1.2.3"
+    contact = detect_contact(message)
+
+    assert contact is None
+    assert compute_status(LEAD_STATUS_POTENTIAL, _qual(LEAD_NONE), contact_now=contact is not None) == (
+        LEAD_STATUS_POTENTIAL
+    )
+
+
+def test_contact_keywords_alone_do_not_count_as_contact() -> None:
+    assert detect_contact("我的电话和 WhatsApp 都可以联系") is None
+
+
+def test_detect_explicit_whatsapp_and_wechat_contacts() -> None:
+    whatsapp = detect_contact("WhatsApp: +1 202 555 0198")
+    wechat = detect_contact("微信号: harry_lead01")
+
+    assert whatsapp is not None and whatsapp.type == "whatsapp"
+    assert wechat is not None and wechat.type == "wechat"
+
+
+def test_test_email_domain_remains_format_valid_but_not_a_phone() -> None:
+    hit = detect_contact("测试邮箱 probe@example.com，日志 2026-10-03 15:17:27")
+
+    assert hit is not None and hit.type == "email" and hit.value == "probe@example.com"
+
+
 def test_detect_wechat_id() -> None:
     hit = detect_contact("加我微信: harry_lead01")
     assert hit is not None and hit.type == "wechat"

@@ -74,6 +74,20 @@ _WECHAT_ID_RE = re.compile(
 # 电话号码:≥9 位数字(容忍 + 前缀与 -/空格/括号分隔);<9 位排除日期/编号噪声
 _PHONE_RE = re.compile(r"(?<![\d@.\-])(?:\+\d[\d\s().-]{8,17}\d|\d[\d\s().-]{7,17}\d)(?![\d@.\-])")
 
+# 技术文本中常见的数字串不是用户留资:在宽松电话形状匹配前先移除它们,
+# 避免日期、IP 或版本串的部分数字被当作独立号码。
+_TIMESTAMP_RE = re.compile(
+    r"\b\d{4}-\d{1,2}-\d{1,2}(?:[T ]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?\b",
+    re.IGNORECASE,
+)
+_IPV4_RE = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])")
+_VERSION_RE = re.compile(r"(?<![\w])v?\d+(?:\.\d+){2,}(?:[-+][\w.-]+)?\b", re.IGNORECASE)
+_TECH_ID_RE = re.compile(
+    r"\b(?:build|version|firmware|fw|commit|revision|serial|id)\s*[:=#-]?\s*"
+    r"[A-Za-z0-9._-]*\d[A-Za-z0-9._-]*",
+    re.IGNORECASE,
+)
+
 _WHATSAPP_KW_RE = re.compile(r"whats\s*app|whatsapp", re.IGNORECASE)
 _WECHAT_KW_RE = re.compile(r"微信|wechat|weixin", re.IGNORECASE)
 _PHONE_KW_RE = re.compile(r"电话|手机号|联系电话|phone|tel|mobile|call me", re.IGNORECASE)
@@ -131,7 +145,11 @@ def detect_contact(text: str) -> ContactHit | None:
         default_type = "wechat" if not _WHATSAPP_KW_RE.search(text) else "whatsapp"
         return ContactHit(type=default_type, value=val, masked=mask_contact_value(val))
 
-    phone_m = _PHONE_RE.search(text)
+    phone_text = _TIMESTAMP_RE.sub(" ", text)
+    phone_text = _IPV4_RE.sub(" ", phone_text)
+    phone_text = _VERSION_RE.sub(" ", phone_text)
+    phone_text = _TECH_ID_RE.sub(" ", phone_text)
+    phone_m = _PHONE_RE.search(phone_text)
     if phone_m:
         raw = phone_m.group(0).strip()
         digits = re.sub(r"\D", "", raw)
