@@ -15,6 +15,21 @@ const WIKI_SERIES: Record<string, string> = {
 // 由已核对的官方 Store 页面形态确定；这些商品是配件，名字/SKU 只能标识
 // 配件自身。只有明确的 isAccessoryOrSparePartFor 唯一目标才能输出产品提示。
 const STORE_ACCESSORY_SLUGS = new Set(["mounting-ne101", "ov5640", "usb-camera-module"]);
+const STORE_PRODUCT_SLUGS: Record<string, string> = {
+  "neoeyes-503": "NE503",
+  "neoeyes-ne101": "NE101",
+  ne301: "NE301",
+  "ne301-poe": "NE301",
+  "ne101-dev-kit": "NE101",
+};
+const PRODUCT_NAME_PATTERNS: Array<[RegExp, string]> = [
+  [/(^|[^a-z0-9])ne[\s-]?101(?=$|[^a-z0-9])/i, "NE101"],
+  [/(^|[^a-z0-9])ne[\s-]?301(?=$|[^a-z0-9])/i, "NE301"],
+  [/(^|[^a-z0-9])ne[\s-]?302(?=$|[^a-z0-9])/i, "NE302"],
+  [/(^|[^a-z0-9])ne[\s-]?503(?=$|[^a-z0-9])/i, "NE503"],
+  [/(^|[^a-z0-9])ng[\s-]?4500(?=$|[^a-z0-9])/i, "NG4500"],
+  [/(^|[^a-z0-9])neo[\s-]?mind(?=$|[^a-z0-9])/i, "NeoMind"],
+];
 
 type JsonRecord = Record<string, unknown>;
 
@@ -39,7 +54,15 @@ function relatedProducts(value: unknown): JsonRecord[] {
   return isRecord(value) ? [value] : [];
 }
 
-function storeProductContext(doc: Document, accessoryPage: boolean): PageContextPayload {
+function canonicalProductHint(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const matches = PRODUCT_NAME_PATTERNS
+    .filter(([pattern]) => pattern.test(value))
+    .map(([, product]) => product);
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+function storeProductContext(doc: Document, accessoryPage: boolean, slug: string): PageContextPayload {
   const products: JsonRecord[] = [];
   for (const script of Array.from(doc.querySelectorAll('script[type="application/ld+json"]'))) {
     try {
@@ -63,9 +86,10 @@ function storeProductContext(doc: Document, accessoryPage: boolean): PageContext
   const target = related[0];
   // 声明了兼容关系后，目标不可解析时必须 abstain；不能把配件自身名称
   // 或 SKU 退化成目标产品身份。
+  const rawProduct = relationDeclared ? target?.name : item.name;
   const product = relationDeclared
-    ? (typeof target?.name === "string" ? target.name.trim() : "")
-    : (typeof item.name === "string" ? item.name.trim() : "");
+    ? canonicalProductHint(rawProduct)
+    : (STORE_PRODUCT_SLUGS[slug] || canonicalProductHint(rawProduct));
   if (!product) return { page_type: accessoryPage || relationDeclared ? "accessory" : "product" };
   return {
     page_type: accessoryPage || relationDeclared ? "accessory" : "product",
@@ -87,7 +111,7 @@ function deriveOfficialContext(url: string, doc: Document): PageContextPayload {
 
   if (parsed.hostname === "www.camthink.ai" && /^\/store(?:\/|$)/.test(path)) {
     const storeProduct = path.match(/^\/store\/([^/]+)\/?$/);
-    if (storeProduct) return storeProductContext(doc, STORE_ACCESSORY_SLUGS.has(storeProduct[1]));
+    if (storeProduct) return storeProductContext(doc, STORE_ACCESSORY_SLUGS.has(storeProduct[1]), storeProduct[1]);
     return { page_type: "store" };
   }
   if (parsed.hostname === "wiki.camthink.ai" && /^\/(?:[a-z-]+\/)?docs(?:\/|$)/.test(path)) {

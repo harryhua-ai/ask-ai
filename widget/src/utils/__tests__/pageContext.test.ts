@@ -46,7 +46,7 @@ describe("collectPageContext(自动收集:URL/标题/语言 + AskAIConfig 结构
       "@type": "Product", name: "NeoEyes NE503 Edge AI Camera", sku: "NE503",
     })}</script>`;
     const ctx = collectPageContext(pageWindow("https://www.camthink.ai/store/neoeyes-503/"));
-    expect(ctx).toMatchObject({ page_type: "product", product: "NeoEyes NE503 Edge AI Camera", sku: "NE503" });
+    expect(ctx).toMatchObject({ page_type: "product", product: "NE503", sku: "NE503" });
   });
 
   it("官方 Store 配件声明兼容多个系列时不派生产品身份", () => {
@@ -114,7 +114,7 @@ describe("collectPageContext(自动收集:URL/标题/语言 + AskAIConfig 结构
       isAccessoryOrSparePartFor: { "@type": "Product", name: "NeoEyes NE101" },
     })}</script>`;
     const uniqueAccessory = collectPageContext(pageWindow("https://www.camthink.ai/store/ov5640/"));
-    expect({ successes: Number(uniqueAccessory.page_type === "accessory" && uniqueAccessory.product === "NeoEyes NE101"), denominator: 1 })
+    expect({ successes: Number(uniqueAccessory.page_type === "accessory" && uniqueAccessory.product === "NE101"), denominator: 1 })
       .toEqual({ successes: 1, denominator: 1 });
 
     const accessoryAbstainRows = [
@@ -159,7 +159,7 @@ describe("collectPageContext(自动收集:URL/标题/语言 + AskAIConfig 结构
     })}</script>`;
     const derived = collectPageContext(pageWindow("https://www.camthink.ai/store/neoeyes-503/"));
     expect(buildAskBody("Tell me about this product", [], "widget", [], { pageContext: derived }).page_context)
-      .toMatchObject({ page_type: "product", product: "NeoEyes NE503 4K PoE Edge AI Camera" });
+      .toMatchObject({ page_type: "product", product: "NE503" });
 
     document.body.innerHTML = `<script type="application/ld+json">${JSON.stringify({
       "@type": "Product", name: "OV5640 Camera Module", sku: "OV5640",
@@ -169,6 +169,23 @@ describe("collectPageContext(自动收集:URL/标题/语言 + AskAIConfig 结构
       .toMatchObject({ page_type: "accessory" });
     expect(buildAskBody("What about this product?", [], "widget", [], { pageContext: abstained }).page_context)
       .not.toHaveProperty("product");
+  });
+
+  it("只从有界已知型号匹配营销名；数字 SKU 忽略，零/多匹配 abstain", () => {
+    const samples = [
+      ["NeoEyes NE503 4K PoE Edge AI Camera", 5110, "NE503"],
+      ["CamThink premium smart camera", 5110, undefined],
+      ["NE503 and NE301 camera bundle", 5110, undefined],
+    ] as const;
+    const contexts = samples.map(([name, sku, expected]) => {
+      document.body.innerHTML = `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name, sku })}</script>`;
+      const context = collectPageContext(pageWindow("https://www.camthink.ai/store/special-offer/"));
+      expect(context.product).toBe(expected);
+      expect(context.sku).toBeUndefined();
+      return context;
+    });
+    expect(buildAskBody("Tell me about this product", [], "widget", [], { pageContext: contexts[0] }).page_context)
+      .toMatchObject({ page_type: "product", product: "NE503" });
   });
 
   it("官方 Wiki 产品系列路由派生规范产品名，其他宿主不读页面元数据", () => {
