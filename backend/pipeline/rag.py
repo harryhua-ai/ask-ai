@@ -739,8 +739,24 @@ def _hardware_revision_source_eligible(query: str, result: SearchResult) -> bool
         re.IGNORECASE,
     ):
         return True
-    if (getattr(result, "product", "") or "").lower() != family.group(1).lower():
-        return False
+    product = (getattr(result, "product", "") or "").lower()
+    requested_product = family.group(1).lower()
+    if product != requested_product:
+        # Taxonomy-authorized shared evidence can apply to this product even
+        # when its source label is a shared bucket rather than a product slug.
+        taxonomy = get_taxonomy()
+        canonical = taxonomy.canonicalize(product)
+        entity = taxonomy.entity(canonical) if canonical else None
+        if not entity or entity.kind != "shared" or requested_product not in entity.applies_to:
+            return False
+        # applies_to does not manufacture applicability: the evidence text
+        # must still identify the requested family and revision itself.
+        if not re.search(
+            rf"\b{re.escape(requested_product)}\b",
+            getattr(result, "text", "") or "",
+            re.IGNORECASE,
+        ):
+            return False
     return _revision_marker_covers(getattr(result, "text", "") or "", revision)
 
 
@@ -2805,6 +2821,23 @@ class RAGOrchestrator:
             ]
             if pre_defensive != len(reranked):
                 product_scope_stage["ineligible_filtered"] = pre_defensive - len(reranked)
+
+        # Keep the bounded hardware revision gate in parity with answer():
+        # filter both reranked candidates and the fused #77 fallback pool
+        # before fallback selection or public source/citation construction.
+        if cmp_stage_info is None and _requested_hardware_revision(query) and re.search(
+            r"\bne\d{3,4}\b", query, re.IGNORECASE
+        ) and re.search(
+            r"gpio|pin|tf|sd(?:mmc)?|4g|cat-?1|hardware|module|connector",
+            query,
+            re.IGNORECASE,
+        ):
+            before_fused, before_reranked = len(fused), len(reranked)
+            fused = [r for r in fused if _hardware_revision_source_eligible(query, r)]
+            reranked = [r for r in reranked if _hardware_revision_source_eligible(query, r)]
+            filtered = (before_fused - len(fused)) + (before_reranked - len(reranked))
+            if filtered:
+                product_scope_stage["hardware_applicability_filtered"] = filtered
 
         # 真实阶段事实(AC10):短路拒答路径也必须携带已执行的 retrieve/rerank
         # 证据(生产曾对执行过的阶段显示 0ms/缺失,误导诊断)。
