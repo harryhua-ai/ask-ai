@@ -1,0 +1,21 @@
+{
+ "v": 3,
+ "task": 119,
+ "claim_id": "harryhua-ai-20261013T103043-81a6cd50",
+ "github_principal": "harryhua-ai",
+ "executor_id": "harryhua-ai",
+ "claimed_at": "2026-10-13T10:30:47Z",
+ "lease_expires_at": "2026-10-13T10:36:47Z",
+ "execution_base": "b4be4dab1e47996d92269e33357f5d2f9e968fcb",
+ "status": "active",
+ "branch": "agent/119/6cf3f18f",
+ "heartbeat_at": "2026-10-13T10:30:47Z",
+ "supersedes": null,
+ "contract_digest": "572016a305578a8773c5ec6b42a5355578e64908c735535f420901fd580f26b0",
+ "candidate": null,
+ "runtime": {
+  "digest": "743a713193def2e7afd5c9c614e05968a1ea50b2c6249d6c5ff219cbc5441096",
+  "release": "v1.1.4",
+  "source_sha": "49ce4bd886115b4e001005343d67a54d7ed5d57e"
+ }
+}
