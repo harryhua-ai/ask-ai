@@ -383,6 +383,33 @@ async def ask(
                 },
             }
 
+        # 页面上下文注入可观测性:只记录站点关联后的低基数页面类别与
+        # 产品身份提示有无，不保留页面 metadata 文本；允许按 site_id/page_type
+        # 聚合注入率，包括没有上下文或多义配件的缺失样本。
+        if site:
+            base = trace_payload or {"type": "rag", "stages": {}, "config_snapshot": {}}
+            context = req.page_context
+            page_type = context.page_type if context else None
+            if page_type not in {"product", "accessory", "documentation", "store"}:
+                page_type = "unknown"
+            product_hint_present = bool(
+                context
+                and any(
+                    isinstance(getattr(context, key), str) and getattr(context, key).strip()
+                    for key in ("product", "product_id", "sku")
+                )
+            )
+            trace_payload = {
+                **base,
+                "stages": {
+                    **base.get("stages", {}),
+                    "page_context": {
+                        "page_type": page_type,
+                        "product_hint_present": product_hint_present,
+                    },
+                },
+            }
+
         # 持久化到 Postgres
         try:
             async with session_factory() as session:
