@@ -194,8 +194,12 @@ export function LeadDetailPanel({
         <div className="flex-1 space-y-4 overflow-y-auto p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Badge variant={LEAD_STATUS_META[lead.status].variant}>
-                {LEAD_STATUS_META[lead.status].label}
+              {/* #124 R2:生效口径 —— 作废的联系方式不再宣称「已留联系方式」 */}
+              <Badge
+                variant={LEAD_STATUS_META[lead.effective_status ?? lead.status].variant}
+                data-testid="lead-effective-status"
+              >
+                {LEAD_STATUS_META[lead.effective_status ?? lead.status].label}
               </Badge>
               {lead.contact_voided && (
                 <Badge variant="destructive" data-testid="contact-voided-badge">
@@ -462,8 +466,11 @@ export default function SalesLeads() {
                   data-testid="lead-row"
                 >
                   <TableCell>
-                    <Badge variant={LEAD_STATUS_META[lead.status].variant}>
-                      {LEAD_STATUS_META[lead.status].label}
+                    {/* #124 R2:生效口径 —— 作废的联系方式不再宣称「已留联系方式」 */}
+                    <Badge
+                      variant={LEAD_STATUS_META[lead.effective_status ?? lead.status].variant}
+                    >
+                      {LEAD_STATUS_META[lead.effective_status ?? lead.status].label}
                     </Badge>
                   </TableCell>
                   <TableCell>

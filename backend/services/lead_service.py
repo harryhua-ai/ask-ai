@@ -19,7 +19,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.db.models import SalesLead
@@ -227,3 +227,39 @@ async def apply_lead_turn(
             existing.contact_captured_at = now
         await session.commit()
         return existing.id
+
+
+async def void_lead_contact_atomic(
+    session: AsyncSession, lead_id: uuid.UUID, *, by: str, reason: str
+) -> bool:
+    """#124 AC1:原子首写作废审计(条件 CAS),返回本调用是否赢得首写。
+
+    旧实现「get → if not contact_voided → 赋值 → commit」存在同行竞态:两个
+    admin 并发都能读到 False 并各自 commit 不同操作人/时间/理由,最后 commit
+    覆盖首写审计。此处改为单条条件 UPDATE:
+
+        UPDATE sales_leads SET contact_voided=true, ...
+        WHERE id=:id AND contact_value IS NOT NULL AND NOT contact_voided
+
+    该语句在 DB 层原子执行(PostgreSQL READ COMMITTED 下,并发后写者等锁
+    拿到行后按**已提交新版本**重评 WHERE → 不匹配 → rowcount=0):
+    - 恰好一个事务把行从「未作废」改为「已作废」,其操作人/时间/理由即首写
+      审计,不可被覆盖;
+    - 后写者(含幂等重复提交)rowcount=0 → 调用方幂等返回现状;
+    - 零他行改动(按主键 + 生效前条件定位),contact_value 原文不动。
+    """
+    result = await session.execute(
+        update(SalesLead)
+        .where(
+            SalesLead.id == lead_id,
+            SalesLead.contact_value.is_not(None),
+            SalesLead.contact_voided.is_(False),
+        )
+        .values(
+            contact_voided=True,
+            contact_voided_at=datetime.now(UTC),
+            contact_voided_by=by,
+            contact_voided_reason=reason,
+        )
+    )
+    return bool(result.rowcount == 1)

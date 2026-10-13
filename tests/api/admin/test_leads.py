@@ -84,6 +84,11 @@ async def leads_env():
             marker + "-real",
             marker + "-ov1",
             marker + "-ov2",
+            # #124 R2 回归种子
+            marker + "-ccv",
+            marker + "-ccok",
+            marker + "-qv",
+            marker + "-hv",
         ):
             await session.execute(SalesLead.__table__.delete().where(SalesLead.session_id == sid))
         for role, uid in users.items():
@@ -476,3 +481,171 @@ async def test_business_overview_new_leads_semantics(leads_env):
         assert key in leads
     assert leads["potential"] >= 2
     assert leads["contactable"] >= 1
+
+
+# --------------------------------------------------------------------------- #
+# #124 R2(评审 blocking 修复)三回归:
+#   R2-1 生效语义:作废行不得在筛选/漏斗/徽章口径继续宣称「有效已留联」;
+#   R2-2 并发首写:同行竞态下首写审计不可被覆盖(见 tests/services/test_lead_service.py);
+#   R2-3 列表面 PII:作废理由自由文本只在授权详情回传,列表投影最小化。
+# --------------------------------------------------------------------------- #
+
+
+async def _seed(factory, sid: str, **kw) -> str:
+    async with factory() as session:
+        lead = _mk_lead(sid, **kw)
+        session.add(lead)
+        await session.commit()
+        return str(lead.id)
+
+
+async def test_voided_contact_captured_not_claimed_as_valid_captured(leads_env):
+    """R2-1(AC2):作废后生效口径不再宣称有效已留联。
+
+    - GET /leads?status=contact_captured 不再包含已作废行(生效视图/筛选);
+    - 列表暴露 effective_status(生效状态):作废的 contact_captured 生效回落
+      potential(线索存在、意图未确证),raw status 原样保留(不可变历史);
+    - 对照:真实有效的 contact_captured 行不受影响。"""
+    marker = leads_env["marker"]
+    factory = app.state.session_factory
+    ccv_id = await _seed(
+        factory,
+        marker + "-ccv",
+        status="contact_captured",
+        contact_type="phone",
+        contact_value="13800001111",
+        contact_masked="138******11",
+    )
+    await _seed(
+        factory,
+        marker + "-ccok",
+        status="contact_captured",
+        contact_type="email",
+        contact_value="okbuyer@example.com",
+        contact_masked="o***@example.com",
+    )
+
+    admin = leads_env["headers"]["admin"]
+    viewer = leads_env["headers"]["viewer"]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        rv = await client.post(
+            f"/api/admin/leads/{ccv_id}/void-contact",
+            json={"confirm": True, "reason": "时间戳被误判为电话"},
+            headers=admin,
+        )
+        assert rv.status_code == 200
+        r_cc = await client.get("/api/admin/leads?status=contact_captured", headers=viewer)
+        r_pot = await client.get("/api/admin/leads?status=potential", headers=viewer)
+        r_detail = await client.get(f"/api/admin/leads/{ccv_id}", headers=viewer)
+
+    # 作废行退出 contact_captured 生效筛选;真实有效行不受影响
+    cc_sessions = {x["session_id"] for x in r_cc.json()["leads"]}
+    assert marker + "-ccv" not in cc_sessions
+    assert marker + "-ccok" in cc_sessions
+    assert all(x["effective_status"] == "contact_captured" for x in r_cc.json()["leads"])
+
+    # 作废行落回 potential 生效档(仍审计可见,不凭空消失)
+    pot_rows = [x for x in r_pot.json()["leads"] if x["session_id"] == marker + "-ccv"]
+    assert len(pot_rows) == 1
+    vrow = pot_rows[0]
+    assert vrow["effective_status"] == "potential"
+    assert vrow["status"] == "contact_captured"  # raw 历史不改写
+    assert vrow["contact_voided"] is True
+
+    # 详情:raw 历史保留 + 生效语义并存
+    detail = r_detail.json()
+    assert detail["status"] == "contact_captured"
+    assert detail["effective_status"] == "potential"
+
+
+async def test_funnel_qualified_drops_voided_contact_only_rows(leads_env):
+    """R2-1(AC2):漏斗 qualified 不再把已作废的 contact_captured 行当合格档
+    (其资格仅由已作废联系方式支撑);真正独立成立的 qualified / handed_off
+    行不因作废联系方式被盲目降级(独立购买意图/人工移交是历史事实)。"""
+    marker = leads_env["marker"]
+    factory = app.state.session_factory
+    ccv_id = await _seed(
+        factory,
+        marker + "-ccv",
+        status="contact_captured",
+        contact_type="phone",
+        contact_value="13800002222",
+        contact_masked="138******22",
+    )
+    qv_id = await _seed(
+        factory,
+        marker + "-qv",
+        status="qualified",
+        contact_type="email",
+        contact_value="qbuyer@example.com",
+        contact_masked="q***@example.com",
+    )
+    hv_id = await _seed(
+        factory,
+        marker + "-hv",
+        status="handed_off",
+        contact_type="email",
+        contact_value="hbuyer@example.com",
+        contact_masked="h***@example.com",
+        handoff_by="boss",
+    )
+
+    admin = leads_env["headers"]["admin"]
+    viewer = leads_env["headers"]["viewer"]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r_before = await client.get("/api/admin/business/overview?range=7d", headers=viewer)
+        qualified_before = r_before.json()["leads"]["qualified"]
+
+        for lid in (ccv_id, qv_id, hv_id):
+            rv = await client.post(
+                f"/api/admin/leads/{lid}/void-contact",
+                json={"confirm": True, "reason": "误报"},
+                headers=admin,
+            )
+            assert rv.status_code == 200
+
+        r_after = await client.get("/api/admin/business/overview?range=7d", headers=viewer)
+
+    leads = r_after.json()["leads"]
+    assert leads["contact_voided"] >= 3
+    # 仅「资格只靠已作废联系方式」的 contact_captured 行退出合格档(恰好 -1);
+    # qualified / handed_off 行作废联系方式后仍保有独立资格,不被盲目降级。
+    assert leads["qualified"] == qualified_before - 1
+
+
+async def test_voided_reason_pii_minimized_in_list_projection(leads_env):
+    """R2-3(AC3):作废理由是自由文本(admin 可写入任意内容),列表投影必须
+    PII 最小化 —— 含敏感字面(手机号/邮箱)的完整理由只保留在授权详情视图,
+    列表响应(admin/editor/viewer 可见)不得回传理由内容。"""
+    marker = leads_env["marker"]
+    lead_id = leads_env["lead_id"]
+    phone, email = "13800138000", "buyer-secret@example.com"
+    reason = f"误填手机 {phone} / 邮箱 {email},请作废"
+
+    admin = leads_env["headers"]["admin"]
+    viewer = leads_env["headers"]["viewer"]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        rv = await client.post(
+            f"/api/admin/leads/{lead_id}/void-contact",
+            json={"confirm": True, "reason": reason},
+            headers=admin,
+        )
+        assert rv.status_code == 200
+        r_list = await client.get(f"/api/admin/leads?q={_NS}-acme", headers=viewer)
+        r_voided = await client.get("/api/admin/leads?contact=voided", headers=viewer)
+        r_detail = await client.get(f"/api/admin/leads/{lead_id}", headers=viewer)
+
+    # 列表两视图均不泄露敏感字面,且投影不含理由字段
+    for resp in (r_list, r_voided):
+        assert phone not in resp.text
+        assert email not in resp.text
+        rows = [x for x in resp.json()["leads"] if x["session_id"] == marker]
+        assert len(rows) == 1
+        assert "contact_voided_reason" not in rows[0]
+        assert rows[0]["contact_voided"] is True
+        assert rows[0]["contact_voided_by"]  # 归因保留(操作人非敏感自由文本)
+
+    # 授权详情视图保留完整审计理由(可追溯,读权限不弱化)
+    detail = r_detail.json()
+    assert detail["contact_voided_reason"] == reason
+    assert phone in r_detail.text and email in r_detail.text

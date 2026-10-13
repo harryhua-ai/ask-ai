@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, fireEvent, within } from "@testing-library/react";
 import { BrowserRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -22,6 +22,7 @@ vi.mock("@/lib/api/salesLeads", () => {
   const mockLeads = [
     {
       id: "lead-1", session_id: "sess-1", status: "contact_captured",
+      effective_status: "contact_captured",
       contact_type: "email", contact_masked: "j***@example.com", has_contact: true,
       contact_captured_at: "2026-09-02T10:00:00+00:00", name: null, company: "Acme",
       contact_voided: false, contact_voided_at: null, contact_voided_by: null, contact_voided_reason: null,
@@ -36,6 +37,7 @@ vi.mock("@/lib/api/salesLeads", () => {
     },
     {
       id: "lead-3", session_id: "sess-3", status: "contact_captured",
+      effective_status: "potential",
       contact_type: "phone", contact_masked: "138******78", has_contact: false,
       contact_voided: true,
       contact_voided_at: "2026-10-01T09:00:00+00:00",
@@ -53,6 +55,7 @@ vi.mock("@/lib/api/salesLeads", () => {
     },
     {
       id: "lead-2", session_id: "sess-2", status: "potential",
+      effective_status: "potential",
       contact_type: null, contact_masked: null, has_contact: false,
       contact_captured_at: null, name: null, company: null, region: null,
       contact_voided: false, contact_voided_at: null, contact_voided_by: null, contact_voided_reason: null,
@@ -223,7 +226,8 @@ describe("SalesLeads page", () => {
     renderPage();
     await waitFor(() => expect(screen.getAllByTestId("lead-row").length).toBe(3));
     // lead-3(VoidCo):已作废联系方式 —— 按内容定位,不依赖列表顺序
-    fireEvent.click(screen.getByText("VoidCo").closest('[data-testid="lead-row"]')!);
+    const voidedRow = screen.getByText("VoidCo").closest('[data-testid="lead-row"]')!;
+    fireEvent.click(voidedRow);
     await waitFor(() => {
       expect(screen.getByTestId("lead-detail")).toBeInTheDocument();
     });
@@ -235,5 +239,24 @@ describe("SalesLeads page", () => {
     expect(screen.getByTestId("contact-voided-audit")).toHaveTextContent("时间戳被误判为电话");
     // 已作废线索不再提供作废操作(幂等入口收缩)
     expect(screen.queryByTestId("void-contact-btn")).not.toBeInTheDocument();
+  });
+
+  it("renders effective status so voided contact no longer claims 已留联系方式 (#124 R2)", async () => {
+    renderPage();
+    await waitFor(() => expect(screen.getAllByTestId("lead-row").length).toBe(3));
+    // 列表行:作废行按生效口径渲染 potential 徽章 + 作废徽章,不再并存
+    // 「已留联系方式」与作废标记的矛盾呈现(AC2 运营视图一致不误导)
+    const voidedRow = screen.getByText("VoidCo").closest('[data-testid="lead-row"]')!;
+    expect(within(voidedRow).getByText("潜在线索")).toBeInTheDocument();
+    expect(within(voidedRow).getByTestId("contact-voided-badge")).toBeInTheDocument();
+    expect(within(voidedRow).queryByText("已留联系方式")).not.toBeInTheDocument();
+    // 有效行不受影响
+    const validRow = screen.getByText("Acme").closest('[data-testid="lead-row"]')!;
+    expect(within(validRow).getByText("已留联系方式")).toBeInTheDocument();
+    // 详情面板同样按生效口径渲染
+    fireEvent.click(voidedRow);
+    await waitFor(() => {
+      expect(screen.getByTestId("lead-effective-status")).toHaveTextContent("潜在线索");
+    });
   });
 });
