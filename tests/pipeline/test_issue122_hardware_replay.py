@@ -87,7 +87,28 @@ def _rag(sources, expected_answer):
 
 
 @pytest.mark.asyncio
-async def test_unknown_product_replay_conditions_family_and_excludes_cross_family_case():
+@pytest.mark.parametrize(
+    ("query", "answer"),
+    [
+        (
+            "4G 模块和 TF 卡有没有引脚冲突，能一起用吗？",
+            (
+                "NE101：V1.0–V1.2 的 TF_PWR 是 GPIO42；V2.0 改为 GPIO48，"
+                "且与 Cat-1/HaLow 模组供电共用，GPIO42 是 CAM_PWR。[1] "
+                "NE301：4G 走 USB，与 TF 引脚无复用。[2] 请按具体产品和版本确认。"
+            ),
+        ),
+        (
+            "Can I use the 4G module and TF card at the same time?",
+            (
+                "NE101: V1.0–V1.2 TF_PWR is GPIO42; V2.0 uses GPIO48, shared with the "
+                "Cat-1/HaLow module supply, while GPIO42 is CAM_PWR.[1] NE301: 4G uses USB "
+                "with no TF pin multiplexing.[2] Confirm the exact product and revision."
+            ),
+        ),
+    ],
+)
+async def test_unknown_product_replay_conditions_family_and_excludes_cross_family_case(query, answer):
     ne101 = _source(
         text="NE101 TF power: V1.0-V1.2 GPIO42; V2.0 GPIO48, shared with Cat-1/HaLow supply. V2.0 GPIO42 is CAM_PWR.",
         source_id="wiki/neoeyes-ne101/hardware-connection.md",
@@ -105,19 +126,16 @@ async def test_unknown_product_replay_conditions_family_and_excludes_cross_famil
         source_type="filesystem",
         url="",
     )
-    answer = (
-        "NE101：V1.0–V1.2 的 TF_PWR 是 GPIO42；V2.0 改为 GPIO48，"
-        "且与 Cat-1/HaLow 模组供电共用，GPIO42 是 CAM_PWR。[1] "
-        "NE301：4G 走 USB，与 TF 引脚无复用。[2] 请按具体产品和版本确认。"
-    )
     rag, llm = _rag([ne101, ne301, case], answer)
 
-    result = await rag.answer("4G 模块和 TF 卡有没有引脚冲突，能一起用吗？")
+    result = await rag.answer(query)
 
     assert "NE101" in result.answer and "NE301" in result.answer
     assert "V1.0–V1.2" in result.answer and "V2.0" in result.answer
-    assert "GPIO48" in result.answer and "共用" in result.answer and "CAM_PWR" in result.answer
-    assert "USB" in result.answer and "无复用" in result.answer
+    assert "GPIO48" in result.answer and "CAM_PWR" in result.answer
+    assert "共用" in result.answer or "shared" in result.answer.lower()
+    assert "USB" in result.answer
+    assert "无复用" in result.answer or "no TF pin multiplexing" in result.answer
     assert "[1]" in result.answer and "[2]" in result.answer
     source_urls = {source["url"] for source in result.sources}
     assert ne101.url in source_urls and ne301.url in source_urls
@@ -178,7 +196,22 @@ async def test_revision_answer_cites_version_qualified_hardware_source_only(quer
 
 
 @pytest.mark.asyncio
-async def test_conflicting_example_does_not_turn_configuration_limit_into_universal_conflict():
+@pytest.mark.parametrize(
+    ("query", "answer"),
+    [
+        (
+            "NE101 的 4G Cat-1 和 TF 卡能否同时使用？",
+            "NE101 的限制取决于具体 Cat-1/HaLow 配置：复用 GPIO38–GPIO41 和 GPIO45 的冲突配置不能并用；GPIO41 也与 TF/HaLow 使用冲突。[1]",
+        ),
+        (
+            "Can NE101 Cat-1 4G and the TF card be used together?",
+            "On NE101 this depends on the selected Cat-1/HaLow configuration: only combinations conflicting on multiplexed GPIO38–GPIO41/GPIO45 cannot be used together; GPIO41 also conflicts with TF/HaLow use.[1]",
+        ),
+    ],
+)
+async def test_conflicting_example_does_not_turn_configuration_limit_into_universal_conflict(
+    query, answer,
+):
     authoritative = _source(
         text="NE101 hardware connection: GPIO38-GPIO41 and GPIO45 are multiplexed. Only conflicting WiFi-HaLow or 4G Cat-1 configurations cannot be used together; assess the selected configuration. GPIO41 conflicts with TF/HaLow use.",
         source_id="wiki/neoeyes-ne101/hardware-connection.md",
@@ -191,14 +224,18 @@ async def test_conflicting_example_does_not_turn_configuration_limit_into_univer
         url="https://docs.example/neoeyes-ne101/6-example-arduino.md",
         score=0.8,
     )
-    answer = "NE101 的限制取决于具体 Cat-1/HaLow 配置：复用 GPIO38–GPIO41 和 GPIO45 的冲突配置不能并用；GPIO41 也与 TF/HaLow 使用冲突。[1]"
     rag, _llm = _rag([authoritative, old_example], answer)
 
-    result = await rag.answer("NE101 的 4G Cat-1 和 TF 卡能否同时使用？")
+    result = await rag.answer(query)
 
-    assert "取决于具体" in result.answer
+    assert "取决于具体" in result.answer or "depends on the selected" in result.answer
     assert "GPIO45" in result.answer and "GPIO41" in result.answer
-    assert "所有配置" not in result.answer and "不能同时使用" not in result.answer
+    assert "所有配置" not in result.answer and "all configurations" not in result.answer.lower()
+    assert "不能同时使用" not in result.answer
+    if "On NE101" in result.answer:
+        assert "cannot be used together" in result.answer
+    else:
+        assert "冲突配置不能并用" in result.answer
     assert "[1]" in result.answer
     assert result.sources[0]["url"] == authoritative.url
 
