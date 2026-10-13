@@ -13,6 +13,7 @@
 import json
 import uuid
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -196,6 +197,52 @@ async def test_ask_streams_sources_tokens_done() -> None:
     # 验证 Postgres 写入
     session.add.assert_called_once()
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("page_context", "expected_page_type", "expected_hint_present"),
+    [
+        ({"page_type": "product", "product": "NE503"}, "product", True),
+        ({"page_type": "accessory"}, "accessory", False),
+        (None, "unknown", False),
+    ],
+)
+async def test_ask_trace_observes_product_context_by_site_and_page_category(
+    monkeypatch, page_context, expected_page_type, expected_hint_present
+) -> None:
+    """站点问答 trace 只存页面类别和产品身份有无，便于按类别统计注入率。"""
+    import backend.api.routes as routes
+
+    async def fake_resolve_site(*_args):
+        return SimpleNamespace(display_name="CamThink Wiki", language="en")
+
+    monkeypatch.setattr(
+        routes,
+        "resolve_site",
+        fake_resolve_site,
+    )
+    app.state.rag = _make_streaming_rag(
+        [{"type": "complete", "answer": "ok", "sources": [], "is_answered": True, "language": "en"}]
+    )
+    factory, session = _make_mock_session_factory()
+    app.state.session_factory = factory
+
+    payload = {"message": "about this product", "site_id": "camthink-wiki"}
+    if page_context is not None:
+        payload["page_context"] = page_context
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/ask", json=payload, headers={"Origin": "https://wiki.camthink.ai"}
+        )
+
+    assert response.status_code == 200
+    traces = [call.args[0] for call in session.add.call_args_list if hasattr(call.args[0], "stages")]
+    assert len(traces) == 1
+    assert traces[0].stages["page_context"] == {
+        "page_type": expected_page_type,
+        "product_hint_present": expected_hint_present,
+    }
 
 
 @pytest.mark.unit

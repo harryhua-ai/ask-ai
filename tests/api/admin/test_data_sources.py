@@ -34,8 +34,16 @@ async def auth_headers():
     yield {"Authorization": f"Bearer {token}"}
     # 清理：仅删除本测试创建的数据源和用户，避免破坏 Task 9 迁移的共享 dev 数据
     async with factory() as session:
-        await session.execute(DataSource.__table__.delete().where(DataSource.id == "test-source"))
-        await session.execute(SyncLog.__table__.delete().where(SyncLog.source_id == "test-source"))
+        await session.execute(
+            DataSource.__table__.delete().where(
+                DataSource.id.in_(["test-source", "upload-test-source"])
+            )
+        )
+        await session.execute(
+            SyncLog.__table__.delete().where(
+                SyncLog.source_id.in_(["test-source", "upload-test-source"])
+            )
+        )
         await session.execute(User.__table__.delete().where(User.id == user_id))
         await session.commit()
 
@@ -57,6 +65,23 @@ async def test_create_and_list_data_source(auth_headers):
         resp = await client.get("/api/admin/data-sources", headers=auth_headers)
         assert resp.status_code == 200
         assert any(s["id"] == "test-source" for s in resp.json())
+
+
+async def test_create_upload_source_defaults_to_no_public_channels(auth_headers):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/admin/data-sources",
+            json={
+                "id": "upload-test-source",
+                "type": "filesystem",
+                "product": "knowledge",
+                "config": {"upload_mode": True, "file_types": [".md"]},
+            },
+            headers=auth_headers,
+        )
+    assert resp.status_code == 201
+    assert resp.json()["config"]["channel_visibility"] == []
 
 
 async def test_list_data_sources_includes_latest_sync(auth_headers):

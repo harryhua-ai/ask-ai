@@ -8,6 +8,7 @@
 """
 
 import json
+import subprocess
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -145,10 +146,111 @@ async def test_ask_authorized_site_persists_site_id_and_threads_context():
     assert captured["page_context"] == {"product": "NE503", "page_type": "product"}
     assert captured["channel"] == "widget"
     # 持久化:conversation.site_id 落值
-    session.add.assert_called_once()
-    conv = session.add.call_args.args[0]
+    conversations = [
+        call.args[0] for call in session.add.call_args_list
+        if hasattr(call.args[0], "site_id") and hasattr(call.args[0], "channel")
+    ]
+    assert len(conversations) == 1
+    conv = conversations[0]
     assert conv.site_id == "camthink-store"
     assert conv.channel == "widget"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("message", "page_context", "expected_mode", "expected_targets", "expected_source"),
+    [
+        (
+            "Tell me about this product",
+            {"product": "NE503", "page_type": "product"},
+            "exact", ("ne503",), "page_context",
+        ),
+        (
+            "What is this product?",
+            {"page_type": "accessory"},
+            "ambiguous", (), "none",
+        ),
+        (
+            "NE301 specifications",
+            {"product": "NE503", "page_type": "product"},
+            "exact", ("ne301",), "query",
+        ),
+    ],
+)
+async def test_widget_api_resolver_page_context_derive_abstain_and_query_precedence(
+    message, page_context, expected_mode, expected_targets, expected_source
+):
+    """Widget 请求上下文经 API 到达解析器；缺失 abstain，用户点名产品优先。"""
+    from backend.pipeline.product_resolver import resolve_products
+    from backend.product_taxonomy import get_taxonomy
+
+    captured: dict = {}
+    factory, _session = _make_site_factory(_make_site_row())
+    app.state.rag = _capture_rag(_EVENTS, captured)
+    app.state.session_factory = factory
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/api/ask",
+            json={"message": message, "site_id": "camthink-store", "page_context": page_context},
+            headers={"Origin": STORE_ORIGIN},
+        )
+
+    assert resp.status_code == 200
+    assert captured["page_context"] == page_context
+    resolution = resolve_products(message, page_context=captured["page_context"], taxonomy=get_taxonomy())
+    assert (resolution.mode, resolution.targets, resolution.source) == (
+        expected_mode, expected_targets, expected_source,
+    )
+
+
+@pytest.mark.unit
+async def test_real_widget_derived_store_context_resolves_through_ask_api():
+    """Store JSON-LD → collectPageContext → buildAskBody → /api/ask → resolver."""
+    from backend.pipeline.product_resolver import resolve_products
+    from backend.product_taxonomy import get_taxonomy
+
+    widget_dir = __import__("pathlib").Path(__file__).resolve().parents[2] / "widget"
+    script = r'''
+      import { createRequire } from "node:module";
+      import { pathToFileURL } from "node:url";
+      const widgetDir = process.argv[1];
+      const require = createRequire(pathToFileURL(`${widgetDir}/package.json`));
+      const { createServer } = require("vite");
+      const { JSDOM } = require("jsdom");
+      const vite = await createServer({ root: widgetDir, configFile: `${widgetDir}/vite.config.ts`, server: { middlewareMode: true } });
+      try {
+        const { collectPageContext } = await vite.ssrLoadModule("/src/utils/pageContext.ts");
+        const { buildAskBody } = await vite.ssrLoadModule("/src/hooks/useSSE.ts");
+        const dom = new JSDOM(`<script type="application/ld+json">${JSON.stringify({
+          "@type": "Product", name: "NeoEyes NE503 4K PoE Edge AI Camera", sku: 5110,
+        })}</script>`, { url: "https://www.camthink.ai/store/neoeyes-503/" });
+        globalThis.localStorage = dom.window.localStorage;
+        const pageContext = collectPageContext(dom.window);
+        process.stdout.write(JSON.stringify(buildAskBody("Tell me about this product", [], "widget", [], { siteId: "camthink-store", pageContext })));
+        dom.window.close();
+      } finally { await vite.close(); }
+    '''
+    completed = subprocess.run(
+        ["node", "--input-type=module", "-e", script, str(widget_dir)],
+        cwd=widget_dir, capture_output=True, text=True, check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    captured: dict = {}
+    factory, _session = _make_site_factory(_make_site_row())
+    app.state.rag = _capture_rag(_EVENTS, captured)
+    app.state.session_factory = factory
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/api/ask", json=payload, headers={"Origin": STORE_ORIGIN})
+
+    assert resp.status_code == 200
+    assert captured["page_context"] == payload["page_context"]
+    resolution = resolve_products(
+        payload["message"], page_context=captured["page_context"], taxonomy=get_taxonomy(),
+    )
+    assert (resolution.mode, resolution.targets, resolution.source) == ("exact", ("ne503",), "page_context")
 
 
 @pytest.mark.unit

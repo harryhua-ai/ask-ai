@@ -107,3 +107,51 @@ async def test_ttl_refreshes_snapshot():
     mapping["src-a"] = ("widget", "api")  # 管理员改配置
     await asyncio.sleep(0.06)
     assert await guard.allows("src-a/case.md", "widget") is True
+
+
+async def test_upload_visibility_requires_valid_explicit_public_grant():
+    """Incident and newly created upload sources default closed; exact grants survive."""
+    from backend.services.source_visibility import visibility_for_source
+
+    incident = {"upload_mode": True}
+    new_upload = {"upload_mode": True, "channel_visibility": "widget"}
+    explicit_widget = {"upload_mode": True, "channel_visibility": ["widget"]}
+    explicit_api = {"upload_mode": True, "channel_visibility": ["api"]}
+    revoked = {"upload_mode": True, "channel_visibility": []}
+
+    assert visibility_for_source("filesystem", incident) == ()
+    assert visibility_for_source("filesystem", new_upload) == ()
+    assert visibility_for_source("filesystem", explicit_widget) == ("widget",)
+    assert visibility_for_source("filesystem", explicit_api) == ("api",)
+    assert visibility_for_source("filesystem", revoked) == ()
+    assert visibility_for_source("github", {}) == ("widget", "api")
+
+
+async def test_guard_blocks_lagging_chunk_metadata_after_upload_grant_revoked():
+    """Authoritative source snapshot blocks a stale public chunk projection."""
+    from backend.services.source_visibility import visibility_for_source
+
+    async def load_revoked_upload():
+        return {
+            "upload-source": visibility_for_source(
+                "filesystem", {"upload_mode": True, "channel_visibility": []}
+            )
+        }
+
+    guard = SourceVisibilityGuard(load_revoked_upload, ttl=60)
+    assert await guard.allows("upload-source/customer-case.md", "widget") is False
+    assert await guard.allows("upload-source/customer-case.md", "api") is False
+
+
+async def test_upload_invalid_or_non_public_channel_values_fail_closed():
+    from backend.services.source_visibility import visibility_for_source
+
+    assert visibility_for_source(
+        "filesystem", {"upload_mode": True, "channel_visibility": ["widget", "admin"]}
+    ) == ()
+    assert visibility_for_source(
+        "filesystem", {"upload_mode": True, "channel_visibility": ["internal"]}
+    ) == ()
+    assert visibility_for_source(
+        "filesystem", {"upload_mode": True, "channel_visibility": ["api"]}
+    ) == ("api",)

@@ -69,7 +69,7 @@ _UNDERSTANDING_PROMPT = """你是智能应答系统的任务理解助手。请�
 
 ## 第一步:交互模式判定(决定路由,先于分类)
 - capability_orientation: 用户在询问**助手本身**——它能做什么/能帮什么忙/服务范围/怎么使用它。中英文语义等价表达都算(如「你会干什么」「你可以帮我什么」「怎么用你」「What can you do?」「How can you help me?」)。这是合法交互,**不是闲聊,也不是 off_topic**。
-- clarification_required: 请求大概率属于产品/商务/支持域(有明确的产品/技术/采购诉求),但缺少继续所需的关键信息(典型:没说产品型号),且对话历史也补不上。此时**绝不猜产品,也绝不当无关处理**。例:「What is included in the box?」(无上下文)→ clarification_required。**注意**:用户已给出场景/规模/区域/行业/约束等实质信息的选型或方案请求(如「某地区仓库群读表部署该选什么设备」)信息是充分的——应走 standard 作答,不得因未点名型号而判 clarification_required;型号不确定时在答案内按适配性分述即可。
+- clarification_required: 仅当正确回答**确实依赖**缺失的产品型号、具体场景或硬件版本,且对话历史也补不上时才澄清。没有点名型号本身**不是**澄清理由。公共事实、购买政策、泛能力或有证据的横向对比,即使尚未确定单一产品,也应走 standard 检索;检索后只能按实际权威资料回答,证据不足则诚实说明,不得猜测价格、政策或参数。选型/方案请求若缺少不可省略的需求条件(如「Which product fits my project?」且未给项目信息),仍须澄清。指代「这个设备」但无法解析目标、或询问依赖设备身份的硬件版本时,仍须澄清。
 - off_topic: **仅当有充分证据**表明请求与产品域完全无关:天气、通用闲聊、纯无关技术问题、纯竞品闲聊。**仅缺少产品名称不足以判 off_topic**。
 - standard: 其余正常的产品/商务/支持请求,直接进入检索作答。
 
@@ -85,6 +85,11 @@ _UNDERSTANDING_PROMPT = """你是智能应答系统的任务理解助手。请�
 - "产品X 支持哪些接口 / 有演示视频吗" → standard + product
 - "设备Y 蜂窝网络注册失败 / CEREG 报错" → standard + support
 - "What is included in the box?"(无任何产品上下文)→ clarification_required + product
+- "Is there a subscription fee?" / "where to buy in australia" → standard;检索公共购买政策
+- "I need night vision ×2" / "分辨率最高的产品是哪个？价格如何？" → standard;检索泛能力或有证据的对比,不猜未证实参数
+- "how to hide this inside a vehicle?" → standard;检索可用安装资料,无证据时明确说明
+- "Which product fits my project?"(没有项目条件)→ clarification_required + product
+- "这台设备应该刷哪个硬件版本？" / "这个设备支持什么?"(设备身份无法解析)→ clarification_required + product
 - "你会干什么 / What can you do?"(询问助手本身)→ capability_orientation + product
 - "今天天气怎么样 / 写一首诗"(与产品域无关)→ off_topic + off_topic
 

@@ -1,0 +1,31 @@
+name: ght-plan-publish
+# ght-adoption-managed: ght-plan-publish/v1
+on:
+  push:
+    paths: ['docs/plans/current-plan.yaml']
+  workflow_dispatch:
+    inputs:
+      plan_path:
+        required: true
+        type: string
+        default: docs/plans/current-plan.yaml
+      replace_revision:
+        required: false
+        type: string
+permissions:
+  contents: write
+  issues: read
+jobs:
+  publish:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish the A-authored Plan payload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GHT_PLAN_PUBLISHER_ID: ght-plan-publish-workflow
+          GHT_RUNTIME_REF: "743a713193def2e7afd5c9c614e05968a1ea50b2c6249d6c5ff219cbc5441096"
+          GHT_PLAN_PATH: ${{ inputs.plan_path || 'docs/plans/current-plan.yaml' }}
+          GHT_REPLACE_REVISION: ${{ inputs.replace_revision }}
+        run: sh .github/scripts/ght-gha-adapter.sh plan-publish "$GHT_PLAN_PATH" "$GHT_REPLACE_REVISION"

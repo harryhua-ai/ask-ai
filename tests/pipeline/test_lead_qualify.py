@@ -222,6 +222,58 @@ def test_date_is_not_phone() -> None:
     assert detect_contact("项目启动日期是 2026-09-02") is None
 
 
+def test_log_timestamp_is_not_phone() -> None:
+    assert detect_contact("[2026-10-03 15:17:27] camera pipeline timeout") is None
+
+
+def test_ipv4_is_not_phone() -> None:
+    assert detect_contact("连接 192.168.10.101 失败") is None
+
+
+def test_version_identifier_is_not_phone() -> None:
+    assert detect_contact("固件版本 v1.2.3 build 202610031517") is None
+
+
+def test_technical_noise_mixed_with_text_does_not_become_phone() -> None:
+    assert detect_contact("日志 [2026-10-03 15:17:27] host=192.168.10.101 fw=v1.2.3") is None
+
+
+def test_technical_noise_does_not_hide_a_real_phone_or_email() -> None:
+    phone = detect_contact("日志 [2026-10-03 15:17:27] 请联系我 13812345678")
+    email = detect_contact("host=192.168.10.101 请联系 john@example.com")
+
+    assert phone is not None and phone.type == "phone" and phone.value == "13812345678"
+    assert email is not None and email.type == "email" and email.value == "john@example.com"
+
+
+def test_technical_support_message_does_not_advance_contact_status() -> None:
+    message = "[2026-10-03 15:17:27] host=192.168.10.101 fw=v1.2.3"
+    contact = detect_contact(message)
+
+    assert contact is None
+    assert compute_status(LEAD_STATUS_POTENTIAL, _qual(LEAD_NONE), contact_now=contact is not None) == (
+        LEAD_STATUS_POTENTIAL
+    )
+
+
+def test_contact_keywords_alone_do_not_count_as_contact() -> None:
+    assert detect_contact("我的电话和 WhatsApp 都可以联系") is None
+
+
+def test_detect_explicit_whatsapp_and_wechat_contacts() -> None:
+    whatsapp = detect_contact("WhatsApp: +1 202 555 0198")
+    wechat = detect_contact("微信号: harry_lead01")
+
+    assert whatsapp is not None and whatsapp.type == "whatsapp"
+    assert wechat is not None and wechat.type == "wechat"
+
+
+def test_test_email_domain_remains_format_valid_but_not_a_phone() -> None:
+    hit = detect_contact("测试邮箱 probe@example.com，日志 2026-10-03 15:17:27")
+
+    assert hit is not None and hit.type == "email" and hit.value == "probe@example.com"
+
+
 def test_detect_wechat_id() -> None:
     hit = detect_contact("加我微信: harry_lead01")
     assert hit is not None and hit.type == "wechat"
@@ -315,3 +367,28 @@ def test_lead_turn_context_gate() -> None:
     assert ctx3.capture_mode is True
     assert ctx3.should_qualify("support") is True
     assert uuid.UUID(str(ctx3.lead_id)) if ctx3.lead_id else True  # 类型冒烟
+
+
+def test_compact_keyed_log_timestamp_is_not_phone() -> None:
+    """A 的 REQUEST_CHANGES：`timestamp=`/`ts=` 前缀的压缩日志时间不得判为电话。"""
+    assert detect_contact("timestamp=20261003151727 camera timeout") is None
+    assert detect_contact("ts=202610031517 device reboot") is None
+
+
+def test_compact_keyed_timestamp_with_genuine_phone_still_captures_phone() -> None:
+    """混排场景：剥离技术时间戳后，真实电话仍须命中（不得全局拒真）。"""
+    hit = detect_contact(
+        "timestamp=20261003151727 camera timeout, call me +1 202 555 0198"
+    )
+
+    assert hit is not None and hit.type == "phone"
+    assert "555" in hit.value and "0198" in hit.value
+
+
+def test_compact_keyed_timestamp_with_utc_marker_is_not_phone() -> None:
+    """A 第二轮 REQUEST_CHANGES：压缩时间戳带 Z/UTC 后缀同样不得判为电话。"""
+    assert detect_contact("timestamp=20261003151727Z camera timeout") is None
+    assert detect_contact("ts=202610031517UTC device reboot") is None
+    hit = detect_contact("ts=202610031517Z gateway drop, ring +1 202 555 0198")
+
+    assert hit is not None and hit.type == "phone"

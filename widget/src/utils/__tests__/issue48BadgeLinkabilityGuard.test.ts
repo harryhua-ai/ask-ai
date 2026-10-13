@@ -97,6 +97,19 @@ describe("issue48: widget renders per explicit backend link state (C-3)", () => 
     });
   }
 
+  it("stale citations explain that the destination may have moved or failed", () => {
+    const html = renderMarkdownSafe(ANSWER, [
+      {
+        url: "https://github.com/camthink-ai/wiki-documents/blob/main/docs/moved.md",
+        title: "moved-doc",
+        type: "github",
+        link_state: "stale",
+      },
+    ]);
+    expect(html).toContain('title="来源可能已移动或失效"');
+    expect(html).not.toMatch(/<a\s[^>]*class="ask-ai-ref"/);
+  });
+
   it("external state with off-host URL must not render clickable (defense in depth; isAllowedUrl only downgrades)", () => {
     const html = renderMarkdownSafe(ANSWER, [
       { url: "https://evil.example.com/payload.md", title: "off-host", type: "github", link_state: "external" },

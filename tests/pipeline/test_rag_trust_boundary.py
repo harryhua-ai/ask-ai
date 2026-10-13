@@ -219,3 +219,34 @@ def test_hardware_compatibility_prompt_preserves_product_and_revision_scope():
     assert "hardware revision" in system
     assert "conflicting" in system
     assert "historical case" in system
+
+
+@pytest.mark.asyncio
+async def test_incident_upload_missing_grant_never_becomes_external_citation():
+    """Known upload identity without explicit grant is denied before generation."""
+    from backend.services.source_visibility import SourceVisibilityGuard, visibility_for_source
+
+    source_id = "knowledge-cb70f5ae"
+    guard = SourceVisibilityGuard(
+        lambda: _incident_visibility_snapshot(source_id, visibility_for_source), ttl=60
+    )
+    incident = _make_sr(
+        text=RESTRICTED_SR.text,
+        source_id=f"{source_id}/support.md",
+        source_type="filesystem",
+        title="内部支持案例",
+        url="",
+    )
+    rag, reranker, llm = _build([incident], guard=guard)
+
+    result = await rag.answer(query="case details", channel="widget")
+
+    assert result.reranked_results == []
+    assert result.sources == []
+    assert "ICC" not in str(result.sources)
+    assert all(call.args[1] == [] for call in reranker.rerank_scored.call_args_list)
+    assert all(call.kwargs.get("task") != "generation" for call in llm.generate.call_args_list)
+
+
+async def _incident_visibility_snapshot(source_id, policy):
+    return {source_id: policy("filesystem", {"upload_mode": True})}
