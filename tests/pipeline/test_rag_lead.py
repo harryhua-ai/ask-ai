@@ -211,6 +211,10 @@ async def test_strong_purchase_signals_still_qualify_and_invite_after_answer(que
         "Please translate the phrase We will purchase, next quarter into Chinese.",
         "How do you say we will purchase next quarter in Chinese?",
         "请翻译“我们计划采购，时间是下季度”为英文。",
+        "Please quote the user manual: We will purchase, next quarter.",
+        "Please translate We will purchase, next quarter.",
+        "How do you say We will purchase, next quarter?",
+        "请翻译我们计划采购，时间是下季度。",
     ],
 )
 async def test_information_queries_with_purchase_words_do_not_upgrade_or_invite(query):

@@ -237,15 +237,18 @@ def explicit_purchase_signal(text: str) -> bool:
         r"|(?:来自|根据)(?:用户)?(?:手册|文档|源码)|(?:引用|摘录)(?:用户)?(?:手册|文档|源码)",
         re.IGNORECASE,
     )
-    translation_frame = re.compile(
-        r"\b(?:please\s+)?translate\b.{0,100}?"
-        r"(?=\b(?:into|to)\s+[A-Za-z])"
-        r"|\bhow\s+do\s+you\s+say\b.{0,100}?"
-        r"(?=\bin\s+[A-Za-z])"
-        r"|\b(?:please\s+)?explain\b.{0,100}?"
-        r"(?=\b(?:in|to)\s+[A-Za-z])"
-        r"|(?:请?翻译|翻译一下|请解释|解释一下).{0,100}?"
-        r"(?=(?:成|为|到)\s*[\u4e00-\u9fff])",
+    # A framework verb scopes only over its object. The object ends at a
+    # sentence boundary or an explicit coordinating clause boundary; language
+    # names and quote marks are optional and do not determine the scope.
+    framework_verb = re.compile(
+        r"\b(?:please\s+)?(?:quote|cite|translate|paraphrase|explain)\b"
+        r"|\bhow\s+do\s+you\s+say\b"
+        r"|\bwhat\s+does\b"
+        r"|(?:请)?(?:引用|摘录|翻译|解释|转述)",
+        re.IGNORECASE,
+    )
+    object_boundary = re.compile(
+        r"\b(?:and|but|while|whereas)\b|(?:并且|但是|而且|同时)|[.!?。！？;；]",
         re.IGNORECASE,
     )
 
@@ -258,22 +261,25 @@ def explicit_purchase_signal(text: str) -> bool:
             right = sentence.find(closing, end - 1)
             if left >= 0 and right >= end - 1:
                 return True
-        # A framework only makes text in its object position non-actionable.
-        # In particular, a later independent question must not veto a preceding
-        # first-person commitment joined with a comma and conjunction.
-        for frame in translation_frame.finditer(sentence):
-            if frame.start() <= start and end <= frame.end():
+        # Any recognized framework verb makes its following object
+        # non-actionable. A later independent clause remains outside that span.
+        for frame in framework_verb.finditer(sentence):
+            object_start = frame.end()
+            object_end = len(sentence)
+            boundary = object_boundary.search(sentence, object_start)
+            if boundary:
+                object_end = boundary.start()
+            if frame.group(0).lower().endswith("does"):
+                meaning = re.search(r"\bmean\b", sentence[object_start:], re.IGNORECASE)
+                if meaning:
+                    object_end = min(object_end, object_start + meaning.start())
+            if object_start <= start and end <= object_end:
                 return True
-        # “What does [object] mean?” scopes over the phrase between the question
-        # opener and mean, rather than over every timeline in the sentence.
-        for frame in re.finditer(r"\bwhat\s+does\b", sentence, re.IGNORECASE):
-            meaning = re.search(r"\bmean\b", sentence[end:], re.IGNORECASE)
-            if frame.start() <= start and meaning:
+        # Chinese postposed question frames scope over the preceding phrase.
+        if re.search(r"(?:是什么意思|是指什么|怎么翻译|什么意思)", sentence[end:]):
+            prefix = sentence[:start]
+            if re.search(r"(?:翻译|解释|引用|转述|这句|短语|phrase)", prefix, re.IGNORECASE):
                 return True
-        if re.search(r"(?:是什么意思|是指什么)", sentence[end:]) and re.search(
-            r"(?:这句|短语|phrase|translate|翻译|解释)", sentence[:start], re.IGNORECASE
-        ):
-            return True
         return False
 
     # The comma-joined matcher spans only the commitment and its deadline.
