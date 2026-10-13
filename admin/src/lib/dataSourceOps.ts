@@ -181,6 +181,8 @@ export function toneVariant(tone: OperatorTone): "success" | "warning" | "destru
 export function attentionReasonClasses(
   lifecycleCounts: Record<string, number> | null | undefined,
   attentionCount: number,
+  /** Issue #113:范围外孤儿计数(后端权威 attention_scope_external_orphan_count)。 */
+  orphanCount: number = 0,
 ): string[] {
   if (!attentionCount || attentionCount <= 0) return [];
   const counts = lifecycleCounts ?? {};
@@ -190,10 +192,20 @@ export function attentionReasonClasses(
   if (missing > 0) {
     lines.push(`${missing} 项源内容缺失,处于缺席宽限期(仍由上一代继续服务)`);
   }
+  if (orphanCount > 0) {
+    // Issue #113(AC2):范围外孤儿 = 文件已物理丢失且超出知识源范围,
+    // 修复(从盘重摄取)永不可达 —— 必须与可修复缺席显式区分。
+    lines.push(
+      `${orphanCount} 项为范围外孤儿(文件已丢失且超出知识源范围,无法修复,可显式退休)`,
+    );
+  }
   if (discovered > 0) {
     lines.push(`${discovered} 项已发现但尚未灌入(无现行版本)`);
   }
-  const suspended = attentionCount - missing - discovered;
+  const suspended = Math.max(
+    0,
+    attentionCount - missing - discovered - Math.max(0, orphanCount),
+  );
   if (suspended > 0) {
     lines.push(`${suspended} 项现行版本缺失,无法证明在服`);
   }
@@ -201,6 +213,35 @@ export function attentionReasonClasses(
     lines.push(`${attentionCount} 项知识处于需要关注状态`);
   }
   return lines;
+}
+
+// --------------------------------------------------------------------------- //
+// Issue #113(AC2):横幅动作分类 —— 可修复缺席走 repair,范围外孤儿走
+// 显式退休;repair-all 不得再把自己呈现为修不好的行的动作。
+// 输入全部为后端权威计数(documents 聚合投影),前端零重判。
+// --------------------------------------------------------------------------- //
+
+export interface BannerActions {
+  repairCount: number;
+  orphanCount: number;
+  showRepair: boolean;
+  showRetire: boolean;
+}
+
+export function bannerActionsOf(input: {
+  attentionCount: number;
+  orphanCount: number;
+}): BannerActions {
+  const attentionCount = Math.max(0, input.attentionCount ?? 0);
+  // 孤儿计数钳制在 attention 计数内(后端计数瞬时不一致时不越界呈现)。
+  const orphanCount = Math.max(0, Math.min(input.orphanCount ?? 0, attentionCount));
+  const repairCount = attentionCount - orphanCount;
+  return {
+    repairCount,
+    orphanCount,
+    showRepair: repairCount > 0,
+    showRetire: orphanCount > 0,
+  };
 }
 
 // --------------------------------------------------------------------------- //

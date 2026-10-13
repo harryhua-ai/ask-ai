@@ -177,6 +177,10 @@ class DataSourceDocumentItem(BaseModel):
     current_version_seq: int | None = None  # None = 后端无此记录
     generation_ordinal: int | None = None  # None = 后端无此记录
     content_type: str | None = None  # U-7(NULL = 存量行不可用)
+    # Issue #113(加性):A-3 政策缺席原因(missing_candidate 行的范围外
+    # 分类真值,来自 documents.metadata_['absence'].policy_reason;
+    # None = 非范围外缺席 —— 前端据此路由 修复 vs 显式退休,禁推断)。
+    absence_policy_reason: str | None = None
 
 
 class DataSourceDocumentsResponse(BaseModel):
@@ -186,6 +190,10 @@ class DataSourceDocumentsResponse(BaseModel):
     current_count 为全源账本聚合(不受过滤影响)。
     content_type_counts = U-7 逐文档内容类型账本聚合(不含 NULL;类型过滤
     词表的真实来源,前端禁推断)。
+    attention_scope_external_orphan_count = Issue #113 横幅分类真相:
+    missing_candidate ∧ A-3 政策缺席(范围外孤儿,repair 永不可达)计数;
+    attention_repairable_count = attention 桶中的可修复行计数
+    (attention − 范围外孤儿;与 repair-all 资格同源)。
     """
 
     source_id: str
@@ -197,6 +205,8 @@ class DataSourceDocumentsResponse(BaseModel):
     serving_count: int = 0
     current_count: int = 0
     content_type_counts: dict[str, int] = Field(default_factory=dict)
+    attention_scope_external_orphan_count: int = 0
+    attention_repairable_count: int = 0
     items: list[DataSourceDocumentItem]
 
 
@@ -392,6 +402,42 @@ class DocumentRepairRequest(BaseModel):
 
     doc_source_id: str  # 复合文档身份 <source_id>/<branch>/<rel_path>
     idempotency_key: str | None = Field(default=None, max_length=100)
+
+
+class DocumentRetireRequest(BaseModel):
+    """POST /data-sources/{source_id}/documents/retire 请求(Issue #113)。
+
+    范围外孤儿行(A-3 政策缺席)的手动显式退休命令:admin 专属、逐行确认
+    (``confirm=true`` 硬门槛)、审计留痕(``reason`` 必填 = 操作理由)。
+    ``doc_source_ids``(显式逐行)与 ``all_scope_external``(该源全部资格行)
+    二选一;资格判定以服务端 A-3 分类真值为准,请求方不得扩权。
+    """
+
+    doc_source_ids: list[str] = Field(default_factory=list)
+    all_scope_external: bool = False
+    confirm: bool = False
+    # 空白理由在端点层以 400 拒绝(确认/审计硬门槛统一走显式 400,非 422)。
+    reason: str = ""
+
+
+class BulkDocumentRetireItem(BaseModel):
+    """单个退休项的权威结果(与批量修复同纪律:不把未执行伪装成成功)。"""
+
+    doc_source_id: str
+    # retired / already_retired / refused(拒绝时 error 必携带原因)
+    status: str
+    error: str | None = None
+
+
+class BulkDocumentRetireOut(BaseModel):
+    """数据源级显式退休聚合结果(Issue #113 AC1)。"""
+
+    source_id: str
+    requested: int
+    retired: int
+    already_retired: int
+    refused: int
+    items: list[BulkDocumentRetireItem] = Field(default_factory=list)
 
 
 class KnowledgeSettingsOut(BaseModel):

@@ -22,6 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.api.admin.schemas import (
     BulkDocumentRepairItem,
     BulkDocumentRepairOut,
+    BulkDocumentRetireItem,
+    BulkDocumentRetireOut,
     ChunkServingTruth,
     DataSourceCreate,
     DataSourceDocumentItem,
@@ -30,12 +32,13 @@ from backend.api.admin.schemas import (
     DataSourceGenerationsResponse,
     DataSourceOut,
     DataSourceUpdate,
-    DocumentCurrentVersionTruth,
     DocumentCitationTruth,
     DocumentCommerceTruth,
+    DocumentCurrentVersionTruth,
     DocumentGenerationTruth,
     DocumentRepairRequest,
     DocumentRepairTaskOut,
+    DocumentRetireRequest,
     DocumentVersionHistoryEntry,
     KnowledgePreviewRequest,
     KnowledgePreviewResponse,
@@ -66,7 +69,10 @@ from backend.services import knowledge_policy, repo_discovery, source_lifecycle
 from backend.services import schedule_truth as schedule_truth_svc
 from backend.services.chunk_serving import chunk_serving_for_doc
 from backend.services.document_lifecycle import (
+    ABSENCE_META_KEY,
+    RETIRE_REASON_MANUAL,
     DocLifecycle,
+    confirm_absence_retirement,
     get_absence_state,
     get_retirement_record,
 )
@@ -971,11 +977,42 @@ def _current_version_resolvable():
     ).where(DocumentVersion.id == Document.current_version_id).exists()
 
 
+def _absence_policy_reason_of(doc: Document) -> str | None:
+    """读取行的 A-3 政策缺席原因(缺席状态缺键/畸形 → None,不推断)。"""
+    state = get_absence_state(doc)
+    if not state:
+        return None
+    reason = state.get("policy_reason")
+    return str(reason) if reason else None
+
+
+def _scope_external_orphan_predicate():
+    """范围外孤儿谓词(Issue #113):missing_candidate ∧ A-3 政策缺席。
+
+    分类真值 = ``documents.metadata_['absence'].policy_reason``(sync 侧
+    ``FilesystemConnector.policy_absence_reason`` 在最近一次完整发现时持久化
+    的 A-3 分类;本谓词不重新分类、不推断 —— 权威与 A-3 冻结语义同源)。
+    这些行的文件已物理丢失且超出当前管理员策略范围,repair(从盘重摄取)
+    永不可达;仅手动显式退休(Issue #113)或白名单扩展后的 A-2 自动确认
+    可以收口。
+    """
+    return (Document.lifecycle == DocLifecycle.MISSING_CANDIDATE) & (
+        Document.metadata_[ABSENCE_META_KEY]["policy_reason"].as_string().is_not(None)
+    )
+
+
 def _bulk_repair_eligibility():
-    """批量修复资格:只覆盖当前 attention 桶,不触碰健康或已退役文档。"""
+    """批量修复资格:只覆盖当前 attention 桶,不触碰健康或已退役文档。
+
+    Issue #113(AC2):范围外孤儿行(missing_candidate ∧ A-3 政策缺席)
+    **不入修复资格** —— 修复 = 从盘重摄取,而这些行文件已物理丢失,修复
+    永远不可能成功;把它们呈现为"待修复"是生产事件中横幅误导的根源。
+    收口路径 = 显式退休(Issue #113)或白名单扩展后的 A-2 自动确认。
+    """
     resolvable = _current_version_resolvable()
     return or_(
-        Document.lifecycle.in_((DocLifecycle.MISSING_CANDIDATE, DocLifecycle.DISCOVERED)),
+        (Document.lifecycle.in_((DocLifecycle.MISSING_CANDIDATE, DocLifecycle.DISCOVERED)))
+        & ~_scope_external_orphan_predicate(),
         (Document.lifecycle == DocLifecycle.ACTIVE) & ~resolvable,
     )
 
@@ -1126,6 +1163,24 @@ async def list_source_documents(
             )
         ).all()
         content_type_counts = {row[0]: int(row[1]) for row in content_type_rows if row[0]}
+        # Issue #113(AC2):横幅分类真相 —— attention 桶拆分为「可修复缺席」
+        # 与「范围外孤儿」(A-3 政策缺席,repair 永不可达);计数为全源账本
+        # 口径,不受过滤影响。attention = ledger − retired − current。
+        orphan_count = int(
+            (
+                await session.execute(
+                    select(func.count())
+                    .select_from(Document)
+                    .where(_document_scope(source_id), _scope_external_orphan_predicate())
+                )
+            ).scalar()
+            or 0
+        )
+        retired_count = (
+            lifecycle_counts.get(DocLifecycle.SUPERSEDED, 0)
+            + lifecycle_counts.get(DocLifecycle.DELETED, 0)
+        )
+        attention_total = max(0, ledger_total - retired_count - current_count)
         rows = (
             (
                 await session.execute(
@@ -1174,6 +1229,11 @@ async def list_source_documents(
                 created_at=_iso_or_none(d.created_at),
                 updated_at=_iso_or_none(d.updated_at),
                 content_type=d.content_type,
+                absence_policy_reason=(
+                    _absence_policy_reason_of(d)
+                    if d.lifecycle == DocLifecycle.MISSING_CANDIDATE
+                    else None
+                ),
                 current_version_seq=(
                     version_by_id[d.current_version_id].version_seq
                     if d.current_version_id in version_by_id
@@ -1197,6 +1257,8 @@ async def list_source_documents(
         serving_count=serving_count,
         current_count=current_count,
         content_type_counts=content_type_counts,
+        attention_scope_external_orphan_count=orphan_count,
+        attention_repairable_count=max(0, attention_total - orphan_count),
         items=items,
     )
 
@@ -1703,7 +1765,7 @@ def _bulk_repair_idempotency_key(source_id: str, doc_source_id: str) -> str:
     legacy = f"bulk-repair-v1:{source_id}:{doc_source_id}"
     if len(legacy) <= 100:
         return legacy
-    digest = hashlib.sha256(f"{source_id}:{doc_source_id}".encode("utf-8")).hexdigest()[:32]
+    digest = hashlib.sha256(f"{source_id}:{doc_source_id}".encode()).hexdigest()[:32]
     return f"bulk-repair-v2:{digest}"
 
 
@@ -1824,7 +1886,7 @@ async def repair_all_source_documents(
                         rebuild_requested += 1
                     else:  # failed / pending / running
                         failed += 1
-                except Exception as exc:  # noqa: BLE001 - 隔离到单项,批不中断
+                except Exception as exc:
                     logger.exception(
                         "批量修复单文档失败 %s/%s", source_id, doc.source_id
                     )
@@ -1853,6 +1915,171 @@ async def repair_all_source_documents(
         lock.release()
         if not lock.locked() and _BULK_REPAIR_LOCKS.get(source_id) is lock:
             _BULK_REPAIR_LOCKS.pop(source_id, None)
+
+
+# --------------------------------------------------------------------------- #
+# Issue #113:范围外孤儿行显式退休(admin 手动、显式确认、A-6 审计)。
+# AC3 边界:A-2 连续确认阈值与 A-3 政策缺席分类零改动 —— 本动作只消费
+# confirm_absence_retirement 既有原语(与发现确认退休同一状态语义:即时撤出
+# 服务 + 7 天 GC 资格),绝不自动/隐式触发,绝不适用于 active 或范围内缺席行。
+# --------------------------------------------------------------------------- #
+
+
+def _classify_retire_request(doc: Document | None, source_id: str, doc_id: str) -> tuple[str, str | None, str | None]:
+    """逐行资格判定(fail-closed)。
+
+    Returns:
+        (verdict, policy_reason, refusal_error);verdict ∈ eligible /
+        already_retired / refused。
+    """
+    if not doc_id.startswith(f"{source_id}/"):
+        return "refused", None, "文档不属于该数据源"
+    if doc is None:
+        return "refused", None, "后端无此记录"
+    if doc.lifecycle == DocLifecycle.DELETED:
+        if get_retirement_record(doc) is not None:
+            return "already_retired", None, None
+        return "refused", None, "行已删除但无持久化退休记录,拒绝改写审计真相"
+    if doc.lifecycle != DocLifecycle.MISSING_CANDIDATE:
+        return (
+            "refused",
+            None,
+            (
+                f"生命周期为 {doc.lifecycle}:退休动作仅适用于 missing_candidate "
+                "的范围外缺席行(active 行绝不适用)"
+            ),
+        )
+    policy_reason = _absence_policy_reason_of(doc)
+    if not policy_reason:
+        return (
+            "refused",
+            None,
+            "缺席分类为范围内:由 A-2 连续缺席确认语义负责退休,手动动作拒绝绕过",
+        )
+    return "eligible", policy_reason, None
+
+
+@router.post("/{source_id}/documents/retire", response_model=BulkDocumentRetireOut)
+async def retire_scope_external_documents(
+    source_id: str,
+    req: DocumentRetireRequest,
+    user: Annotated[CurrentUser, Depends(require_role("admin"))],
+    request: Request,
+) -> BulkDocumentRetireOut:
+    """显式退休该源的范围外孤儿行(Issue #113 AC1;admin 专属)。
+
+    生产背景(2026-09-22,179 孤儿行):旧路径形态的行落在 include_dirs
+    白名单外 → A-3 政策缺席把退休计数永久冻结,横幅永远「需要处理」,而
+    repair-all 对这些行永远不可能成功。本端点提供**手动、显式、可审计**的
+    运营收口:逐行确认 + A-6 式审计记录(操作人/时间/理由/政策原因),
+    复用既有退休语义(lifecycle→deleted 即时撤出服务 + retired_at+7d GC
+    资格),分类真值 = 最近一次完整发现持久化的 A-3 政策原因。
+
+    - RBAC:仅 admin(viewer/editor 403;退休是高危运营动作);
+    - 硬门槛:``confirm=true`` + 非空 ``reason``(审计留痕),缺一 400;
+    - 模式:``doc_source_ids`` 逐行显式,或 ``all_scope_external`` 服务端
+      选取该源全部资格行;资格判定以服务端真值为准,请求方不得扩权;
+    - 幂等:已退休行 → already_retired,审计记录零改写;
+    - 单事务原子提交:资格行全退休或全不动。
+    """
+    if not req.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="退休动作必须显式确认(confirm=true);这是不可逆的运营动作",
+        )
+    justification = req.reason.strip()
+    if not justification:
+        raise HTTPException(status_code=400, detail="退休必须携带操作理由(审计留痕)")
+    if not req.all_scope_external and not req.doc_source_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="必须提供 doc_source_ids(逐行显式)或 all_scope_external=true",
+        )
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    requested: list[str]
+    if req.all_scope_external:
+        async with factory() as session:
+            await _get_source_or_404(session, source_id)
+            rows = (
+                (
+                    await session.execute(
+                        select(Document)
+                        .where(
+                            _document_scope(source_id),
+                            Document.lifecycle == DocLifecycle.MISSING_CANDIDATE,
+                        )
+                        .order_by(Document.source_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            requested = [d.source_id for d in rows if _absence_policy_reason_of(d)]
+    else:
+        requested = list(dict.fromkeys(req.doc_source_ids))
+    now = datetime.now(UTC)
+    items: list[BulkDocumentRetireItem] = []
+    retired = already_retired = refused = 0
+    async with factory() as session:
+        await _get_source_or_404(session, source_id)
+        docs_by_id: dict[str, Document] = {}
+        in_scope_ids = [d for d in requested if d.startswith(f"{source_id}/")]
+        if in_scope_ids:
+            rows = (
+                (
+                    await session.execute(
+                        select(Document).where(Document.source_id.in_(in_scope_ids))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            docs_by_id = {d.source_id: d for d in rows}
+        for doc_id in requested:
+            verdict, policy_reason, error = _classify_retire_request(
+                docs_by_id.get(doc_id), source_id, doc_id
+            )
+            item_status = verdict
+            if verdict == "eligible":
+                # A-6 审计原语(与发现确认退休同一实现):lifecycle→deleted +
+                # metadata_[retirement] = {reason/actor/evidence/retired_at/
+                # gc_eligible_at};缺席状态清除。零新存储语义(AC3)。
+                confirm_absence_retirement(
+                    docs_by_id[doc_id],
+                    reason=RETIRE_REASON_MANUAL,
+                    actor=f"admin:{getattr(user, 'email', None) or getattr(user, 'id', '')}",
+                    evidence={
+                        "policy_reason": policy_reason,
+                        "justification": justification,
+                        "operation": "admin_orphan_retire",
+                        "mode": (
+                            "all_scope_external" if req.all_scope_external else "selected"
+                        ),
+                    },
+                    now=now,
+                )
+                retired += 1
+                item_status = "retired"
+            elif verdict == "already_retired":
+                already_retired += 1
+            else:
+                refused += 1
+            items.append(
+                BulkDocumentRetireItem(
+                    doc_source_id=doc_id,
+                    status=item_status,
+                    error=error,
+                )
+            )
+        await session.commit()
+    return BulkDocumentRetireOut(
+        source_id=source_id,
+        requested=len(requested),
+        retired=retired,
+        already_retired=already_retired,
+        refused=refused,
+        items=items,
+    )
 
 
 @router.post("/{source_id}/documents/repair", response_model=DocumentRepairTaskOut)
