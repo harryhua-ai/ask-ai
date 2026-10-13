@@ -80,6 +80,10 @@ _TIMESTAMP_RE = re.compile(
     r"\b\d{4}-\d{1,2}-\d{1,2}(?:[T ]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?\b",
     re.IGNORECASE,
 )
+_COMPACT_TECH_TIMESTAMP_RE = re.compile(
+    r"\b(?:timestamp|ts)\s*[:=]\s*\d{9,15}\b",
+    re.IGNORECASE,
+)
 _IPV4_RE = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])")
 _VERSION_RE = re.compile(r"(?<![\w])v?\d+(?:\.\d+){2,}(?:[-+][\w.-]+)?\b", re.IGNORECASE)
 _TECH_ID_RE = re.compile(
@@ -146,6 +150,7 @@ def detect_contact(text: str) -> ContactHit | None:
         return ContactHit(type=default_type, value=val, masked=mask_contact_value(val))
 
     phone_text = _TIMESTAMP_RE.sub(" ", text)
+    phone_text = _COMPACT_TECH_TIMESTAMP_RE.sub(" ", phone_text)
     phone_text = _IPV4_RE.sub(" ", phone_text)
     phone_text = _VERSION_RE.sub(" ", phone_text)
     phone_text = _TECH_ID_RE.sub(" ", phone_text)

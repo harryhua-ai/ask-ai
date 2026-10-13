@@ -367,3 +367,19 @@ def test_lead_turn_context_gate() -> None:
     assert ctx3.capture_mode is True
     assert ctx3.should_qualify("support") is True
     assert uuid.UUID(str(ctx3.lead_id)) if ctx3.lead_id else True  # 类型冒烟
+
+
+def test_compact_keyed_log_timestamp_is_not_phone() -> None:
+    """A 的 REQUEST_CHANGES：`timestamp=`/`ts=` 前缀的压缩日志时间不得判为电话。"""
+    assert detect_contact("timestamp=20261003151727 camera timeout") is None
+    assert detect_contact("ts=202610031517 device reboot") is None
+
+
+def test_compact_keyed_timestamp_with_genuine_phone_still_captures_phone() -> None:
+    """混排场景：剥离技术时间戳后，真实电话仍须命中（不得全局拒真）。"""
+    hit = detect_contact(
+        "timestamp=20261003151727 camera timeout, call me +1 202 555 0198"
+    )
+
+    assert hit is not None and hit.type == "phone"
+    assert "555" in hit.value and "0198" in hit.value
