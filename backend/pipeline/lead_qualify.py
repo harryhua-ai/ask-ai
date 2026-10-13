@@ -206,25 +206,32 @@ def explicit_purchase_signal(text: str) -> bool:
     """Deterministic G002 safety net for unambiguous strong purchase signals."""
     if not text:
         return False
-    # Commercial topics inside a request for explanation are informational.
-    if re.search(
+    # Keep informational/documentation vetoes local to the clause they describe;
+    # a separate purchase commitment in the same message remains actionable.
+    clauses = re.split(
+        r"[.!?。！？;；,]|\b(?:and|but|while|whereas)\b|(?:并且|但是|而且|同时)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    explanation_clause = re.compile(
         r"(?:\bwhat\s+(?:is|does|do)\b|\bhow\s+(?:does|do)\b).{0,100}"
         r"\b(?:mean|work|for|inquiry|partnership)\b"
         r"|\bhow\s+(?:do|can)\s+i\s+.{0,60}\b(?:project|deployment)\s+(?:for|of)\b"
         r"|(?:是什么意思|是指什么|怎么(?:理解|运作|工作))",
-        text,
         re.IGNORECASE,
-    ):
-        return False
-    # A quote referring to documentation/source material is not a buyer quote.
-    if re.search(
+    )
+    documentation_clause = re.compile(
         r"\bfrom\s+(?:the\s+)?(?:user\s+manual|manual|documentation|source\s+code|wiki)\b"
-        r"|(?:来自|根据)(?:用户)?(?:手册|文档|源码)",
-        text,
+        r"|\bquote\s+(?:the\s+)?(?:user\s+manual|manual|documentation|source\s+code|wiki)\b"
+        r"|(?:来自|根据)(?:用户)?(?:手册|文档|源码)|(?:引用|摘录)(?:用户)?(?:手册|文档|源码)",
         re.IGNORECASE,
-    ):
-        return False
-    return bool(_EXPLICIT_PURCHASE_RE.search(text))
+    )
+    return any(
+        not explanation_clause.search(clause)
+        and not documentation_clause.search(clause)
+        and _EXPLICIT_PURCHASE_RE.search(clause)
+        for clause in clauses
+    )
 
 
 # --------------------------------------------------------------------------- #
