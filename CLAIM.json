@@ -14,7 +14,7 @@
  "contract_digest": "e727c7bcf198c474eaec4cd693e77909dcfeed7b778ace6f4758d2d426d3d93b",
  "candidate": {
   "branch": "agent/113/0e4907e3",
-  "sha": "43885fdd59407014abf2aa80271ca0e7e27fbdb1",
+  "sha": "a4f16c23eb3139f169d5560c4aa63201c52c940a",
   "scope": {
    "pass": true,
    "paths": {
@@ -29,17 +29,18 @@
     "backend/connectors/filesystem.py": "ALLOWED",
     "docs/operations/orphan-row-retirement-and-path-shape-migrations.md": "ALLOWED",
     "reports/issue113-orphan-retire-action-20261013.md": "ALLOWED",
-    "tests/api/admin/test_issue113_orphan_retire_action.py": "ALLOWED"
+    "tests/api/admin/test_issue113_orphan_retire_action.py": "ALLOWED",
+    "tests/connectors/test_filesystem.py": "ALLOWED"
    },
    "violations": [],
    "main_attributed_paths": [],
    "counts": {
-    "ALLOWED": 12,
+    "ALLOWED": 13,
     "FORBIDDEN": 0,
     "MAIN_ATTRIBUTED": 0
    }
   },
-  "preserved_at": "2026-10-13T14:38:10Z"
+  "preserved_at": "2026-10-13T15:48:41Z"
  },
  "runtime": {
   "digest": "743a713193def2e7afd5c9c614e05968a1ea50b2c6249d6c5ff219cbc5441096",
