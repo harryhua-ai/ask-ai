@@ -101,6 +101,27 @@ from backend.utils.user_messages import (
 
 logger = logging.getLogger(__name__)
 
+
+def _public_reservation_trace(stages: dict[str, Any]) -> dict[str, Any]:
+    """Project reservation diagnostics without exposing source/chunk identities or scores."""
+    public: dict[str, Any] = {}
+    reservation = stages.get("evidence_reservation")
+    if isinstance(reservation, dict) and reservation.get("promotions"):
+        promotions = reservation["promotions"]
+        roles = sorted({p.get("role") for p in promotions if isinstance(p, dict) and p.get("role")})
+        public["evidence_reservation"] = {
+            "promotion_count": len(promotions),
+            "promotion_roles": {
+                role: sum(1 for p in promotions if isinstance(p, dict) and p.get("role") == role)
+                for role in roles
+            },
+        }
+    if isinstance(reservation, dict) and reservation.get("solution_retention"):
+        public["solution_retention"] = {
+            "retained_count": len(reservation["solution_retention"]),
+        }
+    return public
+
 REJECT_ANSWER = "暂未在官方资料中找到相关信息。"
 # off-topic 友好边界(产品语义示例):轻量回应 + 能力说明 + 引导,
 # 替代旧生硬话术「我只能回答与 CamThink 产品相关的问题。」。
@@ -3323,6 +3344,7 @@ class RAGOrchestrator:
                             if "response_strategy" in stages
                             else {}
                         ),
+                        **_public_reservation_trace(stages),
                         "intent": {
                             "ms": understanding_ms,
                             "category": understanding.category,

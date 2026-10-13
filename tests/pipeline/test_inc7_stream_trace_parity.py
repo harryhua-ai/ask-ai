@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import backend.pipeline.rag as rag_module
 from backend.pipeline.lead_qualify import LeadTurnContext
 from backend.pipeline.rag import RAGOrchestrator
 from backend.retrieval.search import SearchResult
@@ -133,3 +134,53 @@ async def test_lead_invite_turn_stream_trace_stays_suppressed():
     stages = complete["trace_payload"]["stages"]
     assert "response_strategy" not in stages
     assert stages["lead"]["instruction"]  # lead 权威指令在场(邀请)
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_stream_reservation_stages_are_sanitized_and_match_answer(monkeypatch):
+    """流式仅公开 reservation/retention 汇总，不把 Trace 身份元数据外发。"""
+    private_info = {
+        "promotions": [
+            {"rule": "R1_required_slot_target", "role": "solution_guide", "target": "ne503",
+             "source_id": "private/source", "chunk_index": 42, "score": 0.17},
+            {"rule": "R2_page_completion", "role": "product_spec", "target": "ne503",
+             "source_id": "private/source2", "chunk_index": 43, "score": 0.87},
+        ],
+        "solution_retention": [
+            {"source_id": "private/source", "chunk_index": 42},
+        ],
+        "internal_debug": "secret-marker",
+    }
+
+    async def fake_reserve(*args, **kwargs):
+        return [], private_info
+
+    monkeypatch.setattr(rag_module, "reserve_plan_evidence", fake_reserve)
+    rag = _rag()
+    rag._reranker.rerank_scored.side_effect = lambda q, results, top_k=None: (
+        list(results)[: top_k or 10], [(r, r.score) for r in results]
+    )
+    result = await rag.answer(query="NE503 有哪些接口?")
+    events = await _collect_stream(rag, query="NE503 有哪些接口?")
+    answer_stages = result.trace_payload["stages"]
+    stream_stages = _complete(events)["trace_payload"]["stages"]
+
+    assert stream_stages["evidence_reservation"] == {
+        "promotion_count": 2,
+        "promotion_roles": {"solution_guide": 1, "product_spec": 1},
+    }
+    assert stream_stages["solution_retention"] == {"retained_count": 1}
+    assert answer_stages["evidence_reservation"]["promotions"] == private_info["promotions"]
+    assert answer_stages["evidence_reservation"]["solution_retention"] == private_info["solution_retention"]
+    assert "private/source" not in json.dumps(stream_stages)
+    assert "secret-marker" not in json.dumps(stream_stages)
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_stream_reservation_stages_are_absent_when_not_run():
+    events = await _collect_stream(_rag(), query="NE503 有哪些接口?")
+    stages = _complete(events)["trace_payload"]["stages"]
+    assert "evidence_reservation" not in stages
+    assert "solution_retention" not in stages
