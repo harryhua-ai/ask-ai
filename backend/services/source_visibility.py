@@ -46,6 +46,27 @@ def _as_visibility(value: object) -> tuple[str, ...]:
     return DEFAULT_VISIBILITY
 
 
+_PUBLIC_CHANNELS = frozenset({"widget", "api"})
+
+
+def visibility_for_source(source_type: str, config: object) -> tuple[str, ...]:
+    """Resolve public channel eligibility from authoritative source config.
+
+    Upload-mode filesystem sources require an explicit, well-formed grant.
+    Other source types retain the legacy public default for compatibility.
+    """
+    values = config if isinstance(config, dict) else {}
+    raw = values.get("channel_visibility")
+    is_upload = source_type == "filesystem" and values.get("upload_mode") is True
+    if is_upload:
+        if not isinstance(raw, (list, tuple)) or any(
+            not isinstance(channel, str) or channel not in _PUBLIC_CHANNELS for channel in raw
+        ):
+            return ()
+        return tuple(raw)
+    return _as_visibility(raw)
+
+
 class SourceVisibilityGuard:
     """按源配置复核候选可见性的纵深守卫(fail-closed,授权失败 ≠ 授权旁路)。"""
 
@@ -104,7 +125,9 @@ def make_db_loader(session_factory: Callable[[], Awaitable[object]]) -> Visibili
         from backend.db.models import DataSource
 
         async with session_factory() as session:  # type: ignore[operator]
-            rows = (await session.execute(select(DataSource.id, DataSource.config))).all()
-        return {rid: _as_visibility((cfg or {}).get("channel_visibility")) for rid, cfg in rows}
+            rows = (
+                await session.execute(select(DataSource.id, DataSource.type, DataSource.config))
+            ).all()
+        return {rid: visibility_for_source(source_type, cfg) for rid, source_type, cfg in rows}
 
     return _load
