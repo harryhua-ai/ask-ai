@@ -285,8 +285,10 @@ def test_explicit_purchase_signals_are_qualified_without_promoting_information_q
         "We need 120 pcs. How does a distributor partnership work?",
         "We need 120 pcs. 经销合作是什么意思？",
         "We will purchase next quarter. What does distributor partnership mean?",
+        "We will purchase, next quarter, and what does distributor partnership mean?",
         "We need 120 pcs, and please quote the source code example for integration.",
         "我们计划采购，时间是下季度",
+        "我们计划采购, 时间是下季度, 而且“经销合作”是什么意思？",
         "我们计划采购, 时间是下季度",
         "我们计划采购，时间是下季度",
         "请给 120 台正式报价",
@@ -316,6 +318,9 @@ def test_explicit_purchase_signals_are_qualified_without_promoting_information_q
         'What does "We will purchase, next quarter" mean?',
         'Please quote the user manual: "We will purchase, next quarter".',
         '“我们计划采购, 时间是下季度”是什么意思？',
+        "Please translate the phrase We will purchase, next quarter into Chinese.",
+        "How do you say we will purchase next quarter in Chinese?",
+        "请翻译“我们计划采购，时间是下季度”为英文。",
     ):
         assert explicit_purchase_signal(query) is False
 

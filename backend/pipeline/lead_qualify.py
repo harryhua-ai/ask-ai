@@ -220,10 +220,9 @@ def explicit_purchase_signal(text: str) -> bool:
         return False
     # Keep informational/documentation vetoes local to the clause they describe;
     # a separate purchase commitment in the same message remains actionable.
-    clauses = re.split(
-        r"[.!?。！？;；,]|\b(?:and|but|while|whereas)\b|(?:并且|但是|而且|同时)",
-        text,
-        flags=re.IGNORECASE,
+    clause_separator = re.compile(
+        r"[.!?。！？;；,，]|\b(?:and|but|while|whereas)\b|(?:并且|但是|而且|同时)",
+        re.IGNORECASE,
     )
     explanation_clause = re.compile(
         r"(?:\bwhat\s+(?:is|does|do)\b|\bhow\s+(?:does|do)\b).{0,100}"
@@ -238,10 +237,15 @@ def explicit_purchase_signal(text: str) -> bool:
         r"|(?:来自|根据)(?:用户)?(?:手册|文档|源码)|(?:引用|摘录)(?:用户)?(?:手册|文档|源码)",
         re.IGNORECASE,
     )
-    timeline_explanation = re.compile(
-        r"\bwhat\s+does\b.{0,160}\bmean\b"
-        r"|\bplease\s+quote\s+(?:the\s+)?(?:user\s+)?manual\s*:"
-        r"|(?:是什么意思|是指什么)",
+    translation_frame = re.compile(
+        r"\b(?:please\s+)?translate\b.{0,100}?"
+        r"(?=\b(?:into|to)\s+[A-Za-z])"
+        r"|\bhow\s+do\s+you\s+say\b.{0,100}?"
+        r"(?=\bin\s+[A-Za-z])"
+        r"|\b(?:please\s+)?explain\b.{0,100}?"
+        r"(?=\b(?:in|to)\s+[A-Za-z])"
+        r"|(?:请?翻译|翻译一下|请解释|解释一下).{0,100}?"
+        r"(?=(?:成|为|到)\s*[\u4e00-\u9fff])",
         re.IGNORECASE,
     )
 
@@ -254,7 +258,23 @@ def explicit_purchase_signal(text: str) -> bool:
             right = sentence.find(closing, end - 1)
             if left >= 0 and right >= end - 1:
                 return True
-        return bool(timeline_explanation.search(sentence))
+        # A framework only makes text in its object position non-actionable.
+        # In particular, a later independent question must not veto a preceding
+        # first-person commitment joined with a comma and conjunction.
+        for frame in translation_frame.finditer(sentence):
+            if frame.start() <= start and end <= frame.end():
+                return True
+        # “What does [object] mean?” scopes over the phrase between the question
+        # opener and mean, rather than over every timeline in the sentence.
+        for frame in re.finditer(r"\bwhat\s+does\b", sentence, re.IGNORECASE):
+            meaning = re.search(r"\bmean\b", sentence[end:], re.IGNORECASE)
+            if frame.start() <= start and meaning:
+                return True
+        if re.search(r"(?:是什么意思|是指什么)", sentence[end:]) and re.search(
+            r"(?:这句|短语|phrase|translate|翻译|解释)", sentence[:start], re.IGNORECASE
+        ):
+            return True
+        return False
 
     # The comma-joined matcher spans only the commitment and its deadline.
     # Apply quote/explanation vetoes to that local sentence before accepting it.
@@ -262,12 +282,16 @@ def explicit_purchase_signal(text: str) -> bool:
         match = _PURCHASE_TIMELINE_RE.search(sentence)
         if match and not timeline_is_vetoed(sentence, match.start(), match.end()):
             return True
-    return any(
-        not explanation_clause.search(clause)
-        and not documentation_clause.search(clause)
-        and _EXPLICIT_PURCHASE_RE.search(clause)
-        for clause in clauses
-    )
+    clause_start = 0
+    for separator in list(clause_separator.finditer(text)) + [None]:
+        clause_end = separator.start() if separator else len(text)
+        clause = text[clause_start:clause_end]
+        if not explanation_clause.search(clause) and not documentation_clause.search(clause):
+            match = _EXPLICIT_PURCHASE_RE.search(clause)
+            if match and not timeline_is_vetoed(clause, match.start(), match.end()):
+                return True
+        clause_start = separator.end() if separator else len(text)
+    return False
 
 
 # --------------------------------------------------------------------------- #
