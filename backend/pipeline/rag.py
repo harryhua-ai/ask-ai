@@ -734,6 +734,68 @@ def _compose_user_facing_evidence(
     return composed
 
 
+def _requested_hardware_revision(query: str) -> str | None:
+    """Return an explicitly requested board revision for bounded hardware checks."""
+    match = re.search(
+        r"\b(?:v|rev(?:ision)?\s*)([a-z]|\d+(?:\.\d+)*)\b", query, re.IGNORECASE
+    )
+    return match.group(1).lower() if match else None
+
+
+def _revision_marker_covers(text: str, requested: str) -> bool:
+    """Require source text to explicitly cover a requested hardware revision."""
+    marker = re.compile(
+        r"\b(?:v|rev(?:ision)?\s*)([a-z]|\d+(?:\.\d+)*)"
+        r"(?:\s*[-–]\s*(?:v|rev(?:ision)?\s*)?([a-z]|\d+(?:\.\d+)*))?\b",
+        re.IGNORECASE,
+    )
+
+    def _key(value: str) -> tuple:
+        value = value.lower()
+        if value[0].isdigit():
+            return (0, tuple(int(part) for part in value.split(".")))
+        return (1, value)
+
+    requested_key = _key(requested)
+    for match in marker.finditer(text):
+        start = _key(match.group(1))
+        end = _key(match.group(2)) if match.group(2) else start
+        if start <= requested_key <= end:
+            return True
+    return False
+
+
+def _hardware_revision_source_eligible(query: str, result: SearchResult) -> bool:
+    """Conservatively gate only explicit product+revision hardware questions."""
+    family = re.search(r"\b(ne\d{3,4})\b", query, re.IGNORECASE)
+    revision = _requested_hardware_revision(query)
+    if not family or not revision or not re.search(
+        r"gpio|pin|tf|sd(?:mmc)?|4g|cat-?1|hardware|module|connector",
+        query,
+        re.IGNORECASE,
+    ):
+        return True
+    product = (getattr(result, "product", "") or "").lower()
+    requested_product = family.group(1).lower()
+    if product != requested_product:
+        # Taxonomy-authorized shared evidence can apply to this product even
+        # when its source label is a shared bucket rather than a product slug.
+        taxonomy = get_taxonomy()
+        canonical = taxonomy.canonicalize(product)
+        entity = taxonomy.entity(canonical) if canonical else None
+        if not entity or entity.kind != "shared" or requested_product not in entity.applies_to:
+            return False
+        # applies_to does not manufacture applicability: the evidence text
+        # must still identify the requested family and revision itself.
+        if not re.search(
+            rf"\b{re.escape(requested_product)}\b",
+            getattr(result, "text", "") or "",
+            re.IGNORECASE,
+        ):
+            return False
+    return _revision_marker_covers(getattr(result, "text", "") or "", revision)
+
+
 def page_hint_text(page_context: dict | None, site_name: str | None) -> str:
     """把站点/页面背景格式化为要点文本;无内容返回空串(不产生空段落)。"""
     parts: list[str] = []
@@ -1399,6 +1461,41 @@ class RAGOrchestrator:
         else:
             style = self._intent_styles.get(intent, "")
         system_prompt = f"{base}\n\n{style}" if style else base
+        # 硬件兼容性事实必须保留来源资格，不能把多产品/多版本资料压成
+        # 一个无条件结论。固定在代码模板中，避免渠道自定义 prompt 覆盖。
+        system_prompt = (
+            f"{system_prompt}\n\n"
+            "## Applicability-first hardware response\n"
+            "Before drafting a hardware compatibility answer, map each claim to the source's "
+            "product family and hardware revision. If the question omits a product and supported "
+            "families differ, ask which product the user has or give separate, explicitly named "
+            "conditional answers; never merge them into one conclusion. If the question names a "
+            "revision, use only evidence that covers that revision for revision-dependent claims. "
+            "When a revision-qualified hardware connection source conflicts with an unscoped example, "
+            "follow the qualified source and do not cite the unscoped example for that claim. "
+            "State all qualifications that change the user's action, including shared-supply and "
+            "configuration-specific pin-multiplexing limits. A restriction on conflicting "
+            "configurations does not mean every configuration is incompatible. Cite only the "
+            "source(s) that support each stated product and revision; unrelated-family historical "
+            "cases may not be presented or cited as direct product evidence. If no source establishes "
+            "applicability, say what must be confirmed instead of guessing. Apply these rules in "
+            "both Chinese and English.\n\n"
+            "## Hardware compatibility evidence rules\n"
+            "For hardware compatibility questions, identify the product family and "
+            "hardware revision covered by each relevant source before combining claims. "
+            "If the user's product family or required hardware revision is unknown and "
+            "the answer differs by family or revision, ask a brief clarification or give "
+            "explicitly conditional answers for each supported scope; never silently "
+            "assume one family or revision. Preserve revision-specific pin, power, and "
+            "shared-supply qualifications. When sources conflict, prefer the source "
+            "that explicitly covers the applicable hardware revision; if applicability "
+            "cannot be established, state that it cannot be determined instead of "
+            "presenting an unqualified instruction. Do not turn a restriction on "
+            "conflicting configurations into a universal incompatibility claim. A "
+            "historical case from another product family is not direct evidence for "
+            "the user's product; label it as a separate example or omit it. Cite only "
+            "evidence qualified for the product and revision asserted."
+        )
         if product_boundary:
             system_prompt = f"{system_prompt}\n\n{product_boundary}"
         if lead_instruction:
@@ -1958,6 +2055,24 @@ class RAGOrchestrator:
             ]
             if pre_defensive != len(reranked):
                 product_scope_stage["ineligible_filtered"] = pre_defensive - len(reranked)
+                stages["product_scope"] = product_scope_stage
+
+        # Hardware answers with an explicit family and revision require source
+        # evidence that names that revision. This is deliberately scoped to
+        # hardware applicability; ordinary RAG fallback remains governed by #77.
+        if cmp_stage_info is None and _requested_hardware_revision(query) and re.search(
+            r"\bne\d{3,4}\b", query, re.IGNORECASE
+        ) and re.search(
+            r"gpio|pin|tf|sd(?:mmc)?|4g|cat-?1|hardware|module|connector",
+            query,
+            re.IGNORECASE,
+        ):
+            before_fused, before_reranked = len(fused), len(reranked)
+            fused = [r for r in fused if _hardware_revision_source_eligible(query, r)]
+            reranked = [r for r in reranked if _hardware_revision_source_eligible(query, r)]
+            filtered = (before_fused - len(fused)) + (before_reranked - len(reranked))
+            if filtered:
+                product_scope_stage["hardware_applicability_filtered"] = filtered
                 stages["product_scope"] = product_scope_stage
 
         # 防御过滤/裁剪后的重排终态(不整块覆盖:保留比较管线的 per_target/candidates)
@@ -2742,6 +2857,23 @@ class RAGOrchestrator:
             ]
             if pre_defensive != len(reranked):
                 product_scope_stage["ineligible_filtered"] = pre_defensive - len(reranked)
+
+        # Keep the bounded hardware revision gate in parity with answer():
+        # filter both reranked candidates and the fused #77 fallback pool
+        # before fallback selection or public source/citation construction.
+        if cmp_stage_info is None and _requested_hardware_revision(query) and re.search(
+            r"\bne\d{3,4}\b", query, re.IGNORECASE
+        ) and re.search(
+            r"gpio|pin|tf|sd(?:mmc)?|4g|cat-?1|hardware|module|connector",
+            query,
+            re.IGNORECASE,
+        ):
+            before_fused, before_reranked = len(fused), len(reranked)
+            fused = [r for r in fused if _hardware_revision_source_eligible(query, r)]
+            reranked = [r for r in reranked if _hardware_revision_source_eligible(query, r)]
+            filtered = (before_fused - len(fused)) + (before_reranked - len(reranked))
+            if filtered:
+                product_scope_stage["hardware_applicability_filtered"] = filtered
 
         # 真实阶段事实(AC10):短路拒答路径也必须携带已执行的 retrieve/rerank
         # 证据(生产曾对执行过的阶段显示 0ms/缺失,误导诊断)。

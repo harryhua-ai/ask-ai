@@ -200,6 +200,27 @@ def test_system_prompt_yaml_carries_attribution_guardrail(config_dir):
     assert "ICCID" in guardrails
 
 
+def test_hardware_compatibility_prompt_preserves_product_and_revision_scope():
+    """硬件兼容性合成不能丢掉来源的产品线和硬件版本资格。"""
+    rag, _, _llm = _build([PUBLIC_SR], guard=None)
+    messages = rag._build_messages(
+        query="模块和存储能否同时使用？",
+        context="[1] Hardware guide: revision R1 uses pin A; revision R2 uses pin B.\n"
+        "[2] A historical case from another product family uses a different interface.",
+        language="zh-cn",
+        history=None,
+        channel="widget",
+        intent="support",
+    )
+
+    system = messages[0]["content"].lower()
+    assert "hardware compatibility" in system
+    assert "product family" in system
+    assert "hardware revision" in system
+    assert "conflicting" in system
+    assert "historical case" in system
+
+
 @pytest.mark.asyncio
 async def test_incident_upload_missing_grant_never_becomes_external_citation():
     """Known upload identity without explicit grant is denied before generation."""
