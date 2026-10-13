@@ -28,6 +28,12 @@ from backend.connectors.safety import (
 
 logger = logging.getLogger(__name__)
 
+# 退休证明探针的系统调用缝隙(lstat;模块级别名供确定性测试注入,生产语义
+# 与 ``os.lstat`` 完全一致)。R3 Blocker 1:探针以 lstat + errno 分类取代
+# ``os.path.lexists`` —— 后者把一切 OSError(嵌套父目录 EACCES/EPERM、
+# denied mount、EIO)折叠成 False,把「权限不可达」误认证成「已丢」。
+_lstat = os.lstat
+
 
 @ConnectorRegistry.register("filesystem")
 class FilesystemConnector(DataSourceConnector):
@@ -51,8 +57,10 @@ class FilesystemConnector(DataSourceConnector):
       驱动(A-1/A-2),``fetch_deleted`` 维持诚实空实现;
     - ``policy_absence_reason``:按既有过滤策略逐维分类「范围外缺席」
       (A-3:政策缺席绝不确认为源删除;纯路径形态判定,**不读盘**);
-    - ``physical_absence_evidence``(Issue #113 R2):显式退休裁决用的
-      当前物理存在性检查(读盘;policy-absent ≠ 删除证据,二者严格分立)。
+    - ``physical_absence_evidence``(Issue #113 R2/R3):显式退休裁决用的
+      当前物理存在性检查(读盘;policy-absent ≠ 删除证据,二者严格分立;
+      R3:仅 ENOENT 构成缺失证明,权限/IO 故障一律 unknown,并支持对该行
+      provenance 历史摄取根的同等检查)。
     """
 
     # 不能自证删除事件 → 账本侧缺席确认负责退休(Track A A-1)
@@ -95,18 +103,27 @@ class FilesystemConnector(DataSourceConnector):
         绝对路径,操作员可据此定位部署挂载缺口);根存在但无匹配文件 =
         合法空源,不受此限。
         """
-        if not self._root.is_dir():
+        self._ensure_dir_enumerable(self._root, self._config.config.get("root_path"))
+
+    def _ensure_dir_enumerable(self, root: Path, configured_root: object = None) -> None:
+        """:meth:`_ensure_root_enumerable` 的参数化形态。
+
+        退休证明(Issue #113 R3 Blocker 2)对**历史摄取根**做同等检查时
+        复用;判定语义与错误消息同源(配置值与解析后的绝对路径都进消息,
+        操作员可据此定位挂载缺口)。
+        """
+        if not root.is_dir():
             raise SourceRootUnavailable(
                 f"数据源 {self._config.id} 根目录对执行面不可用: "
-                f"root_path={self._config.config.get('root_path')!r} "
-                f"(解析为 {self._root.resolve()})不存在或不是目录 —— "
+                f"root_path={configured_root!r} "
+                f"(解析为 {root.resolve()})不存在或不是目录 —— "
                 f"检查该执行面的共享上传卷挂载/路径配置"
             )
-        if not os.access(self._root, os.R_OK | os.X_OK):
+        if not os.access(root, os.R_OK | os.X_OK):
             raise SourceRootUnavailable(
                 f"数据源 {self._config.id} 根目录对执行面不可遍历: "
-                f"root_path={self._config.config.get('root_path')!r} "
-                f"(解析为 {self._root.resolve()})缺少读/执行权限 —— "
+                f"root_path={configured_root!r} "
+                f"(解析为 {root.resolve()})缺少读/执行权限 —— "
                 f"POSIX 目录枚举需要 R_OK|X_OK,检查挂载卷权限"
             )
 
@@ -239,10 +256,11 @@ class FilesystemConnector(DataSourceConnector):
         return None
 
     # 物理存在性探针的方法词表(审计与测试断言用;词表封闭)。
-    ABSENCE_PROBE_METHOD = "filesystem.lexists"
+    # R3 Blocker 1:判定原语从 lexists 收紧为 lstat + errno 分类。
+    ABSENCE_PROBE_METHOD = "filesystem.lstat"
 
-    def physical_absence_evidence(self, source_id: str) -> dict:
-        """退休证明原语(Issue #113 R2):对身份解析出的绝对路径做**当前**
+    def physical_absence_evidence(self, source_id: str, *, root: str | None = None) -> dict:
+        """退休证明原语(Issue #113 R2/R3):对身份解析出的绝对路径做**当前**
         物理存在性检查。
 
         与 :meth:`policy_absence_reason` 的分工(A-3 冻结,后者不读盘):
@@ -250,19 +268,58 @@ class FilesystemConnector(DataSourceConnector):
         退休裁决时由服务端调用,提供**当前时点**的物理缺失证明,判定词表:
 
         - ``"verified_absent"``:源根可枚举 ∧ 身份可解析且不越出源根 ∧
-          路径(含悬空符号链接)当前不存在 —— 唯一授权退休的判定;
+          路径 lstat 报 ENOENT(路径当前确定不存在)—— 唯一授权退休的判定;
         - ``"present"``:路径当前存在(文件/目录/悬空链接均算)——
           可恢复文档,禁止撤出(范围外排除 ≠ 物理丢失);
-        - ``"unknown"``:源根不可用/身份异形/路径越界/检查失败 ——
-          诚实未知,fail-closed 禁止撤出。
+        - ``"unknown"``:源根不可用/身份异形/路径越界/权限或 IO 故障/历史根
+          不可信 —— 诚实未知,fail-closed 禁止撤出。
 
-        纯读零突变;证明由调用方写进 A-6 审计记录。路径解析锚定**当前**
-        配置源根(``root_path`` 展开),不信任 DB 元数据里的历史路径。
+        R3 Blocker 1(errno 分类):``os.path.lexists`` 会把一切 OSError
+        (可访问根下嵌套父目录的 EACCES/EPERM、denied mount、EIO、ELOOP…)
+        折叠成 False,把「权限不可达」误认证成「已丢」—— 不可读子目录里
+        **物理存在的可恢复文件**可能被错误授权退休。本实现以 lstat + errno
+        分类取代:仅 ``ENOENT``(路径当前确定不存在)构成 verified_absent,
+        其余一切 ``OSError`` 一律 unknown。
+
+        R3 Blocker 2(历史根):可选 ``root`` 对**该行 provenance 记录的历史
+        摄取根**(``metadata['root']``,摄取时点真值)做同等检查 —— 当前根与
+        历史根不一致时由调用方二次调用;历史根缺失/相对路径/不可解析 ⇒
+        unknown(歧义拒绝),历史根目录不可达 ⇒ unknown(:class:
+        `SourceRootUnavailable`)。绝不以「当前根查无此文件」替代对实际
+        权威原始位置的证明。
+
+        纯读零突变;证明由调用方写进 A-6 审计记录。路径解析默认锚定**当前**
+        配置源根(``root_path`` 展开),不信任 DB 元数据里的历史路径(仅显式
+        ``root=`` 指定的历史根复核例外)。
         """
+        probe_root = self._root
+        if root is not None:
+            hist = root if isinstance(root, str) else None
+            if hist is None or not hist.strip() or not os.path.isabs(hist.strip()):
+                return {
+                    "verdict": "unknown",
+                    "method": self.ABSENCE_PROBE_METHOD,
+                    "root": hist,
+                    "resolved_path": None,
+                    "detail": (
+                        f"历史摄取根 provenance 缺失/畸形({root!r}),无法对"
+                        "实际权威原始位置执行存在性检查,诚实拒绝(UNKNOWN)"
+                    ),
+                }
+            try:
+                probe_root = Path(hist.strip()).expanduser()
+            except (OSError, RuntimeError, ValueError) as exc:
+                return {
+                    "verdict": "unknown",
+                    "method": self.ABSENCE_PROBE_METHOD,
+                    "root": hist,
+                    "resolved_path": None,
+                    "detail": f"历史摄取根不可解析({hist!r}): {exc},诚实拒绝(UNKNOWN)",
+                }
         unknown = {
             "verdict": "unknown",
             "method": self.ABSENCE_PROBE_METHOD,
-            "root": str(self._root),
+            "root": str(probe_root),
             "resolved_path": None,
             "detail": None,
         }
@@ -278,12 +335,17 @@ class FilesystemConnector(DataSourceConnector):
             unknown["detail"] = f"身份含空/越界路径段({rel!r}),路径身份不可信"
             return unknown
         try:
-            self._ensure_root_enumerable()
+            self._ensure_dir_enumerable(
+                probe_root,
+                configured_root=(
+                    root if root is not None else self._config.config.get("root_path")
+                ),
+            )
         except SourceRootUnavailable as exc:
             unknown["detail"] = f"源根不可用,无法执行存在性检查: {exc}"
             return unknown
-        candidate = self._root.joinpath(*parts)
-        root_resolved = self._root.resolve()
+        candidate = probe_root.joinpath(*parts)
+        root_resolved = probe_root.resolve()
         resolved = candidate.resolve()
         if resolved != root_resolved and root_resolved not in resolved.parents:
             unknown["detail"] = (
@@ -291,20 +353,32 @@ class FilesystemConnector(DataSourceConnector):
                 "路径身份不可信"
             )
             return unknown
-        if os.path.lexists(candidate):
+        # R3 Blocker 1:errno 分类 —— FileNotFoundError(ENOENT,路径当前
+        # 确定不存在)是唯一缺失证明;PermissionError(EACCES/EPERM)、EIO、
+        # ELOOP、ENOTDIR 等一切其他 OSError = 不可达/故障 ⇒ unknown,
+        # 绝不得折叠成「已丢」。
+        try:
+            _lstat(candidate)
+        except FileNotFoundError:
             return {
-                "verdict": "present",
+                "verdict": "verified_absent",
                 "method": self.ABSENCE_PROBE_METHOD,
-                "root": str(self._root),
+                "root": str(probe_root),
                 "resolved_path": str(resolved),
-                "detail": "路径当前存在(文件/目录/符号链接),可恢复文档禁止撤出",
+                "detail": None,
             }
+        except OSError as exc:
+            unknown["detail"] = (
+                f"存在性检查遇到非缺失错误(errno={exc.errno}): {exc} —— "
+                "权限/IO/挂载故障 ≠ 文件已丢,诚实拒绝(UNKNOWN)"
+            )
+            return unknown
         return {
-            "verdict": "verified_absent",
+            "verdict": "present",
             "method": self.ABSENCE_PROBE_METHOD,
-            "root": str(self._root),
+            "root": str(probe_root),
             "resolved_path": str(resolved),
-            "detail": None,
+            "detail": "路径当前存在(文件/目录/符号链接),可恢复文档禁止撤出",
         }
 
     def fetch_all(self) -> Iterator[RawDocument]:

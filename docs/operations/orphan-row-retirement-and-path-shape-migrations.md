@@ -97,12 +97,31 @@ Migration checklist (additive segment / prefix change to upload roots):
         and retirement is refused: re-run discovery first;
      3. **physical absence proof** — a server-side existence check on the
         absolute path resolved from the **current** source root
-        (`physical_absence_evidence`; DB metadata is not trusted). A file
-        still on disk (`present`) is refused as recoverable; anything that
-        cannot be proven (root unavailable, alien identity, connector type
-        without the probe, probe failure) is refused as `UNKNOWN` — fail-closed.
+        (`physical_absence_evidence`; DB metadata is not trusted). Only a
+        definitive `ENOENT` counts as `verified_absent`; permission (`EACCES`/
+        `EPERM`), I/O and mount errors are classified `UNKNOWN` — an unreadable
+        subdirectory is not evidence that the file is gone. A file still on
+        disk (`present`) is refused as recoverable; anything that cannot be
+        proven (root unavailable, alien identity, connector type without the
+        probe, probe failure) is refused as `UNKNOWN` — fail-closed.
+     4. **historical-root provenance (R3)** — each filesystem row records the
+        ingestion-time source root in `metadata['root']`. When it differs from
+        the current root, the same existence check runs against that historical
+        root too (a file still present at the original location is refused);
+        a row without usable provenance, or with an unreachable historical
+        root, is refused as `UNKNOWN` — checking only the current root never
+        proves a historical document lost.
+     5. **persistence-point fence (R3)** — probing and committing are not
+        row-locked. Just before the batch commits, the server re-reads the
+        source config and compares a fingerprint: any concurrent config change
+        rejects the whole batch with `409` (zero writes; retry against the
+        current config). Eligible rows are re-read (`populate_existing`) so a
+        concurrent discovery restore is refused instead of overwritten, and
+        the physical proof is re-verified at the commit boundary (a file that
+        returns between probe and commit is caught and the row refused).
      The passing proof is written into the audit record
-     (`evidence.physical_absence`: method / root / resolved_path / checked_at).
+     (`evidence.physical_absence`: method / root / resolved_path /
+     historical_absence? / checked_at).
    - retirement reuses the existing primitive (`confirm_absence_retirement`):
      immediate service withdrawal, GC eligibility at `retired_at + 7d`;
    - audit trail per row in `documents.metadata_['retirement']`:
@@ -117,10 +136,14 @@ Banner copy treats this class as "scope-external excluded (existence unknown)";
 it never claims the files are lost — the loss claim is established per row by
 the retirement adjudication above.
 
-Limitation to keep in mind: the proof anchors on the **current** `root_path`.
-If the upload root itself was migrated and files may still exist under the old
-root, check that location manually before retiring (the probe cannot see a root
-the source no longer points at).
+Since R3 the proof covers the row's recorded historical ingestion root
+automatically (`metadata['root']`), so the old guidance "check the old root
+manually before retiring" is superseded: a migrated row whose file still
+exists under the old root is now refused server-side. Rows without usable
+provenance (no `metadata['root']`) are refused as `UNKNOWN`; if the historical
+root itself is gone or unreadable, retirement stays refused (fail-closed) —
+clean up such rows only after re-establishing where the content actually
+lives.
 
 The Admin UI (source detail page) exposes the same action: a per-row
 "退休" button on orphan rows, and a banner-level "退休 N 项孤儿知识" flow with

@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import re
@@ -1939,6 +1940,18 @@ async def repair_all_source_documents(
 #      (可恢复文档),unknown(源根不可用/身份异形/无适配/检查失败)诚实
 #      拒绝,fail-closed。
 # 证明写进 A-6 审计记录(evidence.physical_absence);被拒行零突变。
+# R3(A REQUEST_CHANGES 第二轮,同一不变量族):缺失证明必须「有效、当前、
+# 源身份匹配」,补三道硬边界:
+#   3. errno 分类(Blocker 1):探针以 lstat 取代 lexists —— 仅 ENOENT 构成
+#      verified_absent;嵌套父目录 EACCES/EPERM、EIO 等一切非缺失错误 =
+#      unknown(可访问根下不可读子目录里物理存在的文件不得被认证为已丢);
+#   4. 历史根 provenance(Blocker 2):行 metadata['root'](摄取时点源根)
+#      与当前根不一致时必须对历史根做同等检查;provenance 缺失/畸形/历史根
+#      不可达 ⇒ UNKNOWN —— 只查当前根不构成历史文档丢失证明;
+#   5. 持久化点围栏(Blocker 3):探测与提交间无行锁,提交前 (a) 重读
+#      DataSource 比对配置摘要,漂移 ⇒ 整批 409 零突变;(b) populate_existing
+#      重读资格行并复验生命周期/分类(并发恢复不得被陈旧 ORM 覆盖);
+#      (c) 物理证明提交前复验(文件回归 ⇒ 逐行拒绝)。
 # --------------------------------------------------------------------------- #
 
 
@@ -1954,6 +1967,132 @@ def _build_retire_connector(ds: DataSource) -> tuple[Any | None, str | None]:
         return ConnectorRegistry.create(to_source_config(ds)), None
     except Exception as exc:  # noqa: BLE001 —— 构建失败是 UNKNOWN 证据,不是放行理由
         return None, f"当前源配置无法构建连接器(配置不可用): {exc}"
+
+
+def _source_config_fingerprint(ds: DataSource) -> str:
+    """R3 Blocker 3 围栏基线:对退休门槛消费的源配置字段做规范化摘要。
+
+    探测/分类与持久提交之间并发的源配置更新(PATCH root_path/include_dirs/
+    enabled 等)会使已算出的分类重放与物理证明失效 —— 提交前重读行并比对
+    本摘要,不符则整批拒绝(409)、零突变,绝不以陈旧证据写库。
+    """
+    sc = to_source_config(ds)
+    payload = {
+        "id": sc.id,
+        "type": sc.type,
+        "product": sc.product,
+        "enabled": sc.enabled,
+        "config": sc.config,
+        "sync_interval": sc.sync_interval,
+        "branches": list(sc.branches),
+        "channel_visibility": list(sc.channel_visibility),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+
+def _historical_root_of(doc: Document | None) -> str | None:
+    """读取该行 provenance 记录的历史摄取根(R3 Blocker 2;缺键/畸形 → None)。"""
+    if doc is None:
+        return None
+    meta = doc.metadata_ if isinstance(doc.metadata_, dict) else {}
+    raw = meta.get("root")
+    return raw if isinstance(raw, str) and raw.strip() else None
+
+
+def _merge_provenance_probe(
+    connector: Any | None,
+    probes: dict[str, dict],
+    doc_source_id: str,
+    doc: Document | None,
+) -> dict:
+    """R3 Blocker 2:把**历史摄取根**的同等检查并入当前探针证据(纯读)。
+
+    只在当前根已证明 verified_absent 时才需要历史根复核(present/unknown
+    本身已足以拒绝)。语义:
+
+    - 当前根 == 历史根(规范化)→ 单点检查,证据原样;
+    - 不一致 → 对历史根做同等探针(同 errno 分类):历史根 present ⇒
+      可恢复文档拒绝;unknown ⇒ 诚实拒绝;verified_absent ⇒ 两处证明齐全;
+    - 历史根 provenance 缺失/畸形 ⇒ UNKNOWN(无法覆盖实际权威原始位置,
+      绝不以「当前根查无此文件」替代对原始位置的证明)。
+    """
+    evidence = probes.get(doc_source_id)
+    if not isinstance(evidence, dict) or evidence.get("verdict") != "verified_absent":
+        return evidence if isinstance(evidence, dict) else {
+            "verdict": "unknown",
+            "method": None,
+            "root": None,
+            "resolved_path": None,
+            "detail": "当前根探针证据缺失,按未知处理(UNKNOWN)",
+        }
+    probe_fn = (
+        getattr(connector, "physical_absence_evidence", None)
+        if connector is not None
+        else None
+    )
+    if not callable(probe_fn):
+        # 无探针适配的源类型本就到不了 verified_absent;防御性直返。
+        return evidence
+    hist = _historical_root_of(doc)
+    if hist is None:
+        return {
+            **evidence,
+            "verdict": "unknown",
+            "detail": (
+                "行 provenance 无历史摄取根(metadata['root'] 缺失/畸形),"
+                "无法证明实际权威原始位置缺失 —— 只查当前根不构成历史文档的"
+                "丢失证明,诚实拒绝(UNKNOWN)"
+            ),
+        }
+    try:
+        same = (
+            os.path.normpath(str(Path(hist).expanduser()))
+            == os.path.normpath(str(evidence.get("root") or ""))
+        )
+    except (OSError, ValueError, RuntimeError):
+        same = False
+    if same:
+        # 当前根与历史根一致:单点检查即覆盖权威原始位置。
+        return evidence
+    try:
+        alt = probe_fn(doc_source_id, root=hist)
+    except Exception as exc:  # noqa: BLE001 —— 历史根探针异常 = 未知,绝不放行
+        alt = {
+            "verdict": "unknown",
+            "method": None,
+            "root": hist,
+            "resolved_path": None,
+            "detail": f"历史摄取根存在性检查失败: {exc}",
+        }
+    if not (isinstance(alt, dict) and alt.get("verdict") in ("verified_absent", "present", "unknown")):
+        alt = {
+            "verdict": "unknown",
+            "method": None,
+            "root": hist,
+            "resolved_path": None,
+            "detail": "历史摄取根探针返回畸形证据,按未知处理(UNKNOWN)",
+        }
+    alt_verdict = alt.get("verdict")
+    if alt_verdict == "verified_absent":
+        return {**evidence, "historical_absence": alt}
+    merged = {
+        **evidence,
+        "historical_absence": alt,
+        "detail": (
+            (alt.get("detail") or "")
+            if alt_verdict == "unknown"
+            else "文件在历史摄取根下当前存在(可恢复),禁止撤出"
+        ),
+    }
+    if alt_verdict == "unknown":
+        merged["verdict"] = "unknown"
+    else:  # present at historical location
+        merged["verdict"] = "present"
+    return merged
 
 
 def _probe_physical_absence_batch(
@@ -2006,11 +2145,22 @@ def _probe_physical_absence_batch(
 
 
 def _probe_batch_for_request(
-    ds: DataSource, doc_source_ids: list[str]
+    ds: DataSource,
+    doc_source_ids: list[str],
+    docs_by_id: dict[str, Document] | None = None,
 ) -> tuple[Any | None, dict[str, dict]]:
-    """线程池内一次完成:构建当前连接器 + 批量物理探针(纯读零突变)。"""
+    """线程池内一次完成:构建当前连接器 + 批量物理探针(纯读零突变)。
+
+    R3 Blocker 2:对已证明 verified_absent 的行并入**历史摄取根**的同等
+    检查(I/O 同样在线程池内执行,不阻塞事件循环)。
+    """
     connector, build_error = _build_retire_connector(ds)
-    return connector, _probe_physical_absence_batch(connector, doc_source_ids, build_error)
+    probes = _probe_physical_absence_batch(connector, doc_source_ids, build_error)
+    for sid in doc_source_ids:
+        doc = (docs_by_id or {}).get(sid)
+        if doc is not None:
+            probes[sid] = _merge_provenance_probe(connector, probes, sid, doc)
+    return connector, probes
 
 
 def _verify_retire_readiness(
@@ -2061,13 +2211,20 @@ def _verify_retire_readiness(
             None,
         )
     # 门槛 2:当前物理缺失证明(服务端探针,绝不只信 DB 元数据)。
+    # R3 Blocker 2:证据已并入历史摄取根的同等检查 —— 任一位置 present 或
+    # unknown 都拒绝;两处都 verified_absent 才是完整缺失证明。
     probe = probes.get(doc_source_id) or {"verdict": "unknown", "detail": "探针缺失"}
     verdict = probe.get("verdict")
+    hist = probe.get("historical_absence") or {}
     if verdict == "present":
+        if hist.get("verdict") == "present" and hist.get("resolved_path"):
+            location = f"历史摄取位置 {hist['resolved_path']}"
+        else:
+            location = str(probe.get("resolved_path") or "路径未知")
         return (
             "refused",
             (
-                f"文件仍在盘上({probe.get('resolved_path') or '路径未知'}):"
+                f"文件仍在盘上({location}):"
                 "范围外排除 ≠ 物理丢失,可恢复文档禁止撤出"
                 "(可经白名单/配置修复后由 discovery 重新纳入)"
             ),
@@ -2082,9 +2239,13 @@ def _verify_retire_readiness(
             ),
             None,
         )
-    proof = {
-        key: probe.get(key) for key in ("method", "root", "resolved_path")
-    }
+    proof = {key: probe.get(key) for key in ("method", "root", "resolved_path")}
+    if isinstance(hist, dict) and hist:
+        proof["historical_absence"] = {
+            "root": hist.get("root"),
+            "resolved_path": hist.get("resolved_path"),
+            "verdict": hist.get("verdict"),
+        }
     return "eligible", None, proof
 
 
@@ -2148,9 +2309,20 @@ async def retire_scope_external_documents(
     - 陈旧分类防护:持久化 policy_reason 必须与**当前**源配置的重放分类
       同值(白名单放宽后未重跑 discovery ⇒ 拒绝,先对账);
     - 物理缺失证明:对**当前**源根解析出的绝对路径做实际存在性检查
-      (``physical_absence_evidence``)—— 文件在盘(present)拒绝撤出;
-      无法证明(源根不可用/身份异形/源类型无适配/检查失败)按 UNKNOWN
-      诚实拒绝。证明随 A-6 审计留痕(evidence.physical_absence)。
+      (``physical_absence_evidence``,R3 起仅 ENOENT 构成缺失证明)——
+      文件在盘(present)拒绝撤出;无法证明(源根不可用/身份异形/源类型
+      无适配/权限或 IO 故障)按 UNKNOWN 诚实拒绝。证明随 A-6 审计留痕
+      (evidence.physical_absence)。
+
+    R3 契约(A REQUEST_CHANGES 第二轮,同一不变量族):
+
+    - 历史根 provenance:行 ``metadata['root']``(摄取时点源根)与当前根
+      不一致 ⇒ 对历史根做同等检查(文件在历史位置仍在盘 ⇒ 拒绝);行
+      provenance 缺失/畸形 ⇒ UNKNOWN(只查当前根不构成历史文档丢失证明);
+    - 持久化点围栏(探测—提交竞态):提交前重读源配置比对摘要,漂移 ⇒
+      整批 409、零突变(可基于当前配置重试);资格行重读复验(并发
+      discovery 恢复 ⇒ 逐行拒绝,绝不以陈旧 ORM 状态覆盖并发写入);物理
+      证明提交前复验(文件回归 ⇒ 逐行拒绝)。
 
     - RBAC:仅 admin(viewer/editor 403;退休是高危运营动作);
     - 硬门槛:``confirm=true`` + 非空 ``reason``(审计留痕),缺一 400;
@@ -2197,10 +2369,10 @@ async def retire_scope_external_documents(
     else:
         requested = list(dict.fromkeys(req.doc_source_ids))
     now = datetime.now(UTC)
-    items: list[BulkDocumentRetireItem] = []
-    retired = already_retired = refused = 0
     async with factory() as session:
         ds = await _get_source_or_404(session, source_id)
+        # R3 Blocker 3:围栏基线 —— 记录裁决所依据的源配置摘要,提交前复验。
+        config_fingerprint = _source_config_fingerprint(ds)
         docs_by_id: dict[str, Document] = {}
         in_scope_ids = [d for d in requested if d.startswith(f"{source_id}/")]
         if in_scope_ids:
@@ -2214,46 +2386,131 @@ async def retire_scope_external_documents(
                 .all()
             )
             docs_by_id = {d.source_id: d for d in rows}
-        # R2:以**当前**源配置构建连接器并批量探针(线程池,纯读零突变)。
+        # R2:以**当前**源配置构建连接器并批量探针(线程池,纯读零突变);
+        # R3 Blocker 2:对 verified_absent 行并入历史摄取根的同等检查。
         connector, probes = await run_in_threadpool(
-            _probe_batch_for_request, ds, requested
+            _probe_batch_for_request, ds, requested, docs_by_id
         )
+        results: dict[str, tuple[str, str | None]] = {}
+        staged: list[str] = []
+        staged_reason: dict[str, str] = {}
         for doc_id in requested:
             verdict, policy_reason, error = _classify_retire_request(
                 docs_by_id.get(doc_id), source_id, doc_id
             )
-            physical_proof: dict | None = None
             if verdict == "eligible":
                 # R2 双门槛:当前分类对账 + 当前物理缺失证明(fail-closed)。
                 verdict, error, physical_proof = _verify_retire_readiness(
                     connector, probes, doc_id, policy_reason or ""
                 )
-            item_status = verdict
-            if verdict == "eligible":
-                # A-6 审计原语(与发现确认退休同一实现):lifecycle→deleted +
-                # metadata_[retirement] = {reason/actor/evidence/retired_at/
-                # gc_eligible_at};缺席状态清除。零新存储语义(AC3)。
-                confirm_absence_retirement(
-                    docs_by_id[doc_id],
-                    reason=RETIRE_REASON_MANUAL,
-                    actor=f"admin:{getattr(user, 'email', None) or getattr(user, 'id', '')}",
-                    evidence={
-                        "policy_reason": policy_reason,
-                        "justification": justification,
-                        "operation": "admin_orphan_retire",
-                        "mode": (
-                            "all_scope_external" if req.all_scope_external else "selected"
-                        ),
-                        "physical_absence": {
-                            **(physical_proof or {}),
-                            "checked_at": now.isoformat(),
-                        },
-                    },
-                    now=now,
+                if verdict == "eligible":
+                    # 突变推迟到持久化点复验之后(R3 Blocker 3):
+                    # 先裁决全批,再在提交边界整体复验、零部分提交。
+                    staged.append(doc_id)
+                    staged_reason[doc_id] = policy_reason or ""
+                    continue
+            results[doc_id] = (verdict, error)
+
+        # ---- R3 Blocker 3:持久化点复验边界(围栏 + 行状态 + 物理证明)。 ----
+        if staged:
+            # (1) 源配置围栏:无行锁的探测—提交窗口内,并发的源配置更新会
+            # 使本批全部分类重放与物理证明失效。重读最新已提交行比对摘要,
+            # 不符 ⇒ 整批拒绝(409)、零突变 —— 绝不以陈旧证据写库。
+            fresh_ds = (
+                await session.execute(
+                    select(DataSource)
+                    .where(DataSource.id == source_id)
+                    .execution_options(populate_existing=True)
                 )
+            ).scalar_one()
+            if _source_config_fingerprint(fresh_ds) != config_fingerprint:
+                await session.rollback()
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "数据源配置在退休裁决期间发生变化(并发配置更新),本批"
+                        "裁决依据的分类与物理证明已失效 —— 整批拒绝、零突变;"
+                        "请基于当前配置重试"
+                    ),
+                )
+            # (2) 行状态围栏:并发的 discovery 恢复/删除会使行级资格失效;
+            # 以 populate_existing 重读,拒绝在陈旧 ORM 状态上写库
+            # (stale-write 防护:并发写入绝不被本事务覆盖)。
+            fresh_rows = (
+                (
+                    await session.execute(
+                        select(Document)
+                        .where(Document.source_id.in_(staged))
+                        .execution_options(populate_existing=True)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            fresh_docs = {d.source_id: d for d in fresh_rows}
+            still_staged: list[str] = []
+            for doc_id in staged:
+                verdict, current_reason, error = _classify_retire_request(
+                    fresh_docs.get(doc_id), source_id, doc_id
+                )
+                if verdict != "eligible" or current_reason != staged_reason[doc_id]:
+                    results[doc_id] = (
+                        "refused",
+                        (
+                            f"行状态在退休裁决期间发生变化(并发 discovery/恢复/"
+                            f"删除;当前裁决为 {verdict}),原判定失效 —— 该行拒绝;"
+                            "请重新对账后重试"
+                        ),
+                    )
+                else:
+                    still_staged.append(doc_id)
+            # (3) 物理证明提交前复验:探测与提交之间文件可能回归;复用同一
+            # 探针(含历史根)在提交边界重新裁决,证明不新鲜 ⇒ 逐行拒绝。
+            if still_staged:
+                connector2, probes2 = await run_in_threadpool(
+                    _probe_batch_for_request, fresh_ds, still_staged, fresh_docs
+                )
+                for doc_id in still_staged:
+                    verdict, error, physical_proof = _verify_retire_readiness(
+                        connector2, probes2, doc_id, staged_reason[doc_id]
+                    )
+                    if verdict != "eligible":
+                        results[doc_id] = ("refused", f"提交前复验未通过: {error}")
+                        continue
+                    # A-6 审计原语(与发现确认退休同一实现):lifecycle→deleted
+                    # + metadata_[retirement] = {reason/actor/evidence/retired_at/
+                    # gc_eligible_at};缺席状态清除。零新存储语义(AC3)。
+                    # 在 populate_existing 刷新后的行对象上突变 —— 携带并发
+                    # 写入的最新状态,不覆盖不相关列。
+                    confirm_absence_retirement(
+                        fresh_docs[doc_id],
+                        reason=RETIRE_REASON_MANUAL,
+                        actor=f"admin:{getattr(user, 'email', None) or getattr(user, 'id', '')}",
+                        evidence={
+                            "policy_reason": staged_reason[doc_id],
+                            "justification": justification,
+                            "operation": "admin_orphan_retire",
+                            "mode": (
+                                "all_scope_external"
+                                if req.all_scope_external
+                                else "selected"
+                            ),
+                            "physical_absence": {
+                                **(physical_proof or {}),
+                                "checked_at": now.isoformat(),
+                            },
+                        },
+                        now=now,
+                    )
+                    results[doc_id] = ("retired", None)
+        # 汇总(保持请求顺序;counts 与逐项状态同源)。
+        items: list[BulkDocumentRetireItem] = []
+        retired = already_retired = refused = 0
+        for doc_id in requested:
+            item_status, error = results.get(doc_id, ("refused", "未完成裁决"))
+            if item_status == "retired":
                 retired += 1
-                item_status = "retired"
-            elif verdict == "already_retired":
+            elif item_status == "already_retired":
                 already_retired += 1
             else:
                 refused += 1
