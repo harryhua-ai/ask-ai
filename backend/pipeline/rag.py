@@ -62,6 +62,7 @@ from backend.pipeline.lead_qualify import (
     LeadTurnContext,
     build_qualification_prompt,
     decide_invite,
+    explicit_purchase_signal,
     parse_qualification,
 )
 from backend.pipeline.product_resolver import (
@@ -885,9 +886,18 @@ class RAGOrchestrator:
                 max_tokens=512,
                 temperature=0.0,
             )
-            return parse_qualification(resp.content)
+            qual = parse_qualification(resp.content)
+            if explicit_purchase_signal(query) and qual.level != "qualified":
+                return replace(
+                    qual, level="qualified", ran=True, source="deterministic_g002"
+                )
+            return qual
         except Exception as exc:  # noqa: BLE001 — lead 判定失败不影响回答
             logger.warning("lead qualifier 失败,fail-open 跳过: %s", str(exc)[:200])
+            if explicit_purchase_signal(query):
+                return LeadQualification(
+                    level="qualified", ran=True, source="deterministic_g002"
+                )
             return None
 
     def _lead_decide(
@@ -912,13 +922,29 @@ class RAGOrchestrator:
         return invited, False, LEAD_INVITE_INSTRUCTION if invited else ""
 
     def _lead_stage(
-        self, lead_ctx: LeadTurnContext, qual: LeadQualification | None, instruction: str
+        self,
+        lead_ctx: LeadTurnContext,
+        qual: LeadQualification | None,
+        instruction: str,
+        *,
+        skip_reason: str | None = None,
     ) -> dict[str, Any]:
         """lead 阶段 trace(PII 安全:联系方式只带 type + masked,绝无原文)。"""
         contact = lead_ctx.contact
         return {
             "level": qual.level if qual else None,
             "qualifier_ran": bool(qual and qual.ran),
+            "qualification_status": (
+                "skipped"
+                if skip_reason
+                else "fallback"
+                if qual and qual.source == "deterministic_g002"
+                else "failed"
+                if qual is None or not qual.ran
+                else "completed"
+            ),
+            "qualification_source": qual.source if qual else None,
+            "skip_reason": skip_reason,
             "instruction": (
                 "ack" if instruction == LEAD_ACK_INSTRUCTION else "invite" if instruction else None
             ),
@@ -926,6 +952,16 @@ class RAGOrchestrator:
             "contact": {"type": contact.type, "masked": contact.masked} if contact else None,
             "explicit_sales_hint": lead_ctx.explicit_sales_hint,
         }
+
+    @staticmethod
+    def _should_run_qualifier(query: str, intent_category: str, lead_ctx: LeadTurnContext | None) -> bool:
+        return bool(
+            lead_ctx
+            and (
+                lead_ctx.should_qualify(intent_category)
+                or explicit_purchase_signal(query)
+            )
+        )
 
     async def _retrieve_and_fuse(
         self,
@@ -1642,6 +1678,13 @@ class RAGOrchestrator:
             reason=understanding.reason,
             confidence=understanding.confidence,
         )
+        lead_qual_task: asyncio.Task | None = None
+        if self._should_run_qualifier(query, intent.category, lead_ctx):
+            lead_qual_task = asyncio.create_task(self._run_qualifier(query, lead_ctx))
+        elif lead_ctx is not None:
+            stages["lead"] = self._lead_stage(
+                lead_ctx, None, "", skip_reason="intent_not_eligible"
+            )
         extracted = understanding.extracted_query
         search_query = understanding.rewritten_query
         stages["understanding"] = {
@@ -1696,6 +1739,8 @@ class RAGOrchestrator:
             elapsed = int((time.monotonic() - start) * 1000)
             for _t in ("query_extraction", "query_rewrite", "pruning", "generation"):
                 tel.record_skipped(_t, "off_topic_short_circuit")
+            if lead_qual_task is not None:
+                stages["lead"] = self._lead_stage(lead_ctx, await lead_qual_task, "")
             return RAGAnswer(
                 answer=_off_topic_reply(language),
                 sources=[],
@@ -1718,8 +1763,15 @@ class RAGOrchestrator:
         # 不得表现为 off_topic 拒答;capture 轮豁免(不得吞掉联系方式捕获)。
         if not capture_mode and understanding.interaction_mode == MODE_CLARIFICATION:
             elapsed = int((time.monotonic() - start) * 1000)
-            for _t in ("pruning", "generation", "lead_qualification"):
+            for _t in ("pruning", "generation"):
                 tel.record_skipped(_t, "clarification_short_circuit")
+            if lead_qual_task is not None:
+                lead_qual = await lead_qual_task
+                stages["lead"] = self._lead_stage(lead_ctx, lead_qual, "")
+            elif lead_ctx is not None:
+                stages["lead"] = self._lead_stage(
+                    lead_ctx, None, "", skip_reason="intent_not_eligible"
+                )
             return RAGAnswer(
                 answer=localized_message(CLARIFICATION_REQUIRED_KEY, language),
                 sources=[],
@@ -1964,6 +2016,8 @@ class RAGOrchestrator:
                 reject_text, reject_key = _comparison_insufficient_reply(
                     language, resolution, taxonomy, _missing
                 )
+                if lead_qual_task is not None:
+                    stages["lead"] = self._lead_stage(lead_ctx, await lead_qual_task, "")
                 return RAGAnswer(
                     answer=reject_text,
                     sources=[],
@@ -2019,6 +2073,8 @@ class RAGOrchestrator:
                 reject_text, reject_key = _product_insufficient_reply(
                     language, resolution, taxonomy
                 )
+                if lead_qual_task is not None:
+                    stages["lead"] = self._lead_stage(lead_ctx, await lead_qual_task, "")
                 return RAGAnswer(
                     answer=reject_text,
                     sources=[],
@@ -2145,8 +2201,8 @@ class RAGOrchestrator:
         # Sales Lead:资格判定(同步路径串行执行)+ 邀请/确认决策
         lead_qual: LeadQualification | None = None
         lead_instruction = ""
-        if lead_ctx is not None and lead_ctx.should_qualify(intent.category):
-            lead_qual = await self._run_qualifier(query, lead_ctx)
+        if lead_qual_task is not None:
+            lead_qual = await lead_qual_task
             _, _, lead_instruction = self._lead_decide(lead_ctx, lead_qual)
             stages["lead"] = self._lead_stage(lead_ctx, lead_qual, lead_instruction)
         # INC-7:自然响应层——确定性策略推导(零 LLM;None ⇒ 今日行为逐字节)。
@@ -2511,8 +2567,17 @@ class RAGOrchestrator:
         # 不得表现为 off_topic 拒答;capture 轮豁免(不得吞掉联系方式捕获)。
         if not capture_mode and understanding.interaction_mode == MODE_CLARIFICATION:
             elapsed = int((time.monotonic() - start) * 1000)
-            for _t in ("pruning", "generation", "lead_qualification"):
+            for _t in ("pruning", "generation"):
                 tel.record_skipped(_t, "clarification_short_circuit")
+            clarify_lead_stage = None
+            if self._should_run_qualifier(query, intent.category, lead_ctx):
+                clarify_qual = await self._run_qualifier(query, lead_ctx)
+                clarify_lead_stage = self._lead_stage(lead_ctx, clarify_qual, "")
+                stages["lead"] = clarify_lead_stage
+            elif lead_ctx is not None:
+                stages["lead"] = self._lead_stage(
+                    lead_ctx, None, "", skip_reason="intent_not_eligible"
+                )
             yield json.dumps(
                 {
                     "type": "complete",
@@ -2595,13 +2660,17 @@ class RAGOrchestrator:
         # Sales Lead Capture:资格判定 LLM 与 rewrite/retrieve 并发执行,
         # commercial/product(或已有线索/检出联系方式/明确销售请求)才跑,零延迟增加。
         lead_qual_task: asyncio.Task | None = None
-        if lead_ctx is not None and lead_ctx.should_qualify(intent.category):
+        if self._should_run_qualifier(query, intent.category, lead_ctx):
             lead_qual_task = asyncio.create_task(self._run_qualifier(query, lead_ctx))
         else:
             tel.record_skipped(
                 "lead_qualification",
                 "no_lead_context" if lead_ctx is None else "qualify_gate_not_met",
             )
+            if lead_ctx is not None:
+                stages["lead"] = self._lead_stage(
+                    lead_ctx, None, "", skip_reason="intent_not_eligible"
+                )
 
         # 评审 C1 第二道门:有附件时 effective_min=0,即使检索为空也走生成(附件作 fallback)
         # Lead capture 轮同理 effective_min=0:联系方式确认不能被「无检索结果」拒答吞掉
@@ -2769,6 +2838,7 @@ class RAGOrchestrator:
                 if lead_qual_task is not None:
                     try:
                         reject_qual = await lead_qual_task
+                        stages["lead"] = self._lead_stage(lead_ctx, reject_qual, "")
                         reject_lead_payload = {
                             "ran": bool(reject_qual and reject_qual.ran),
                             "level": reject_qual.level if reject_qual else "none",
@@ -2797,6 +2867,7 @@ class RAGOrchestrator:
                             "type": "reject_short",
                             "llm_calls": tel.current_calls(),
                             "stages": {
+                                "lead": stages.get("lead"),
                                 "understanding": stages.get("understanding"),
                                 "plan": stages.get("plan"),
                                 "intent": {
@@ -2854,6 +2925,7 @@ class RAGOrchestrator:
                 if lead_qual_task is not None:
                     try:
                         reject_qual = await lead_qual_task
+                        stages["lead"] = self._lead_stage(lead_ctx, reject_qual, "")
                         reject_lead_payload = {
                             "ran": bool(reject_qual and reject_qual.ran),
                             "level": reject_qual.level if reject_qual else "none",
@@ -2898,6 +2970,7 @@ class RAGOrchestrator:
                             "type": "reject_short",
                             "llm_calls": tel.current_calls(),
                             "stages": {
+                                "lead": stages.get("lead"),
                                 "understanding": stages.get("understanding"),
                                 "plan": stages.get("plan"),
                                 "intent": {
@@ -3187,6 +3260,7 @@ class RAGOrchestrator:
                 if lead_qual_task is not None:
                     try:
                         exhaust_qual = await lead_qual_task
+                        stages["lead"] = self._lead_stage(lead_ctx, exhaust_qual, "")
                         exhaust_lead_payload = {
                             "ran": bool(exhaust_qual and exhaust_qual.ran),
                             "level": exhaust_qual.level if exhaust_qual else "none",
@@ -3214,6 +3288,7 @@ class RAGOrchestrator:
                         "trace_payload": {
                             "type": "reject_short",
                             "stages": {
+                                "lead": stages.get("lead"),
                                 "generate": {"ms": int((time.monotonic() - t3) * 1000)},
                                 "citation_integrity": {
                                     **cite_ctx.stats,

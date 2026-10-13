@@ -173,12 +173,36 @@ _EXPLICIT_SALES_RE = re.compile(
     re.IGNORECASE,
 )
 
+# G002 strong purchase signals. Kept separate from explicit_sales_hint because
+# purchase qualification permits an invitation after the answer, while an
+# explicit sales-contact request has its own deterministic invite semantics.
+_EXPLICIT_PURCHASE_RE = re.compile(
+    r"\bbulk\s+(?:pricing|prices|order|purchase)\b"
+    r"|\b(?:need|require|order|purchase|buy|quote|price for|pricing for)"
+    r".{0,32}\b\d[\d,]*\s*(?:pcs?|ps|pieces?|units?|devices?)\b"
+    r"|(?:需要|采购|订购|购买|报价).{0,12}\d[\d,]*\s*(?:台|件|个|套)"
+    r"|\b(?:project|deployment)\s+(?:requirement|needs?|for|of)\b"
+    r"|\b(?:distributor|reseller|integrator)\s+(?:partnership|cooperation|inquiry|opportunity)\b"
+    r"|\binterested in (?:becoming|working as) (?:a )?(?:distributor|reseller|integrator)\b"
+    r"|\b(?:purchase|buy|procurement)\s+(?:by|in|next|this|within)\b"
+    r"|\b(?:purchase|procurement)\s+(?:timeline|schedule|timeframe)\b"
+    r"|\b(?:please\s+)?(?:quote|quotation|price\s+quote)\b"
+    r"|批量(?:价格|报价|采购)"
+    r"|(?:项目需求|项目采购|经销合作|代理合作|采购时间|请报价|正式报价)",
+    re.IGNORECASE,
+)
+
 
 def explicit_sales_hint(text: str) -> bool:
     """确定性判断用户消息是否明确要求销售联系/正式报价(安全网,LLM 之外)。"""
     if not text:
         return False
     return bool(_EXPLICIT_SALES_RE.search(text))
+
+
+def explicit_purchase_signal(text: str) -> bool:
+    """Deterministic G002 safety net for unambiguous strong purchase signals."""
+    return bool(text and _EXPLICIT_PURCHASE_RE.search(text))
 
 
 # --------------------------------------------------------------------------- #
@@ -216,6 +240,7 @@ class LeadQualification:
     fields: LeadFields = field(default_factory=LeadFields)
     summary: str = ""
     ran: bool = False  # 便于上层区分「判定过但 none」与「判定失败/未判定」
+    source: str = "model"  # model | deterministic_g002
 
 
 _QUALIFIER_SYSTEM_PROMPT = """你是 B2B 硬件公司 CamThink 的销售线索资格判定器。根据「当前用户消息」和「近期对话」,判定商业采购信号强度并提取用户自愿提供的商业信息。

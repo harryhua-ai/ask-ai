@@ -23,6 +23,7 @@ from backend.pipeline.lead_qualify import (
     compute_status,
     decide_invite,
     detect_contact,
+    explicit_purchase_signal,
     explicit_sales_hint,
     mask_contact_value,
     parse_qualification,
@@ -267,6 +268,27 @@ def test_hint_negative() -> None:
     assert explicit_sales_hint("NE503 有什么接口?") is False
     assert explicit_sales_hint("NE503 多少钱?") is False
     assert explicit_sales_hint("what is the price of NE301?") is False
+
+
+def test_explicit_purchase_signals_are_qualified_without_promoting_information_queries() -> None:
+    for query in (
+        "What are your bulk prices?",
+        "We need 120 pcs",
+        "price for 120 ps?",
+        "What is the purchase timeline?",
+        "Please quote our project",
+        "We are looking for a distributor partnership",
+        "We plan to purchase next quarter",
+    ):
+        assert explicit_purchase_signal(query) is True
+    for query in (
+        "How much is NE503?",
+        "Send me the product link",
+        "Is there a subscription fee?",
+        "What does distributor mean?",
+        "Does the device support 120 units?",
+    ):
+        assert explicit_purchase_signal(query) is False
 
 
 # --------------------------------------------------------------------------- #
