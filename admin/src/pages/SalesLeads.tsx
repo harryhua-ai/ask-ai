@@ -14,7 +14,16 @@ import {
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Table,
   TableBody,
@@ -30,6 +39,7 @@ import {
   fetchSalesLeadThread,
   fetchSalesLeads,
   handoffSalesLead,
+  voidSalesLeadContact,
   type LeadStatus,
   type LeadThreadData,
   type SalesLead,
@@ -63,6 +73,17 @@ function formatTime(iso: string | null): string {
 }
 
 function ContactCell({ lead }: { lead: SalesLead }) {
+  if (lead.contact_voided) {
+    // #124:已作废联系方式 —— 审计可见但不冒充有效线索
+    return (
+      <span className="inline-flex items-center gap-1.5" data-testid="contact-voided-cell">
+        <Badge variant="destructive" data-testid="contact-voided-badge">
+          已作废
+        </Badge>
+        <span className="text-muted-foreground line-through">{lead.contact_masked}</span>
+      </span>
+    );
+  }
   if (!lead.has_contact) {
     return <span className="text-muted-foreground/60">未提供</span>;
   }
@@ -124,7 +145,11 @@ export function LeadDetailPanel({
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [showThread, setShowThread] = useState(false);
+  const [voidDialogOpen, setVoidDialogOpen] = useState(false);
+  const [voidReason, setVoidReason] = useState("");
   const canHandoff = user?.role === "admin" || user?.role === "editor";
+  // #124:作废是改变运营口径的敏感人工处置 → 仅 admin;且只对「有效在档联系方式」开放
+  const canVoid = user?.role === "admin";
 
   const { data: lead, isLoading } = useQuery<SalesLeadDetail>({
     queryKey: ["lead-detail", leadId],
@@ -139,6 +164,18 @@ export function LeadDetailPanel({
       queryClient.invalidateQueries({ queryKey: ["lead-detail", leadId] });
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : "移交失败"),
+  });
+
+  const voidContact = useMutation({
+    mutationFn: () => voidSalesLeadContact(leadId, voidReason.trim()),
+    onSuccess: () => {
+      toast.success("已标记联系方式无效(已保留审计记录)");
+      setVoidDialogOpen(false);
+      setVoidReason("");
+      queryClient.invalidateQueries({ queryKey: ["sales-leads"] });
+      queryClient.invalidateQueries({ queryKey: ["lead-detail", leadId] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "作废失败"),
   });
 
   return (
@@ -156,24 +193,45 @@ export function LeadDetailPanel({
       ) : (
         <div className="flex-1 space-y-4 overflow-y-auto p-4">
           <div className="flex items-center justify-between">
-            <Badge variant={LEAD_STATUS_META[lead.status].variant}>
-              {LEAD_STATUS_META[lead.status].label}
-            </Badge>
-            {canHandoff && lead.status !== "handed_off" && (
-              <Button
-                size="sm"
-                onClick={() => handoff.mutate()}
-                disabled={handoff.isPending}
-                data-testid="handoff-btn"
-              >
-                {handoff.isPending ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Handshake className="h-3.5 w-3.5" />
-                )}
-                移交销售
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              <Badge variant={LEAD_STATUS_META[lead.status].variant}>
+                {LEAD_STATUS_META[lead.status].label}
+              </Badge>
+              {lead.contact_voided && (
+                <Badge variant="destructive" data-testid="contact-voided-badge">
+                  联系方式已作废
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {canHandoff && lead.status !== "handed_off" && (
+                <Button
+                  size="sm"
+                  onClick={() => handoff.mutate()}
+                  disabled={handoff.isPending}
+                  data-testid="handoff-btn"
+                >
+                  {handoff.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Handshake className="h-3.5 w-3.5" />
+                  )}
+                  移交销售
+                </Button>
+              )}
+              {canVoid && lead.has_contact && !lead.contact_voided && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-destructive/50 text-destructive hover:bg-destructive/10"
+                  onClick={() => setVoidDialogOpen(true)}
+                  disabled={voidContact.isPending}
+                  data-testid="void-contact-btn"
+                >
+                  标记无效
+                </Button>
+              )}
+            </div>
           </div>
 
           <div className="rounded-md border p-3">
@@ -206,6 +264,20 @@ export function LeadDetailPanel({
                 value={`${lead.handoff_by ?? ""} · ${formatTime(lead.handoff_at)}`}
               />
             )}
+            {lead.contact_voided && (
+              <div
+                className="rounded-md border border-destructive/40 bg-destructive/5 p-2.5 text-sm"
+                data-testid="contact-voided-audit"
+              >
+                <p className="mb-1 text-xs font-medium text-destructive">
+                  联系方式已作废(原文保留以供审计,不再计入有效联系方式)
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {lead.contact_voided_by ?? "-"} · {formatTime(lead.contact_voided_at)}
+                  {lead.contact_voided_reason ? ` · 理由:${lead.contact_voided_reason}` : ""}
+                </p>
+              </div>
+            )}
           </div>
 
           <div>
@@ -231,6 +303,49 @@ export function LeadDetailPanel({
           </p>
         </div>
       )}
+
+      <Dialog open={voidDialogOpen} onOpenChange={setVoidDialogOpen}>
+        <DialogContent className="max-w-md" data-testid="void-contact-dialog">
+          <DialogHeader>
+            <DialogTitle>标记联系方式无效</DialogTitle>
+            <DialogDescription>
+              确认将
+              {lead?.contact_masked ? `「${lead.contact_masked}」` : "该联系方式"}
+              标记为无效?作废后不再计入「已留联系方式」与有效联系数,操作人、时间与理由将留存审计;原文保留、不可删除。
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            placeholder="必填:作废理由(如:时间戳被误判为电话)"
+            value={voidReason}
+            onChange={(e) => setVoidReason(e.target.value)}
+            maxLength={500}
+            rows={3}
+            data-testid="void-reason-input"
+          />
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setVoidDialogOpen(false)}
+              data-testid="void-cancel-btn"
+            >
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => voidContact.mutate()}
+              disabled={!voidReason.trim() || voidContact.isPending}
+              data-testid="void-confirm-btn"
+            >
+              {voidContact.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : null}
+              确认作废
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

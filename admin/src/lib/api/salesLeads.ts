@@ -12,8 +12,14 @@ export interface SalesLead {
   status: LeadStatus;
   contact_type: string | null;
   contact_masked: string | null;
+  /** 有效联系方式在档(#124:已作废的联系方式不计入) */
   has_contact: boolean;
   contact_captured_at: string | null;
+  /** #124 错误联系方式作废审计 */
+  contact_voided: boolean;
+  contact_voided_at: string | null;
+  contact_voided_by: string | null;
+  contact_voided_reason: string | null;
   name: string | null;
   company: string | null;
   region: string | null;
@@ -91,4 +97,18 @@ export function fetchSalesLeadThread(id: string): Promise<LeadThreadData> {
 
 export function handoffSalesLead(id: string): Promise<SalesLeadDetail> {
   return apiFetch<SalesLeadDetail>(`/leads/${id}/handoff`, { method: "POST" });
+}
+
+/**
+ * #124:错误联系方式作废(仅 admin;后端要求显式 confirm + 必填理由)。
+ * 幂等:后端首写审计,重复提交返回现状。原文保留,仅运营口径失效。
+ */
+export function voidSalesLeadContact(
+  id: string,
+  reason: string,
+): Promise<SalesLeadDetail> {
+  return apiFetch<SalesLeadDetail>(`/leads/${id}/void-contact`, {
+    method: "POST",
+    body: JSON.stringify({ confirm: true, reason }),
+  });
 }

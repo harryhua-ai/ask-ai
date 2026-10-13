@@ -219,6 +219,38 @@ async def ensure_sync_delta_columns(engine: AsyncEngine) -> None:
         )
 
 
+async def ensure_sales_lead_contact_void_columns(engine: AsyncEngine) -> None:
+    """#124 错误联系方式可审计作废:sales_leads 补作废审计四列(加性、幂等、零回填)。
+
+    - contact_voided BOOLEAN NOT NULL DEFAULT false(存量行 = 未作废);
+    - contact_voided_at / contact_voided_by / contact_voided_reason
+      (NULL = 未作废;首次作废写入,重复提交首写优先)。
+
+    contact_value/contact_masked 原文永不擦除(必要历史审计边界)。生产发布
+    仍应执行 ``scripts/migrate_add_sales_lead_contact_void.py``;这里的启动期
+    守卫只让旧表安全加载新读写代码。Issue #102 同款:稳态零 DDL(catalog
+    探测);真缺列时有界 lock_timeout 下执行,锁竞争有界失败、绝不无限排队。
+    """
+    async with engine.begin() as conn:
+        if (
+            await _table_column_exists(conn, "sales_leads", "contact_voided")
+            and await _table_column_exists(conn, "sales_leads", "contact_voided_at")
+            and await _table_column_exists(conn, "sales_leads", "contact_voided_by")
+            and await _table_column_exists(conn, "sales_leads", "contact_voided_reason")
+        ):
+            return
+        await _execute_compat_ddl(
+            conn,
+            (
+                "ALTER TABLE sales_leads ADD COLUMN IF NOT EXISTS contact_voided BOOLEAN NOT NULL DEFAULT false",
+                "ALTER TABLE sales_leads ADD COLUMN IF NOT EXISTS contact_voided_at TIMESTAMPTZ",
+                "ALTER TABLE sales_leads ADD COLUMN IF NOT EXISTS contact_voided_by VARCHAR(100)",
+                "ALTER TABLE sales_leads ADD COLUMN IF NOT EXISTS contact_voided_reason VARCHAR(500)",
+            ),
+            label="ensure_sales_lead_contact_void_columns",
+        )
+
+
 async def init_db(engine: AsyncEngine) -> None:
     """根据模型元数据创建所有表。
 
@@ -236,3 +268,4 @@ async def init_db(engine: AsyncEngine) -> None:
     await ensure_track_c_columns(engine)
     await ensure_sync_delta_columns(engine)
     await ensure_sync_request_kind_column(engine)
+    await ensure_sales_lead_contact_void_columns(engine)

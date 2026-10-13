@@ -52,10 +52,12 @@ export interface BusinessOverviewData {
     potential: number;
     /** 达到 qualified 及以上(含已留联系方式/已移交) */
     qualified: number;
-    /** 已获得至少一种有效联系方式 */
+    /** 已获得至少一种有效联系方式(#124:已作废的不计入) */
     contactable: number;
     /** 已人工移交销售 */
     handed_off: number;
+    /** #124:被授权管理员作废的联系方式数量(单独统计,不冒充有效线索) */
+    contact_voided: number;
     hot_products: { name: string; count: number }[];
   };
   scenes: SceneItem[];

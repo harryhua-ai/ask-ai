@@ -201,7 +201,10 @@ async def apply_lead_turn(
             await session.commit()
             return lead.id
 
-        # 已有线索:更新(不降级;已有联系方式不覆盖)
+        # 已有线索:更新(不降级;已有联系方式不覆盖)。
+        # #124 AC3:contact_voided=true(管理员已作废)时同样靠「contact_value
+        # 在档即不覆盖」保证作废记录不被自动聚合改写/复活 —— 作废不擦除原文,
+        # 本守卫因此同时封死「换号码重写」与「作废后重新伪装有效」两条路径。
         existing.status = status
         for key, value in merged.items():
             setattr(existing, key, value)

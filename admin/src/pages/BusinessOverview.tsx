@@ -255,6 +255,16 @@ export default function BusinessOverview() {
                     {data.leads.handed_off}
                   </span>
                 </div>
+                {data.leads.contact_voided > 0 && (
+                  <div className="flex justify-between text-[13px]">
+                    <span className="text-[var(--t3)]">
+                      已作废联系方式
+                    </span>
+                    <span className="font-medium text-[var(--t3)]">
+                      {data.leads.contact_voided}
+                    </span>
+                  </div>
+                )}
                 {data.leads.hot_products.length > 0 && (
                   <div className="pt-2">
                     <div className="text-[12px] text-[var(--t3)] mb-1">

@@ -5,6 +5,8 @@
 - GET /leads/{id}/thread  原始会话线程(按 session_id 聚合,无则回退锚点轮次)
 - POST /leads/{id}/handoff  手动移交销售(admin/editor;Contact Captured ≠ Sales Contacted,
   本接口只表达「人已接管跟进」,不触发任何自动通知)
+- POST /leads/{id}/void-contact  错误联系方式作废(仅 admin;明确确认 + 理由;
+  幂等首写优先;contact_value 原文永不擦除,保必要历史审计;#124)
 
 隐私边界(HARD):联系方式原文只经此只读管理面出库;列表视图仅回
 contact_masked,缩小 PII 暴露面。
@@ -16,6 +18,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -26,6 +29,30 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/leads", tags=["销售线索"])
 ViewerDep = Annotated[CurrentUser, Depends(require_role("admin", "editor", "viewer"))]
 EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
+# #124:作废是不可逆的人工处置(改变运营口径),比 handoff 更敏感 → 仅 admin
+AdminDep = Annotated[CurrentUser, Depends(require_role("admin"))]
+
+
+class VoidContactRequest(BaseModel):
+    """作废请求体:显式确认 + 必填理由(审计;AC1「明确确认后」)。"""
+
+    confirm: bool
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator("confirm")
+    @classmethod
+    def _must_explicitly_confirm(cls, v: bool) -> bool:
+        if v is not True:
+            raise ValueError("必须显式 confirm=true 才能作废")
+        return v
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("作废理由不能为空")
+        return v
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -39,8 +66,14 @@ def _serialize(lead: SalesLead, *, include_contact: bool) -> dict[str, Any]:
         "status": lead.status,
         "contact_type": lead.contact_type,
         "contact_masked": lead.contact_masked,
-        "has_contact": bool(lead.contact_value),
+        # #124:has_contact = 有效联系方式在档(作废的联系方式不算有效)
+        "has_contact": bool(lead.contact_value) and not lead.contact_voided,
         "contact_captured_at": _iso(lead.contact_captured_at),
+        # #124:作废审计(列表/详情均可见,呈现已作废徽章;原文仍只在详情)
+        "contact_voided": bool(lead.contact_voided),
+        "contact_voided_at": _iso(lead.contact_voided_at),
+        "contact_voided_by": lead.contact_voided_by,
+        "contact_voided_reason": lead.contact_voided_reason,
         "name": lead.name,
         "company": lead.company,
         "region": lead.region,
@@ -63,6 +96,7 @@ def _serialize(lead: SalesLead, *, include_contact: bool) -> dict[str, Any]:
         "updated_at": _iso(lead.updated_at),
     }
     if include_contact:
+        # 详情含原文:作废后仍返回(必要历史审计,AC3 可追溯),但仅授权角色可达
         data["contact_value"] = lead.contact_value
     return data
 
@@ -74,7 +108,9 @@ async def list_leads(
     status: str | None = Query(
         default=None, pattern="^(potential|qualified|contact_captured|handed_off)$"
     ),
-    contact: str | None = Query(default=None, pattern="^(with|without)$"),
+    # #124:with = 有效联系方式在档(排除已作废);voided = 仅已作废(审计视图);
+    # without = 从未捕获联系方式。三态互斥,完整划分。
+    contact: str | None = Query(default=None, pattern="^(with|without|voided)$"),
     q: str | None = Query(default=None, max_length=200),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -86,9 +122,13 @@ async def list_leads(
         if status:
             conds.append(SalesLead.status == status)
         if contact == "with":
+            # 有效联系方式 = 已捕获且未被作废(#124 AC2:误报不再冒充可联系线索)
             conds.append(SalesLead.contact_value.is_not(None))
+            conds.append(SalesLead.contact_voided.is_(False))
         elif contact == "without":
             conds.append(SalesLead.contact_value.is_(None))
+        elif contact == "voided":
+            conds.append(SalesLead.contact_voided.is_(True))
         if q:
             like = f"%{q}%"
             conds.append(
@@ -216,6 +256,38 @@ async def handoff_lead(
             lead.status = "handed_off"
             lead.handoff_at = datetime.now(UTC)
             lead.handoff_by = user.email
+            await session.commit()
+            # commit 过期了 onupdate 列(updated_at),异步下须显式重载
+            await session.refresh(lead)
+        return _serialize(lead, include_contact=True)
+
+
+@router.post("/{lead_id}/void-contact")
+async def void_lead_contact(
+    user: AdminDep,
+    request: Request,
+    lead_id: str,
+    body: VoidContactRequest,
+) -> dict[str, Any]:
+    """错误联系方式作废/标记无效(仅 admin;#124)。
+
+    - 明确确认(confirm=true)+ 必填理由,保存操作人/时间/理由(AC1 审计);
+    - 幂等:已作废的线索重复提交直接返回现状,首写审计不被覆盖(AC1);
+    - 目标性:仅按主键改写本行,绝不误修改其它线索记录(AC1);
+    - contact_value/contact_masked 原文与捕获时间永不擦除(必要历史审计,
+      AC3 可追溯;禁止不可恢复擦除);状态生命周期不动(不改变 G001 资格)。
+    """
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        lead = await _get_lead_or_404(session, lead_id)
+        if not lead.contact_value:
+            raise HTTPException(status_code=409, detail="该线索没有已捕获的联系方式可作废")
+        if not lead.contact_voided:
+            # 幂等首写:重复提交不再改写审计(AC1)
+            lead.contact_voided = True
+            lead.contact_voided_at = datetime.now(UTC)
+            lead.contact_voided_by = user.email
+            lead.contact_voided_reason = body.reason.strip()
             await session.commit()
             # commit 过期了 onupdate 列(updated_at),异步下须显式重载
             await session.refresh(lead)

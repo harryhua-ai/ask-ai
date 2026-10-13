@@ -289,3 +289,51 @@ async def test_potential_lead_created_on_potential_level(factory) -> None:
     async with factory() as s:
         row = await s.get(SalesLead, lead_id)
     assert row.status == LEAD_STATUS_POTENTIAL
+
+
+async def test_voided_contact_not_overwritten_or_resurrected(factory) -> None:
+    """#124 AC3:已作废联系方式不被自动聚合改写/复活。
+
+    管理员作废(contact_voided=true)后,同会话后续轮次即使再次检出联系方式:
+    - contact_value/contact_masked 原文保持不变(必要历史审计不被擦除);
+    - contact_voided 审计字段保持不变(旧记录不因自动聚合重新伪装为有效)。
+    """
+    from datetime import UTC, datetime
+
+    sid = "sess-void-persist"
+    async with factory() as s:
+        lead = SalesLead(
+            session_id=sid,
+            status=LEAD_STATUS_CONTACT_CAPTURED,
+            source_conversation_id=uuid.uuid4(),
+            last_conversation_id=uuid.uuid4(),
+            contact_type="phone",
+            contact_value="13800000000",
+            contact_masked="138******00",
+            contact_captured_at=datetime.now(UTC),
+        )
+        s.add(lead)
+        await s.flush()
+        lead_id = lead.id
+        # 模拟管理员作废审计写路径(API 层同一列语义)
+        lead.contact_voided = True
+        lead.contact_voided_at = datetime.now(UTC)
+        lead.contact_voided_by = "admin@test.com"
+        lead.contact_voided_reason = "时间戳误报"
+        await s.commit()
+
+    ctx = await load_lead_context(factory, session_id=sid, raw_question="换一个号码 13999999999")
+    await apply_lead_turn(
+        factory,
+        ctx,
+        _payload(level="qualified"),
+        conversation_id=uuid.uuid4(),
+        session_id=sid,
+    )
+    async with factory() as s:
+        row = await s.get(SalesLead, lead_id)
+    assert row.contact_value == "13800000000"
+    assert row.contact_masked == "138******00"
+    assert row.contact_voided is True
+    assert row.contact_voided_by == "admin@test.com"
+    assert row.contact_voided_reason == "时间戳误报"
