@@ -82,7 +82,7 @@ export interface SourceDocumentsResponse {
   current_count: number;
   /** U-7 逐文档内容类型账本聚合(类型过滤词表真实来源;NULL 不入)。 */
   content_type_counts: Record<string, number>;
-  /** Issue #113:范围外孤儿计数(missing_candidate ∧ A-3 政策缺席;repair 永不可达)。 */
+  /** Issue #113:范围外排除计数(missing_candidate ∧ A-3 政策缺席;存在性未知,物理缺失在退休时服务端验证)。 */
   attention_scope_external_orphan_count: number;
   /** Issue #113:attention 桶中可修复行计数(attention − 范围外孤儿;与 repair-all 资格同源)。 */
   attention_repairable_count: number;

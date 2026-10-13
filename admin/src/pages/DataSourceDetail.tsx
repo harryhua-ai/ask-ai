@@ -312,7 +312,7 @@ export default function DataSourceDetail() {
 
   const runRowRetire = (docSourceId: string) => {
     const reason = window.prompt(
-      `显式退休 ${docSourceId}\n范围外孤儿行:文件已丢失且超出知识源范围,退休后立即撤出服务(审计留痕)。请输入操作理由:`,
+      `显式退休 ${docSourceId}\n范围外排除行(存在性未知):退休前服务端会验证物理缺失,文件仍在盘上或无法验证的行将被拒绝;退休后立即撤出服务(审计留痕)。请输入操作理由:`,
     );
     if (reason === null) return;
     runRetire({ doc_source_ids: [docSourceId] }, reason);
@@ -595,8 +595,8 @@ export default function DataSourceDetail() {
               data-testid="orphan-retire-confirm-panel"
             >
               <p className="text-xs text-muted-foreground">
-                将退休 {bannerActions.orphanCount} 项范围外孤儿知识(文件已丢失且超出知识源范围):
-                立即撤出服务,7 天后具备物理回收资格;操作人与理由将写入审计记录。该动作不可自动撤销。
+                将退休 {bannerActions.orphanCount} 项范围外排除知识(存在性未知;服务端会逐行验证物理缺失,文件仍在盘上或无法验证的行将被拒绝):
+                通过验证的行立即撤出服务,7 天后具备物理回收资格;操作人与理由将写入审计记录。该动作不可自动撤销。
               </p>
               <Input
                 data-testid="orphan-retire-reason"
@@ -856,9 +856,9 @@ export default function DataSourceDetail() {
                                     : "修复此知识"}
                                 </Button>
                               )}
-                              {/* Issue #113:范围外孤儿行(missing_candidate + A-3 政策缺席)
-                                  修复永不可达(文件已丢失且超出知识源范围)→ 提供显式退休
-                                  动作(确认 + 理由 + 审计留痕;资格判定在后端,禁扩权)。 */}
+                              {/* Issue #113(R2 修正):范围外排除行(missing_candidate + A-3
+                                  政策缺席)存在性未知 —— 修复不适用,提供显式退休动作
+                                  (确认 + 理由 + 审计留痕;退休前服务端验证物理缺失,禁扩权)。 */}
                               {canWrite &&
                                 row.lifecycle === "missing_candidate" &&
                                 row.absence_policy_reason && (
@@ -867,7 +867,7 @@ export default function DataSourceDetail() {
                                     variant="outline"
                                     className="h-7 border-destructive/50 px-2 text-destructive"
                                     data-testid={`doc-retire-${row.source_id}`}
-                                    title={`范围外孤儿(A-3 政策缺席: ${row.absence_policy_reason});显式退休并留审计痕`}
+                                    title={`范围外排除(A-3 政策缺席: ${row.absence_policy_reason},存在性未知);退休前服务端验证物理缺失,显式退休并留审计痕`}
                                     onClick={() => runRowRetire(row.source_id)}
                                   >
                                     退休

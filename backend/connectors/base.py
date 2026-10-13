@@ -83,6 +83,16 @@ class DataSourceConnector(Protocol):
       给定复合身份的**当前权威内容指纹**(与 RawDocument.content_hash 同
       变换)。供成员对账对排除登记做指纹比对 —— 指纹漂移 ⇒ 立即失效压制
       重评估;无此能力的连接器由压制窗口(TTL)兜底。实现者:GitHubConnector。
+
+    Issue #113 退休证明能力(鸭子类型,非协议必需):
+    - ``physical_absence_evidence(source_id) -> dict``:对身份解析出的绝对
+      路径做**当前**物理存在性检查,返回
+      ``{"verdict": "verified_absent"|"present"|"unknown", "method", "root",
+      "resolved_path", "detail"}``。供管理端显式退休裁决消费:范围外排除
+      (A-3 policy-absent)≠ 物理丢失,退休前必须以此证明文件确实不在盘;
+      ``unknown``(源根不可用/身份异形/检查失败)一律 fail-closed 禁止撤出。
+      无此能力的源类型:诚实拒绝(UNKNOWN),不得以策略排除当删除证据。
+      实现者:FilesystemConnector。
     """
 
     DECLARES_DELETIONS: bool

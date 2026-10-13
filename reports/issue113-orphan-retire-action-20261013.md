@@ -114,3 +114,127 @@ helper); GREEN after.
   directory (also per the repo's own operational guidance).
 - This change delivers the capability only; no existing production row was
   retired and no production DB/reindex was touched.
+
+---
+
+# R2 Delta — physical absence proof (A REQUEST_CHANGES, 2026-10-13)
+
+Reviewer blocking family: **configuration-policy exclusion is not evidence of
+physical file loss.** The persisted `metadata_['absence'].policy_reason` was
+treated everywhere as "file provably gone", so a row whose file still exists on
+disk (excluded by `include_dirs`, or stale after a whitelist relaxation without
+a discovery re-run) could be withdrawn by an admin bulk-retire and become
+physically GC-eligible after 7 days. Fix keeps all R1 guarantees (explicit
+admin confirm, per-row A-6 audit, active/in-scope refusal, A-2/A-3 frozen,
+7-day GC timing, non-destructive whitelist path) and adds server-side proof.
+
+## Mechanism (three server-side gates per row, fail-closed, in adjudication order)
+
+1. **DB classification** (unchanged): `missing_candidate` ∧ non-null persisted
+   `policy_reason`; `DELETED`+record → `already_retired`; active/in-scope →
+   refused.
+2. **Stale-classification guard** (new): the persisted `policy_reason` must be
+   reproduced by the **current** source config
+   (`FilesystemConnector.policy_absence_reason` replay at execution time —
+   the connector is rebuilt from the DB row's current config, so any config
+   change between the admin's confirmation and execution is caught).
+   Mismatch (whitelist relaxed, filter dimension changed, connector without
+   A-3 adaptation) → refused; operator must re-run discovery.
+3. **Physical absence proof** (new): actual existence check on the absolute
+   path resolved from the **current** source root — new duck-typed connector
+   capability `FilesystemConnector.physical_absence_evidence(source_id)`
+   (A-3 `policy_absence_reason` untouched; it deliberately never stats the
+   filesystem). Verdicts:
+   - `verified_absent` — root enumerable ∧ identity parses to a path inside
+     the resolved root (symlink/`..` containment enforced, dangling symlinks
+     count as present) ∧ `lexists` false → only then retired; proof persisted
+     in the A-6 record as `evidence.physical_absence`
+     (`method`/`root`/`resolved_path`/`checked_at`).
+   - `present` → refused ("文件仍在盘上"): recoverable document, exclusion is
+     not loss.
+   - `unknown` (root unavailable — reuses the #100 fail-closed check; alien
+     identity; path escaping the root; connector type without the probe, e.g.
+     non-filesystem; probe exception; malformed evidence) → refused honestly;
+     no withdrawal without proof.
+
+`all_scope_external` selection stays DB-classified but every selected row goes
+through gates 2–3; unverified rows come back per-row `refused` with an
+actionable reason (never silently dropped, never in the mutating set).
+
+## Honesty of banner/counts
+
+- Banner line copy is now
+  `N 项为范围外排除(超出知识源范围,存在性未知;显式退休前服务端会验证物理缺失)`
+  — no "文件已丢失" claim anywhere in the banner/confirm/row copy; the loss
+  claim is established per row only by the retirement adjudication and its
+  audit record.
+- `attention_scope_external_orphan_count` semantics documented as
+  "scope-external **excluded** (existence unknown)"; schema/ops docs updated.
+  A persistent "verified missing" count does not exist by design: verification
+  is a point-in-time act at retirement, materialized in the response statuses
+  and `metadata_['retirement'].evidence.physical_absence`.
+
+## Files touched in R2
+
+- `backend/connectors/filesystem.py` — new `physical_absence_evidence`
+  (+ docstring boundary note on `policy_absence_reason`; A-3 logic untouched).
+- `backend/connectors/base.py` — protocol docstring: optional capability note
+  (Issue #113 pattern, like Issue #91).
+- `backend/api/admin/data_sources.py` — `_build_retire_connector`,
+  `_probe_physical_absence_batch`, `_verify_retire_readiness` (threadpool off
+  the event loop), endpoint gates + evidence; docstrings de-absolutized
+  (`_scope_external_orphan_predicate`, `_bulk_repair_eligibility`).
+- `backend/api/admin/schemas.py` — count semantics docstrings.
+- `admin/src/lib/dataSourceOps.ts`, `admin/src/pages/DataSourceDetail.tsx`,
+  `admin/src/hooks/useDataSourceKnowledge.ts`,
+  `admin/src/types/dataSourceWorkspace.ts` — copy/comments.
+- `docs/operations/orphan-row-retirement-and-path-shape-migrations.md` —
+  three-gate close-out path + proof-anchoring limitation (current `root_path`
+  only; migrate-then-retire needs a manual old-root check).
+- `tests/api/admin/test_issue113_orphan_retire_action.py` — fixture now
+  provides a real enumerable root + config that reproduces the persisted
+  classification; 5 new cases (see below).
+
+## Test evidence (RED → GREEN)
+
+New backend contract tests (all RED on a460e2d before the fix, GREEN after):
+
+| Case | Proves |
+| --- | --- |
+| `test_retire_refuses_present_but_excluded_file` | file recreated on disk under an excluded prefix → `refused` ("仍在盘上"), row byte-identical, no retirement record |
+| `test_retire_refuses_stale_classification_after_whitelist_relaxation` | whitelist relaxed without discovery → refused "分类陈旧" |
+| `test_retire_refuses_when_source_root_unavailable` | root gone → refused UNKNOWN, row untouched |
+| `test_retire_refuses_when_source_config_invalid` | config without `root_path` → refused UNKNOWN |
+| `test_retire_bulk_mixed_states_adjudicates_per_row` | one bulk call: verified-absent retires; present / stale / path-escape identity / active / in-scope all refused per row with reasons; zero mutation spread |
+| `test_retire_scope_external_orphans_with_a6_audit` (extended) | positive: verifiably-lost file retires with `evidence.physical_absence` (method/root/resolved_path/checked_at) in the audit record |
+
+RED evidence: exactly the 6 contract-bearing cases failed on a460e2d
+(8 unchanged passed); GREEN after the fix.
+
+## R2 test numbers
+
+| Suite | Result |
+| --- | --- |
+| `tests/api/admin/test_issue113_orphan_retire_action.py` (14 cases = 9 R1 + 5 new, 1 extended) | 14 passed |
+| A-2/A-3 lifecycle regression (`test_fs_disappearance_retirement.py` + `test_lifecycle_composition_u82_u25.py`) | 11 passed |
+| full `tests/api/admin/` directory | 539 passed, 4 failed — all 4 (`test_gap_export` ×2, `test_gap_observation`, `test_tech_answer_gaps`) reproduce identically on clean base a460e2d (pre-existing gap-window flakes, unrelated) |
+| admin vitest `src/lib/dataSourceOps.test.ts` (single file, timeout-bounded) | 8 passed (7 R1 + 1 new negative-copy case) |
+| admin vitest `tests/dataSources` + `DataSourcesAttentionReason` + `dataSourceLifecycle` | 197 passed, 25 failed — all 25 (`DataSourceDetailConvergence` 17, `DataSourceDetailTrackC` 7, `DataSources` 1) reproduce identically on clean base a460e2d (pre-existing mock drift from R1, unrelated to R2 copy changes) |
+| `tsc -b` (admin) | clean |
+
+## R2 known limitations
+
+- The physical proof anchors on the **current** `root_path` resolution. If the
+  upload root itself was migrated and files may still exist under the old root,
+  the probe cannot see them; operators must verify the old location manually
+  before retiring (documented in the ops doc).
+- Only `filesystem` implements `physical_absence_evidence`; other source types
+  refuse with UNKNOWN. In practice only filesystem rows can carry a non-null
+  persisted `policy_reason` (woo always returns None, git/web never enter A-3
+  reconciliation), so no legitimate flow regresses.
+- The stale-classification guard compares classification **values**; a
+  no-op config edit that reproduces the same classification does not block
+  retirement (the classification, not the config bytes, is the truth).
+- Pre-existing failures noted above (4 pytest / 25 vitest) are inherited from
+  the base and out of R2 scope; no new failures introduced.
+- No production row was retired; no production DB/reindex touched.

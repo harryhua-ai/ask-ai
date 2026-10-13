@@ -191,7 +191,8 @@ class DataSourceDocumentsResponse(BaseModel):
     content_type_counts = U-7 逐文档内容类型账本聚合(不含 NULL;类型过滤
     词表的真实来源,前端禁推断)。
     attention_scope_external_orphan_count = Issue #113 横幅分类真相:
-    missing_candidate ∧ A-3 政策缺席(范围外孤儿,repair 永不可达)计数;
+    missing_candidate ∧ A-3 政策缺席(范围外**排除**;存在性未知 ——
+    排除 ≠ 物理丢失,缺失须在显式退休时由服务端对当前源根证明)计数;
     attention_repairable_count = attention 桶中的可修复行计数
     (attention − 范围外孤儿;与 repair-all 资格同源)。
     """

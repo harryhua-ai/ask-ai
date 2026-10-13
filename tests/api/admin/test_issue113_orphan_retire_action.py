@@ -38,7 +38,8 @@ BASE = f"/api/admin/data-sources/{SRC}"
 
 # 旧路径形态(include_dirs 白名单外;2025.2 legacy 前缀,无上传根段)
 DOC_ORPHAN_A = f"{SRC}/main/2025.2/case-alpha.md"
-DOC_ORPHAN_B = f"{SRC}/main/2025.3/case-beta.md"
+# file_types 范围外(.log 不在后缀白名单;在 include_dirs 白名单内)
+DOC_ORPHAN_B = f"{SRC}/main/2025.3/case-beta.log"
 # 范围内缺席(两次连续确认由 A-2 自动退休;手动动作必须拒绝绕过)
 DOC_INSCOPE_MISSING = f"{SRC}/main/experience/in-scope-missing.md"
 # 健康在服行(绝不适用)
@@ -58,8 +59,20 @@ def _absence_meta(policy_reason: str | None) -> dict:
 
 
 @pytest_asyncio.fixture(loop_scope="session")
-async def seed():
-    """播种:1 filesystem 源 + 2 范围外孤儿 + 1 范围内缺席 + 1 健康在服。"""
+async def seed(tmp_path):
+    """播种:1 filesystem 源 + 2 范围外孤儿 + 1 范围内缺席 + 1 健康在服。
+
+    R2 契约(A RC 修正):物理缺失证明在退休时由服务端对**当前**源根执行,
+    因此源根必须真实可枚举(R2 之前测试不需要盘面);且**当前**配置必须能
+    重放出持久化的 A-3 分类,否则退休判定为「分类陈旧」拒绝:
+
+    - DOC_ORPHAN_A(2025.2/case-alpha.md):include_dirs 只白名单 ``2025.3``
+      → 当前分类 ``include_dirs`` == 持久化分类;文件未创建 ⇒ 可验证物理缺失;
+    - DOC_ORPHAN_B(2025.3/case-beta.log):``.log`` 不在 file_types 白名单
+      → 当前分类 ``file_types`` == 持久化分类;文件未创建 ⇒ 可验证物理缺失。
+    """
+    root = tmp_path / "uploads"
+    root.mkdir(parents=True)
     factory = app.state.session_factory
     async with factory() as session:
         session.add(
@@ -67,7 +80,7 @@ async def seed():
                 id=SRC,
                 type="filesystem",
                 product="probe",
-                config={"root_path": f"data/uploads/data-sources/{SRC}"},
+                config={"root_path": str(root), "include_dirs": ["2025.3"]},
                 sync_interval="24h",
                 enabled=True,
             )
@@ -225,6 +238,16 @@ async def _doc(source_id: str) -> Document | None:
         ).scalar_one_or_none()
 
 
+async def _set_source_config(config: dict) -> None:
+    """改写测试源的**当前**配置(模拟管理操作:白名单放宽/根路径丢失等)。"""
+    async with app.state.session_factory() as session:
+        ds = (
+            await session.execute(select(DataSource).where(DataSource.id == SRC))
+        ).scalar_one()
+        ds.config = config
+        await session.commit()
+
+
 # --------------------------------------------------------------------------- #
 # AC1:显式退休动作(确认 + 审计 + 既有退休语义)
 # --------------------------------------------------------------------------- #
@@ -288,11 +311,15 @@ async def test_retire_viewer_and_editor_forbidden(seed):
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_retire_scope_external_orphans_with_a6_audit(admin_headers, seed):
+async def test_retire_scope_external_orphans_with_a6_audit(admin_headers, seed, tmp_path):
     """AC1 主链:逐行显式退休范围外孤儿 + A-6 式审计(操作人/时间/理由/政策原因)。
 
     退休语义与既有发现确认退休同一原语:lifecycle→deleted(即时撤出服务)
     + 7 天 GC 资格(retired_at + 7d);缺席状态清除;reason=manual 封闭词表。
+
+    R2(A RC):正向主链同时就是「可验证物理缺失」证明 —— 文件未创建,
+    服务端对当前源根解析出的绝对路径做存在性检查通过(verified_absent),
+    证明写进 A-6 审计记录 evidence.physical_absence。
     """
     reason_text = "2026-09-22 事件:文件在 pre-#100 上传纪元物理丢失,路径形态迁移致范围外"
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
@@ -335,6 +362,15 @@ async def test_retire_scope_external_orphans_with_a6_audit(admin_headers, seed):
             "GC 资格 = retired_at + 7d(与发现确认退休同一冻结时序)"
         )
         assert "absence" not in (doc.metadata_ or {}), "退休后缺席状态必须清除"
+        # R2:物理缺失证明必须随审计留痕(服务端对当前源根的当前检查)。
+        proof = evidence.get("physical_absence")
+        assert isinstance(proof, dict), "退休审计必须携带 physical_absence 证明"
+        assert proof.get("resolved_path"), "证明必须记录存在性检查的解析绝对路径"
+        assert proof.get("root"), "证明必须记录当前源根"
+        assert proof.get("checked_at"), "证明必须记录检查时点"
+        assert str(proof["resolved_path"]).endswith(sid.rsplit("/", 1)[-1]), (
+            "解析路径必须对应该行身份的末段"
+        )
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -490,3 +526,207 @@ async def test_repair_all_excludes_scope_external_orphans(admin_headers, seed, v
     assert DOC_ORPHAN_A not in batch_ids, "范围外孤儿不得进入修复批(修不好 ≠ 待修复)"
     assert DOC_ORPHAN_B not in batch_ids
     assert DOC_INSCOPE_MISSING in batch_ids, "范围内缺席行仍是可修复资格(语义不变)"
+
+
+# --------------------------------------------------------------------------- #
+# R2(A REQUEST_CHANGES 修正):配置策略排除 ≠ 文件物理丢失。
+# 退休前服务端做**当前**物理缺失证明;无法证明(UNKNOWN)或分类陈旧一律拒绝;
+# 横幅/计数不再把范围外排除标注为确定性丢失。
+# --------------------------------------------------------------------------- #
+
+
+async def _seed_orphan(doc_source_id: str, policy_reason: str) -> None:
+    """补种一行范围外孤儿(混合态用;teardown 的 like 清理已覆盖)。"""
+    async with app.state.session_factory() as session:
+        session.add(
+            Document(
+                source_id=doc_source_id,
+                content_hash="e" * 64,
+                source_type="filesystem",
+                product="probe",
+                title=doc_source_id.rsplit("/", 1)[-1],
+                url=f"file:///{doc_source_id}",
+                branch="",
+                chunk_count=1,
+                lifecycle="missing_candidate",
+                metadata_=_absence_meta(policy_reason),
+            )
+        )
+        await session.commit()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_retire_refuses_present_but_excluded_file(admin_headers, seed, tmp_path):
+    """负例(误杀场景本体):文件仍在盘上但被 include_dirs 排除 ⇒ 拒绝退休。
+
+    范围外排除 ≠ 物理丢失:服务端必须对当前源根解析出的绝对路径做存在性
+    检查;文件在盘 ⇒ 可恢复文档,绝不撤出(撤出后 7 天可被物理 GC)。
+    """
+    present = tmp_path / "uploads" / "2025.2" / "case-alpha.md"
+    present.parent.mkdir(parents=True, exist_ok=True)
+    present.write_text("仍在盘上", encoding="utf-8")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        resp = await client.post(
+            f"{BASE}/documents/retire",
+            headers=admin_headers,
+            json={
+                "doc_source_ids": [DOC_ORPHAN_A],
+                "confirm": True,
+                "reason": "全选退休(误杀场景:旧分类合格但文件其实还在)",
+            },
+        )
+    assert resp.status_code == 200, resp.text[:300]
+    body = resp.json()
+    assert body["retired"] == 0, "present-but-excluded 绝不允许被退休"
+    assert body["refused"] == 1
+    item = body["items"][0]
+    assert item["status"] == "refused"
+    assert "仍在盘上" in (item["error"] or ""), f"拒绝理由必须说明文件在盘: {item['error']}"
+    doc = await _doc(DOC_ORPHAN_A)
+    assert doc is not None and doc.lifecycle == "missing_candidate", "拒绝路径零突变"
+    assert (doc.metadata_ or {}).get("retirement") is None, "拒绝不得写退休审计"
+    absence = (doc.metadata_ or {}).get("absence") or {}
+    assert absence.get("policy_reason") == "include_dirs", "缺席状态必须原样保留"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_retire_refuses_stale_classification_after_whitelist_relaxation(
+    admin_headers, seed, tmp_path
+):
+    """负例(陈旧分类):白名单放宽后未重跑 discovery ⇒ 持久化分类不得授权退休。
+
+    持久化 policy_reason='include_dirs',但**当前**配置已无 include_dirs
+    (该身份回到范围内)—— 分类与当前配置对账失败,必须拒绝(否则以陈旧
+    分类退休,绕过 A-2 对「现在范围内缺席」的两次确认语义)。
+    """
+    await _set_source_config({"root_path": str(tmp_path / "uploads")})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        resp = await client.post(
+            f"{BASE}/documents/retire",
+            headers=admin_headers,
+            json={
+                "doc_source_ids": [DOC_ORPHAN_A],
+                "confirm": True,
+                "reason": "白名单已放宽,顺手收口旧行",
+            },
+        )
+    assert resp.status_code == 200, resp.text[:300]
+    body = resp.json()
+    assert body["retired"] == 0, "陈旧分类绝不得授权退休"
+    item = body["items"][0]
+    assert item["status"] == "refused"
+    assert "陈旧" in (item["error"] or ""), f"拒绝理由必须指出分类陈旧: {item['error']}"
+    doc = await _doc(DOC_ORPHAN_A)
+    assert doc.lifecycle == "missing_candidate"
+    assert (doc.metadata_ or {}).get("retirement") is None
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_retire_refuses_when_source_root_unavailable(admin_headers, seed, tmp_path):
+    """负例(源不可达):当前源根不可枚举 ⇒ 无法证明物理缺失,UNKNOWN 拒绝。"""
+    await _set_source_config(
+        {"root_path": str(tmp_path / "does-not-exist"), "include_dirs": ["2025.3"]}
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        resp = await client.post(
+            f"{BASE}/documents/retire",
+            headers=admin_headers,
+            json={
+                "doc_source_ids": [DOC_ORPHAN_A],
+                "confirm": True,
+                "reason": "根挂载缺失时的批量清理",
+            },
+        )
+    assert resp.status_code == 200, resp.text[:300]
+    body = resp.json()
+    assert body["retired"] == 0, "源根不可达时绝不允许退休(无法证明缺失)"
+    item = body["items"][0]
+    assert item["status"] == "refused"
+    assert "无法证明物理缺失" in (item["error"] or ""), (
+        f"拒绝理由必须说明 UNKNOWN: {item['error']}"
+    )
+    doc = await _doc(DOC_ORPHAN_A)
+    assert doc.lifecycle == "missing_candidate"
+    assert (doc.metadata_ or {}).get("retirement") is None
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_retire_refuses_when_source_config_invalid(admin_headers, seed):
+    """负例(配置不可用):config 缺 root_path ⇒ 连接器不可构建,UNKNOWN 拒绝。"""
+    await _set_source_config({})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        resp = await client.post(
+            f"{BASE}/documents/retire",
+            headers=admin_headers,
+            json={
+                "doc_source_ids": [DOC_ORPHAN_A],
+                "confirm": True,
+                "reason": "配置已损坏,清理孤儿",
+            },
+        )
+    assert resp.status_code == 200, resp.text[:300]
+    body = resp.json()
+    assert body["retired"] == 0, "当前配置不可用时绝不允许退休"
+    item = body["items"][0]
+    assert item["status"] == "refused"
+    assert "无法证明物理缺失" in (item["error"] or ""), (
+        f"拒绝理由必须落入 UNKNOWN 家族: {item['error']}"
+    )
+    doc = await _doc(DOC_ORPHAN_A)
+    assert doc.lifecycle == "missing_candidate"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_retire_bulk_mixed_states_adjudicates_per_row(
+    admin_headers, seed, tmp_path
+):
+    """负例(批量混合态):verified-absent / present / 陈旧 / 越界身份 / active /
+    范围内缺席逐行独立裁决 —— 只有可验证物理缺失的行退休,其余逐项 refused
+    并携带原因;零部分突变扩散。"""
+    present = tmp_path / "uploads" / "2025.3" / "still-here.log"
+    present.parent.mkdir(parents=True, exist_ok=True)
+    present.write_text("在盘", encoding="utf-8")
+    doc_present = f"{SRC}/main/2025.3/still-here.log"
+    doc_stale = f"{SRC}/main/2025.2/stale-classification.md"  # 持久化 exclusion_policy ≠ 当前 include_dirs
+    doc_escape = f"{SRC}/main/../escape.md"  # 越界路径段:身份不可解析 → UNKNOWN
+    await _seed_orphan(doc_present, "file_types")
+    await _seed_orphan(doc_stale, "exclusion_policy")
+    await _seed_orphan(doc_escape, "include_dirs")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        resp = await client.post(
+            f"{BASE}/documents/retire",
+            headers=admin_headers,
+            json={
+                "doc_source_ids": [
+                    DOC_ORPHAN_A,
+                    doc_present,
+                    doc_stale,
+                    doc_escape,
+                    DOC_ACTIVE,
+                    DOC_INSCOPE_MISSING,
+                ],
+                "confirm": True,
+                "reason": "混合态批量收口",
+            },
+        )
+    assert resp.status_code == 200, resp.text[:300]
+    body = resp.json()
+    assert body["retired"] == 1, "只有可验证物理缺失的行允许退休"
+    assert body["refused"] == 5
+    by_doc = {i["doc_source_id"]: i for i in body["items"]}
+    assert by_doc[DOC_ORPHAN_A]["status"] == "retired"
+    assert by_doc[doc_present]["status"] == "refused"
+    assert "仍在盘上" in (by_doc[doc_present]["error"] or "")
+    assert by_doc[doc_stale]["status"] == "refused"
+    assert "陈旧" in (by_doc[doc_stale]["error"] or "")
+    assert by_doc[doc_escape]["status"] == "refused"
+    assert "无法证明物理缺失" in (by_doc[doc_escape]["error"] or "")
+    assert by_doc[DOC_ACTIVE]["status"] == "refused"
+    assert by_doc[DOC_INSCOPE_MISSING]["status"] == "refused"
+    # 被拒行零突变(逐行裁决不得扩散)。
+    for sid in (doc_present, doc_stale, doc_escape):
+        doc = await _doc(sid)
+        assert doc.lifecycle == "missing_candidate"
+        assert (doc.metadata_ or {}).get("retirement") is None
+    retired = await _doc(DOC_ORPHAN_A)
+    assert retired.lifecycle == "deleted"

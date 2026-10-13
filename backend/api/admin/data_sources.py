@@ -54,6 +54,8 @@ from backend.api.admin.source_center_schemas import (
     WebsiteDiscoveryRequest,
 )
 from backend.auth.dependencies import CurrentUser, require_role
+from backend.connectors.db_adapter import to_source_config
+from backend.connectors.registry import ConnectorRegistry
 from backend.db.models import (
     DataSource,
     Document,
@@ -992,9 +994,13 @@ def _scope_external_orphan_predicate():
     分类真值 = ``documents.metadata_['absence'].policy_reason``(sync 侧
     ``FilesystemConnector.policy_absence_reason`` 在最近一次完整发现时持久化
     的 A-3 分类;本谓词不重新分类、不推断 —— 权威与 A-3 冻结语义同源)。
-    这些行的文件已物理丢失且超出当前管理员策略范围,repair(从盘重摄取)
-    永不可达;仅手动显式退休(Issue #113)或白名单扩展后的 A-2 自动确认
-    可以收口。
+
+    R2 契约(A REQUEST_CHANGES):本谓词只证明「范围外**排除**」——
+    行的存在性**未知**,不证明「文件已物理丢失」(文件可能仍在盘上,或
+    白名单放宽后分类已陈旧)。物理缺失必须在显式退休裁决时由服务端探针
+    (``FilesystemConnector.physical_absence_evidence``)对当前源根证明;
+    未证明的行拒绝撤出。收口路径不变:显式退休(Issue #113,带证明)或
+    白名单扩展后的 A-2 自动确认。
     """
     return (Document.lifecycle == DocLifecycle.MISSING_CANDIDATE) & (
         Document.metadata_[ABSENCE_META_KEY]["policy_reason"].as_string().is_not(None)
@@ -1005,9 +1011,9 @@ def _bulk_repair_eligibility():
     """批量修复资格:只覆盖当前 attention 桶,不触碰健康或已退役文档。
 
     Issue #113(AC2):范围外孤儿行(missing_candidate ∧ A-3 政策缺席)
-    **不入修复资格** —— 修复 = 从盘重摄取,而这些行文件已物理丢失,修复
-    永远不可能成功;把它们呈现为"待修复"是生产事件中横幅误导的根源。
-    收口路径 = 显式退休(Issue #113)或白名单扩展后的 A-2 自动确认。
+    **不入修复资格** —— 修复(从盘重摄取)不适用于范围外行,把它们呈现为
+    "待修复"是生产事件中横幅误导的根源。收口路径 = 显式退休(R2:须先通过
+    服务端物理缺失证明)或白名单扩展后的 A-2 自动确认。
     """
     resolvable = _current_version_resolvable()
     return or_(
@@ -1922,11 +1928,171 @@ async def repair_all_source_documents(
 # AC3 边界:A-2 连续确认阈值与 A-3 政策缺席分类零改动 —— 本动作只消费
 # confirm_absence_retirement 既有原语(与发现确认退休同一状态语义:即时撤出
 # 服务 + 7 天 GC 资格),绝不自动/隐式触发,绝不适用于 active 或范围内缺席行。
+# R2(A REQUEST_CHANGES):配置策略排除 ≠ 文件物理丢失。退休裁决新增两道
+# 服务端门槛(顺序:DB 分类资格 → 当前分类对账 → 当前物理缺失证明):
+#   1. 陈旧分类防护:持久化 policy_reason 必须能被**当前**源配置重放
+#      (``policy_absence_reason`` 同值)—— 白名单放宽后未重跑 discovery 的
+#      陈旧分类不得授权退休;确认与执行间配置变化在此自然被拒(连接器按
+#      执行时点的 DB 行现值构建);
+#   2. 物理缺失证明:对**当前**源根解析出的绝对路径做存在性检查
+#      (``physical_absence_evidence``;绝不只信 DB 元数据)—— present 拒绝
+#      (可恢复文档),unknown(源根不可用/身份异形/无适配/检查失败)诚实
+#      拒绝,fail-closed。
+# 证明写进 A-6 审计记录(evidence.physical_absence);被拒行零突变。
 # --------------------------------------------------------------------------- #
 
 
+def _build_retire_connector(ds: DataSource) -> tuple[Any | None, str | None]:
+    """以**当前**源配置构建连接器(退休证明用;纯读,零副作用)。
+
+    Returns:
+        (connector, error);error 非 None 时 connector 为 None。构建失败
+        (配置缺 root_path / 类型未注册等)= 「当前配置不可用」事实,退休
+        一律 fail-closed,绝不放行。
+    """
+    try:
+        return ConnectorRegistry.create(to_source_config(ds)), None
+    except Exception as exc:  # noqa: BLE001 —— 构建失败是 UNKNOWN 证据,不是放行理由
+        return None, f"当前源配置无法构建连接器(配置不可用): {exc}"
+
+
+def _probe_physical_absence_batch(
+    connector: Any | None,
+    doc_source_ids: list[str],
+    build_error: str | None,
+) -> dict[str, dict]:
+    """批量物理存在性探针(同步纯读;调用方放线程池,不阻塞事件循环)。
+
+    无连接器/无 ``physical_absence_evidence`` 适配/探针异常/畸形证据 →
+    UNKNOWN(fail-closed;未知绝不放行撤出)。
+    """
+    probe_fn = (
+        getattr(connector, "physical_absence_evidence", None)
+        if connector is not None
+        else None
+    )
+    out: dict[str, dict] = {}
+    for sid in doc_source_ids:
+        unknown = {
+            "verdict": "unknown",
+            "method": None,
+            "root": None,
+            "resolved_path": None,
+            "detail": None,
+        }
+        if build_error is not None:
+            unknown["detail"] = build_error
+        elif not callable(probe_fn):
+            unknown["detail"] = (
+                "当前源类型无物理缺失证明适配(仅 filesystem 提供),"
+                "无法证明文件确实不在盘,诚实拒绝(UNKNOWN)"
+            )
+        else:
+            try:
+                evidence = probe_fn(sid)
+            except Exception as exc:  # noqa: BLE001 —— 探针异常 = 未知,绝不放行
+                unknown["detail"] = f"物理存在性检查失败: {exc}"
+            else:
+                if (
+                    isinstance(evidence, dict)
+                    and evidence.get("verdict")
+                    in ("verified_absent", "present", "unknown")
+                ):
+                    out[sid] = evidence
+                    continue
+                unknown["detail"] = "探针返回畸形证据,按未知处理(UNKNOWN)"
+        out[sid] = unknown
+    return out
+
+
+def _probe_batch_for_request(
+    ds: DataSource, doc_source_ids: list[str]
+) -> tuple[Any | None, dict[str, dict]]:
+    """线程池内一次完成:构建当前连接器 + 批量物理探针(纯读零突变)。"""
+    connector, build_error = _build_retire_connector(ds)
+    return connector, _probe_physical_absence_batch(connector, doc_source_ids, build_error)
+
+
+def _verify_retire_readiness(
+    connector: Any | None,
+    probes: dict[str, dict],
+    doc_source_id: str,
+    persisted_reason: str,
+) -> tuple[str, str | None, dict | None]:
+    """R2 双门槛(仅对已过 DB 分类资格的行调用;fail-closed)。
+
+    Returns:
+        ("eligible", None, physical_absence_evidence) 或
+        ("refused", 拒绝原因, None)。
+    """
+    # 门槛 0:连接器不可构建(当前配置不可用)→ 两道门槛都无法执行 →
+    # 直接落 UNKNOWN 家族(携带构建失败的可执行原因)。
+    if connector is None:
+        probe = probes.get(doc_source_id) or {}
+        return (
+            "refused",
+            (
+                f"无法证明物理缺失({probe.get('detail') or '当前源配置不可用'}):"
+                "UNKNOWN 诚实拒绝撤出"
+            ),
+            None,
+        )
+    # 门槛 1:陈旧分类防护 —— 持久化 A-3 分类须被**当前**源配置重放。
+    reason_fn = getattr(connector, "policy_absence_reason", None)
+    if not callable(reason_fn):
+        return (
+            "refused",
+            (
+                "当前源类型无 A-3 分类适配,无法以当前配置复核持久化政策原因,"
+                "诚实拒绝(UNKNOWN)"
+            ),
+            None,
+        )
+    current_reason = reason_fn(doc_source_id)
+    if current_reason != persisted_reason:
+        return (
+            "refused",
+            (
+                f"缺席分类陈旧:持久化 policy_reason={persisted_reason!r} 与当前"
+                f"源配置分类 {current_reason!r} 不一致 —— 过滤策略在分类后已变化"
+                "(如白名单放宽)且未重跑 discovery;请先重跑 discovery 对账,"
+                "不得以陈旧分类授权退休"
+            ),
+            None,
+        )
+    # 门槛 2:当前物理缺失证明(服务端探针,绝不只信 DB 元数据)。
+    probe = probes.get(doc_source_id) or {"verdict": "unknown", "detail": "探针缺失"}
+    verdict = probe.get("verdict")
+    if verdict == "present":
+        return (
+            "refused",
+            (
+                f"文件仍在盘上({probe.get('resolved_path') or '路径未知'}):"
+                "范围外排除 ≠ 物理丢失,可恢复文档禁止撤出"
+                "(可经白名单/配置修复后由 discovery 重新纳入)"
+            ),
+            None,
+        )
+    if verdict != "verified_absent":
+        return (
+            "refused",
+            (
+                f"无法证明物理缺失({probe.get('detail') or '未知原因'}):"
+                "UNKNOWN 诚实拒绝撤出"
+            ),
+            None,
+        )
+    proof = {
+        key: probe.get(key) for key in ("method", "root", "resolved_path")
+    }
+    return "eligible", None, proof
+
+
 def _classify_retire_request(doc: Document | None, source_id: str, doc_id: str) -> tuple[str, str | None, str | None]:
-    """逐行资格判定(fail-closed)。
+    """逐行资格判定(fail-closed;DB 侧第一道门槛)。
+
+    R2:本函数只裁决 DB 侧资格(范围/生命周期/缺席分类);通过者还须过
+    :func:`_verify_retire_readiness` 的当前分类对账 + 物理缺失证明才可退休。
 
     Returns:
         (verdict, policy_reason, refusal_error);verdict ∈ eligible /
@@ -1971,16 +2137,29 @@ async def retire_scope_external_documents(
     生产背景(2026-09-22,179 孤儿行):旧路径形态的行落在 include_dirs
     白名单外 → A-3 政策缺席把退休计数永久冻结,横幅永远「需要处理」,而
     repair-all 对这些行永远不可能成功。本端点提供**手动、显式、可审计**的
-    运营收口:逐行确认 + A-6 式审计记录(操作人/时间/理由/政策原因),
-    复用既有退休语义(lifecycle→deleted 即时撤出服务 + retired_at+7d GC
-    资格),分类真值 = 最近一次完整发现持久化的 A-3 政策原因。
+    运营收口:逐行确认 + A-6 式审计记录(操作人/时间/理由/政策原因 +
+    物理缺失证明),复用既有退休语义(lifecycle→deleted 即时撤出服务 +
+    retired_at+7d GC 资格)。
+
+    R2 契约(A REQUEST_CHANGES):**配置策略排除 ≠ 文件物理丢失**。
+    持久化的 A-3 分类只证明「范围外排除」;每行在退休前还须通过两道服务端
+    门槛(以执行时点的**当前**源配置逐行裁决,请求方不得扩权):
+
+    - 陈旧分类防护:持久化 policy_reason 必须与**当前**源配置的重放分类
+      同值(白名单放宽后未重跑 discovery ⇒ 拒绝,先对账);
+    - 物理缺失证明:对**当前**源根解析出的绝对路径做实际存在性检查
+      (``physical_absence_evidence``)—— 文件在盘(present)拒绝撤出;
+      无法证明(源根不可用/身份异形/源类型无适配/检查失败)按 UNKNOWN
+      诚实拒绝。证明随 A-6 审计留痕(evidence.physical_absence)。
 
     - RBAC:仅 admin(viewer/editor 403;退休是高危运营动作);
     - 硬门槛:``confirm=true`` + 非空 ``reason``(审计留痕),缺一 400;
-    - 模式:``doc_source_ids`` 逐行显式,或 ``all_scope_external`` 服务端
-      选取该源全部资格行;资格判定以服务端真值为准,请求方不得扩权;
+    - 模式:``doc_source_ids`` 逐行显式,或 ``all_scope_external=true`` 服务端
+      选取该源全部 DB 分类资格行 —— 全选行同样逐行过上述门槛,未能验证的行
+      逐项 ``refused``(拒绝原因可执行),绝不入突变集;
     - 幂等:已退休行 → already_retired,审计记录零改写;
-    - 单事务原子提交:资格行全退休或全不动。
+    - 被拒行零突变(缺席状态/计数原样保留);单事务原子提交:资格行全退休
+      或全不动。
     """
     if not req.confirm:
         raise HTTPException(
@@ -2021,7 +2200,7 @@ async def retire_scope_external_documents(
     items: list[BulkDocumentRetireItem] = []
     retired = already_retired = refused = 0
     async with factory() as session:
-        await _get_source_or_404(session, source_id)
+        ds = await _get_source_or_404(session, source_id)
         docs_by_id: dict[str, Document] = {}
         in_scope_ids = [d for d in requested if d.startswith(f"{source_id}/")]
         if in_scope_ids:
@@ -2035,10 +2214,20 @@ async def retire_scope_external_documents(
                 .all()
             )
             docs_by_id = {d.source_id: d for d in rows}
+        # R2:以**当前**源配置构建连接器并批量探针(线程池,纯读零突变)。
+        connector, probes = await run_in_threadpool(
+            _probe_batch_for_request, ds, requested
+        )
         for doc_id in requested:
             verdict, policy_reason, error = _classify_retire_request(
                 docs_by_id.get(doc_id), source_id, doc_id
             )
+            physical_proof: dict | None = None
+            if verdict == "eligible":
+                # R2 双门槛:当前分类对账 + 当前物理缺失证明(fail-closed)。
+                verdict, error, physical_proof = _verify_retire_readiness(
+                    connector, probes, doc_id, policy_reason or ""
+                )
             item_status = verdict
             if verdict == "eligible":
                 # A-6 审计原语(与发现确认退休同一实现):lifecycle→deleted +
@@ -2055,6 +2244,10 @@ async def retire_scope_external_documents(
                         "mode": (
                             "all_scope_external" if req.all_scope_external else "selected"
                         ),
+                        "physical_absence": {
+                            **(physical_proof or {}),
+                            "checked_at": now.isoformat(),
+                        },
                     },
                     now=now,
                 )

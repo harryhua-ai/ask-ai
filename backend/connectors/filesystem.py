@@ -15,7 +15,7 @@ import logging
 import os
 from collections.abc import Iterator
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from backend.connectors.base import DataSourceConnector, RawDocument, SourceRootUnavailable
 from backend.connectors.exclusion import ExclusionPolicy
@@ -50,7 +50,9 @@ class FilesystemConnector(DataSourceConnector):
       自证删除;账本行退休由 sync 侧完整权威发现差集 + 两次连续缺席确认
       驱动(A-1/A-2),``fetch_deleted`` 维持诚实空实现;
     - ``policy_absence_reason``:按既有过滤策略逐维分类「范围外缺席」
-      (A-3:政策缺席绝不确认为源删除)。
+      (A-3:政策缺席绝不确认为源删除;纯路径形态判定,**不读盘**);
+    - ``physical_absence_evidence``(Issue #113 R2):显式退休裁决用的
+      当前物理存在性检查(读盘;policy-absent ≠ 删除证据,二者严格分立)。
     """
 
     # 不能自证删除事件 → 账本侧缺席确认负责退休(Track A A-1)
@@ -211,6 +213,10 @@ class FilesystemConnector(DataSourceConnector):
             范围外缺席的固定 reason 词表(``"file_types"`` / ``"include_dirs"`` /
             ``"technical_safety"`` / ``"exclusion_policy"``);范围内(即若文件
             在盘就会被摄取)→ None,其缺席可进入 A-2 退休确认。
+
+        注意(Issue #113 R2 契约边界):本方法**故意不做文件系统存在性检查**
+        —— policy-absent 只证明「不在摄取范围」,绝不证明「文件已物理丢失」
+        (A-3 冻结设计)。物理缺失证明走 :meth:`physical_absence_evidence`。
         """
         prefix = f"{self._config.id}/{self._branch}/"
         if not source_id.startswith(prefix):
@@ -231,6 +237,75 @@ class FilesystemConnector(DataSourceConnector):
         if self._policy.should_exclude(rel, 0):
             return "exclusion_policy"
         return None
+
+    # 物理存在性探针的方法词表(审计与测试断言用;词表封闭)。
+    ABSENCE_PROBE_METHOD = "filesystem.lexists"
+
+    def physical_absence_evidence(self, source_id: str) -> dict:
+        """退休证明原语(Issue #113 R2):对身份解析出的绝对路径做**当前**
+        物理存在性检查。
+
+        与 :meth:`policy_absence_reason` 的分工(A-3 冻结,后者不读盘):
+        policy-absent 只证明「不在摄取范围」,不是删除证据;本方法在显式
+        退休裁决时由服务端调用,提供**当前时点**的物理缺失证明,判定词表:
+
+        - ``"verified_absent"``:源根可枚举 ∧ 身份可解析且不越出源根 ∧
+          路径(含悬空符号链接)当前不存在 —— 唯一授权退休的判定;
+        - ``"present"``:路径当前存在(文件/目录/悬空链接均算)——
+          可恢复文档,禁止撤出(范围外排除 ≠ 物理丢失);
+        - ``"unknown"``:源根不可用/身份异形/路径越界/检查失败 ——
+          诚实未知,fail-closed 禁止撤出。
+
+        纯读零突变;证明由调用方写进 A-6 审计记录。路径解析锚定**当前**
+        配置源根(``root_path`` 展开),不信任 DB 元数据里的历史路径。
+        """
+        unknown = {
+            "verdict": "unknown",
+            "method": self.ABSENCE_PROBE_METHOD,
+            "root": str(self._root),
+            "resolved_path": None,
+            "detail": None,
+        }
+        prefix = f"{self._config.id}/{self._branch}/"
+        if not source_id.startswith(prefix):
+            unknown["detail"] = (
+                f"身份非本连接器路径形态(期望前缀 {prefix!r}),路径身份不可解析"
+            )
+            return unknown
+        rel = source_id[len(prefix) :]
+        parts = PurePosixPath(rel).parts
+        if not parts or parts[0] == os.sep or ".." in parts:
+            unknown["detail"] = f"身份含空/越界路径段({rel!r}),路径身份不可信"
+            return unknown
+        try:
+            self._ensure_root_enumerable()
+        except SourceRootUnavailable as exc:
+            unknown["detail"] = f"源根不可用,无法执行存在性检查: {exc}"
+            return unknown
+        candidate = self._root.joinpath(*parts)
+        root_resolved = self._root.resolve()
+        resolved = candidate.resolve()
+        if resolved != root_resolved and root_resolved not in resolved.parents:
+            unknown["detail"] = (
+                f"解析路径 {resolved} 越出源根 {root_resolved}(符号链接/异常身份),"
+                "路径身份不可信"
+            )
+            return unknown
+        if os.path.lexists(candidate):
+            return {
+                "verdict": "present",
+                "method": self.ABSENCE_PROBE_METHOD,
+                "root": str(self._root),
+                "resolved_path": str(resolved),
+                "detail": "路径当前存在(文件/目录/符号链接),可恢复文档禁止撤出",
+            }
+        return {
+            "verdict": "verified_absent",
+            "method": self.ABSENCE_PROBE_METHOD,
+            "root": str(self._root),
+            "resolved_path": str(resolved),
+            "detail": None,
+        }
 
     def fetch_all(self) -> Iterator[RawDocument]:
         """全量抓取:递归遍历根目录,yield 所有符合过滤条件的文件。
