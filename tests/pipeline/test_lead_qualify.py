@@ -275,10 +275,13 @@ def test_explicit_purchase_signals_are_qualified_without_promoting_information_q
         "What are your bulk prices?",
         "We need 120 pcs",
         "price for 120 ps?",
-        "What is the purchase timeline?",
-        "Please quote our project",
+        "Please provide a formal quotation for our project",
+        "Please send an official price quote",
+        "We will purchase next quarter",
+        "We expect to buy within 3 months",
         "We are looking for a distributor partnership",
-        "We plan to purchase next quarter",
+        "我们计划采购，时间是下季度",
+        "请给 120 台正式报价",
     ):
         assert explicit_purchase_signal(query) is True
     for query in (
@@ -287,6 +290,12 @@ def test_explicit_purchase_signals_are_qualified_without_promoting_information_q
         "Is there a subscription fee?",
         "What does distributor mean?",
         "Does the device support 120 units?",
+        "Can I buy in Chile?",
+        "Where can I buy in Australia?",
+        "Quote from the user manual",
+        "Please quote the source code",
+        "What is the purchase timeline?",
+        "采购时间表是什么？",
     ):
         assert explicit_purchase_signal(query) is False
 

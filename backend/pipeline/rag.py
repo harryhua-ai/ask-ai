@@ -887,6 +887,8 @@ class RAGOrchestrator:
                 temperature=0.0,
             )
             qual = parse_qualification(resp.content)
+            # Only a successful evaluation may be supplemented by a narrow,
+            # unambiguous G002 signal; model failure stays fail-open/unknown.
             if explicit_purchase_signal(query) and qual.level != "qualified":
                 return replace(
                     qual, level="qualified", ran=True, source="deterministic_g002"
@@ -894,10 +896,6 @@ class RAGOrchestrator:
             return qual
         except Exception as exc:  # noqa: BLE001 — lead 判定失败不影响回答
             logger.warning("lead qualifier 失败,fail-open 跳过: %s", str(exc)[:200])
-            if explicit_purchase_signal(query):
-                return LeadQualification(
-                    level="qualified", ran=True, source="deterministic_g002"
-                )
             return None
 
     def _lead_decide(

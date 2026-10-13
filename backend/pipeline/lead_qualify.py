@@ -184,11 +184,13 @@ _EXPLICIT_PURCHASE_RE = re.compile(
     r"|\b(?:project|deployment)\s+(?:requirement|needs?|for|of)\b"
     r"|\b(?:distributor|reseller|integrator)\s+(?:partnership|cooperation|inquiry|opportunity)\b"
     r"|\binterested in (?:becoming|working as) (?:a )?(?:distributor|reseller|integrator)\b"
-    r"|\b(?:purchase|buy|procurement)\s+(?:by|in|next|this|within)\b"
-    r"|\b(?:purchase|procurement)\s+(?:timeline|schedule|timeframe)\b"
-    r"|\b(?:please\s+)?(?:quote|quotation|price\s+quote)\b"
+    r"|\b(?:i|we)\s+(?:plan|intend|expect|will)\s+(?:to\s+)?(?:purchase|buy|order)\s+(?:by|in|next|this|within)\b"
+    r"|\b(?:request|need|want|provide|send|prepare|get|obtain).{0,24}\b(?:formal|official)\s+quote\b"
+    r"|\b(?:request|need|want|provide|send|prepare|get|obtain).{0,24}\b(?:quotation|price\s+quote)\b"
+    r"|\b(?:formal|official)\s+(?:quotation|quote|price\s+quote)\b"
     r"|批量(?:价格|报价|采购)"
-    r"|(?:项目需求|项目采购|经销合作|代理合作|采购时间|请报价|正式报价)",
+    r"|(?:项目需求|项目采购|经销合作|代理合作|请报价|正式报价)"
+    r"|(?:我|我们).{0,8}(?:计划|打算|预计|将).{0,8}(?:采购|购买|订购).{0,8}(?:下?周|下?月|下?季度|本年|今年|明年|\d+[天日周月季度年]内)",
     re.IGNORECASE,
 )
 

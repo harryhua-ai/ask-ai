@@ -144,7 +144,7 @@ async def test_bulk_pricing_is_qualified_even_when_llm_says_none():
 
 
 @pytest.mark.unit
-async def test_bulk_pricing_uses_deterministic_fallback_when_qualifier_fails():
+async def test_bulk_pricing_does_not_use_deterministic_fallback_when_qualifier_fails():
     llm, _ = _make_lead_llm(intent="commercial")
     original_generate = llm.generate
 
@@ -156,9 +156,84 @@ async def test_bulk_pricing_uses_deterministic_fallback_when_qualifier_fails():
     llm.generate = AsyncMock(side_effect=_generate)
     rag = _make_rag(llm)
     events = await _collect(rag, "What are your bulk prices?", lead_ctx=_ctx())
-    assert events[-1]["lead"]["ran"] is True
+    assert events[-1]["lead"]["ran"] is False
+    assert events[-1]["lead"]["level"] == "none"
+    assert events[-1]["lead"]["invited"] is False
+    assert events[-1]["trace_payload"]["stages"]["lead"]["qualification_status"] == "failed"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "query",
+    [
+        "What are your bulk prices?",
+        "Price for 120 pcs?",
+        "Please provide a formal quotation for our project",
+        "We have a project requirement for warehouse deployment",
+        "We are looking for a distributor partnership",
+        "We will purchase next quarter",
+    ],
+)
+async def test_strong_purchase_signals_still_qualify_and_invite_after_answer(query):
+    llm, streamed = _make_lead_llm(
+        intent="commercial", qualification=json.dumps({"lead_level": "none"})
+    )
+    rag = _make_rag(llm)
+    events = await _collect(rag, query, lead_ctx=_ctx())
+    assert events[-1]["is_answered"] is True
     assert events[-1]["lead"]["level"] == "qualified"
-    assert events[-1]["trace_payload"]["stages"]["lead"]["qualification_status"] == "fallback"
+    assert events[-1]["lead"]["invited"] is True
+    assert LEAD_INVITE_INSTRUCTION in streamed[-1][0]["content"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Can I buy in Chile?",
+        "Where can I buy in Australia?",
+        "Quote from the user manual",
+        "Please quote the source code",
+        "What is the purchase timeline?",
+        "采购时间表是什么？",
+    ],
+)
+async def test_information_queries_with_purchase_words_do_not_upgrade_or_invite(query):
+    llm, streamed = _make_lead_llm(
+        intent="commercial", qualification=json.dumps({"lead_level": "none"})
+    )
+    rag = _make_rag(llm)
+    events = await _collect(rag, query, lead_ctx=_ctx())
+    assert events[-1]["lead"]["level"] == "none"
+    assert events[-1]["lead"]["invited"] is False
+    assert LEAD_INVITE_INSTRUCTION not in streamed[-1][0]["content"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Can I buy in Chile?",
+        "Where can I buy in Australia?",
+        "Please quote the source code",
+        "What is the purchase timeline?",
+    ],
+)
+async def test_information_query_qualifier_failure_does_not_use_purchase_fallback(query):
+    llm, _ = _make_lead_llm(intent="commercial")
+    original_generate = llm.generate
+
+    async def _generate(messages, **kwargs):
+        if kwargs.get("task") == "lead_qualification":
+            raise RuntimeError("qualifier unavailable")
+        return await original_generate(messages, **kwargs)
+
+    llm.generate = AsyncMock(side_effect=_generate)
+    rag = _make_rag(llm)
+    events = await _collect(rag, query, lead_ctx=_ctx())
+    assert events[-1]["lead"]["level"] == "none"
+    assert events[-1]["lead"]["invited"] is False
+    assert events[-1]["lead"]["ran"] is False
 
 
 @pytest.mark.unit
