@@ -280,8 +280,11 @@ def test_explicit_purchase_signals_are_qualified_without_promoting_information_q
         "We will purchase next quarter",
         "We expect to buy within 3 months",
         "We are looking for a distributor partnership",
+        "We are requesting a distributor partnership for our project and will place initial orders this quarter",
         "我们计划采购，时间是下季度",
         "请给 120 台正式报价",
+        "请给我们正式报价",
+        "我们需要项目经销合作，请联系销售",
     ):
         assert explicit_purchase_signal(query) is True
     for query in (
@@ -296,6 +299,13 @@ def test_explicit_purchase_signals_are_qualified_without_promoting_information_q
         "Please quote the source code",
         "What is the purchase timeline?",
         "采购时间表是什么？",
+        "What is this project for?",
+        "How do I create a project for NE101?",
+        "How does a distributor partnership work?",
+        "What does distributor inquiry mean?",
+        "我想了解项目需求是什么意思？",
+        "请报价是什么意思？",
+        "I want a formal quote from the user manual",
     ):
         assert explicit_purchase_signal(query) is False
 

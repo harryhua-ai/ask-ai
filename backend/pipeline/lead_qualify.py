@@ -182,14 +182,14 @@ _EXPLICIT_PURCHASE_RE = re.compile(
     r".{0,32}\b\d[\d,]*\s*(?:pcs?|ps|pieces?|units?|devices?)\b"
     r"|(?:需要|采购|订购|购买|报价).{0,12}\d[\d,]*\s*(?:台|件|个|套)"
     r"|\b(?:project|deployment)\s+(?:requirement|needs?|for|of)\b"
-    r"|\b(?:distributor|reseller|integrator)\s+(?:partnership|cooperation|inquiry|opportunity)\b"
+    r"|\b(?:distributor|reseller|integrator)\s+(?:partnership|cooperation|opportunity)\b"
     r"|\binterested in (?:becoming|working as) (?:a )?(?:distributor|reseller|integrator)\b"
     r"|\b(?:i|we)\s+(?:plan|intend|expect|will)\s+(?:to\s+)?(?:purchase|buy|order)\s+(?:by|in|next|this|within)\b"
     r"|\b(?:request|need|want|provide|send|prepare|get|obtain).{0,24}\b(?:formal|official)\s+quote\b"
     r"|\b(?:request|need|want|provide|send|prepare|get|obtain).{0,24}\b(?:quotation|price\s+quote)\b"
     r"|\b(?:formal|official)\s+(?:quotation|quote|price\s+quote)\b"
     r"|批量(?:价格|报价|采购)"
-    r"|(?:项目需求|项目采购|经销合作|代理合作|请报价|正式报价)"
+    r"|(?:项目采购|经销合作|代理合作|正式报价)"
     r"|(?:我|我们).{0,8}(?:计划|打算|预计|将).{0,8}(?:采购|购买|订购).{0,8}(?:下?周|下?月|下?季度|本年|今年|明年|\d+[天日周月季度年]内)",
     re.IGNORECASE,
 )
@@ -204,7 +204,27 @@ def explicit_sales_hint(text: str) -> bool:
 
 def explicit_purchase_signal(text: str) -> bool:
     """Deterministic G002 safety net for unambiguous strong purchase signals."""
-    return bool(text and _EXPLICIT_PURCHASE_RE.search(text))
+    if not text:
+        return False
+    # Commercial topics inside a request for explanation are informational.
+    if re.search(
+        r"(?:\bwhat\s+(?:is|does|do)\b|\bhow\s+(?:does|do)\b).{0,100}"
+        r"\b(?:mean|work|for|inquiry|partnership)\b"
+        r"|\bhow\s+(?:do|can)\s+i\s+.{0,60}\b(?:project|deployment)\s+(?:for|of)\b"
+        r"|(?:是什么意思|是指什么|怎么(?:理解|运作|工作))",
+        text,
+        re.IGNORECASE,
+    ):
+        return False
+    # A quote referring to documentation/source material is not a buyer quote.
+    if re.search(
+        r"\bfrom\s+(?:the\s+)?(?:user\s+manual|manual|documentation|source\s+code|wiki)\b"
+        r"|(?:来自|根据)(?:用户)?(?:手册|文档|源码)",
+        text,
+        re.IGNORECASE,
+    ):
+        return False
+    return bool(_EXPLICIT_PURCHASE_RE.search(text))
 
 
 # --------------------------------------------------------------------------- #
