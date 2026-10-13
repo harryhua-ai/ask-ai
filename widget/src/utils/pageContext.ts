@@ -12,6 +12,10 @@ const WIKI_SERIES: Record<string, string> = {
   neomind: "NeoMind",
 };
 
+// 由已核对的官方 Store 页面形态确定；这些商品是配件，名字/SKU 只能标识
+// 配件自身。只有明确的 isAccessoryOrSparePartFor 唯一目标才能输出产品提示。
+const STORE_ACCESSORY_SLUGS = new Set(["mounting-ne101", "ov5640", "usb-camera-module"]);
+
 type JsonRecord = Record<string, unknown>;
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -35,7 +39,7 @@ function relatedProducts(value: unknown): JsonRecord[] {
   return isRecord(value) ? [value] : [];
 }
 
-function storeProductContext(doc: Document): PageContextPayload {
+function storeProductContext(doc: Document, accessoryPage: boolean): PageContextPayload {
   const products: JsonRecord[] = [];
   for (const script of Array.from(doc.querySelectorAll('script[type="application/ld+json"]'))) {
     try {
@@ -45,25 +49,29 @@ function storeProductContext(doc: Document): PageContextPayload {
     }
   }
   // 多个 Product 节点时无法证明哪个是当前页面主体。
-  if (products.length !== 1) return { page_type: "product" };
+  if (products.length !== 1) return { page_type: accessoryPage ? "accessory" : "product" };
 
   const item = products[0];
   const relationDeclared = item.isAccessoryOrSparePartFor !== undefined && item.isAccessoryOrSparePartFor !== null;
   const rawRelated = item.isAccessoryOrSparePartFor;
   const related = relatedProducts(rawRelated);
+  if (accessoryPage && !relationDeclared) return { page_type: "accessory" };
   if ((Array.isArray(rawRelated) && rawRelated.length > 1) || (relationDeclared && related.length !== 1)) {
     return { page_type: "accessory" };
   }
 
   const target = related[0];
-  const product = typeof target?.name === "string" ? target.name.trim()
-    : typeof item.name === "string" ? item.name.trim() : "";
-  if (!product) return { page_type: relationDeclared ? "accessory" : "product" };
+  // 声明了兼容关系后，目标不可解析时必须 abstain；不能把配件自身名称
+  // 或 SKU 退化成目标产品身份。
+  const product = relationDeclared
+    ? (typeof target?.name === "string" ? target.name.trim() : "")
+    : (typeof item.name === "string" ? item.name.trim() : "");
+  if (!product) return { page_type: accessoryPage || relationDeclared ? "accessory" : "product" };
   return {
-    page_type: relationDeclared ? "accessory" : "product",
+    page_type: accessoryPage || relationDeclared ? "accessory" : "product",
     product,
     // 商品 SKU 是身份辅助字段；兼容配件时不传配件自身 SKU 作为目标产品线索。
-    ...(!relationDeclared && typeof item.sku === "string" && item.sku.trim() ? { sku: item.sku.trim() } : {}),
+    ...(!accessoryPage && !relationDeclared && typeof item.sku === "string" && item.sku.trim() ? { sku: item.sku.trim() } : {}),
   };
 }
 
@@ -78,7 +86,8 @@ function deriveOfficialContext(url: string, doc: Document): PageContextPayload {
   if (parsed.protocol !== "https:") return {};
 
   if (parsed.hostname === "www.camthink.ai" && /^\/store(?:\/|$)/.test(path)) {
-    if (/^\/store\/product\//.test(path)) return storeProductContext(doc);
+    const storeProduct = path.match(/^\/store\/([^/]+)\/?$/);
+    if (storeProduct) return storeProductContext(doc, STORE_ACCESSORY_SLUGS.has(storeProduct[1]));
     return { page_type: "store" };
   }
   if (parsed.hostname === "wiki.camthink.ai" && /^\/(?:[a-z-]+\/)?docs(?:\/|$)/.test(path)) {
