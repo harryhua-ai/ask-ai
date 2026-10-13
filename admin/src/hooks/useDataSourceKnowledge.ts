@@ -7,7 +7,10 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
-import type { DocumentRepairTask } from "@/types/dataSourceWorkspace";
+import type {
+  BulkDocumentRetireResult,
+  DocumentRepairTask,
+} from "@/types/dataSourceWorkspace";
 
 export interface BulkDocumentRepairItem {
   doc_source_id: string;
@@ -142,6 +145,34 @@ export function useBulkDocumentRepair(sourceId: string) {
       apiFetch<BulkDocumentRepairResult>(
         `/data-sources/${encodeURIComponent(sourceId)}/documents/repair-all`,
         { method: "POST" },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["data-source-documents", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["data-source-document-truth"] });
+      void qc.invalidateQueries({ queryKey: ["data-sources-attention-summary"] });
+      void qc.invalidateQueries({ queryKey: ["data-sources"] });
+    },
+  });
+}
+
+/**
+ * Issue #113:范围外孤儿行显式退休(admin 专属;手动、显式确认、审计留痕)。
+ * confirm/reason 为硬门槛(缺一后端 400);资格与物理缺失证明都在后端
+ * (R2:A-3 分类真值 + 当前源根存在性检查;仍在盘上/无法验证/分类陈旧的行
+ * 逐项 refused),请求方不得扩权;审计落 documents.metadata_[retirement]。
+ */
+export function useBulkDocumentRetire(sourceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (req: {
+      doc_source_ids?: string[];
+      all_scope_external?: boolean;
+      confirm: boolean;
+      reason: string;
+    }) =>
+      apiFetch<BulkDocumentRetireResult>(
+        `/data-sources/${encodeURIComponent(sourceId)}/documents/retire`,
+        { method: "POST", body: JSON.stringify(req) },
       ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["data-source-documents", sourceId] });

@@ -34,6 +34,7 @@ import {
 } from "@/hooks/useDataSourceWorkspace";
 import {
   useBulkDocumentRepair,
+  useBulkDocumentRetire,
   useDocumentRepair,
   useSourceSchedule,
 } from "@/hooks/useDataSourceKnowledge";
@@ -42,6 +43,7 @@ import { sourceBrandOf } from "@/lib/sourceBrand";
 import { contentTypeLabel } from "@/lib/contentType";
 import {
   attentionReasonClasses,
+  bannerActionsOf,
   operatorStateOf,
   relativeTime,
   toneVariant,
@@ -238,6 +240,10 @@ export default function DataSourceDetail() {
   // U-8:行级修复(POST repair;RBAC/幂等/审计/验证在后端)
   const repairMutation = useDocumentRepair(sourceId);
   const bulkRepairMutation = useBulkDocumentRepair(sourceId);
+  // Issue #113:范围外孤儿行显式退休(admin 专属;确认+理由=后端硬门槛,审计留痕)
+  const retireMutation = useBulkDocumentRetire(sourceId);
+  const [retireArmed, setRetireArmed] = useState(false);
+  const [retireReason, setRetireReason] = useState("");
   // U-11:调度真值(schedule 端点 reconcile 的权威 next_run_at)
   const scheduleQuery = useSourceSchedule(sourceId);
 
@@ -278,6 +284,40 @@ export default function DataSourceDetail() {
     });
   };
 
+  // Issue #113:范围外孤儿行显式退休。资格/确认/审计都在后端;此处只收集
+  // 显式确认与操作理由(空理由 = 前端即拒,与后端 400 硬门槛同口径)。
+  const runRetire = (req: { doc_source_ids?: string[]; all_scope_external?: boolean }, reason: string) => {
+    if (!reason.trim()) {
+      toast.error("退休必须携带操作理由(审计留痕)");
+      return;
+    }
+    retireMutation.mutate(
+      { ...req, confirm: true, reason: reason.trim() },
+      {
+        onSuccess: (result) => {
+          const refusedNote = result.refused > 0 ? `，${result.refused} 项被拒绝` : "";
+          toast.success(
+            `已退休 ${result.retired} 项(即时撤出服务,7 天后可物理回收)${refusedNote}`,
+          );
+          setRetireArmed(false);
+          setRetireReason("");
+          void documentsQuery.refetch();
+          void truthQuery.refetch();
+        },
+        onError: (err) =>
+          toast.error(err instanceof Error ? err.message : "退休命令失败"),
+      },
+    );
+  };
+
+  const runRowRetire = (docSourceId: string) => {
+    const reason = window.prompt(
+      `显式退休 ${docSourceId}\n范围外排除行(存在性未知):退休前服务端会验证物理缺失,文件仍在盘上或无法验证的行将被拒绝;退休后立即撤出服务(审计留痕)。请输入操作理由:`,
+    );
+    if (reason === null) return;
+    runRetire({ doc_source_ids: [docSourceId] }, reason);
+  };
+
   if (sourcesError && !sources) {
     return (
       <div className="space-y-4">
@@ -300,8 +340,11 @@ export default function DataSourceDetail() {
       })
     : null;
   const attentionCount = bucketCounts?.attention ?? 0;
+  // Issue #113(AC2):横幅动作分类 —— 可修复缺席 vs 范围外孤儿(后端权威计数)
+  const orphanCount = docs?.attention_scope_external_orphan_count ?? 0;
+  const bannerActions = bannerActionsOf({ attentionCount, orphanCount });
   const reasonLines = docs
-    ? attentionReasonClasses(docs.lifecycle_counts, attentionCount)
+    ? attentionReasonClasses(docs.lifecycle_counts, attentionCount, orphanCount)
     : [];
   const location = source ? sourceLocation(source) : null;
 
@@ -507,7 +550,9 @@ export default function DataSourceDetail() {
             >
               查看需处理
             </Button>
-            {canWrite && (
+            {/* Issue #113(AC2):修复动作只呈现给可修复行;范围外孤儿走显式退休,
+                repair-all 不再把自己呈现为修不好的行的动作。 */}
+            {canWrite && bannerActions.showRepair && (
               <Button
                 size="sm"
                 variant="default"
@@ -517,18 +562,74 @@ export default function DataSourceDetail() {
               >
                 {bulkRepairMutation.isPending
                   ? "一键修复中..."
-                  : `一键修复全部 ${attentionCount} 项`}
+                  : `一键修复全部 ${bannerActions.repairCount} 项`}
+              </Button>
+            )}
+            {canWrite && bannerActions.showRetire && !retireArmed && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-destructive/50 text-destructive"
+                data-testid="orphan-retire-open"
+                onClick={() => setRetireArmed(true)}
+              >
+                退休 {bannerActions.orphanCount} 项孤儿知识
               </Button>
             )}
             <Button
               size="sm"
               variant="ghost"
               aria-label="关闭提醒"
-              onClick={() => setBannerDismissed(true)}
+              onClick={() => {
+                setBannerDismissed(true);
+                setRetireArmed(false);
+              }}
             >
               ✕
             </Button>
           </div>
+          {/* Issue #113:退休确认条(显式确认 + 操作理由 = 后端审计硬门槛) */}
+          {retireArmed && (
+            <div
+              className="w-full space-y-2 rounded-md border border-destructive/40 bg-background p-3"
+              data-testid="orphan-retire-confirm-panel"
+            >
+              <p className="text-xs text-muted-foreground">
+                将退休 {bannerActions.orphanCount} 项范围外排除知识(存在性未知;服务端会逐行验证物理缺失,文件仍在盘上或无法验证的行将被拒绝):
+                通过验证的行立即撤出服务,7 天后具备物理回收资格;操作人与理由将写入审计记录。该动作不可自动撤销。
+              </p>
+              <Input
+                data-testid="orphan-retire-reason"
+                aria-label="退休理由(审计留痕,必填)"
+                placeholder="退休理由(审计留痕,必填),如:2026-09-22 事件收口,文件在 pre-#100 纪元物理丢失"
+                value={retireReason}
+                onChange={(e) => setRetireReason(e.target.value)}
+              />
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setRetireArmed(false);
+                    setRetireReason("");
+                  }}
+                >
+                  取消
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  data-testid="orphan-retire-confirm"
+                  disabled={!retireReason.trim() || retireMutation.isPending}
+                  onClick={() => runRetire({ all_scope_external: true }, retireReason)}
+                >
+                  {retireMutation.isPending
+                    ? "退休中..."
+                    : `确认退休 ${bannerActions.orphanCount} 项`}
+                </Button>
+              </div>
+            </div>
+          )}
           {bulkRepairMutation.data && (
             <p className="w-full text-xs text-muted-foreground" aria-live="polite">
               已修复 {bulkRepairMutation.data.succeeded} 项，{bulkRepairMutation.data.failed} 项仍需处理
@@ -755,6 +856,23 @@ export default function DataSourceDetail() {
                                     : "修复此知识"}
                                 </Button>
                               )}
+                              {/* Issue #113(R2 修正):范围外排除行(missing_candidate + A-3
+                                  政策缺席)存在性未知 —— 修复不适用,提供显式退休动作
+                                  (确认 + 理由 + 审计留痕;退休前服务端验证物理缺失,禁扩权)。 */}
+                              {canWrite &&
+                                row.lifecycle === "missing_candidate" &&
+                                row.absence_policy_reason && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 border-destructive/50 px-2 text-destructive"
+                                    data-testid={`doc-retire-${row.source_id}`}
+                                    title={`范围外排除(A-3 政策缺席: ${row.absence_policy_reason},存在性未知);退休前服务端验证物理缺失,显式退休并留审计痕`}
+                                    onClick={() => runRowRetire(row.source_id)}
+                                  >
+                                    退休
+                                  </Button>
+                                )}
                               {bucketKey === "retired" && (
                                 <span
                                   className="text-xs text-muted-foreground"

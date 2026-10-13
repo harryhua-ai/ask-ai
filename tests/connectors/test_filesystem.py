@@ -361,3 +361,84 @@ def test_filesystem_excludes_build_dir(tmp_path) -> None:
     paths = {d.metadata["path"] for d in docs}
     assert "doc.md" in paths
     assert "__pycache__/cache.md" not in paths
+
+
+# ====================  Issue #113 R3:物理缺失证明的 errno 分类  ==================== #
+# A REQUEST_CHANGES Blocker 1:``os.path.lexists`` 把一切 OSError(含嵌套父目录
+# EACCES/EPERM、denied mount、EIO)都折叠成 False ⇒ 「权限不可达 ≠ 文件已丢」
+# 被误认证为 verified_absent。修正后只有 ENOENT(路径当前确定不存在)授权退休;
+# 其余 errno 一律 unknown(诚实拒绝,fail-closed)。
+
+
+@pytest.mark.unit
+def test_physical_absence_permission_denied_is_unknown_not_verified_absent(
+    tmp_path,
+) -> None:
+    """负向(嵌套权限失败):可访问根下不可读子目录里的**物理存在**文件,
+    不得被认证为 verified_absent(误杀 ⇒ 退休后 7 天物理 GC)。
+
+    确定性模拟:子目录 chmod 000(POSIX DAC;lstat 进子目录 ⇒ EACCES),
+    文件实际在盘 —— 现码(lexists)会把 EACCES 折叠成 False ⇒ verified_absent。
+    root 用户不受 DAC 限制,本测试诚实 skip。
+    """
+    if os.geteuid() == 0:
+        pytest.skip("root 不受 DAC 限制,权限失败无法在本环境模拟")
+    root = tmp_path / "root"
+    nested = root / "2025.2"
+    nested.mkdir(parents=True)
+    survivor = nested / "case-alpha.md"
+    survivor.write_text("物理存在但不可达", encoding="utf-8")
+    nested.chmod(0o000)
+    try:
+        connector = ConnectorRegistry.create(_make_config(str(root)))
+        evidence = connector.physical_absence_evidence("test-fs/main/2025.2/case-alpha.md")
+    finally:
+        nested.chmod(0o755)
+    assert evidence["verdict"] == "unknown", (
+        "嵌套父目录权限失败必须按 unknown 诚实拒绝,绝不得认证为已丢: "
+        f"{evidence}"
+    )
+    assert evidence.get("detail"), "unknown 必须携带可执行的原因"
+
+
+@pytest.mark.unit
+def test_physical_absence_errno_classification_table(tmp_path, monkeypatch) -> None:
+    """errno 分类词表(确定性,不依赖 DAC):仅 ENOENT ⇒ verified_absent;
+    EACCES/EIO/其他 OSError ⇒ unknown;探测异常不得伪装成缺失证明。"""
+    import errno as _errno
+
+    import backend.connectors.filesystem as fs_mod
+
+    root = tmp_path / "root"
+    (root / "sub").mkdir(parents=True)
+    (root / "sub" / "keep.md").write_text("on disk", encoding="utf-8")
+    real_lstat = os.lstat
+    connector = ConnectorRegistry.create(_make_config(str(root)))
+    sid_present = "test-fs/main/sub/keep.md"
+    sid_absent = "test-fs/main/sub/gone.md"
+
+    def _deny(path, *a, **k):
+        if str(path).endswith("keep.md"):
+            raise PermissionError(_errno.EACCES, "Permission denied")
+        return real_lstat(path, *a, **k)
+
+    monkeypatch.setattr(fs_mod, "_lstat", _deny, raising=False)
+    evidence = connector.physical_absence_evidence(sid_present)
+    assert evidence["verdict"] == "unknown", "EACCES 绝不是缺失证明"
+    assert "EACCES" in (evidence.get("detail") or "") or "13" in (evidence.get("detail") or "")
+
+    def _io_error(path, *a, **k):
+        if str(path).endswith("keep.md"):
+            raise OSError(_errno.EIO, "Input/output error")
+        return real_lstat(path, *a, **k)
+
+    monkeypatch.setattr(fs_mod, "_lstat", _io_error, raising=False)
+    evidence = connector.physical_absence_evidence(sid_present)
+    assert evidence["verdict"] == "unknown", "EIO 绝不是缺失证明(存储故障 ≠ 已丢)"
+
+    # 正向:真缺失路径(ENOENT)= 唯一授权退休的判定,不受同批注入错误影响。
+    evidence = connector.physical_absence_evidence(sid_absent)
+    assert evidence["verdict"] == "verified_absent", (
+        "真缺失路径仍必须可证明(ENOENT 是唯一的退休授权判定)"
+    )
+    assert evidence.get("resolved_path"), "verified_absent 证明必须记录解析绝对路径"

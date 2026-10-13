@@ -30,6 +30,8 @@ export interface SourceDocumentItem {
   generation_ordinal: number | null;
   /** U-7 逐文档内容类型(结构化后端真值;null = 存量行不可用,禁推断)。 */
   content_type: string | null;
+  /** Issue #113:A-3 政策缺席原因(null = 非范围外缺席;修复 vs 退休路由真值,禁推断)。 */
+  absence_policy_reason: string | null;
 }
 
 /** U-9 chunk 级 serving 投影真值(UI 比例必须等于 serving/total)。 */
@@ -80,7 +82,29 @@ export interface SourceDocumentsResponse {
   current_count: number;
   /** U-7 逐文档内容类型账本聚合(类型过滤词表真实来源;NULL 不入)。 */
   content_type_counts: Record<string, number>;
+  /** Issue #113:范围外排除计数(missing_candidate ∧ A-3 政策缺席;存在性未知,物理缺失在退休时服务端验证)。 */
+  attention_scope_external_orphan_count: number;
+  /** Issue #113:attention 桶中可修复行计数(attention − 范围外孤儿;与 repair-all 资格同源)。 */
+  attention_repairable_count: number;
   items: SourceDocumentItem[];
+}
+
+/** Issue #113:单个显式退休项的权威结果(不把未执行伪装成成功)。 */
+export interface BulkDocumentRetireItem {
+  doc_source_id: string;
+  /** retired / already_retired / refused(拒绝时 error 必携带原因)。 */
+  status: string;
+  error: string | null;
+}
+
+/** Issue #113:数据源级显式退休聚合结果(AC1;审计在后端 metadata_[retirement])。 */
+export interface BulkDocumentRetireResult {
+  source_id: string;
+  requested: number;
+  retired: number;
+  already_retired: number;
+  refused: number;
+  items: BulkDocumentRetireItem[];
 }
 
 /** 现行版本真相(归属版本链与生成)。 */
