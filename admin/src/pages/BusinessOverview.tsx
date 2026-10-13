@@ -7,6 +7,7 @@ import TimeFilter from "@/components/observability/TimeFilter";
 import StackedBar from "@/components/observability/StackedBar";
 import IntentColumn from "@/components/observability/IntentColumn";
 import ProgressBar from "@/components/observability/ProgressBar";
+import DailyConversationChart from "@/components/observability/DailyConversationChart";
 import { Button } from "@/components/ui/button";
 import {
   fetchBusinessOverview,
@@ -179,31 +180,7 @@ export default function BusinessOverview() {
               <h2 className="text-[14px] font-medium text-[var(--t1)] mb-3">
                 每日对话量
               </h2>
-              <div className="flex items-end gap-1 h-32">
-                {data.timeseries.map((d) => {
-                  const max = Math.max(...data.timeseries.map((t) => t.total), 1);
-                  const h = (d.total / max) * 100;
-                  return (
-                    <div
-                      key={d.date}
-                      className="flex-1 flex flex-col items-center justify-end"
-                      title={`${d.date}: ${d.total}`}
-                    >
-                      <div
-                        className="w-full rounded-t"
-                        style={{
-                          height: `${h}%`,
-                          background: "var(--acc)",
-                          minHeight: d.total > 0 ? "2px" : "0",
-                        }}
-                      />
-                      <div className="text-[10px] text-[var(--t3)] mt-1">
-                        {d.date}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              <DailyConversationChart data={data.timeseries} />
             </div>
           )}
 
