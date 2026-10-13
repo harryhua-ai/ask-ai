@@ -194,6 +194,18 @@ _EXPLICIT_PURCHASE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A comma may separate a purchase commitment from its deadline. Keep this
+# narrow: only a direct plan/intent/expect/will purchase phrase followed by a
+# time window is joined across comma-style punctuation.
+_PURCHASE_TIMELINE_RE = re.compile(
+    r"\b(?:i|we)\s+(?:plan|intend|expect|will)\s+(?:to\s+)?"
+    r"(?:purchase|buy|order)\s*,?\s*(?:by|in|next|this|within)\b"
+    r"|(?:我|我们).{0,8}(?:计划|打算|预计|将).{0,8}(?:采购|购买|订购)"
+    r"\s*[,，]?\s*(?:时间(?:是|为)?|交期(?:是)?)?\s*"
+    r"(?:下?周|下?月|下?季度|本年|今年|明年|\d+[天日周月季度年]内)",
+    re.IGNORECASE,
+)
+
 
 def explicit_sales_hint(text: str) -> bool:
     """确定性判断用户消息是否明确要求销售联系/正式报价(安全网,LLM 之外)。"""
@@ -206,6 +218,13 @@ def explicit_purchase_signal(text: str) -> bool:
     """Deterministic G002 safety net for unambiguous strong purchase signals."""
     if not text:
         return False
+    # Join only the tightly coupled commitment + deadline construction. Other
+    # signal and veto checks remain scoped to the comma-delimited clauses below.
+    if any(
+        _PURCHASE_TIMELINE_RE.search(sentence)
+        for sentence in re.split(r"[.!?。！？;；]+", text)
+    ):
+        return True
     # Keep informational/documentation vetoes local to the clause they describe;
     # a separate purchase commitment in the same message remains actionable.
     clauses = re.split(

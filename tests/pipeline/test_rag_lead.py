@@ -172,6 +172,8 @@ async def test_bulk_pricing_does_not_use_deterministic_fallback_when_qualifier_f
         "We have a project requirement for warehouse deployment",
         "We are looking for a distributor partnership",
         "We will purchase next quarter",
+        "We will purchase, next quarter",
+        "我们计划采购, 时间是下季度",
         "We need 120 pcs. How does a distributor partnership work?",
         "We need 120 pcs. 经销合作是什么意思？",
         "We will purchase next quarter. What does distributor partnership mean?",
