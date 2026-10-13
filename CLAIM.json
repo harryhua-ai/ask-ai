@@ -14,25 +14,54 @@
  "contract_digest": "742603087914622b4fedecf70ecc63b744c9b676dc5384568d12c07e01815f61",
  "candidate": {
   "branch": "agent/122/700846e6",
-  "sha": "893da5320675131094f2418dcbab7ff1d11f739f",
+  "sha": "d2d5977ba37b8ee9d18ca3beee36eb1d5e9dddc5",
   "scope": {
    "pass": true,
    "paths": {
+    ".github/scripts/ght-gha-adapter.sh": "ALLOWED",
+    ".github/scripts/ght-gha-review-trigger.py": "ALLOWED",
+    ".github/scripts/ght-gha-review-verdict.py": "ALLOWED",
+    ".github/workflows/ght-complete.yml": "ALLOWED",
+    ".github/workflows/ght-plan-publish.yml": "ALLOWED",
+    "admin/src/components/observability/DailyConversationChart.tsx": "ALLOWED",
+    "admin/src/pages/BusinessOverview.tsx": "ALLOWED",
+    "admin/tests/DailyConversationChart.test.tsx": "ALLOWED",
+    "backend/api/admin/business.py": "ALLOWED",
+    "backend/api/admin/data_sources.py": "ALLOWED",
+    "backend/api/routes.py": "ALLOWED",
+    "backend/connectors/db_adapter.py": "ALLOWED",
+    "backend/pipeline/lead_qualify.py": "ALLOWED",
     "backend/pipeline/rag.py": "ALLOWED",
+    "backend/pipeline/task_understanding.py": "ALLOWED",
+    "backend/services/source_visibility.py": "ALLOWED",
+    "docs/operations/upload-source-visibility-migration.md": "ALLOWED",
+    "reports/issue118-calibration-replay-20261013.md": "ALLOWED",
+    "tests/api/admin/test_analytics_business.py": "ALLOWED",
+    "tests/api/admin/test_data_sources.py": "ALLOWED",
+    "tests/api/test_routes.py": "ALLOWED",
+    "tests/api/test_site_routes.py": "ALLOWED",
+    "tests/connectors/test_db_adapter.py": "ALLOWED",
+    "tests/pipeline/test_inc7_stream_trace_parity.py": "ALLOWED",
+    "tests/pipeline/test_issue118_clarification_calibration.py": "ALLOWED",
     "tests/pipeline/test_issue122_hardware_replay.py": "ALLOWED",
     "tests/pipeline/test_issue122_stream_revision_parity.py": "ALLOWED",
+    "tests/pipeline/test_lead_qualify.py": "ALLOWED",
     "tests/pipeline/test_rag.py": "ALLOWED",
-    "tests/pipeline/test_rag_trust_boundary.py": "ALLOWED"
+    "tests/pipeline/test_rag_trust_boundary.py": "ALLOWED",
+    "tests/services/test_source_visibility.py": "ALLOWED",
+    "widget/src/utils/__tests__/issue48BadgeLinkabilityGuard.test.ts": "ALLOWED",
+    "widget/src/utils/__tests__/pageContext.test.ts": "ALLOWED",
+    "widget/src/utils/pageContext.ts": "ALLOWED"
    },
    "violations": [],
    "main_attributed_paths": [],
    "counts": {
-    "ALLOWED": 5,
+    "ALLOWED": 34,
     "FORBIDDEN": 0,
     "MAIN_ATTRIBUTED": 0
    }
   },
-  "preserved_at": "2026-10-13T12:46:36Z"
+  "preserved_at": "2026-10-13T13:33:16Z"
  },
  "runtime": {
   "digest": "743a713193def2e7afd5c9c614e05968a1ea50b2c6249d6c5ff219cbc5441096",
