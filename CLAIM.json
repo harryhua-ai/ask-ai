@@ -12,7 +12,32 @@
  "heartbeat_at": "2026-10-13T09:48:00Z",
  "supersedes": null,
  "contract_digest": "ad139db274783c96dc32f033dcad68a495ae2e0679dcf89bd0f7eaf5f3e12808",
- "candidate": null,
+ "candidate": {
+  "branch": "agent/121/1f87240a",
+  "sha": "2530c775d604ab530e7b5082d694212b8fdb806d",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "backend/api/admin/data_sources.py": "ALLOWED",
+    "backend/connectors/db_adapter.py": "ALLOWED",
+    "backend/services/source_visibility.py": "ALLOWED",
+    "docs/operations/upload-source-visibility-migration.md": "ALLOWED",
+    "tests/api/admin/test_data_sources.py": "ALLOWED",
+    "tests/connectors/test_db_adapter.py": "ALLOWED",
+    "tests/pipeline/test_rag_trust_boundary.py": "ALLOWED",
+    "tests/services/test_source_visibility.py": "ALLOWED",
+    "widget/src/utils/__tests__/issue48BadgeLinkabilityGuard.test.ts": "ALLOWED"
+   },
+   "violations": [],
+   "main_attributed_paths": [],
+   "counts": {
+    "ALLOWED": 9,
+    "FORBIDDEN": 0,
+    "MAIN_ATTRIBUTED": 0
+   }
+  },
+  "preserved_at": "2026-10-13T09:49:24Z"
+ },
  "runtime": {
   "digest": "743a713193def2e7afd5c9c614e05968a1ea50b2c6249d6c5ff219cbc5441096",
   "release": "v1.1.4",
