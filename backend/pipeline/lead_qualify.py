@@ -285,9 +285,9 @@ def explicit_purchase_signal(text: str) -> bool:
     # The comma-joined matcher spans only the commitment and its deadline.
     # Apply quote/explanation vetoes to that local sentence before accepting it.
     for sentence in re.split(r"(?<=[.!?。！？;；])\s*", text):
-        match = _PURCHASE_TIMELINE_RE.search(sentence)
-        if match and not timeline_is_vetoed(sentence, match.start(), match.end()):
-            return True
+        for match in _PURCHASE_TIMELINE_RE.finditer(sentence):
+            if not timeline_is_vetoed(sentence, match.start(), match.end()):
+                return True
     clause_start = 0
     for separator in list(clause_separator.finditer(text)) + [None]:
         clause_end = separator.start() if separator else len(text)
