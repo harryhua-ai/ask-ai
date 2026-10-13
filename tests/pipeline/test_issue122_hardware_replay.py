@@ -299,9 +299,9 @@ async def test_cross_family_source_cannot_support_ne101_fact():
 
 
 @pytest.mark.asyncio
-async def test_scored_rerank_rejection_cannot_fall_back_to_fused_rrf_candidate():
+async def test_scored_rerank_fallback_rejects_hardware_source_for_wrong_revision():
     source = _source(
-        text="NE101 V2.0 TF_PWR is GPIO48.",
+        text="NE101 V1.2 TF_PWR is GPIO42.",
         source_id="wiki/neoeyes-ne101/hardware.md",
     )
     rag, llm = _rag([source])

@@ -698,6 +698,52 @@ def _compose_user_facing_evidence(
     return composed
 
 
+def _requested_hardware_revision(query: str) -> str | None:
+    """Return an explicitly requested board revision for bounded hardware checks."""
+    match = re.search(
+        r"\b(?:v|rev(?:ision)?\s*)([a-z]|\d+(?:\.\d+)*)\b", query, re.IGNORECASE
+    )
+    return match.group(1).lower() if match else None
+
+
+def _revision_marker_covers(text: str, requested: str) -> bool:
+    """Require source text to explicitly cover a requested hardware revision."""
+    marker = re.compile(
+        r"\b(?:v|rev(?:ision)?\s*)([a-z]|\d+(?:\.\d+)*)"
+        r"(?:\s*[-–]\s*(?:v|rev(?:ision)?\s*)?([a-z]|\d+(?:\.\d+)*))?\b",
+        re.IGNORECASE,
+    )
+
+    def _key(value: str) -> tuple:
+        value = value.lower()
+        if value[0].isdigit():
+            return (0, tuple(int(part) for part in value.split(".")))
+        return (1, value)
+
+    requested_key = _key(requested)
+    for match in marker.finditer(text):
+        start = _key(match.group(1))
+        end = _key(match.group(2)) if match.group(2) else start
+        if start <= requested_key <= end:
+            return True
+    return False
+
+
+def _hardware_revision_source_eligible(query: str, result: SearchResult) -> bool:
+    """Conservatively gate only explicit product+revision hardware questions."""
+    family = re.search(r"\b(ne\d{3,4})\b", query, re.IGNORECASE)
+    revision = _requested_hardware_revision(query)
+    if not family or not revision or not re.search(
+        r"gpio|pin|tf|sd(?:mmc)?|4g|cat-?1|hardware|module|connector",
+        query,
+        re.IGNORECASE,
+    ):
+        return True
+    if (getattr(result, "product", "") or "").lower() != family.group(1).lower():
+        return False
+    return _revision_marker_covers(getattr(result, "text", "") or "", revision)
+
+
 def page_hint_text(page_context: dict | None, site_name: str | None) -> str:
     """把站点/页面背景格式化为要点文本;无内容返回空串(不产生空段落)。"""
     parts: list[str] = []
@@ -1959,6 +2005,24 @@ class RAGOrchestrator:
                 product_scope_stage["ineligible_filtered"] = pre_defensive - len(reranked)
                 stages["product_scope"] = product_scope_stage
 
+        # Hardware answers with an explicit family and revision require source
+        # evidence that names that revision. This is deliberately scoped to
+        # hardware applicability; ordinary RAG fallback remains governed by #77.
+        if cmp_stage_info is None and _requested_hardware_revision(query) and re.search(
+            r"\bne\d{3,4}\b", query, re.IGNORECASE
+        ) and re.search(
+            r"gpio|pin|tf|sd(?:mmc)?|4g|cat-?1|hardware|module|connector",
+            query,
+            re.IGNORECASE,
+        ):
+            before_fused, before_reranked = len(fused), len(reranked)
+            fused = [r for r in fused if _hardware_revision_source_eligible(query, r)]
+            reranked = [r for r in reranked if _hardware_revision_source_eligible(query, r)]
+            filtered = (before_fused - len(fused)) + (before_reranked - len(reranked))
+            if filtered:
+                product_scope_stage["hardware_applicability_filtered"] = filtered
+                stages["product_scope"] = product_scope_stage
+
         # 防御过滤/裁剪后的重排终态(不整块覆盖:保留比较管线的 per_target/candidates)
         stages["rerank"]["top_score"] = reranked[0].score if reranked else None
         stages["rerank"]["count"] = len(reranked)
@@ -2029,21 +2093,7 @@ class RAGOrchestrator:
             # 但 reranker 给分 < 0.3 被滤光。真无召回(fused 也空)才拒答。
             # Issue #77(D 兜底资格+B1):兜底证据面服从同一类组合边界,
             # 但 code-oriented 查询保持竞争序(与比较管线 Rev2 同语义)。
-            # A scored rerank refusal is an explicit execution decision. Do not
-            # let the earlier fused/RRF ordering re-authorize candidates that
-            # the reranker scored below its configured threshold.
-            rerank_refused = bool(
-                not reranked
-                and pool_scores
-                and getattr(self._reranker, "threshold", None) is not None
-                and all(
-                    score < self._reranker.threshold
-                    for _candidate, score in pool_scores
-                )
-            )
-            if rerank_refused:
-                fallback = []
-            elif _is_code_oriented_query(query):
+            if _is_code_oriented_query(query):
                 fallback = fused[: self._top_k] if fused else []
             else:
                 fallback = (

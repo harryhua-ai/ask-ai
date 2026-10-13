@@ -940,7 +940,8 @@ async def test_rag_falls_back_when_rerank_filters_all():
     reranker = MagicMock()
     reranker.rerank.return_value = []  # threshold 把候选全滤光
     # threshold 把候选全滤光
-    reranker.rerank_scored.return_value = ([], [])
+    reranker.rerank_scored.return_value = ([], [(sr, 0.1)])
+    reranker.threshold = 0.3
     llm = AsyncMock()
     llm.generate.side_effect = [
         _intent_response("product"),
