@@ -1363,6 +1363,26 @@ class RAGOrchestrator:
         else:
             style = self._intent_styles.get(intent, "")
         system_prompt = f"{base}\n\n{style}" if style else base
+        # 硬件兼容性事实必须保留来源资格，不能把多产品/多版本资料压成
+        # 一个无条件结论。固定在代码模板中，避免渠道自定义 prompt 覆盖。
+        system_prompt = (
+            f"{system_prompt}\n\n"
+            "## Hardware compatibility evidence rules\n"
+            "For hardware compatibility questions, identify the product family and "
+            "hardware revision covered by each relevant source before combining claims. "
+            "If the user's product family or required hardware revision is unknown and "
+            "the answer differs by family or revision, ask a brief clarification or give "
+            "explicitly conditional answers for each supported scope; never silently "
+            "assume one family or revision. Preserve revision-specific pin, power, and "
+            "shared-supply qualifications. When sources conflict, prefer the source "
+            "that explicitly covers the applicable hardware revision; if applicability "
+            "cannot be established, state that it cannot be determined instead of "
+            "presenting an unqualified instruction. Do not turn a restriction on "
+            "conflicting configurations into a universal incompatibility claim. A "
+            "historical case from another product family is not direct evidence for "
+            "the user's product; label it as a separate example or omit it. Cite only "
+            "evidence qualified for the product and revision asserted."
+        )
         if product_boundary:
             system_prompt = f"{system_prompt}\n\n{product_boundary}"
         if lead_instruction:
