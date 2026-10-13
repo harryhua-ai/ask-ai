@@ -875,6 +875,8 @@ class SalesLead(Base):
     # 线索线程键:widget 匿名会话 ID(一轮问不出联系方式、后续轮补充的场景靠它聚合)
     session_id: Mapped[str | None] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="potential", index=True)
+    # NULL = 历史来源未知;新写入路径标记 qualified_signal / no_qualified_signal。
+    qualification_provenance: Mapped[str | None] = mapped_column(String(30))
 
     # 联系方式(PII,仅此表持有原文;contact_value 最长 RFC 邮箱 320)
     contact_type: Mapped[str | None] = mapped_column(
@@ -912,6 +914,20 @@ class SalesLead(Base):
     # 手动移交销售(admin/editor 触发)
     handoff_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     handoff_by: Mapped[str | None] = mapped_column(String(100))
+
+    # ---- #124 错误联系方式可审计作废(加性列;幂等迁移见
+    # backend.db.session.ensure_sales_lead_contact_void_columns)----
+    # 人工核实误报(如时间戳/IPv4 被确定性检测误判)后由授权 admin 标记无效:
+    # contact_voided=true 的联系方式不再计入有效 contact_captured/有效联系数,
+    # 但 contact_value/contact_masked 原文与捕获时间**永不擦除**(必要历史审计,
+    # Contract 禁止不可恢复擦除)。首次作废写审计四列,重复提交首写优先(幂等);
+    # 自动聚合管道(lead_service.apply_lead_turn)绝不改写作废标记与审计。
+    contact_voided: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    contact_voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    contact_voided_by: Mapped[str | None] = mapped_column(String(100))
+    contact_voided_reason: Mapped[str | None] = mapped_column(String(500))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

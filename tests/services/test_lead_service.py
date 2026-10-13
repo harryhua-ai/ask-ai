@@ -289,3 +289,107 @@ async def test_potential_lead_created_on_potential_level(factory) -> None:
     async with factory() as s:
         row = await s.get(SalesLead, lead_id)
     assert row.status == LEAD_STATUS_POTENTIAL
+
+
+async def test_voided_contact_not_overwritten_or_resurrected(factory) -> None:
+    """#124 AC3:已作废联系方式不被自动聚合改写/复活。
+
+    管理员作废(contact_voided=true)后,同会话后续轮次即使再次检出联系方式:
+    - contact_value/contact_masked 原文保持不变(必要历史审计不被擦除);
+    - contact_voided 审计字段保持不变(旧记录不因自动聚合重新伪装为有效)。
+    """
+    from datetime import UTC, datetime
+
+    sid = "sess-void-persist"
+    async with factory() as s:
+        lead = SalesLead(
+            session_id=sid,
+            status=LEAD_STATUS_CONTACT_CAPTURED,
+            source_conversation_id=uuid.uuid4(),
+            last_conversation_id=uuid.uuid4(),
+            contact_type="phone",
+            contact_value="13800000000",
+            contact_masked="138******00",
+            contact_captured_at=datetime.now(UTC),
+        )
+        s.add(lead)
+        await s.flush()
+        lead_id = lead.id
+        # 模拟管理员作废审计写路径(API 层同一列语义)
+        lead.contact_voided = True
+        lead.contact_voided_at = datetime.now(UTC)
+        lead.contact_voided_by = "admin@test.com"
+        lead.contact_voided_reason = "时间戳误报"
+        await s.commit()
+
+    ctx = await load_lead_context(factory, session_id=sid, raw_question="换一个号码 13999999999")
+    await apply_lead_turn(
+        factory,
+        ctx,
+        _payload(level="qualified"),
+        conversation_id=uuid.uuid4(),
+        session_id=sid,
+    )
+    async with factory() as s:
+        row = await s.get(SalesLead, lead_id)
+    assert row.contact_value == "13800000000"
+    assert row.contact_masked == "138******00"
+    assert row.contact_voided is True
+    assert row.contact_voided_by == "admin@test.com"
+    assert row.contact_voided_reason == "时间戳误报"
+
+
+async def test_void_audit_first_write_atomic_under_stale_concurrent_sessions(factory) -> None:
+    """#124 AC1(R2)同行并发首写竞态回归。
+
+    两个会话在竞态窗口内都读到 contact_voided=False,随后各自提交不同
+    操作人/理由 —— 原子条件 CAS(UPDATE ... WHERE NOT contact_voided)保证
+    恰好一个事务首写成功;后写者 CAS 落空(rowcount=0),首写审计(操作人/
+    时间/理由)不被覆盖。"""
+    from datetime import UTC, datetime
+
+    from backend.services.lead_service import void_lead_contact_atomic
+
+    sid = "sess-void-race"
+    async with factory() as s:
+        lead = SalesLead(
+            session_id=sid,
+            status=LEAD_STATUS_CONTACT_CAPTURED,
+            source_conversation_id=uuid.uuid4(),
+            last_conversation_id=uuid.uuid4(),
+            contact_type="phone",
+            contact_value="13800003333",
+            contact_masked="138******33",
+            contact_captured_at=datetime.now(UTC),
+        )
+        s.add(lead)
+        await s.flush()
+        lead_id = lead.id
+        await s.commit()
+
+    async with (
+        factory() as s1,
+        factory() as s2,
+    ):
+        l1 = await s1.get(SalesLead, lead_id)
+        l2 = await s2.get(SalesLead, lead_id)
+        # 竞态窗口:双方都读到 False(旧实现此后各自赋值+commit → 覆盖首写)
+        assert l1.contact_voided is False
+        assert l2.contact_voided is False
+        won1 = await void_lead_contact_atomic(
+            s1, lead_id, by="admin-a@test.com", reason="首写作废 A"
+        )
+        await s1.commit()
+        # s2 基于过期快照继续提交 —— CAS 必须落空
+        won2 = await void_lead_contact_atomic(
+            s2, lead_id, by="admin-b@test.com", reason="并发提交 B"
+        )
+        await s2.commit()
+
+    assert won1 is True
+    assert won2 is False
+    async with factory() as s:
+        row = await s.get(SalesLead, lead_id)
+    assert row.contact_voided is True
+    assert row.contact_voided_by == "admin-a@test.com"
+    assert row.contact_voided_reason == "首写作废 A"

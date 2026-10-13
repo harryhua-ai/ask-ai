@@ -19,7 +19,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.db.models import SalesLead
@@ -181,6 +181,9 @@ async def apply_lead_turn(
             lead = SalesLead(
                 session_id=session_id,
                 status=status,
+                qualification_provenance=(
+                    "qualified_signal" if qual.level == "qualified" else "no_qualified_signal"
+                ),
                 source_conversation_id=conversation_id,
                 last_conversation_id=conversation_id,
                 channel=channel,
@@ -201,8 +204,17 @@ async def apply_lead_turn(
             await session.commit()
             return lead.id
 
-        # 已有线索:更新(不降级;已有联系方式不覆盖)
+        # 已有线索:更新(不降级;已有联系方式不覆盖)。
+        # #124 AC3:contact_voided=true(管理员已作废)时同样靠「contact_value
+        # 在档即不覆盖」保证作废记录不被自动聚合改写/复活 —— 作废不擦除原文,
+        # 本守卫因此同时封死「换号码重写」与「作废后重新伪装有效」两条路径。
+        previous_status = existing.status
         existing.status = status
+        if qual.level == "qualified" or previous_status in ("qualified", "handed_off"):
+            existing.qualification_provenance = "qualified_signal"
+        elif existing.qualification_provenance is None and previous_status == "potential":
+            # 单调 raw lifecycle 可证明尚未到过 qualified,不从自由文本推断。
+            existing.qualification_provenance = "no_qualified_signal"
         for key, value in merged.items():
             setattr(existing, key, value)
         if summary:
@@ -224,3 +236,39 @@ async def apply_lead_turn(
             existing.contact_captured_at = now
         await session.commit()
         return existing.id
+
+
+async def void_lead_contact_atomic(
+    session: AsyncSession, lead_id: uuid.UUID, *, by: str, reason: str
+) -> bool:
+    """#124 AC1:原子首写作废审计(条件 CAS),返回本调用是否赢得首写。
+
+    旧实现「get → if not contact_voided → 赋值 → commit」存在同行竞态:两个
+    admin 并发都能读到 False 并各自 commit 不同操作人/时间/理由,最后 commit
+    覆盖首写审计。此处改为单条条件 UPDATE:
+
+        UPDATE sales_leads SET contact_voided=true, ...
+        WHERE id=:id AND contact_value IS NOT NULL AND NOT contact_voided
+
+    该语句在 DB 层原子执行(PostgreSQL READ COMMITTED 下,并发后写者等锁
+    拿到行后按**已提交新版本**重评 WHERE → 不匹配 → rowcount=0):
+    - 恰好一个事务把行从「未作废」改为「已作废」,其操作人/时间/理由即首写
+      审计,不可被覆盖;
+    - 后写者(含幂等重复提交)rowcount=0 → 调用方幂等返回现状;
+    - 零他行改动(按主键 + 生效前条件定位),contact_value 原文不动。
+    """
+    result = await session.execute(
+        update(SalesLead)
+        .where(
+            SalesLead.id == lead_id,
+            SalesLead.contact_value.is_not(None),
+            SalesLead.contact_voided.is_(False),
+        )
+        .values(
+            contact_voided=True,
+            contact_voided_at=datetime.now(UTC),
+            contact_voided_by=by,
+            contact_voided_reason=reason,
+        )
+    )
+    return bool(result.rowcount == 1)

@@ -198,19 +198,37 @@ async def business_overview(
         # 等同于有效线索(LEAD-G010)。
         # - commercial_conversations:商业对话量(意图口径,≠线索);
         # - potential:窗口内新建线索(至少 potential 资格);
-        # - qualified:达到 qualified 及以上(含已留联系方式/已移交);
-        # - contactable:已获得至少一种有效联系方式;
-        # - handed_off:已人工移交销售。
-        lead_q = select(SalesLead.status, SalesLead.contact_value).where(
+        # - qualified:达到 qualified 及以上;作废后仍按资格来源计入合格,
+        #   无来源证明的历史行单列 unknown_provenance,不猜测;
+        # - contactable:已获得至少一种**有效**联系方式(#124:作废的不计入);
+        # - handed_off:已人工移交销售;
+        # - contact_voided:被授权管理员作废的联系方式数量(#124 AC2 单独统计)。
+        lead_q = select(
+            SalesLead.status, SalesLead.contact_value, SalesLead.contact_voided,
+            SalesLead.qualification_provenance,
+        ).where(
             SalesLead.created_at >= start, SalesLead.created_at <= end
         )
         lead_rows = (await session.execute(lead_q)).all()
         lead_potential = len(lead_rows)
         lead_qualified = sum(
-            1 for r in lead_rows if r.status in ("qualified", "contact_captured", "handed_off")
+            1
+            for r in lead_rows
+            if r.status in ("qualified", "handed_off")
+            or (r.status == "contact_captured" and not r.contact_voided)
+            or (
+                r.status == "contact_captured"
+                and r.contact_voided
+                and r.qualification_provenance == "qualified_signal"
+            )
         )
-        lead_contactable = sum(1 for r in lead_rows if r.contact_value)
+        lead_unknown_provenance = sum(
+            1 for r in lead_rows
+            if r.status == "contact_captured" and r.contact_voided and r.qualification_provenance is None
+        )
+        lead_contactable = sum(1 for r in lead_rows if r.contact_value and not r.contact_voided)
         lead_handed_off = sum(1 for r in lead_rows if r.status == "handed_off")
+        lead_contact_voided = sum(1 for r in lead_rows if r.contact_voided)
 
         # 业务信号(场景/需求)——按"区间重叠"匹配:
         # 信号 period(如默认 30 天提取窗)与查询窗口(如 7d)有重叠即展示。
@@ -359,6 +377,8 @@ async def business_overview(
             "qualified": lead_qualified,
             "contactable": lead_contactable,
             "handed_off": lead_handed_off,
+            "contact_voided": lead_contact_voided,
+            "unknown_provenance": lead_unknown_provenance,
             "hot_products": hot_products,
         },
         "scenes": scenes,

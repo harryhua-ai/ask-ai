@@ -76,7 +76,23 @@ async def leads_env():
     yield {"marker": marker, "lead_id": lead_id, "headers": headers}
 
     async with factory() as session:
-        for sid in (marker, marker + "-pot", marker + "-done"):
+        for sid in (
+            marker,
+            marker + "-pot",
+            marker + "-done",
+            marker + "-bystander",
+            marker + "-real",
+            marker + "-ov1",
+            marker + "-ov2",
+            # #124 R2 回归种子
+            marker + "-ccv",
+            marker + "-ccok",
+            marker + "-qv",
+            marker + "-hv",
+            marker + "-r3-g002",
+            marker + "-r3-contact-only",
+            marker + "-r3-ambiguous",
+        ):
             await session.execute(SalesLead.__table__.delete().where(SalesLead.session_id == sid))
         for role, uid in users.items():
             await session.execute(
@@ -193,6 +209,254 @@ async def test_handoff_role_enforced_and_idempotent(leads_env):
     assert r_again.json()["status"] == "handed_off"
 
 
+# --------------------------------------------------------------------------- #
+# #124 错误联系方式可审计作废(POST /leads/{id}/void-contact)
+# --------------------------------------------------------------------------- #
+
+
+async def test_void_contact_requires_auth(leads_env):
+    """未认证方不可作废(AC3 权限边界)。"""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            f"/api/admin/leads/{leads_env['lead_id']}/void-contact",
+            json={"confirm": True, "reason": "误报"},
+        )
+    assert resp.status_code == 401
+
+
+async def test_void_contact_admin_only(leads_env):
+    """仅 admin 可作废;editor/viewer 403(AC1「已授权管理员」+ AC3 未授权方不可作废)。"""
+    lead_id = leads_env["lead_id"]
+    body = {"confirm": True, "reason": "误报"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r_viewer = await client.post(
+            f"/api/admin/leads/{lead_id}/void-contact",
+            json=body,
+            headers=leads_env["headers"]["viewer"],
+        )
+        r_editor = await client.post(
+            f"/api/admin/leads/{lead_id}/void-contact",
+            json=body,
+            headers=leads_env["headers"]["editor"],
+        )
+    assert r_viewer.status_code == 403
+    assert r_editor.status_code == 403
+    # 未授权尝试不得改写数据
+    factory = app.state.session_factory
+    async with factory() as session:
+        lead = await session.get(SalesLead, uuid.UUID(lead_id))
+        assert lead.contact_voided is False
+
+
+async def test_void_contact_requires_confirm_and_reason(leads_env):
+    """明确确认后才能作废:缺 confirm / confirm=false / 空白理由 → 422(AC1 二次确认)。"""
+    lead_id = leads_env["lead_id"]
+    admin = leads_env["headers"]["admin"]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r_no_confirm = await client.post(
+            f"/api/admin/leads/{lead_id}/void-contact",
+            json={"confirm": False, "reason": "误报"},
+            headers=admin,
+        )
+        r_missing_confirm = await client.post(
+            f"/api/admin/leads/{lead_id}/void-contact",
+            json={"reason": "误报"},
+            headers=admin,
+        )
+        r_blank_reason = await client.post(
+            f"/api/admin/leads/{lead_id}/void-contact",
+            json={"confirm": True, "reason": "   "},
+            headers=admin,
+        )
+        r_missing_reason = await client.post(
+            f"/api/admin/leads/{lead_id}/void-contact",
+            json={"confirm": True},
+            headers=admin,
+        )
+    assert r_no_confirm.status_code == 422
+    assert r_missing_confirm.status_code == 422
+    assert r_blank_reason.status_code == 422
+    assert r_missing_reason.status_code == 422
+
+
+async def test_void_contact_saves_audit_and_idempotent(leads_env):
+    """作废保存操作人/时间/理由;contact_value 原文保留(审计);重复提交幂等
+    (首写审计不被覆盖);其余线索零误改(AC1)。"""
+    marker = leads_env["marker"]
+    factory = app.state.session_factory
+    async with factory() as session:
+        other = _mk_lead(
+            marker + "-bystander",
+            contact_type="phone",
+            contact_value="13900001111",
+            contact_masked="139******11",
+        )
+        session.add(other)
+        await session.commit()
+        other_id = str(other.id)
+
+    lead_id = leads_env["lead_id"]
+    admin = leads_env["headers"]["admin"]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r1 = await client.post(
+            f"/api/admin/leads/{lead_id}/void-contact",
+            json={"confirm": True, "reason": "时间戳被误判为电话"},
+            headers=admin,
+        )
+        first = r1.json()
+        # 幂等:再次提交(不同理由)→ 200,首写审计不变
+        r2 = await client.post(
+            f"/api/admin/leads/{lead_id}/void-contact",
+            json={"confirm": True, "reason": "第二次补充理由"},
+            headers=admin,
+        )
+    assert r1.status_code == 200
+    body = first
+    assert body["contact_voided"] is True
+    assert body["contact_voided_by"]  # 操作人 email
+    assert body["contact_voided_at"] is not None
+    assert body["contact_voided_reason"] == "时间戳被误判为电话"
+    # 原文保留(必要历史审计,不可恢复擦除被禁止)
+    assert body["contact_value"] == "sales-buyer@example.com"
+    assert body["contact_masked"] == "s***@example.com"
+
+    assert r2.status_code == 200
+    again = r2.json()
+    assert again["contact_voided_at"] == body["contact_voided_at"]
+    assert again["contact_voided_by"] == body["contact_voided_by"]
+    assert again["contact_voided_reason"] == "时间戳被误判为电话"
+
+    # 目标性:其它线索零误改
+    async with factory() as session:
+        o = await session.get(SalesLead, uuid.UUID(other_id))
+        assert o.contact_voided is False
+        assert o.contact_voided_by is None
+        assert o.contact_value == "13900001111"
+
+
+async def test_void_contact_not_found_and_no_contact(leads_env):
+    """404:线索不存在/非法 UUID;409:线索没有已捕获联系方式可作废。"""
+    admin = leads_env["headers"]["admin"]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r_missing = await client.post(
+            f"/api/admin/leads/{uuid.uuid4()}/void-contact",
+            json={"confirm": True, "reason": "误报"},
+            headers=admin,
+        )
+        r_bad = await client.post(
+            "/api/admin/leads/not-a-uuid/void-contact",
+            json={"confirm": True, "reason": "误报"},
+            headers=admin,
+        )
+        # marker+"-pot" 种子线索无联系方式
+        factory = app.state.session_factory
+        async with factory() as session:
+            from sqlalchemy import select
+
+            row = (
+                await session.execute(
+                    select(SalesLead).where(SalesLead.session_id == leads_env["marker"] + "-pot")
+                )
+            ).scalar_one()
+        r_no_contact = await client.post(
+            f"/api/admin/leads/{row.id}/void-contact",
+            json={"confirm": True, "reason": "误报"},
+            headers=admin,
+        )
+    assert r_missing.status_code == 404
+    assert r_bad.status_code == 404
+    assert r_no_contact.status_code == 409
+
+
+async def test_voided_lead_list_and_filter_semantics(leads_env):
+    """AC2/AC3:作废后列表 has_contact=False;contact=with 排除;contact=voided
+    可单独查看(审计);列表永不回原文;详情仍保留原文与作废审计。"""
+    marker = leads_env["marker"]
+    lead_id = leads_env["lead_id"]
+    viewer = leads_env["headers"]["viewer"]
+    admin = leads_env["headers"]["admin"]
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        rv = await client.post(
+            f"/api/admin/leads/{lead_id}/void-contact",
+            json={"confirm": True, "reason": "误报"},
+            headers=admin,
+        )
+        assert rv.status_code == 200
+
+        r_with = await client.get("/api/admin/leads?contact=with", headers=viewer)
+        r_voided = await client.get("/api/admin/leads?contact=voided", headers=viewer)
+        r_all = await client.get(f"/api/admin/leads?q={_NS}-acme", headers=viewer)
+        r_detail = await client.get(f"/api/admin/leads/{lead_id}", headers=viewer)
+
+    assert all(
+        x["has_contact"] is False for x in r_with.json()["leads"] if x["session_id"] == marker
+    )
+    voided_rows = [x for x in r_voided.json()["leads"] if x["session_id"] == marker]
+    assert len(voided_rows) == 1
+    vrow = voided_rows[0]
+    assert vrow["contact_voided"] is True
+    assert vrow["has_contact"] is False
+    assert vrow["contact_masked"] == "s***@example.com"
+    # 列表不回原文(既有 PII 边界不因作废放宽)
+    assert "sales-buyer@example.com" not in r_with.text
+    assert "sales-buyer@example.com" not in r_voided.text
+    assert "sales-buyer@example.com" not in r_all.text
+
+    # 列表仍可见该线索(审计可见),状态徽章独立于作废标记
+    all_rows = [x for x in r_all.json()["leads"] if x["session_id"] == marker]
+    assert len(all_rows) == 1
+    assert all_rows[0]["contact_voided"] is True
+
+    # 详情(授权角色)保留原文 + 作废审计(AC3 可追溯)
+    detail = r_detail.json()
+    assert detail["contact_value"] == "sales-buyer@example.com"
+    assert detail["contact_voided"] is True
+    assert detail["contact_voided_reason"] == "误报"
+    assert detail["contact_voided_by"]
+
+
+async def test_funnel_counts_voided_separately(leads_env):
+    """AC2:作废后不再计入有效联系数(contactable);漏斗单独统计作废数量;
+    既有真实有效联系方式不受影响。"""
+    marker = leads_env["marker"]
+    factory = app.state.session_factory
+    # 一条真实有效联系方式对照(不受作废影响)
+    async with factory() as session:
+        session.add(
+            _mk_lead(
+                marker + "-real",
+                status="contact_captured",
+                contact_type="email",
+                contact_value="realbuyer@example.com",
+                contact_masked="r***@example.com",
+            )
+        )
+        await session.commit()
+
+    lead_id = leads_env["lead_id"]
+    viewer = leads_env["headers"]["viewer"]
+    admin = leads_env["headers"]["admin"]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r_before = await client.get("/api/admin/business/overview?range=7d", headers=viewer)
+        contactable_before = r_before.json()["leads"]["contactable"]
+
+        rv = await client.post(
+            f"/api/admin/leads/{lead_id}/void-contact",
+            json={"confirm": True, "reason": "误报"},
+            headers=admin,
+        )
+        assert rv.status_code == 200
+
+        r_after = await client.get("/api/admin/business/overview?range=7d", headers=viewer)
+
+    leads = r_after.json()["leads"]
+    assert "contact_voided" in leads  # 漏斗单独统计作废数量
+    assert leads["contact_voided"] >= 1
+    # 作废后有效联系数恰好减一(误报不再冒充可联系线索)
+    assert leads["contactable"] == contactable_before - 1
+
+
 async def test_business_overview_new_leads_semantics(leads_env):
     """G010:overview 线索口径 = sales_leads,且不再有 valid(=commercial)混淆。"""
     factory = app.state.session_factory
@@ -220,3 +484,258 @@ async def test_business_overview_new_leads_semantics(leads_env):
         assert key in leads
     assert leads["potential"] >= 2
     assert leads["contactable"] >= 1
+
+
+# --------------------------------------------------------------------------- #
+# #124 R2(评审 blocking 修复)三回归:
+#   R2-1 生效语义:作废行不得在筛选/漏斗/徽章口径继续宣称「有效已留联」;
+#   R2-2 并发首写:同行竞态下首写审计不可被覆盖(见 tests/services/test_lead_service.py);
+#   R2-3 列表面 PII:作废理由自由文本只在授权详情回传,列表投影最小化。
+# --------------------------------------------------------------------------- #
+
+
+async def _seed(factory, sid: str, **kw) -> str:
+    async with factory() as session:
+        lead = _mk_lead(sid, **kw)
+        session.add(lead)
+        await session.commit()
+        return str(lead.id)
+
+
+async def test_voided_contact_captured_not_claimed_as_valid_captured(leads_env):
+    """R2-1(AC2):作废后生效口径不再宣称有效已留联。
+
+    - GET /leads?status=contact_captured 不再包含已作废行(生效视图/筛选);
+    - 列表暴露 effective_status(生效状态):作废的 contact_captured 生效回落
+      potential(线索存在、意图未确证),raw status 原样保留(不可变历史);
+    - 对照:真实有效的 contact_captured 行不受影响。"""
+    marker = leads_env["marker"]
+    factory = app.state.session_factory
+    ccv_id = await _seed(
+        factory,
+        marker + "-ccv",
+        status="contact_captured",
+        qualification_provenance="no_qualified_signal",
+        contact_type="phone",
+        contact_value="13800001111",
+        contact_masked="138******11",
+    )
+    await _seed(
+        factory,
+        marker + "-ccok",
+        status="contact_captured",
+        contact_type="email",
+        contact_value="okbuyer@example.com",
+        contact_masked="o***@example.com",
+    )
+
+    admin = leads_env["headers"]["admin"]
+    viewer = leads_env["headers"]["viewer"]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        rv = await client.post(
+            f"/api/admin/leads/{ccv_id}/void-contact",
+            json={"confirm": True, "reason": "时间戳被误判为电话"},
+            headers=admin,
+        )
+        assert rv.status_code == 200
+        r_cc = await client.get("/api/admin/leads?status=contact_captured", headers=viewer)
+        r_pot = await client.get("/api/admin/leads?status=potential", headers=viewer)
+        r_unknown = await client.get("/api/admin/leads?status=unknown_provenance", headers=viewer)
+        r_detail = await client.get(f"/api/admin/leads/{ccv_id}", headers=viewer)
+
+    # 作废行退出 contact_captured 生效筛选;真实有效行不受影响
+    cc_sessions = {x["session_id"] for x in r_cc.json()["leads"]}
+    assert marker + "-ccv" not in cc_sessions
+    assert marker + "-ccok" in cc_sessions
+    assert all(x["effective_status"] == "contact_captured" for x in r_cc.json()["leads"])
+
+    # 该测试行明确没有 qualified 信号,作废后回到 potential。
+    pot_rows = [x for x in r_pot.json()["leads"] if x["session_id"] == marker + "-ccv"]
+    assert len(pot_rows) == 1
+    vrow = pot_rows[0]
+    assert vrow["effective_status"] == "potential"
+    assert vrow["status"] == "contact_captured"  # raw 历史不改写
+    assert vrow["contact_voided"] is True
+    assert vrow["qualification_provenance"] == "no_qualified_signal"
+    assert marker + "-ccv" not in {x["session_id"] for x in r_unknown.json()["leads"]}
+
+    # 详情:raw 历史保留 + 生效语义并存
+    detail = r_detail.json()
+    assert detail["status"] == "contact_captured"
+    assert detail["effective_status"] == "potential"
+
+
+async def test_funnel_qualified_drops_voided_contact_only_rows(leads_env):
+    """R2-1(AC2):漏斗 qualified 不再把已作废的 contact_captured 行当合格档
+    (其资格仅由已作废联系方式支撑);真正独立成立的 qualified / handed_off
+    行不因作废联系方式被盲目降级(独立购买意图/人工移交是历史事实)。"""
+    marker = leads_env["marker"]
+    factory = app.state.session_factory
+    ccv_id = await _seed(
+        factory,
+        marker + "-ccv",
+        status="contact_captured",
+        qualification_provenance="no_qualified_signal",
+        contact_type="phone",
+        contact_value="13800002222",
+        contact_masked="138******22",
+    )
+    qv_id = await _seed(
+        factory,
+        marker + "-qv",
+        status="qualified",
+        contact_type="email",
+        contact_value="qbuyer@example.com",
+        contact_masked="q***@example.com",
+    )
+    hv_id = await _seed(
+        factory,
+        marker + "-hv",
+        status="handed_off",
+        contact_type="email",
+        contact_value="hbuyer@example.com",
+        contact_masked="h***@example.com",
+        handoff_by="boss",
+    )
+
+    admin = leads_env["headers"]["admin"]
+    viewer = leads_env["headers"]["viewer"]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r_before = await client.get("/api/admin/business/overview?range=7d", headers=viewer)
+        qualified_before = r_before.json()["leads"]["qualified"]
+
+        for lid in (ccv_id, qv_id, hv_id):
+            rv = await client.post(
+                f"/api/admin/leads/{lid}/void-contact",
+                json={"confirm": True, "reason": "误报"},
+                headers=admin,
+            )
+            assert rv.status_code == 200
+
+        r_after = await client.get("/api/admin/business/overview?range=7d", headers=viewer)
+
+    leads = r_after.json()["leads"]
+    assert leads["contact_voided"] >= 3
+    # 仅「资格只靠已作废联系方式」的 contact_captured 行退出合格档(恰好 -1);
+    # qualified / handed_off 行作废联系方式后仍保有独立资格,不被盲目降级。
+    assert leads["qualified"] == qualified_before - 1
+
+
+async def test_void_after_real_g002_lifecycle_preserves_qualification(leads_env):
+    """R3 AC2:真实 G002→留联与 contact-only 两轮路径作废后资格分流。"""
+    from backend.pipeline.lead_qualify import detect_contact
+    from backend.services.lead_service import apply_lead_turn, load_lead_context
+
+    marker = leads_env["marker"]
+    factory = app.state.session_factory
+
+    async def turn_payload(level: str, *, ran: bool = True) -> dict:
+        return {
+            "ran": ran, "level": level, "invited": False, "fields": {},
+            "summary": "", "explicit_sales_request": False,
+        }
+
+    ids = {}
+    for suffix, first_level in (("g002", "qualified"), ("contact-only", "none")):
+        sid = marker + "-r3-" + suffix
+        if suffix == "contact-only":
+            from backend.pipeline.lead_qualify import LeadTurnContext
+            first_ctx = LeadTurnContext(session_id=sid)
+            first_ctx.contact = detect_contact("联系我 buyer@example.com")
+            first_payload = await turn_payload("none", ran=False)
+        else:
+            first_ctx = await load_lead_context(factory, session_id=sid, raw_question="项目采购 500 台")
+            first_payload = await turn_payload(first_level)
+        lead_id = await apply_lead_turn(
+            factory, first_ctx, first_payload, conversation_id=uuid.uuid4(), session_id=sid
+        )
+        if suffix == "g002":
+            ctx = await load_lead_context(factory, session_id=sid, raw_question="buyer@example.com")
+            payload = await turn_payload("potential")
+            lead_id = await apply_lead_turn(
+                factory, ctx, payload, conversation_id=uuid.uuid4(), session_id=sid
+            )
+        ids[suffix] = str(lead_id)
+
+    # R2 之前的 contact_captured 行没有资格来源记录,必须明确呈现未知。
+    ids["ambiguous"] = await _seed(
+        factory, marker + "-r3-ambiguous", status="contact_captured",
+        contact_type="email", contact_value="legacy@example.com",
+        contact_masked="l***@example.com",
+    )
+
+    admin, viewer = leads_env["headers"]["admin"], leads_env["headers"]["viewer"]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for lead_id in ids.values():
+            result = await client.post(
+                f"/api/admin/leads/{lead_id}/void-contact",
+                json={"confirm": True, "reason": "invalid address"}, headers=admin,
+            )
+            assert result.status_code == 200
+        listed = await client.get("/api/admin/leads?contact=voided", headers=viewer)
+        qualified = await client.get("/api/admin/leads?status=qualified", headers=viewer)
+        potential = await client.get("/api/admin/leads?status=potential", headers=viewer)
+        unknown = await client.get("/api/admin/leads?status=unknown_provenance", headers=viewer)
+        overview = await client.get("/api/admin/business/overview?range=7d", headers=viewer)
+        detail = await client.get(f"/api/admin/leads/{ids['g002']}", headers=viewer)
+
+    rows = {row["session_id"]: row for row in listed.json()["leads"]}
+    g002 = rows[marker + "-r3-g002"]
+    contact_only = rows[marker + "-r3-contact-only"]
+    ambiguous = rows[marker + "-r3-ambiguous"]
+    assert g002["effective_status"] == "qualified"
+    assert contact_only["effective_status"] == "potential"
+    assert g002["status"] == contact_only["status"] == "contact_captured"
+    assert g002["contact_voided"] and contact_only["contact_voided"]
+    assert g002["qualification_provenance"] == "qualified_signal"
+    assert contact_only["qualification_provenance"] == "no_qualified_signal"
+    assert ambiguous["effective_status"] == "unknown_provenance"
+    assert marker + "-r3-ambiguous" in {r["session_id"] for r in unknown.json()["leads"]}
+    assert marker + "-r3-g002" in {r["session_id"] for r in qualified.json()["leads"]}
+    assert marker + "-r3-g002" not in {r["session_id"] for r in potential.json()["leads"]}
+    assert marker + "-r3-contact-only" in {r["session_id"] for r in potential.json()["leads"]}
+    assert marker + "-r3-contact-only" not in {r["session_id"] for r in qualified.json()["leads"]}
+    assert overview.json()["leads"]["qualified"] >= 1
+    assert overview.json()["leads"]["unknown_provenance"] >= 1
+    assert detail.json()["status"] == "contact_captured"
+    assert detail.json()["contact_voided"] is True
+    assert detail.json()["contact_voided_reason"] == "invalid address"
+    assert detail.json()["contact_value"] == "buyer@example.com"
+
+
+async def test_voided_reason_pii_minimized_in_list_projection(leads_env):
+    """R2-3(AC3):作废理由是自由文本(admin 可写入任意内容),列表投影必须
+    PII 最小化 —— 含敏感字面(手机号/邮箱)的完整理由只保留在授权详情视图,
+    列表响应(admin/editor/viewer 可见)不得回传理由内容。"""
+    marker = leads_env["marker"]
+    lead_id = leads_env["lead_id"]
+    phone, email = "13800138000", "buyer-secret@example.com"
+    reason = f"误填手机 {phone} / 邮箱 {email},请作废"
+
+    admin = leads_env["headers"]["admin"]
+    viewer = leads_env["headers"]["viewer"]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        rv = await client.post(
+            f"/api/admin/leads/{lead_id}/void-contact",
+            json={"confirm": True, "reason": reason},
+            headers=admin,
+        )
+        assert rv.status_code == 200
+        r_list = await client.get(f"/api/admin/leads?q={_NS}-acme", headers=viewer)
+        r_voided = await client.get("/api/admin/leads?contact=voided", headers=viewer)
+        r_detail = await client.get(f"/api/admin/leads/{lead_id}", headers=viewer)
+
+    # 列表两视图均不泄露敏感字面,且投影不含理由字段
+    for resp in (r_list, r_voided):
+        assert phone not in resp.text
+        assert email not in resp.text
+        rows = [x for x in resp.json()["leads"] if x["session_id"] == marker]
+        assert len(rows) == 1
+        assert "contact_voided_reason" not in rows[0]
+        assert rows[0]["contact_voided"] is True
+        assert rows[0]["contact_voided_by"]  # 归因保留(操作人非敏感自由文本)
+
+    # 授权详情视图保留完整审计理由(可追溯,读权限不弱化)
+    detail = r_detail.json()
+    assert detail["contact_voided_reason"] == reason
+    assert phone in r_detail.text and email in r_detail.text
