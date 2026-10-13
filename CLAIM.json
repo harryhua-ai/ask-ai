@@ -12,7 +12,28 @@
  "heartbeat_at": "2026-10-13T08:16:44Z",
  "supersedes": null,
  "contract_digest": "fea237ce73b1c50febab64a2651c5b684b17476aa0a3a7d4462b377a14c467e5",
- "candidate": null,
+ "candidate": {
+  "branch": "agent/117/9ac95ff0",
+  "sha": "e3c67be3bcd7097f6a1628148f4b149ca214e6a6",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "admin/src/components/observability/DailyConversationChart.tsx": "ALLOWED",
+    "admin/src/pages/BusinessOverview.tsx": "ALLOWED",
+    "admin/tests/DailyConversationChart.test.tsx": "ALLOWED",
+    "backend/api/admin/business.py": "ALLOWED",
+    "tests/api/admin/test_analytics_business.py": "ALLOWED"
+   },
+   "violations": [],
+   "main_attributed_paths": [],
+   "counts": {
+    "ALLOWED": 5,
+    "FORBIDDEN": 0,
+    "MAIN_ATTRIBUTED": 0
+   }
+  },
+  "preserved_at": "2026-10-13T08:18:07Z"
+ },
  "runtime": {
   "digest": "743a713193def2e7afd5c9c614e05968a1ea50b2c6249d6c5ff219cbc5441096",
   "release": "v1.1.4",
