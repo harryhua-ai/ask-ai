@@ -2029,7 +2029,21 @@ class RAGOrchestrator:
             # 但 reranker 给分 < 0.3 被滤光。真无召回(fused 也空)才拒答。
             # Issue #77(D 兜底资格+B1):兜底证据面服从同一类组合边界,
             # 但 code-oriented 查询保持竞争序(与比较管线 Rev2 同语义)。
-            if _is_code_oriented_query(query):
+            # A scored rerank refusal is an explicit execution decision. Do not
+            # let the earlier fused/RRF ordering re-authorize candidates that
+            # the reranker scored below its configured threshold.
+            rerank_refused = bool(
+                not reranked
+                and pool_scores
+                and getattr(self._reranker, "threshold", None) is not None
+                and all(
+                    score < self._reranker.threshold
+                    for _candidate, score in pool_scores
+                )
+            )
+            if rerank_refused:
+                fallback = []
+            elif _is_code_oriented_query(query):
                 fallback = fused[: self._top_k] if fused else []
             else:
                 fallback = (
