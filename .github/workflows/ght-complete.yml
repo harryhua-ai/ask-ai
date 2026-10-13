@@ -1,0 +1,74 @@
+name: ght-complete
+# ght-adoption-managed: ght-complete/v2
+on:
+  pull_request:
+    types: [closed]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  issue_comment:
+    types: [created, edited, deleted]
+  workflow_dispatch:
+    inputs:
+      issue:
+        required: true
+        type: string
+      pr:
+        required: true
+        type: string
+permissions:
+  contents: write
+  pull-requests: read
+  issues: write
+jobs:
+  review_verdict:
+    name: Publish canonical exact-SHA review result
+    if: >-
+      github.event_name == 'pull_request_review' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       (contains(github.event.comment.body, 'A REVIEW') ||
+        contains(github.event.changes.body.from, 'A REVIEW')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      checks: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Publish attempt-bound canonical verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 .github/scripts/ght-gha-review-trigger.py
+
+  complete:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    env:
+      GHT_RUNTIME_REF: "743a713193def2e7afd5c9c614e05968a1ea50b2c6249d6c5ff219cbc5441096"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
+      - name: Resolve issue and PR from canonical metadata
+        id: facts
+        env:
+          GHA_EVENT_NAME: ${{ github.event_name }}
+          GHA_PR_NUMBER: ${{ github.event.pull_request.number }}
+          GHA_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          GHA_DISPATCH_ISSUE: ${{ inputs.issue }}
+          GHA_DISPATCH_PR: ${{ inputs.pr }}
+        run: sh .github/scripts/ght-gha-adapter.sh resolve >> "$GITHUB_OUTPUT"
+      - name: Record not-applicable outcome
+        if: steps.facts.outputs.applicable == 'false'
+        run: echo "PR is not a ght Candidate; completion skipped." >> "$GITHUB_STEP_SUMMARY"
+      - name: Complete the exact merged attempt
+        if: steps.facts.outputs.applicable != 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GHT_RECONCILER_ID: ght-complete-workflow
+          GHT_EXECUTOR_ID: ght-complete-workflow
+        run: sh .github/scripts/ght-gha-adapter.sh complete "${{ steps.facts.outputs.issue }}" "${{ steps.facts.outputs.pr }}"
