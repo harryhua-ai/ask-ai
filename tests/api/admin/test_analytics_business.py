@@ -1,5 +1,6 @@
 """业务概览聚合端点测试。"""
 
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -272,6 +273,71 @@ async def test_business_overview_signals_overlap_with_query_window(business_seed
             await session.execute(
                 BusinessSignal.__table__.delete().where(
                     BusinessSignal.label.like("biz_test_signal_%")
+                )
+            )
+            await session.commit()
+
+
+async def test_business_overview_timeseries_business_day_bucketing(business_seed):
+    """timeseries 按 Asia/Shanghai 业务日归桶,date 为完整 YYYY-MM-DD 且跨年稳定排序(#117)。
+
+    复现生产缺陷(测试库会话时区=UTC,与生产一致):
+    - 2026-10-03 18:30 UTC = 2026-10-04 02:30 +08,旧 UTC 分桶把它并入 10-03,
+      "10-04" 桶 0 行 → 前端整个日期标签消失(生产截图所见);
+    - 2025-12-31 16:00 UTC = 2026-01-01 00:00 +08(恰在业务日午夜),跨 UTC 午夜
+      样本必须归入 2026-01-01;
+    - 旧输出 date 为 "MM-DD" 字符串:跨年窗排序 "12-30" > "10-05" 乱序,且
+      "12-31"/"01-01" 式键跨年冲突。
+    """
+    factory = app.state.session_factory
+    # (UTC 时刻, 期望业务日)
+    samples = [
+        (datetime(2025, 12, 30, 10, 0, tzinfo=UTC), "2025-12-30"),
+        (datetime(2025, 12, 31, 16, 0, tzinfo=UTC), "2026-01-01"),  # 恰 +08 午夜
+        (datetime(2026, 10, 3, 18, 30, tzinfo=UTC), "2026-10-04"),  # 生产 10-04 消失案例
+        (datetime(2026, 10, 5, 2, 0, tzinfo=UTC), "2026-10-05"),
+    ]
+    seeded_questions = [f"biz_test_ts_{d.replace('-', '')}" for _, d in samples]
+    try:
+        async with factory() as session:
+            for (ts, day), q in zip(samples, seeded_questions, strict=True):
+                session.add(
+                    Conversation(
+                        question=q,
+                        channel="widget",
+                        is_answered=True,
+                        intent_tag="commercial",
+                        created_at=ts,
+                    )
+                )
+            await session.commit()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get(
+                "/api/admin/business/overview?from=2025-12-30&to=2026-10-06",
+                headers=business_seed,
+            )
+        assert resp.status_code == 200
+        ts = resp.json()["timeseries"]
+        # 日期身份:完整日历日期 YYYY-MM-DD,组件键不因 MM-DD 冲突
+        for entry in ts:
+            assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", entry["date"]), (
+                f"date 应为 YYYY-MM-DD,实际 {entry['date']!r}"
+            )
+        by_date = {entry["date"]: entry for entry in ts}
+        # 业务日归桶:跨 UTC 午夜样本入正确业务日(含生产 10-04 整日消失案例)
+        for _, day in samples:
+            assert day in by_date, f"业务日 {day} 桶缺失,实际日期 {[e['date'] for e in ts]}"
+            assert by_date[day]["total"] >= 1, f"业务日 {day} 应至少含 1 条样本"
+        # 跨年窗口按完整日历日期稳定排序(旧 MM-DD 排序 10-05 < 12-30 乱序)
+        seeded_in_order = [e["date"] for e in ts if e["date"] in {d for _, d in samples}]
+        assert seeded_in_order == sorted(seeded_in_order), (
+            f"timeseries 应按日历日期升序,实际 {seeded_in_order}"
+        )
+    finally:
+        async with factory() as session:
+            await session.execute(
+                Conversation.__table__.delete().where(
+                    Conversation.question.in_(seeded_questions)
                 )
             )
             await session.commit()

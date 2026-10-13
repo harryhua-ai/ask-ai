@@ -16,6 +16,12 @@ router = APIRouter(prefix="/business", tags=["业务概览"])
 ViewerDep = Annotated[CurrentUser, Depends(require_role("admin", "editor", "viewer"))]
 EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
 
+# 业务日时区(#117):每日对话量按 Asia/Shanghai 业务日归桶。
+# 生产 DB 会话时区为 UTC,date_trunc 直接按会话时区切桶会把 +08 的
+# 00:00-08:00 对话计入前一 UTC 日,导致业务日整日消失(如 10-04 并入 10-03)。
+# 显式转换后分桶不再依赖会话时区。
+BUSINESS_TIMEZONE = "Asia/Shanghai"
+
 # 已知 e2e 测试问题前缀(精确匹配)
 _TEST_QUESTION_PREFIXES = (
     "What is NE301",
@@ -210,10 +216,12 @@ async def business_overview(
             key=lambda x: -x["count"],
         )[:5]
 
-        # 时间序列(按天聚合对话量)
+        # 时间序列(按业务日聚合对话量;#117:先转 Asia/Shanghai 再切日桶)
         daily_q = (
             select(
-                func.date_trunc("day", Conversation.created_at).label("day"),
+                func.date_trunc(
+                    "day", func.timezone(BUSINESS_TIMEZONE, Conversation.created_at)
+                ).label("day"),
                 func.count().label("cnt"),
                 Conversation.intent_tag,
             )
@@ -232,7 +240,8 @@ async def business_overview(
             }
         )
         for row in daily_rows:
-            day_str = row.day.strftime("%m-%d") if row.day else ""
+            # 完整日历日期(YYYY-MM-DD):跨年窗口排序稳定,组件键不因 MM-DD 冲突
+            day_str = row.day.strftime("%Y-%m-%d") if row.day else ""
             entry = daily_map[day_str]
             entry["date"] = day_str
             entry["total"] += row.cnt
