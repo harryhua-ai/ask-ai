@@ -20,19 +20,72 @@ from backend.pipeline.task_understanding import understand_task
 
 BASELINE = "b4be4da"
 
-# Frozen calibration cases. These are deliberately marked no-authority until an
-# exact, reviewed official corpus source is mapped to the claim being tested.
-# The presence of an answerable-sounding query is not evidence of authority.
+# Frozen calibration cases. Every positive carries an authority_ref verified
+# against the publicly authorized official sources on 2026-10-13 (issue #118
+# R3 bounded recovery). Mapping rationale:
+# - en_subscription: official purchase model — terms-of-service pricing clause
+#   ("Prices are listed in USD", one-time checkout) plus the store catalog where
+#   every product is a one-time-priced item and no official page advertises a
+#   subscription fee. The honest grounded answer is one-time hardware purchase.
+# - en_australia: https://www.camthink.ai/shipping-policy/ — worldwide DAP
+#   delivery (DHL/FedEx/SF/Yuntu/Yanwen/4PX); the "online checkout not
+#   available" exclusion list covers parts of South America/Asia/Africa but
+#   does NOT include Australia.
+# - en_night_vision: NE503 wiki overview — "<0.01 LUX full-color night vision",
+#   automatic IR-CUT switching, "IR fill light (supported, 80m)"; store page
+#   corroborates 4K UHD + 0.01-lux low-light imaging.
+# - zh_compare: cross-product resolution comparison grounded in the official
+#   spec pages — NE503 4K UHD (IMX678, 3856x2180) vs NE301 (OS04C10, 4MP) vs
+#   NE302 (4MP CMOS) vs NE101 (OV5640 module); price from the NE503 store page
+#   ($999–$1,199).
+# - en_vehicle: official installation material — store mounting brackets
+#   (wall/dial/pole/shaft&ball/base) for NE101/NE301 and the wiki dev-kit
+#   installation guide. No official covert-installation guide exists; the
+#   expected honest answer states that absence explicitly instead of guessing.
+# The presence of an answerable-sounding query is not evidence of authority:
+# an empty authority_ref keeps a positive out of the AC1 denominator
+# (fail-closed) and buckets it as no_authority.
 CASES = (
-    ("en_subscription", "Is there a subscription fee?", "positive", None),
-    ("en_australia", "where to buy in australia", "positive", None),
-    ("en_night_vision", "I need night vision x2", "positive", None),
-    ("zh_compare", "分辨率最高的产品是哪个？价格如何？", "positive", None),
-    ("en_vehicle", "how to hide this inside a vehicle?", "positive", None),
+    (
+        "en_subscription",
+        "Is there a subscription fee?",
+        "positive",
+        "https://www.camthink.ai/terms-of-service/",
+    ),
+    (
+        "en_australia",
+        "where to buy in australia",
+        "positive",
+        "https://www.camthink.ai/shipping-policy/",
+    ),
+    (
+        "en_night_vision",
+        "I need night vision x2",
+        "positive",
+        "https://wiki.camthink.ai/docs/neoeyes-ne503-series/overview",
+    ),
+    (
+        "zh_compare",
+        "分辨率最高的产品是哪个？价格如何？",
+        "positive",
+        "https://wiki.camthink.ai/docs/neoeyes-ne503-series/overview",
+    ),
+    (
+        "en_vehicle",
+        "how to hide this inside a vehicle?",
+        "positive",
+        "https://www.camthink.ai/store/mounting-ne101/",
+    ),
     ("en_selector", "Which product fits my project?", "negative", None),
     ("zh_revision", "这台设备应该刷哪个硬件版本？", "negative", None),
     ("zh_deixis", "这个设备支持什么？", "negative", None),
 )
+
+# AC1 gate: >= 90% of authority-supported generic-answerable first questions
+# must route to retrieval instead of unconditional model clarification.
+AC1_POSITIVE_STANDARD_GATE = 0.9
+
+_OFFICIAL_AUTHORITY_HOSTS = ("https://wiki.camthink.ai/", "https://www.camthink.ai/")
 
 
 def _baseline_prompt() -> str:
@@ -40,7 +93,7 @@ def _baseline_prompt() -> str:
         ["git", "show", f"{BASELINE}:backend/pipeline/task_understanding.py"],
         text=True,
     )
-    marker = "_UNDERSTANDING_PROMPT = \"\"\""
+    marker = '_UNDERSTANDING_PROMPT = """'
     start = source.index(marker) + len(marker)
     end = source.index('\n"""', start)
     return source[start:end]
@@ -104,8 +157,10 @@ def test_issue118_paired_prompt_replay_reports_decisions_and_authority_buckets()
     for prompt_name, _ in prompts:
         by_kind: dict[str, list[str]] = {"positive": [], "negative": [], "no_authority": []}
         for case_id, _, kind, authority_ref in CASES:
-            bucket = "negative" if kind == "negative" else (
-                "positive" if authority_ref else "no_authority"
+            bucket = (
+                "negative"
+                if kind == "negative"
+                else ("positive" if authority_ref else "no_authority")
             )
             by_kind[bucket].append(decisions[prompt_name][case_id])
         positive = by_kind["positive"]
@@ -126,10 +181,32 @@ def test_issue118_paired_prompt_replay_reports_decisions_and_authority_buckets()
         }
 
     print(json.dumps({"before_after": summary, "decisions": decisions}, ensure_ascii=False))
-    # This calibration set has no authority mappings yet. Refuse to imply AC1
-    # was measured from answerable-looking but unsupported cases.
-    assert all(row["authority_supported_positive_n"] == 0 for row in summary.values())
-    assert all(row["positive_standard_rate"] is None for row in summary.values())
+    # AC1 (measured, not prescribed): on the frozen authority-qualified EN/ZH
+    # calibration set the candidate prompt must route >= 90% of the positives
+    # to retrieval, and the paired baseline must show the pre-fix over-
+    # clarification it claims to fix (strict improvement, AC3).
+    for prompt_name, row in summary.items():
+        assert row["authority_supported_positive_n"] == sum(
+            kind == "positive" for _, _, kind, ref in CASES if ref
+        ), f"{prompt_name}: authority mapping drifted out of the AC1 denominator"
+        assert row["no_authority_n"] == sum(
+            1 for _, _, kind, ref in CASES if kind == "positive" and not ref
+        ), f"{prompt_name}: unmapped positives must stay in the separate no-authority bucket"
+    before_rate = summary["before"]["positive_standard_rate"]
+    after_rate = summary["after"]["positive_standard_rate"]
+    assert before_rate is not None and after_rate is not None, "replay produced no positive rate"
+    assert after_rate >= AC1_POSITIVE_STANDARD_GATE, (
+        f"AC1 unmet: candidate positive_standard_rate {after_rate:.2f} < {AC1_POSITIVE_STANDARD_GATE}"
+    )
+    assert after_rate > before_rate, (
+        f"AC3 unmet: candidate rate {after_rate:.2f} does not improve on baseline {before_rate:.2f}"
+    )
+    # AC2: the frozen indispensable-clarification negatives must still clarify
+    # under the candidate prompt (no forced disguise as grounded answers).
+    assert summary["after"]["negative_clarification_rate"] == 1.0, (
+        "AC2 unmet: a frozen negative lost its necessary clarification: "
+        + json.dumps(summary["after"], ensure_ascii=False)
+    )
 
 
 @pytest.mark.unit
@@ -137,4 +214,10 @@ def test_frozen_calibration_cases_cover_bilingual_positive_and_clarification_int
     assert {kind for _, _, kind, _ in CASES} == {"positive", "negative"}
     assert any(any("a" <= char.lower() <= "z" for char in query) for _, query, _, _ in CASES)
     assert any(any("\u4e00" <= char <= "\u9fff" for char in query) for _, query, _, _ in CASES)
-    assert all(authority_ref is None for _, _, _, authority_ref in CASES)
+    # Fail-closed authority eligibility: every mapped positive must cite a
+    # publicly authorized official source; an empty ref never enters AC1.
+    assert all(
+        authority_ref and any(authority_ref.startswith(host) for host in _OFFICIAL_AUTHORITY_HOSTS)
+        for _, _, kind, authority_ref in CASES
+        if kind == "positive"
+    ), "every AC1 positive must map to an official camthink authority source"
