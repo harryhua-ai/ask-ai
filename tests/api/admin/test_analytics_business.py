@@ -343,6 +343,120 @@ async def test_business_overview_timeseries_business_day_bucketing(business_seed
             await session.commit()
 
 
+async def test_daily_chart_window_from_to_is_business_day_bounds():
+    """from/to 日历日 → 业务日 [00:00 +08, 次日 00:00 +08) 右开有界(AC2 #117)。"""
+    from backend.api.admin.business import _daily_chart_window_utc
+
+    start, end = _daily_chart_window_utc(
+        "7d",
+        "2026-10-04",
+        "2026-10-04",
+        datetime(2026, 10, 13, 5, 0, tzinfo=UTC),
+    )
+    # 2026-10-04 业务日 = 2026-10-03T16:00Z 起,2026-10-04T16:00Z 止(右开)
+    assert start == datetime(2026, 10, 3, 16, 0, tzinfo=UTC)
+    assert end == datetime(2026, 10, 4, 16, 0, tzinfo=UTC)
+    # 右开端点:恰在次日 +08 午夜的对话不属于 to 业务日
+    assert datetime(2026, 10, 4, 16, 0, tzinfo=UTC) >= end
+
+
+async def test_daily_chart_window_today_is_shanghai_calendar_day():
+    """range=today(TimeFilter「今天」日历日语义)→ 当前业务日整天,非滚动 24h。"""
+    from backend.api.admin.business import _daily_chart_window_utc
+
+    # now = 2026-10-03T20:00Z:UTC 日期还是 10-03,业务日已是 10-04(04:00 +08)。
+    # 滚动 24h 会给 [10-02T20:00Z, 10-03T20:00Z) 两个残缺业务日桶;
+    # 日历日语义必须给 10-04 整天。
+    start, end = _daily_chart_window_utc(
+        "today", None, None, datetime(2026, 10, 3, 20, 0, tzinfo=UTC)
+    )
+    assert start == datetime(2026, 10, 3, 16, 0, tzinfo=UTC)  # 10-04 00:00 +08
+    assert end == datetime(2026, 10, 4, 16, 0, tzinfo=UTC)  # 10-05 00:00 +08
+
+
+async def test_daily_chart_window_default_range_rolling_unchanged():
+    """无 from/to 的普通 range 维持滚动窗 [now - N 天, now),与 KPI 端点一致。"""
+    from backend.api.admin.business import _daily_chart_window_utc
+
+    now = datetime(2026, 10, 13, 5, 0, tzinfo=UTC)
+    start, end = _daily_chart_window_utc("7d", None, None, now)
+    assert end == now
+    assert start == now - timedelta(days=7)
+
+
+async def test_business_overview_daily_chart_calendar_day_selection(business_seed):
+    """AC2(#117):日图表的日历日期选择(from/to)按 Asia/Shanghai 业务日解释。
+
+    复现 review blocker 2:from=2026-10-04&to=2026-10-04 旧实现按 UTC 午夜
+    解释为 [2026-10-04T00:00Z, 2026-10-04T00:00Z],生产样本
+    2026-10-03T18:30Z = 2026-10-04 02:30 +08 在新 timezone()/date_trunc()
+    分桶执行**之前**就被 WHERE 排除 → 业务日 10-04 整日消失。
+    修正语义(右开有界):from → 该业务日 00:00 +08 起;to → 该业务日次日
+    00:00 +08 止(恰在次日午夜的对话属下一业务日)。
+    共享测试库可能含其他真实数据 → 全部用播种前后的桶计数增量断言。
+    """
+    factory = app.state.session_factory
+
+    async def overview_snapshot():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get(
+                "/api/admin/business/overview?from=2026-10-04&to=2026-10-04",
+                headers=business_seed,
+            )
+        assert resp.status_code == 200
+        j = resp.json()
+        by_date = {e["date"]: e["total"] for e in j["timeseries"]}
+        return (
+            by_date.get("2026-10-04", 0),
+            by_date.get("2026-10-05", 0),
+            j["service"]["total"],
+        )
+
+    # (UTC 时刻, 是否应计入 10-04 业务日窗)
+    samples = [
+        (datetime(2026, 10, 3, 15, 59, 59, tzinfo=UTC), False),  # 10-03 23:59:59 +08
+        (datetime(2026, 10, 3, 16, 0, 0, tzinfo=UTC), True),  # 10-04 00:00:00 +08(左闭)
+        (datetime(2026, 10, 3, 18, 30, 0, tzinfo=UTC), True),  # 10-04 02:30:00 +08 生产消失样本
+        (datetime(2026, 10, 4, 15, 59, 59, tzinfo=UTC), True),  # 10-04 23:59:59 +08
+        (datetime(2026, 10, 4, 16, 0, 0, tzinfo=UTC), False),  # 10-05 00:00:00 +08(右开)
+    ]
+    seeded_questions = [f"biz_test_bd_{i}" for i in range(len(samples))]
+    try:
+        d0, day5_0, svc0 = await overview_snapshot()
+        async with factory() as session:
+            for q, (ts, _) in zip(seeded_questions, samples, strict=True):
+                session.add(
+                    Conversation(
+                        question=q,
+                        channel="widget",
+                        is_answered=True,
+                        intent_tag="commercial",
+                        created_at=ts,
+                    )
+                )
+            await session.commit()
+        d1, day5_1, svc1 = await overview_snapshot()
+        # 业务日 10-04 桶增量恰为 3:早间 02:30 +08 样本与整日边界都在
+        assert d1 - d0 == 3, (
+            f"10-04 业务日桶应恰增 3(含 10-04 02:30 +08 生产消失样本),实际 {d0}→{d1}"
+        )
+        # 右开有界:恰在 10-05 00:00 +08 的样本属下一业务日,且 to=10-04 的窗
+        # 止于次日午夜之前 → 该样本完全不出现在任何桶(10-05 桶增量 0)
+        assert day5_1 - day5_0 == 0, (
+            f"恰在 10-05 00:00 +08 的样本不得计入 to=10-04 窗(右开端点),实际 10-05 桶 {day5_0}→{day5_1}"
+        )
+        # KPI 语义守卫(review 决议:本 Candidate 不悄悄改变其他 KPI 的
+        # UTC 午夜过滤):service.total 不受业务日重解释影响,增量恒 0
+        # (样本无一恰落在 [10-04T00:00Z, 10-04T00:00Z] 空窗)。
+        assert svc1 == svc0, f"service.total 的 KPI 过滤语义应保持不变,实际 {svc0}→{svc1}"
+    finally:
+        async with factory() as session:
+            await session.execute(
+                Conversation.__table__.delete().where(Conversation.question.in_(seeded_questions))
+            )
+            await session.commit()
+
+
 async def test_hot_questions_by_intent(business_seed):
     """按 intent 过滤的 Top3 问题(按 question 文本聚合)。"""
     factory = app.state.session_factory

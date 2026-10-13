@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
+from datetime import timezone as _dt_timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -21,6 +22,53 @@ EditorDep = Annotated[CurrentUser, Depends(require_role("admin", "editor"))]
 # 00:00-08:00 对话计入前一 UTC 日,导致业务日整日消失(如 10-04 并入 10-03)。
 # 显式转换后分桶不再依赖会话时区。
 BUSINESS_TIMEZONE = "Asia/Shanghai"
+
+# Python 侧固定 +08 偏移:Asia/Shanghai 自 1991 年起无夏令时,对话分析窗口内
+# 固定偏移与 IANA 名等价,且不引入 tzdata 运行时依赖;SQL 侧仍用 IANA 名
+# (由 Postgres tzdata 解析)。
+BUSINESS_TZ = _dt_timezone(timedelta(hours=8))
+
+# range 预设 → 滚动窗天数。
+_RANGE_DAYS = {"today": 1, "7d": 7, "30d": 30, "90d": 90}
+
+
+def _daily_chart_window_utc(
+    range_name: str,
+    date_from: str | None,
+    date_to: str | None,
+    now: datetime,
+) -> tuple[datetime, datetime]:
+    """日图表(AC2 #117)时间窗:日历日期选择按 Asia/Shanghai 业务日解释。
+
+    - from/to(YYYY-MM-DD):from → 该业务日 00:00 +08 起;to → 该业务日次日
+      00:00 +08 止(**右开有界**:恰在次日午夜的对话属下一业务日)。
+      r1 缺陷:from/to 按 UTC 午夜解释,from=to=D 收缩为 [D 00:00Z, D 00:00Z],
+      生产样本 2026-10-03T18:30Z(= 10-04 02:30 +08)在 timezone()/date_trunc()
+      分桶执行之前就被 WHERE 排除,业务日整日消失。
+      只给其一,另一端维持默认滚动端点。
+    - range=today:TimeFilter「今天」是日历日语义 → 当前业务日整天,
+      而非滚动 24h(KPI 卡片维持滚动窗,见 PR 已知限制)。
+    - 其余 range:滚动窗 [now - N 天, now),与 KPI 端点一致。
+    返回 UTC (start, end),end 右开。
+    """
+    start = now - timedelta(days=_RANGE_DAYS.get(range_name, 7))
+    end = now
+    if date_from:
+        day = datetime.fromisoformat(date_from).date()
+        start = datetime(day.year, day.month, day.day, tzinfo=BUSINESS_TZ).astimezone(UTC)
+    if date_to:
+        day = datetime.fromisoformat(date_to).date()
+        day_start_utc = datetime(day.year, day.month, day.day, tzinfo=BUSINESS_TZ).astimezone(UTC)
+        end = day_start_utc + timedelta(days=1)
+    if range_name == "today" and not date_from and not date_to:
+        now_local = now.astimezone(BUSINESS_TZ)
+        day_start_local = datetime(
+            now_local.year, now_local.month, now_local.day, tzinfo=BUSINESS_TZ
+        )
+        start = day_start_local.astimezone(UTC)
+        end = day_start_local.astimezone(UTC) + timedelta(days=1)
+    return start, end
+
 
 # 已知 e2e 测试问题前缀(精确匹配)
 _TEST_QUESTION_PREFIXES = (
@@ -53,14 +101,20 @@ async def business_overview(
 ) -> dict[str, Any]:
     """返回业务概览:服务总览、销售线索、场景应用、产品需求、热门问题、地域。"""
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
-    days = {"today": 1, "7d": 7, "30d": 30, "90d": 90}.get(range, 7)
-    end = datetime.now(UTC)
+    now_utc = datetime.now(UTC)
+    days = _RANGE_DAYS.get(range, 7)
+    end = now_utc
     start = end - timedelta(days=days)
 
     if date_from:
         start = datetime.fromisoformat(date_from).replace(tzinfo=UTC)
     if date_to:
         end = datetime.fromisoformat(date_to).replace(tzinfo=UTC)
+
+    # AC2(#117):日图表的日历日期选择按业务日(Asia/Shanghai)解释,仅作用于
+    # timeseries 查询;其余 KPI 维持原 UTC 午夜过滤(review 决议:不悄悄改变
+    # 其他 KPI 过滤语义;图表/KPI 边界差异见 PR 已知限制)。
+    chart_start, chart_end = _daily_chart_window_utc(range, date_from, date_to, now_utc)
 
     # 上一同等长度时间窗(环比 prev_total/delta_pct)
     prev_end = start
@@ -216,7 +270,8 @@ async def business_overview(
             key=lambda x: -x["count"],
         )[:5]
 
-        # 时间序列(按业务日聚合对话量;#117:先转 Asia/Shanghai 再切日桶)
+        # 时间序列(按业务日聚合对话量;#117:先转 Asia/Shanghai 再切日桶;
+        # AC2:WHERE 也按业务日窗 [chart_start, chart_end) 右开,与分桶一致)
         daily_q = (
             select(
                 func.date_trunc(
@@ -225,7 +280,10 @@ async def business_overview(
                 func.count().label("cnt"),
                 Conversation.intent_tag,
             )
-            .where(Conversation.created_at >= start, Conversation.created_at <= end)
+            .where(
+                Conversation.created_at >= chart_start,
+                Conversation.created_at < chart_end,
+            )
             .group_by("day", Conversation.intent_tag)
         )
         daily_rows = (await session.execute(daily_q)).all()
