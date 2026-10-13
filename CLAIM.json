@@ -12,7 +12,39 @@
  "heartbeat_at": "2026-10-13T11:25:31Z",
  "supersedes": null,
  "contract_digest": "c35e9c9eec769367db44664b0717b2cc6e5336c4f2af0466e4237d4a608734e9",
- "candidate": null,
+ "candidate": {
+  "branch": "agent/124/bef87a7c",
+  "sha": "9c9fe7a455a9f01c7d66b4230c151628730608b0",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "admin/src/lib/api/businessOverview.ts": "ALLOWED",
+    "admin/src/lib/api/salesLeads.ts": "ALLOWED",
+    "admin/src/pages/BusinessOverview.tsx": "ALLOWED",
+    "admin/src/pages/SalesLeads.tsx": "ALLOWED",
+    "admin/tests/SalesLeads.test.tsx": "ALLOWED",
+    "backend/api/admin/business.py": "ALLOWED",
+    "backend/api/admin/leads.py": "ALLOWED",
+    "backend/db/models.py": "ALLOWED",
+    "backend/db/session.py": "ALLOWED",
+    "backend/services/lead_service.py": "ALLOWED",
+    "deploy/prod/migrations.json": "ALLOWED",
+    "reports/issue124-void-contact-candidate-20261013.md": "ALLOWED",
+    "scripts/migrate_add_sales_lead_contact_void.py": "ALLOWED",
+    "tests/api/admin/test_leads.py": "ALLOWED",
+    "tests/db/test_migrate_sales_lead_contact_void.py": "ALLOWED",
+    "tests/services/test_lead_service.py": "ALLOWED"
+   },
+   "violations": [],
+   "main_attributed_paths": [],
+   "counts": {
+    "ALLOWED": 16,
+    "FORBIDDEN": 0,
+    "MAIN_ATTRIBUTED": 0
+   }
+  },
+  "preserved_at": "2026-10-13T11:27:31Z"
+ },
  "runtime": {
   "digest": "743a713193def2e7afd5c9c614e05968a1ea50b2c6249d6c5ff219cbc5441096",
   "release": "v1.1.4",
