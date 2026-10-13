@@ -138,13 +138,15 @@ async def business_overview(
         # 等同于有效线索(LEAD-G010)。
         # - commercial_conversations:商业对话量(意图口径,≠线索);
         # - potential:窗口内新建线索(至少 potential 资格);
-        # - qualified:达到 qualified 及以上。#124 R2:资格**只由已作废联系
-        #   方式支撑**的 contact_captured 行退出合格档(不再冒充有效线索);
-        #   独立成立的 qualified / handed_off(购买意图/人工移交)不盲目降级;
+        # - qualified:达到 qualified 及以上;作废后仍按资格来源计入合格,
+        #   无来源证明的历史行单列 unknown_provenance,不猜测;
         # - contactable:已获得至少一种**有效**联系方式(#124:作废的不计入);
         # - handed_off:已人工移交销售;
         # - contact_voided:被授权管理员作废的联系方式数量(#124 AC2 单独统计)。
-        lead_q = select(SalesLead.status, SalesLead.contact_value, SalesLead.contact_voided).where(
+        lead_q = select(
+            SalesLead.status, SalesLead.contact_value, SalesLead.contact_voided,
+            SalesLead.qualification_provenance,
+        ).where(
             SalesLead.created_at >= start, SalesLead.created_at <= end
         )
         lead_rows = (await session.execute(lead_q)).all()
@@ -154,6 +156,15 @@ async def business_overview(
             for r in lead_rows
             if r.status in ("qualified", "handed_off")
             or (r.status == "contact_captured" and not r.contact_voided)
+            or (
+                r.status == "contact_captured"
+                and r.contact_voided
+                and r.qualification_provenance == "qualified_signal"
+            )
+        )
+        lead_unknown_provenance = sum(
+            1 for r in lead_rows
+            if r.status == "contact_captured" and r.contact_voided and r.qualification_provenance is None
         )
         lead_contactable = sum(1 for r in lead_rows if r.contact_value and not r.contact_voided)
         lead_handed_off = sum(1 for r in lead_rows if r.status == "handed_off")
@@ -300,6 +311,7 @@ async def business_overview(
             "contactable": lead_contactable,
             "handed_off": lead_handed_off,
             "contact_voided": lead_contact_voided,
+            "unknown_provenance": lead_unknown_provenance,
             "hot_products": hot_products,
         },
         "scenes": scenes,

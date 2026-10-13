@@ -9,10 +9,10 @@
 - POST /leads/{id}/void-contact  错误联系方式作废(仅 admin;明确确认 + 理由;
   原子首写审计(条件 CAS,并发不可覆盖);contact_value 原文永不擦除,#124)
 
-生效语义(#124 R2):raw status 只升不降、不可改写(历史审计);每行另暴露
-effective_status —— 已作废联系方式不再宣称「有效已留联」:仅靠联系方式抵达
-contact_captured 的行生效口径回落 potential,独立成立的 qualified/handed_off
-(购买意图/人工移交)不被盲目降级。列表/筛选/运营计数一律按生效口径。
+生效语义(#124 R3):raw status 只升不降、不可改写(历史审计);资格来源独立记账。
+作废联系方式不再宣称「有效已留联」;有 qualified 信号的行仍算 qualified,明确无
+qualified 信号的行回到 potential,历史来源不可证明的行单独标 unknown_provenance。
+列表/筛选/运营计数按此生效口径。
 
 隐私边界(HARD):联系方式原文与作废理由自由文本只经此只读管理面详情出库;
 列表视图仅回 contact_masked 与作废归因(操作人/时间),缩小 PII 暴露面。
@@ -69,13 +69,15 @@ def _iso(dt: datetime | None) -> str | None:
 def _effective_status(lead: SalesLead) -> str:
     """生效状态(#124 R2,AC2):运营视图/筛选/计数的口径。
 
-    raw status 只升不降且不可改写(不可变历史);作废仅使「资格只由该联系
-    方式支撑」的 contact_captured 行不再宣称有效已留联 → 生效回落 potential
-    (线索存在、意图未确证)。独立成立的 qualified / handed_off(购买意图、
-    人工移交是独立历史事实)不因作废联系方式被盲目降级。
+    raw status 只升不降且不可改写(不可变历史)。作废后以独立资格来源区分
+    qualified、potential 和历史 unknown;来源不明时不根据自由文本猜测。
     """
     if lead.contact_voided and lead.status == "contact_captured":
-        return "potential"
+        if lead.qualification_provenance == "qualified_signal":
+            return "qualified"
+        if lead.qualification_provenance == "no_qualified_signal":
+            return "potential"
+        return "unknown_provenance"
     return lead.status
 
 
@@ -86,6 +88,7 @@ def _serialize(lead: SalesLead, *, include_contact: bool) -> dict[str, Any]:
         "status": lead.status,
         # #124 R2:生效状态(运营口径);status 为不可变历史
         "effective_status": _effective_status(lead),
+        "qualification_provenance": lead.qualification_provenance,
         "contact_type": lead.contact_type,
         "contact_masked": lead.contact_masked,
         # #124:has_contact = 有效联系方式在档(作废的联系方式不算有效)
@@ -130,7 +133,7 @@ async def list_leads(
     _: ViewerDep,
     request: Request,
     status: str | None = Query(
-        default=None, pattern="^(potential|qualified|contact_captured|handed_off)$"
+        default=None, pattern="^(potential|qualified|contact_captured|handed_off|unknown_provenance)$"
     ),
     # #124:with = 有效联系方式在档(排除已作废);voided = 仅已作废(审计视图);
     # without = 从未捕获联系方式。三态互斥,完整划分。
@@ -142,8 +145,8 @@ async def list_leads(
     """线索列表(创建时间倒序)。列表视图不回联系方式原文/作废理由(PII 投影)。
 
     status 筛选按**生效状态**(#124 R2):status=contact_captured 排除已作废行
-    (不再宣称有效已留联);作废的 contact_captured 行按生效口径出现在
-    status=potential;raw 历史见每行 status 字段或 contact=voided 审计视图。
+    (不再宣称有效已留联);作废行按资格来源分别出现在 qualified / potential /
+    unknown_provenance;raw 历史见每行 status 字段或 contact=voided 审计视图。
     """
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
@@ -159,6 +162,26 @@ async def list_leads(
                     and_(
                         SalesLead.status == "contact_captured",
                         SalesLead.contact_voided.is_(True),
+                        SalesLead.qualification_provenance == "no_qualified_signal",
+                    ),
+                )
+            )
+        elif status == "unknown_provenance":
+            conds.append(
+                and_(
+                    SalesLead.status == "contact_captured",
+                    SalesLead.contact_voided.is_(True),
+                    SalesLead.qualification_provenance.is_(None),
+                )
+            )
+        elif status == "qualified":
+            conds.append(
+                or_(
+                    SalesLead.status == "qualified",
+                    and_(
+                        SalesLead.status == "contact_captured",
+                        SalesLead.contact_voided.is_(True),
+                        SalesLead.qualification_provenance == "qualified_signal",
                     ),
                 )
             )

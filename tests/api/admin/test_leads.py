@@ -89,6 +89,9 @@ async def leads_env():
             marker + "-ccok",
             marker + "-qv",
             marker + "-hv",
+            marker + "-r3-g002",
+            marker + "-r3-contact-only",
+            marker + "-r3-ambiguous",
         ):
             await session.execute(SalesLead.__table__.delete().where(SalesLead.session_id == sid))
         for role, uid in users.items():
@@ -512,6 +515,7 @@ async def test_voided_contact_captured_not_claimed_as_valid_captured(leads_env):
         factory,
         marker + "-ccv",
         status="contact_captured",
+        qualification_provenance="no_qualified_signal",
         contact_type="phone",
         contact_value="13800001111",
         contact_masked="138******11",
@@ -536,6 +540,7 @@ async def test_voided_contact_captured_not_claimed_as_valid_captured(leads_env):
         assert rv.status_code == 200
         r_cc = await client.get("/api/admin/leads?status=contact_captured", headers=viewer)
         r_pot = await client.get("/api/admin/leads?status=potential", headers=viewer)
+        r_unknown = await client.get("/api/admin/leads?status=unknown_provenance", headers=viewer)
         r_detail = await client.get(f"/api/admin/leads/{ccv_id}", headers=viewer)
 
     # 作废行退出 contact_captured 生效筛选;真实有效行不受影响
@@ -544,13 +549,15 @@ async def test_voided_contact_captured_not_claimed_as_valid_captured(leads_env):
     assert marker + "-ccok" in cc_sessions
     assert all(x["effective_status"] == "contact_captured" for x in r_cc.json()["leads"])
 
-    # 作废行落回 potential 生效档(仍审计可见,不凭空消失)
+    # 该测试行明确没有 qualified 信号,作废后回到 potential。
     pot_rows = [x for x in r_pot.json()["leads"] if x["session_id"] == marker + "-ccv"]
     assert len(pot_rows) == 1
     vrow = pot_rows[0]
     assert vrow["effective_status"] == "potential"
     assert vrow["status"] == "contact_captured"  # raw 历史不改写
     assert vrow["contact_voided"] is True
+    assert vrow["qualification_provenance"] == "no_qualified_signal"
+    assert marker + "-ccv" not in {x["session_id"] for x in r_unknown.json()["leads"]}
 
     # 详情:raw 历史保留 + 生效语义并存
     detail = r_detail.json()
@@ -568,6 +575,7 @@ async def test_funnel_qualified_drops_voided_contact_only_rows(leads_env):
         factory,
         marker + "-ccv",
         status="contact_captured",
+        qualification_provenance="no_qualified_signal",
         contact_type="phone",
         contact_value="13800002222",
         contact_masked="138******22",
@@ -611,6 +619,88 @@ async def test_funnel_qualified_drops_voided_contact_only_rows(leads_env):
     # 仅「资格只靠已作废联系方式」的 contact_captured 行退出合格档(恰好 -1);
     # qualified / handed_off 行作废联系方式后仍保有独立资格,不被盲目降级。
     assert leads["qualified"] == qualified_before - 1
+
+
+async def test_void_after_real_g002_lifecycle_preserves_qualification(leads_env):
+    """R3 AC2:真实 G002→留联与 contact-only 两轮路径作废后资格分流。"""
+    from backend.pipeline.lead_qualify import detect_contact
+    from backend.services.lead_service import apply_lead_turn, load_lead_context
+
+    marker = leads_env["marker"]
+    factory = app.state.session_factory
+
+    async def turn_payload(level: str, *, ran: bool = True) -> dict:
+        return {
+            "ran": ran, "level": level, "invited": False, "fields": {},
+            "summary": "", "explicit_sales_request": False,
+        }
+
+    ids = {}
+    for suffix, first_level in (("g002", "qualified"), ("contact-only", "none")):
+        sid = marker + "-r3-" + suffix
+        if suffix == "contact-only":
+            from backend.pipeline.lead_qualify import LeadTurnContext
+            first_ctx = LeadTurnContext(session_id=sid)
+            first_ctx.contact = detect_contact("联系我 buyer@example.com")
+            first_payload = await turn_payload("none", ran=False)
+        else:
+            first_ctx = await load_lead_context(factory, session_id=sid, raw_question="项目采购 500 台")
+            first_payload = await turn_payload(first_level)
+        lead_id = await apply_lead_turn(
+            factory, first_ctx, first_payload, conversation_id=uuid.uuid4(), session_id=sid
+        )
+        if suffix == "g002":
+            ctx = await load_lead_context(factory, session_id=sid, raw_question="buyer@example.com")
+            payload = await turn_payload("potential")
+            lead_id = await apply_lead_turn(
+                factory, ctx, payload, conversation_id=uuid.uuid4(), session_id=sid
+            )
+        ids[suffix] = str(lead_id)
+
+    # R2 之前的 contact_captured 行没有资格来源记录,必须明确呈现未知。
+    ids["ambiguous"] = await _seed(
+        factory, marker + "-r3-ambiguous", status="contact_captured",
+        contact_type="email", contact_value="legacy@example.com",
+        contact_masked="l***@example.com",
+    )
+
+    admin, viewer = leads_env["headers"]["admin"], leads_env["headers"]["viewer"]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for lead_id in ids.values():
+            result = await client.post(
+                f"/api/admin/leads/{lead_id}/void-contact",
+                json={"confirm": True, "reason": "invalid address"}, headers=admin,
+            )
+            assert result.status_code == 200
+        listed = await client.get("/api/admin/leads?contact=voided", headers=viewer)
+        qualified = await client.get("/api/admin/leads?status=qualified", headers=viewer)
+        potential = await client.get("/api/admin/leads?status=potential", headers=viewer)
+        unknown = await client.get("/api/admin/leads?status=unknown_provenance", headers=viewer)
+        overview = await client.get("/api/admin/business/overview?range=7d", headers=viewer)
+        detail = await client.get(f"/api/admin/leads/{ids['g002']}", headers=viewer)
+
+    rows = {row["session_id"]: row for row in listed.json()["leads"]}
+    g002 = rows[marker + "-r3-g002"]
+    contact_only = rows[marker + "-r3-contact-only"]
+    ambiguous = rows[marker + "-r3-ambiguous"]
+    assert g002["effective_status"] == "qualified"
+    assert contact_only["effective_status"] == "potential"
+    assert g002["status"] == contact_only["status"] == "contact_captured"
+    assert g002["contact_voided"] and contact_only["contact_voided"]
+    assert g002["qualification_provenance"] == "qualified_signal"
+    assert contact_only["qualification_provenance"] == "no_qualified_signal"
+    assert ambiguous["effective_status"] == "unknown_provenance"
+    assert marker + "-r3-ambiguous" in {r["session_id"] for r in unknown.json()["leads"]}
+    assert marker + "-r3-g002" in {r["session_id"] for r in qualified.json()["leads"]}
+    assert marker + "-r3-g002" not in {r["session_id"] for r in potential.json()["leads"]}
+    assert marker + "-r3-contact-only" in {r["session_id"] for r in potential.json()["leads"]}
+    assert marker + "-r3-contact-only" not in {r["session_id"] for r in qualified.json()["leads"]}
+    assert overview.json()["leads"]["qualified"] >= 1
+    assert overview.json()["leads"]["unknown_provenance"] >= 1
+    assert detail.json()["status"] == "contact_captured"
+    assert detail.json()["contact_voided"] is True
+    assert detail.json()["contact_voided_reason"] == "invalid address"
+    assert detail.json()["contact_value"] == "buyer@example.com"
 
 
 async def test_voided_reason_pii_minimized_in_list_projection(leads_env):

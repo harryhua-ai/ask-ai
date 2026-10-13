@@ -4,16 +4,17 @@ export type LeadStatus =
   | "potential"
   | "qualified"
   | "contact_captured"
-  | "handed_off";
+  | "handed_off"
+  | "unknown_provenance";
 
 export interface SalesLead {
   id: string;
   session_id: string | null;
   /** 不可变历史状态(只升不降,不改写) */
   status: LeadStatus;
-  /** 生效状态(#124 R2 运营口径):作废的 contact_captured 回落 potential,
-   *  独立成立的 qualified/handed_off 不因作废联系方式降级。徽章/筛选用此 */
+  /** 生效状态(#124):作废后的来源不明资格单独标记,不猜成 potential 或 qualified。 */
   effective_status: LeadStatus;
+  qualification_provenance: "qualified_signal" | "no_qualified_signal" | null;
   contact_type: string | null;
   contact_masked: string | null;
   /** 有效联系方式在档(#124:已作废的联系方式不计入) */

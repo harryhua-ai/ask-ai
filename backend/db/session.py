@@ -10,6 +10,7 @@
 from typing import Any
 
 from sqlalchemy import create_engine as _create_sync_engine
+from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -18,7 +19,6 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy import text
 
 from backend.db.models import Base
 
@@ -251,6 +251,18 @@ async def ensure_sales_lead_contact_void_columns(engine: AsyncEngine) -> None:
         )
 
 
+async def ensure_sales_lead_qualification_provenance_column(engine: AsyncEngine) -> None:
+    """为 sales_leads 加资格来源时间线列;NULL 保留历史来源未知,不回填。"""
+    async with engine.begin() as conn:
+        if await _table_column_exists(conn, "sales_leads", "qualification_provenance"):
+            return
+        await _execute_compat_ddl(
+            conn,
+            ("ALTER TABLE sales_leads ADD COLUMN IF NOT EXISTS qualification_provenance VARCHAR(30)",),
+            label="ensure_sales_lead_qualification_provenance_column",
+        )
+
+
 async def init_db(engine: AsyncEngine) -> None:
     """根据模型元数据创建所有表。
 
@@ -269,3 +281,4 @@ async def init_db(engine: AsyncEngine) -> None:
     await ensure_sync_delta_columns(engine)
     await ensure_sync_request_kind_column(engine)
     await ensure_sales_lead_contact_void_columns(engine)
+    await ensure_sales_lead_qualification_provenance_column(engine)

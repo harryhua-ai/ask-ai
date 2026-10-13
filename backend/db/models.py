@@ -875,6 +875,8 @@ class SalesLead(Base):
     # 线索线程键:widget 匿名会话 ID(一轮问不出联系方式、后续轮补充的场景靠它聚合)
     session_id: Mapped[str | None] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="potential", index=True)
+    # NULL = 历史来源未知;新写入路径标记 qualified_signal / no_qualified_signal。
+    qualification_provenance: Mapped[str | None] = mapped_column(String(30))
 
     # 联系方式(PII,仅此表持有原文;contact_value 最长 RFC 邮箱 320)
     contact_type: Mapped[str | None] = mapped_column(

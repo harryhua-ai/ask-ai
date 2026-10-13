@@ -181,6 +181,9 @@ async def apply_lead_turn(
             lead = SalesLead(
                 session_id=session_id,
                 status=status,
+                qualification_provenance=(
+                    "qualified_signal" if qual.level == "qualified" else "no_qualified_signal"
+                ),
                 source_conversation_id=conversation_id,
                 last_conversation_id=conversation_id,
                 channel=channel,
@@ -205,7 +208,13 @@ async def apply_lead_turn(
         # #124 AC3:contact_voided=true(管理员已作废)时同样靠「contact_value
         # 在档即不覆盖」保证作废记录不被自动聚合改写/复活 —— 作废不擦除原文,
         # 本守卫因此同时封死「换号码重写」与「作废后重新伪装有效」两条路径。
+        previous_status = existing.status
         existing.status = status
+        if qual.level == "qualified" or previous_status in ("qualified", "handed_off"):
+            existing.qualification_provenance = "qualified_signal"
+        elif existing.qualification_provenance is None and previous_status == "potential":
+            # 单调 raw lifecycle 可证明尚未到过 qualified,不从自由文本推断。
+            existing.qualification_provenance = "no_qualified_signal"
         for key, value in merged.items():
             setattr(existing, key, value)
         if summary:

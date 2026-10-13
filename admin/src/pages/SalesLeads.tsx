@@ -54,6 +54,7 @@ export const LEAD_STATUS_META: Record<
   qualified: { label: "合格线索", variant: "default" },
   contact_captured: { label: "已留联系方式", variant: "outline" },
   handed_off: { label: "已移交销售", variant: "destructive" },
+  unknown_provenance: { label: "资格来源待核实", variant: "secondary" },
 };
 
 export const LEAD_CONTACT_ICONS: Record<string, typeof Mail> = {
@@ -377,6 +378,7 @@ export default function SalesLeads() {
     "qualified",
     "contact_captured",
     "handed_off",
+    "unknown_provenance",
   ];
 
   return (

@@ -58,6 +58,8 @@ export interface BusinessOverviewData {
     handed_off: number;
     /** #124:被授权管理员作废的联系方式数量(单独统计,不冒充有效线索) */
     contact_voided: number;
+    /** 作废的 contact_captured 历史行缺少资格来源记录,需人工区分核实 */
+    unknown_provenance: number;
     hot_products: { name: string; count: number }[];
   };
   scenes: SceneItem[];

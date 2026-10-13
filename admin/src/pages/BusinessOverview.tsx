@@ -243,6 +243,14 @@ export default function BusinessOverview() {
                     {data.leads.qualified}
                   </span>
                 </div>
+                {data.leads.unknown_provenance > 0 && (
+                  <div className="flex justify-between text-[13px]">
+                    <span className="text-[var(--t3)]">资格来源待核实</span>
+                    <span className="font-medium text-[var(--t3)]">
+                      {data.leads.unknown_provenance}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between text-[13px]">
                   <span className="text-[var(--t2)]">可联系线索</span>
                   <span className="font-medium text-[var(--t1)]">
