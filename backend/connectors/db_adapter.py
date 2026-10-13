@@ -9,6 +9,7 @@ DB 层存的是 :class:`backend.db.models.DataSource`(SQLAlchemy ORM,config 列
 
 from backend.connectors.registry import SourceConfig
 from backend.db.models import DataSource
+from backend.services.source_visibility import visibility_for_source
 
 
 def to_source_config(ds: DataSource) -> SourceConfig:
@@ -33,5 +34,5 @@ def to_source_config(ds: DataSource) -> SourceConfig:
         config=ds.config,
         sync_interval=ds.sync_interval,
         branches=tuple(ds.config.get("branches", ())),
-        channel_visibility=tuple(ds.config.get("channel_visibility", ("widget", "api"))),
+        channel_visibility=visibility_for_source(ds.type, ds.config),
     )

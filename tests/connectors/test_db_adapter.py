@@ -103,3 +103,36 @@ def test_source_config_branches_default_empty():
         sync_interval="1h",
     )
     assert cfg.branches == ()
+
+
+@pytest.mark.unit
+def test_to_source_config_denies_ungranted_upload_source_but_keeps_explicit_api():
+    """Upload sources need an exact public grant; api remains a public channel."""
+    incident = DataSource(
+        id="knowledge-cb70f5ae",
+        type="filesystem",
+        product="knowledge",
+        enabled=True,
+        config={"upload_mode": True, "root_path": "/uploads/incident"},
+        sync_interval="24h",
+    )
+    new_upload = DataSource(
+        id="new-upload",
+        type="filesystem",
+        product="knowledge",
+        enabled=True,
+        config={"upload_mode": True, "root_path": "/uploads/new"},
+        sync_interval="24h",
+    )
+    explicitly_api = DataSource(
+        id="api-public-upload",
+        type="filesystem",
+        product="knowledge",
+        enabled=True,
+        config={"upload_mode": True, "channel_visibility": ["api"]},
+        sync_interval="24h",
+    )
+
+    assert to_source_config(incident).channel_visibility == ()
+    assert to_source_config(new_upload).channel_visibility == ()
+    assert to_source_config(explicitly_api).channel_visibility == ("api",)

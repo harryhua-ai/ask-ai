@@ -560,6 +560,8 @@ async def create_data_source(
     if req.type == "filesystem" and (req.config or {}).get("upload_mode"):
         # C9 上传模式:root_path 由服务端指向落盘目录,用户不可见不可手填
         req.config["root_path"] = str(UPLOADS_CORPUS_ROOT / source_id)
+        # 上传知识不因缺省配置自动公开;显式 widget/api grant 才可访客检索。
+        req.config.setdefault("channel_visibility", [])
     async with factory() as session:
         existing = await session.execute(select(DataSource).where(DataSource.id == source_id))
         if existing.scalar_one_or_none():
