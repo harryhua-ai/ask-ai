@@ -81,7 +81,7 @@ _TIMESTAMP_RE = re.compile(
     re.IGNORECASE,
 )
 _COMPACT_TECH_TIMESTAMP_RE = re.compile(
-    r"\b(?:timestamp|ts)\s*[:=]\s*\d{9,15}\b",
+    r"\b(?:timestamp|ts)\s*[:=]\s*\d{9,15}(?:Z|UTC)?\b",
     re.IGNORECASE,
 )
 _IPV4_RE = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])")

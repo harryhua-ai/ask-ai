@@ -383,3 +383,12 @@ def test_compact_keyed_timestamp_with_genuine_phone_still_captures_phone() -> No
 
     assert hit is not None and hit.type == "phone"
     assert "555" in hit.value and "0198" in hit.value
+
+
+def test_compact_keyed_timestamp_with_utc_marker_is_not_phone() -> None:
+    """A 第二轮 REQUEST_CHANGES：压缩时间戳带 Z/UTC 后缀同样不得判为电话。"""
+    assert detect_contact("timestamp=20261003151727Z camera timeout") is None
+    assert detect_contact("ts=202610031517UTC device reboot") is None
+    hit = detect_contact("ts=202610031517Z gateway drop, ring +1 202 555 0198")
+
+    assert hit is not None and hit.type == "phone"
