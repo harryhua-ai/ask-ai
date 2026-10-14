@@ -143,6 +143,14 @@ async def test_upload_only_knowledge_stays_in_generation_context_without_visitor
     assert "设备需要 12 V 电源" in prompt
     assert "后台上传资料" in prompt
     assert "后台上传资料」可以支持回答" in prompt
+    assert (
+        "## 后台上传资料(可用于回答;仅由此处支持的事实不得标注 [N] 或归因于可引用资料)"
+        in prompt
+    )
+    citable_context, upload_context = prompt.split("## 后台上传资料", 1)
+    assert "(无可引用资料)" in citable_context
+    assert "设备需要 12 V 电源" not in citable_context
+    assert "设备需要 12 V 电源" in upload_context
     assert "不可公开的内部文件名" not in prompt
     assert "upload-support/internal-guide.md" not in prompt
     assert "/srv/private/internal-guide.md" not in prompt
@@ -172,11 +180,25 @@ async def test_mixed_upload_and_public_sources_share_contiguous_visible_citation
         score=0.8,
         chunk_index=0,
     )
-    answer = "公开 Wiki 说明工作电压为 24 V [1]。\n安装前还应检查现场空间 [2]。"
+    public_second = SearchResult(
+        text="公开 Wiki 说明外壳防护等级为 IP65。",
+        source_id="wiki/main/docs/ne301/enclosure.md",
+        source_type="github",
+        product="ne301",
+        title="NE301 防护等级",
+        url="https://github.com/camthink-ai/wiki/blob/main/docs/ne301/enclosure.md",
+        score=0.75,
+        chunk_index=0,
+    )
+    answer = (
+        "公开 Wiki 说明工作电压为 24 V [1]。\n"
+        "安装前还应检查现场空间 [3]。\n"
+        "公开 Wiki 说明外壳防护等级为 IP65 [2]。"
+    )
     rag, llm = _build_orchestrator(
-        [upload, public],
+        [upload, public, public_second],
         answer=answer,
-        visibility_guard=_upload_aware_visibility_guard([upload, public]),
+        visibility_guard=_upload_aware_visibility_guard([upload, public, public_second]),
     )
 
     result = await rag.answer("供电和安装准备", "widget")
@@ -184,9 +206,10 @@ async def test_mixed_upload_and_public_sources_share_contiguous_visible_citation
     source_event = next(event for event in events if event["type"] == "sources")
     complete_event = next(event for event in events if event["type"] == "complete")
 
-    assert [source["title"] for source in result.sources] == ["NE301 供电说明"]
+    assert [source["title"] for source in result.sources] == ["NE301 供电说明", "NE301 防护等级"]
     assert "24 V [1]" in result.answer
-    assert "[2]" not in result.answer
+    assert "IP65 [2]" in result.answer
+    assert "[3]" not in result.answer
     assert source_event["sources"] == result.sources
     assert complete_event["sources"] == result.sources
     assert complete_event["answer"] == result.answer
@@ -197,8 +220,8 @@ async def test_mixed_upload_and_public_sources_share_contiguous_visible_citation
     )
     prompt = str(generation_messages)
     assert "[1] [GitHub] NE301 供电说明" in prompt
+    assert "[2] [GitHub] NE301 防护等级" in prompt
     assert "仅上传资料支持：安装前检查现场空间。" in prompt
-    assert "背景资料" in prompt
     citable_context, upload_context = prompt.split("## 后台上传资料", 1)
     assert "仅上传资料支持：安装前检查现场空间。" not in citable_context
     assert "仅上传资料支持：安装前检查现场空间。" in upload_context
@@ -258,7 +281,7 @@ async def test_non_upload_first_party_knowledge_case_keeps_existing_source_behav
 @pytest.mark.unit
 async def test_non_upload_internal_background_remains_context_only():
     internal = SearchResult(
-        text="内部背景信息，不作为访客回答依据。",
+        text="历史案例曾记录 NE101 旧版固件上电后重启。",
         source_id="internal-case/ne101/private.md",
         source_type="filesystem",
         product="knowledge",
@@ -270,7 +293,7 @@ async def test_non_upload_internal_background_remains_context_only():
     )
     rag, llm = _build_orchestrator([internal])
 
-    await rag.answer("NE101 案例", "widget")
+    result = await rag.answer("NE101 案例", "widget")
 
     generation_messages = next(
         call.args[0]
@@ -278,9 +301,11 @@ async def test_non_upload_internal_background_remains_context_only():
         if call.kwargs.get("task") == "generation"
     )
     prompt = str(generation_messages)
+    assert result.sources == []
     assert "## 背景资料(仅供理解上下文,禁止引用,严禁在其内容后标注 [N])" in prompt
-    assert "仅供理解上下文,禁止作为回答依据" in prompt
-    assert "内部背景信息，不作为访客回答依据。" in prompt
+    assert "「背景资料」仅供理解上下文,禁止引用" in prompt
+    assert "「背景资料」仅供理解上下文,禁止作为回答依据" not in prompt
+    assert "历史案例曾记录 NE101 旧版固件上电后重启。" in prompt
 
 
 @pytest.mark.unit
