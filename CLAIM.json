@@ -5,9 +5,9 @@
  "github_principal": "harryhua-ai",
  "executor_id": "harryhua-ai",
  "claimed_at": "2026-10-14T03:39:52Z",
- "lease_expires_at": "2026-10-14T04:05:24Z",
+ "lease_expires_at": "2026-10-14T04:00:44Z",
  "execution_base": "6ab2fc2f5bba2e816f839ff460beb81b7a22099e",
- "status": "active",
+ "status": "investigated",
  "branch": "agent/145/b84688be",
  "heartbeat_at": "2026-10-14T03:59:24Z",
  "supersedes": null,
@@ -17,5 +17,6 @@
   "digest": "743a713193def2e7afd5c9c614e05968a1ea50b2c6249d6c5ff219cbc5441096",
   "release": "v1.1.4",
   "source_sha": "49ce4bd886115b4e001005343d67a54d7ed5d57e"
- }
+ },
+ "note": "\u53ea\u8bfb\u53d6\u8bc1\u5b8c\u6210\uff1apre-pool PASS \u518d\u786e\u8ba4\u6210\u7acb\uff1b\u6700\u7ec8\u4fdd\u7559/\u5f15\u7528\u5c42 FAIL\u2014\u2014\u5b98\u65b9 Solution \u9875\u4e24\u8bed\u8a00\u5747\u672a\u8fdb\u6700\u7ec8 evidence/citation/streamed sources\uff1b\u7b2c\u4e00\u65b9 Case ZH \u672a\u4fdd\u7559\u3001EN \u4fdd\u7559\u672a\u5f15\u7528\u4e14\u90e8\u7f72\u8bc1\u660e\u58f0\u660e\u5f15\u7528\u5230\u5185\u90e8\u652f\u6301\u6848\u4f8b\u3002\u7f3a\u5931\u58f0\u660e/\u4ea7\u54c1\u9694\u79bb/citation-integrity gate PASS\u3002\u62a5\u544a\uff1areports/issue145-final-answer-evidence-20261014.md"
 }
