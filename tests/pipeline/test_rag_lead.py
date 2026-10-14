@@ -132,6 +132,199 @@ async def test_potential_no_invite():
 
 
 @pytest.mark.unit
+async def test_bulk_pricing_is_qualified_even_when_llm_says_none():
+    llm, _ = _make_lead_llm(
+        intent="commercial", qualification=json.dumps({"lead_level": "none"})
+    )
+    rag = _make_rag(llm)
+    events = await _collect(rag, "What are your bulk prices?", lead_ctx=_ctx())
+    assert events[-1]["lead"]["level"] == "qualified"
+    assert events[-1]["lead"]["invited"] is True
+    assert events[-1]["trace_payload"]["stages"]["lead"]["qualification_status"] == "fallback"
+
+
+@pytest.mark.unit
+async def test_bulk_pricing_does_not_use_deterministic_fallback_when_qualifier_fails():
+    llm, _ = _make_lead_llm(intent="commercial")
+    original_generate = llm.generate
+
+    async def _generate(messages, **kwargs):
+        if kwargs.get("task") == "lead_qualification":
+            raise RuntimeError("qualifier unavailable")
+        return await original_generate(messages, **kwargs)
+
+    llm.generate = AsyncMock(side_effect=_generate)
+    rag = _make_rag(llm)
+    events = await _collect(rag, "What are your bulk prices?", lead_ctx=_ctx())
+    assert events[-1]["lead"]["ran"] is False
+    assert events[-1]["lead"]["level"] == "none"
+    assert events[-1]["lead"]["invited"] is False
+    assert events[-1]["trace_payload"]["stages"]["lead"]["qualification_status"] == "failed"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "query",
+    [
+        "What are your bulk prices?",
+        "Price for 120 pcs?",
+        "Please provide a formal quotation for our project",
+        "We have a project requirement for warehouse deployment",
+        "We are looking for a distributor partnership",
+        "We will purchase next quarter",
+        "We will purchase, next quarter",
+        "我们计划采购, 时间是下季度",
+        "我们计划采购，时间是下季度",
+        'Please translate "We will purchase, next quarter", but we will purchase, next month.',
+        'Please translate "We will purchase, next quarter". But we will purchase, next month.',
+        '请翻译“我们计划采购，时间是下季度”，但是我们计划采购，时间是下月。',
+        '请翻译“我们计划采购，时间是下季度”。但是我们计划采购，时间是下月。',
+        "We need 120 pcs. How does a distributor partnership work?",
+        "We need 120 pcs. 经销合作是什么意思？",
+        "We will purchase next quarter. What does distributor partnership mean?",
+        "We will purchase, next quarter, and what does distributor partnership mean?",
+        "我们计划采购, 时间是下季度, 而且“经销合作”是什么意思？",
+        "We need 120 pcs, and please quote the source code example for integration.",
+    ],
+)
+async def test_strong_purchase_signals_still_qualify_and_invite_after_answer(query):
+    llm, streamed = _make_lead_llm(
+        intent="commercial", qualification=json.dumps({"lead_level": "none"})
+    )
+    rag = _make_rag(llm)
+    events = await _collect(rag, query, lead_ctx=_ctx())
+    assert events[-1]["is_answered"] is True
+    assert events[-1]["lead"]["level"] == "qualified"
+    assert events[-1]["lead"]["invited"] is True
+    assert LEAD_INVITE_INSTRUCTION in streamed[-1][0]["content"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Can I buy in Chile?",
+        "Where can I buy in Australia?",
+        "Quote from the user manual",
+        "Please quote the source code",
+        "What is the purchase timeline?",
+        "采购时间表是什么？",
+        'What does "We will purchase, next quarter" mean?',
+        'Please quote the user manual: "We will purchase, next quarter".',
+        '“我们计划采购, 时间是下季度”是什么意思？',
+        "Please translate the phrase We will purchase, next quarter into Chinese.",
+        "How do you say we will purchase next quarter in Chinese?",
+        "请翻译“我们计划采购，时间是下季度”为英文。",
+        "Please quote the user manual: We will purchase, next quarter.",
+        "Please translate We will purchase, next quarter.",
+        "How do you say We will purchase, next quarter?",
+        "请翻译我们计划采购，时间是下季度。",
+    ],
+)
+async def test_information_queries_with_purchase_words_do_not_upgrade_or_invite(query):
+    llm, streamed = _make_lead_llm(
+        intent="commercial", qualification=json.dumps({"lead_level": "none"})
+    )
+    rag = _make_rag(llm)
+    events = await _collect(rag, query, lead_ctx=_ctx())
+    assert events[-1]["lead"]["level"] == "none"
+    assert events[-1]["lead"]["invited"] is False
+    assert LEAD_INVITE_INSTRUCTION not in streamed[-1][0]["content"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Can I buy in Chile?",
+        "Where can I buy in Australia?",
+        "Please quote the source code",
+        "What is the purchase timeline?",
+    ],
+)
+async def test_information_query_qualifier_failure_does_not_use_purchase_fallback(query):
+    llm, _ = _make_lead_llm(intent="commercial")
+    original_generate = llm.generate
+
+    async def _generate(messages, **kwargs):
+        if kwargs.get("task") == "lead_qualification":
+            raise RuntimeError("qualifier unavailable")
+        return await original_generate(messages, **kwargs)
+
+    llm.generate = AsyncMock(side_effect=_generate)
+    rag = _make_rag(llm)
+    events = await _collect(rag, query, lead_ctx=_ctx())
+    assert events[-1]["lead"]["level"] == "none"
+    assert events[-1]["lead"]["invited"] is False
+    assert events[-1]["lead"]["ran"] is False
+
+
+@pytest.mark.unit
+async def test_qualification_trace_distinguishes_failure_from_real_none():
+    llm, _ = _make_lead_llm(intent="commercial", qualification="not json")
+    rag = _make_rag(llm)
+    failed = await _collect(rag, "What is NE503?", lead_ctx=_ctx())
+    failed_stage = failed[-1]["trace_payload"]["stages"]["lead"]
+    assert failed_stage["qualification_status"] == "failed"
+
+    llm, _ = _make_lead_llm(intent="commercial", qualification=json.dumps({"lead_level": "none"}))
+    rag = _make_rag(llm)
+    none = await _collect(rag, "What is NE503?", lead_ctx=_ctx())
+    none_stage = none[-1]["trace_payload"]["stages"]["lead"]
+    assert none_stage["qualification_status"] == "completed"
+    assert none_stage["level"] == "none"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_clarification_path_records_purchase_qualification(monkeypatch, streaming):
+    from backend.pipeline import rag as rag_module
+    from backend.pipeline.task_understanding import MODE_CLARIFICATION, TaskUnderstanding
+
+    async def _clarify(*args, **kwargs):
+        return TaskUnderstanding(
+            category="commercial",
+            interaction_mode=MODE_CLARIFICATION,
+            extracted_query="What are your bulk prices?",
+            rewritten_query="What are your bulk prices?",
+        )
+
+    monkeypatch.setattr(rag_module, "understand_task", _clarify)
+    llm, _ = _make_lead_llm(intent="commercial")
+    rag = _make_rag(llm)
+    if streaming:
+        events = await _collect(rag, "What are your bulk prices?", lead_ctx=_ctx())
+        trace = events[-1]["trace_payload"]
+    else:
+        answer = await rag.answer("What are your bulk prices?", "widget", lead_ctx=_ctx())
+        trace = answer.trace_payload
+    assert trace["stages"]["lead"]["level"] == "qualified"
+    assert trace["stages"]["lead"]["instruction"] is None
+
+
+@pytest.mark.unit
+async def test_ineligible_support_turn_has_explainable_lead_skip(monkeypatch):
+    from backend.pipeline import rag as rag_module
+    from backend.pipeline.task_understanding import MODE_STANDARD, TaskUnderstanding
+
+    async def _support(*args, **kwargs):
+        return TaskUnderstanding(
+            category="support",
+            interaction_mode=MODE_STANDARD,
+            extracted_query="NE301 firmware issue",
+            rewritten_query="NE301 firmware issue",
+        )
+
+    monkeypatch.setattr(rag_module, "understand_task", _support)
+    llm, _ = _make_lead_llm(intent="support")
+    rag = _make_rag(llm)
+    answer = await rag.answer("NE301 firmware issue", "widget", lead_ctx=_ctx())
+    stage = answer.trace_payload["stages"]["lead"]
+    assert stage["qualification_status"] == "skipped"
+    assert stage["skip_reason"] == "intent_not_eligible"
+
+
+@pytest.mark.unit
 async def test_one_proactive_ask_second_turn_no_reinvite():
     """G005:已邀请过(prompt_count=1)且无更强信号 → 不再邀请。"""
     llm, _ = _make_lead_llm(intent="commercial")
@@ -220,6 +413,13 @@ async def test_reject_path_still_reports_lead_payload():
     assert complete["is_answered"] is False
     assert complete["lead"]["level"] == "qualified"
     assert complete["lead"]["invited"] is False
+    assert complete["trace_payload"]["stages"]["lead"]["qualification_status"] == "completed"
+
+    llm, _ = _make_lead_llm(intent="commercial")
+    rag = _make_rag(llm, results=[])
+    rag._reranker.rerank.return_value = []
+    result = await rag.answer("请报 500 台的价格", "widget", lead_ctx=_ctx())
+    assert result.trace_payload["stages"]["lead"]["level"] == "qualified"
 
 
 @pytest.mark.unit
@@ -244,7 +444,7 @@ async def test_sync_answer_parity_invite():
     rag = _make_rag(llm)
     result = await rag.answer("批量采购请报价", "widget", lead_ctx=_ctx())
     assert result.is_answered is True
-    gen_call = [c for c in llm.generate.call_args_list if c.kwargs.get("task") == "generation"][0]
+    gen_call = next(c for c in llm.generate.call_args_list if c.kwargs.get("task") == "generation")
     assert LEAD_INVITE_INSTRUCTION in gen_call.args[0][0]["content"]
     assert "lead" in result.trace_payload["stages"]
 

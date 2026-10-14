@@ -23,6 +23,7 @@ from backend.pipeline.lead_qualify import (
     compute_status,
     decide_invite,
     detect_contact,
+    explicit_purchase_signal,
     explicit_sales_hint,
     mask_contact_value,
     parse_qualification,
@@ -319,6 +320,69 @@ def test_hint_negative() -> None:
     assert explicit_sales_hint("NE503 有什么接口?") is False
     assert explicit_sales_hint("NE503 多少钱?") is False
     assert explicit_sales_hint("what is the price of NE301?") is False
+
+
+def test_explicit_purchase_signals_are_qualified_without_promoting_information_queries() -> None:
+    for query in (
+        "What are your bulk prices?",
+        "We need 120 pcs",
+        "price for 120 ps?",
+        "Please provide a formal quotation for our project",
+        "Please send an official price quote",
+        "We will purchase next quarter",
+        "We will purchase, next quarter",
+        "We expect to buy within 3 months",
+        "We are looking for a distributor partnership",
+        "We are requesting a distributor partnership for our project and will place initial orders this quarter",
+        "We need 120 pcs. How does a distributor partnership work?",
+        "We need 120 pcs. 经销合作是什么意思？",
+        "We will purchase next quarter. What does distributor partnership mean?",
+        "We will purchase, next quarter, and what does distributor partnership mean?",
+        "We need 120 pcs, and please quote the source code example for integration.",
+        "我们计划采购，时间是下季度",
+        "我们计划采购, 时间是下季度, 而且“经销合作”是什么意思？",
+        "我们计划采购, 时间是下季度",
+        "我们计划采购，时间是下季度",
+        'Please translate "We will purchase, next quarter", but we will purchase, next month.',
+        'Please translate "We will purchase, next quarter". But we will purchase, next month.',
+        '请翻译“我们计划采购，时间是下季度”，但是我们计划采购，时间是下月。',
+        '请翻译“我们计划采购，时间是下季度”。但是我们计划采购，时间是下月。',
+        "请给 120 台正式报价",
+        "请给我们正式报价",
+        "我们需要项目经销合作，请联系销售",
+    ):
+        assert explicit_purchase_signal(query) is True
+    for query in (
+        "How much is NE503?",
+        "Send me the product link",
+        "Is there a subscription fee?",
+        "What does distributor mean?",
+        "Does the device support 120 units?",
+        "Can I buy in Chile?",
+        "Where can I buy in Australia?",
+        "Quote from the user manual",
+        "Please quote the source code",
+        "What is the purchase timeline?",
+        "采购时间表是什么？",
+        "What is this project for?",
+        "How do I create a project for NE101?",
+        "How does a distributor partnership work?",
+        "What does distributor inquiry mean?",
+        "我想了解项目需求是什么意思？",
+        "请报价是什么意思？",
+        "I want a formal quote from the user manual",
+        'What does "We will purchase, next quarter" mean?',
+        'Please quote the user manual: "We will purchase, next quarter".',
+        '“我们计划采购, 时间是下季度”是什么意思？',
+        "Please translate the phrase We will purchase, next quarter into Chinese.",
+        "How do you say we will purchase next quarter in Chinese?",
+        "请翻译“我们计划采购，时间是下季度”为英文。",
+        "Please quote the user manual: We will purchase, next quarter.",
+        "Please translate We will purchase, next quarter.",
+        "How do you say We will purchase, next quarter?",
+        "请翻译我们计划采购，时间是下季度。",
+    ):
+        assert explicit_purchase_signal(query) is False
 
 
 # --------------------------------------------------------------------------- #

@@ -196,12 +196,131 @@ _EXPLICIT_SALES_RE = re.compile(
     re.IGNORECASE,
 )
 
+# G002 strong purchase signals. Kept separate from explicit_sales_hint because
+# purchase qualification permits an invitation after the answer, while an
+# explicit sales-contact request has its own deterministic invite semantics.
+_EXPLICIT_PURCHASE_RE = re.compile(
+    r"\bbulk\s+(?:pricing|prices|order|purchase)\b"
+    r"|\b(?:need|require|order|purchase|buy|quote|price for|pricing for)"
+    r".{0,32}\b\d[\d,]*\s*(?:pcs?|ps|pieces?|units?|devices?)\b"
+    r"|(?:需要|采购|订购|购买|报价).{0,12}\d[\d,]*\s*(?:台|件|个|套)"
+    r"|\b(?:project|deployment)\s+(?:requirement|needs?|for|of)\b"
+    r"|\b(?:distributor|reseller|integrator)\s+(?:partnership|cooperation|opportunity)\b"
+    r"|\binterested in (?:becoming|working as) (?:a )?(?:distributor|reseller|integrator)\b"
+    r"|\b(?:i|we)\s+(?:plan|intend|expect|will)\s+(?:to\s+)?(?:purchase|buy|order)\s+(?:by|in|next|this|within)\b"
+    r"|\b(?:request|need|want|provide|send|prepare|get|obtain).{0,24}\b(?:formal|official)\s+quote\b"
+    r"|\b(?:request|need|want|provide|send|prepare|get|obtain).{0,24}\b(?:quotation|price\s+quote)\b"
+    r"|\b(?:formal|official)\s+(?:quotation|quote|price\s+quote)\b"
+    r"|批量(?:价格|报价|采购)"
+    r"|(?:项目采购|经销合作|代理合作|正式报价)"
+    r"|(?:我|我们).{0,8}(?:计划|打算|预计|将).{0,8}(?:采购|购买|订购).{0,8}(?:下?周|下?月|下?季度|本年|今年|明年|\d+[天日周月季度年]内)",
+    re.IGNORECASE,
+)
+
+# A comma may separate a purchase commitment from its deadline. Keep this
+# narrow: only a direct plan/intent/expect/will purchase phrase followed by a
+# time window is joined across comma-style punctuation.
+_PURCHASE_TIMELINE_RE = re.compile(
+    r"\b(?:i|we)\s+(?:plan|intend|expect|will)\s+(?:to\s+)?"
+    r"(?:purchase|buy|order)\s*,?\s*(?:by|in|next|this|within)\b"
+    r"|(?:我|我们).{0,8}(?:计划|打算|预计|将).{0,8}(?:采购|购买|订购)"
+    r"\s*[,，]?\s*(?:时间(?:是|为)?|交期(?:是)?)?\s*"
+    r"(?:下?周|下?月|下?季度|本年|今年|明年|\d+[天日周月季度年]内)",
+    re.IGNORECASE,
+)
+
 
 def explicit_sales_hint(text: str) -> bool:
     """确定性判断用户消息是否明确要求销售联系/正式报价(安全网,LLM 之外)。"""
     if not text:
         return False
     return bool(_EXPLICIT_SALES_RE.search(text))
+
+
+def explicit_purchase_signal(text: str) -> bool:
+    """Deterministic G002 safety net for unambiguous strong purchase signals."""
+    if not text:
+        return False
+    # Keep informational/documentation vetoes local to the clause they describe;
+    # a separate purchase commitment in the same message remains actionable.
+    clause_separator = re.compile(
+        r"[.!?。！？;；,，]|\b(?:and|but|while|whereas)\b|(?:并且|但是|而且|同时)",
+        re.IGNORECASE,
+    )
+    explanation_clause = re.compile(
+        r"(?:\bwhat\s+(?:is|does|do)\b|\bhow\s+(?:does|do)\b).{0,100}"
+        r"\b(?:mean|work|for|inquiry|partnership)\b"
+        r"|\bhow\s+(?:do|can)\s+i\s+.{0,60}\b(?:project|deployment)\s+(?:for|of)\b"
+        r"|(?:是什么意思|是指什么|怎么(?:理解|运作|工作))",
+        re.IGNORECASE,
+    )
+    documentation_clause = re.compile(
+        r"\bfrom\s+(?:the\s+)?(?:user\s+manual|manual|documentation|source\s+code|wiki)\b"
+        r"|\bquote\s+(?:the\s+)?(?:user\s+manual|manual|documentation|source\s+code|wiki)\b"
+        r"|(?:来自|根据)(?:用户)?(?:手册|文档|源码)|(?:引用|摘录)(?:用户)?(?:手册|文档|源码)",
+        re.IGNORECASE,
+    )
+    # A framework verb scopes only over its object. The object ends at a
+    # sentence boundary or an explicit coordinating clause boundary; language
+    # names and quote marks are optional and do not determine the scope.
+    framework_verb = re.compile(
+        r"\b(?:please\s+)?(?:quote|cite|translate|paraphrase|explain)\b"
+        r"|\bhow\s+do\s+you\s+say\b"
+        r"|\bwhat\s+does\b"
+        r"|(?:请)?(?:引用|摘录|翻译|解释|转述)",
+        re.IGNORECASE,
+    )
+    object_boundary = re.compile(
+        r"\b(?:and|but|while|whereas)\b|(?:并且|但是|而且|同时)|[.!?。！？;；]",
+        re.IGNORECASE,
+    )
+
+    def timeline_is_vetoed(sentence: str, start: int, end: int) -> bool:
+        # A quoted commitment is an object of discussion, not the user's own
+        # purchase intent. Check common paired quote marks around this match.
+        quote_pairs = (("\"", "\""), ("'", "'"), ("“", "”"), ("「", "」"))
+        for opening, closing in quote_pairs:
+            left = sentence.rfind(opening, 0, start + 1)
+            right = sentence.find(closing, end - 1)
+            if left >= 0 and right >= end - 1:
+                return True
+        # Any recognized framework verb makes its following object
+        # non-actionable. A later independent clause remains outside that span.
+        for frame in framework_verb.finditer(sentence):
+            object_start = frame.end()
+            object_end = len(sentence)
+            boundary = object_boundary.search(sentence, object_start)
+            if boundary:
+                object_end = boundary.start()
+            if frame.group(0).lower().endswith("does"):
+                meaning = re.search(r"\bmean\b", sentence[object_start:], re.IGNORECASE)
+                if meaning:
+                    object_end = min(object_end, object_start + meaning.start())
+            if object_start <= start and end <= object_end:
+                return True
+        # Chinese postposed question frames scope over the preceding phrase.
+        if re.search(r"(?:是什么意思|是指什么|怎么翻译|什么意思)", sentence[end:]):
+            prefix = sentence[:start]
+            if re.search(r"(?:翻译|解释|引用|转述|这句|短语|phrase)", prefix, re.IGNORECASE):
+                return True
+        return False
+
+    # The comma-joined matcher spans only the commitment and its deadline.
+    # Apply quote/explanation vetoes to that local sentence before accepting it.
+    for sentence in re.split(r"(?<=[.!?。！？;；])\s*", text):
+        for match in _PURCHASE_TIMELINE_RE.finditer(sentence):
+            if not timeline_is_vetoed(sentence, match.start(), match.end()):
+                return True
+    clause_start = 0
+    for separator in list(clause_separator.finditer(text)) + [None]:
+        clause_end = separator.start() if separator else len(text)
+        clause = text[clause_start:clause_end]
+        if not explanation_clause.search(clause) and not documentation_clause.search(clause):
+            match = _EXPLICIT_PURCHASE_RE.search(clause)
+            if match and not timeline_is_vetoed(clause, match.start(), match.end()):
+                return True
+        clause_start = separator.end() if separator else len(text)
+    return False
 
 
 # --------------------------------------------------------------------------- #
@@ -239,6 +358,7 @@ class LeadQualification:
     fields: LeadFields = field(default_factory=LeadFields)
     summary: str = ""
     ran: bool = False  # 便于上层区分「判定过但 none」与「判定失败/未判定」
+    source: str = "model"  # model | deterministic_g002
 
 
 _QUALIFIER_SYSTEM_PROMPT = """你是 B2B 硬件公司 CamThink 的销售线索资格判定器。根据「当前用户消息」和「近期对话」,判定商业采购信号强度并提取用户自愿提供的商业信息。
