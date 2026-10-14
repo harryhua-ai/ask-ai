@@ -15,6 +15,7 @@
         "scripts/migrate_add_ingestion_exclusions.py",
         "scripts/migrate_add_country_truth.py",
         "scripts/migrate_add_zero_semantic_chunks.py",
-        "scripts/migrate_add_sales_lead_contact_void.py"
+        "scripts/migrate_add_sales_lead_contact_void.py",
+        "scripts/migrate_add_sales_lead_qualification_provenance.py"
     ]
 }
