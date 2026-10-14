@@ -7,7 +7,7 @@
  "claimed_at": "2026-10-14T02:40:08Z",
  "lease_expires_at": "2026-10-14T03:06:14Z",
  "execution_base": "34f48cfd4b6294bbb2da6b9efa599091fba294d6",
- "status": "active",
+ "status": "delivered",
  "branch": "agent/141/f9f8b81c",
  "heartbeat_at": "2026-10-14T03:00:14Z",
  "supersedes": null,
@@ -41,5 +41,12 @@
   "sha": "c67847359786d96d69bfcaa7bc9d8935aa7cdae7",
   "note": "",
   "delivered_at": "2026-10-14T03:00:49Z"
+ },
+ "completed": {
+  "pr": 143,
+  "merge_commit": "6ab2fc2f5bba2e816f839ff460beb81b7a22099e",
+  "candidate_sha": "c67847359786d96d69bfcaa7bc9d8935aa7cdae7",
+  "completed_by": "ght-complete-workflow",
+  "completed_at": "2026-10-14T03:24:09Z"
  }
 }
