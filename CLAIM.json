@@ -5,9 +5,9 @@
  "github_principal": "harryhua-ai",
  "executor_id": "harryhua-ai",
  "claimed_at": "2026-10-14T03:20:56Z",
- "lease_expires_at": "2026-10-14T03:42:58Z",
+ "lease_expires_at": "2026-10-14T03:38:46Z",
  "execution_base": "34f48cfd4b6294bbb2da6b9efa599091fba294d6",
- "status": "active",
+ "status": "investigated",
  "branch": "agent/144/505bdd36",
  "heartbeat_at": "2026-10-14T03:36:58Z",
  "supersedes": null,
@@ -17,5 +17,6 @@
   "digest": "743a713193def2e7afd5c9c614e05968a1ea50b2c6249d6c5ff219cbc5441096",
   "release": "v1.1.4",
   "source_sha": "49ce4bd886115b4e001005343d67a54d7ed5d57e"
- }
+ },
+ "note": "RCA(#144/#114): \u751f\u4ea7 country/country_source \u5168 NULL \u6839\u56e0=CONFIG_OFF \u5df2\u8bc1\u2014\u2014\u4e09\u9879 ingress \u914d\u7f6e(COUNTRY_RESOLUTION_MODE/COUNTRY_INGRESS_HEADER/GEO_TRUSTED_PROXY_CIDRS)\u4ece\u672a\u6ce8\u5165\u751f\u4ea7\u5bb9\u5668(\u8fd0\u884c\u6001 introspection: off/\u672a\u914d/0\u6761),\u5224\u5b9a\u94fe\u7b2c\u4e00\u95e8\u5373\u77ed\u8def\u8fd4\u56de(None,None);\u5171\u65ad\u5c42:nginx \u5168\u673a\u96f6 geo \u5934 set \u6307\u4ee4\u3001\u76f4\u8fde peer=\u5bbf\u4e3b\u7f51\u6865\u7f51\u5173\u800c allowlist \u7a7a\u3002#68 \u4ee3\u7801\u63a5\u7ebf\u5728\u751f\u4ea7 SHA 8052b358 \u5728\u4f4d,\u65e0\u4ee3\u7801\u7f3a\u9677;\u6301\u4e45\u5c42\u6392\u9664(\u5217\u5b58\u5728\u30011622 \u884c\u5747\u5300 NULL\u3001\u96f6 'ingress' \u53f2)\u3002\u8131\u654f\u62a5\u544a: reports/issue144-country-attribution-rca-20261014.md"
 }
