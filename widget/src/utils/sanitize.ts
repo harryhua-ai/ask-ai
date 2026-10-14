@@ -65,54 +65,58 @@ export function renderMarkdownSafe(text: string, sources?: SourceLink[]): string
   html = html.replace(/^#{1,6} (.+)$/gm, "<h4>$1</h4>");
   html = html.replace(/^- (.+)$/gm, "<li>$1</li>");
   html = html.replace(/((?:<li>.+<\/li>\n?)+)/g, (m) => `<ul>${m.trim().replace(/\n/g, "")}</ul>`);
-  if (sources && sources.length > 0) {
-    const lines = html.split("\n");
-    // CIT-01:代码块(<pre><code>)内的 [N] 是数组下标等代码内容,不是引用
-    // 标记——整块跳过,防止引用处理吞掉代码内容或误挂徽标。
-    let inPre = false;
-    html = lines.map((line) => {
-      if (!inPre && line.includes("<pre>")) {
-        if (!line.includes("</pre>")) inPre = true;
-        return line;
-      }
-      if (inPre) {
-        if (line.includes("</pre>")) inPre = false;
-        return line;
-      }
-      const found = new Set<number>();
-      const cleaned = line.replace(/\[(\d+)\]/g, (_, n: string) => {
+  const visibleSources = sources ?? [];
+  const lines = html.split("\n");
+  // CIT-01:代码块(<pre><code>)内的 [N] 是数组下标等代码内容,不是引用
+  // 标记——整块跳过,防止引用处理吞掉代码内容或误挂徽标。
+  let inPre = false;
+  html = lines.map((line) => {
+    if (!inPre && line.includes("<pre>")) {
+      if (!line.includes("</pre>")) inPre = true;
+      return line;
+    }
+    if (inPre) {
+      if (line.includes("</pre>")) inPre = false;
+      return line;
+    }
+    const found = new Set<number>();
+    const cleanCitationMarkers = (text: string) =>
+      text.replace(/\[(\d+)\]/g, (_, n: string) => {
         const idx = parseInt(n, 10) - 1;
-        if (sources[idx]) found.add(idx);
+        if (visibleSources[idx]) found.add(idx);
         return "";
       });
-      if (found.size === 0) return cleaned;
-      const icons = Array.from(found).map((i) => {
-        const src = sources[i];
-        // T29:数字徽标 —— 锚点文本 = 引用编号 n,title = 来源标题(转义,防属性逃逸/注入)
-        // Issue #48 / Track C C-2/C-3:可点击性 = 后端显式 link_state 权威,
-        // widget 不从 URL 字符串形状推断;isAllowedUrl 仅作纵深安全门
-        // (只降级、不升级)。存量载荷(无 link_state 的历史会话)回退到
-        // URL 安全门 + 非空守卫 —— 行为与历史基线一致,且关闭 href=""/
-        // off-host/file:// 假链接(C-2:禁自跳转与死链)。
-        const stateClickable =
-          src.link_state === undefined
-            ? Boolean(src.url) && isAllowedUrl(src.url)
-            : src.link_state === "external";
-        if (stateClickable && isAllowedUrl(src.url)) {
-          return `<a href="${escapeHtml(src.url)}" title="${escapeHtml(src.title ?? "")}" class="ask-ai-ref" target="_blank" rel="noopener noreferrer">${i + 1}</a>`;
-        }
-        // 非 external 状态:真值静态徽标(无 <a>、无 href —— 禁伪造导航),
-        // title 按 state 如实说明(C-3 truthful representation)。
-        const reason =
-          NON_CLICKABLE_TITLES[src.link_state ?? "legacy"] ?? NON_CLICKABLE_TITLES.legacy;
-        return `<span class="ask-ai-ref ask-ai-ref-static" title="${escapeHtml(reason)}">${i + 1}</span>`;
-      });
-      const trimmed = cleaned.replace(/[。，、.;；\s]+$/, "");
-      const isChinese = /[一-鿿]/.test(trimmed);
-      const period = isChinese ? "。" : ".";
-      return `${trimmed}${period} ${icons.join(" ")}`;
-    }).join("\n");
-  }
+    const cleaned = line
+      .split(/(<code>[\s\S]*?<\/code>)/g)
+      .map((segment, index) => (index % 2 === 1 ? segment : cleanCitationMarkers(segment)))
+      .join("");
+    if (found.size === 0) return cleaned;
+    const icons = Array.from(found).map((i) => {
+      const src = visibleSources[i];
+      // T29:数字徽标 —— 锚点文本 = 引用编号 n,title = 来源标题(转义,防属性逃逸/注入)
+      // Issue #48 / Track C C-2/C-3:可点击性 = 后端显式 link_state 权威,
+      // widget 不从 URL 字符串形状推断;isAllowedUrl 仅作纵深安全门
+      // (只降级、不升级)。存量载荷(无 link_state 的历史会话)回退到
+      // URL 安全门 + 非空守卫 —— 行为与历史基线一致,且关闭 href=""/
+      // off-host/file:// 假链接(C-2:禁自跳转与死链)。
+      const stateClickable =
+        src.link_state === undefined
+          ? Boolean(src.url) && isAllowedUrl(src.url)
+          : src.link_state === "external";
+      if (stateClickable && isAllowedUrl(src.url)) {
+        return `<a href="${escapeHtml(src.url)}" title="${escapeHtml(src.title ?? "")}" class="ask-ai-ref" target="_blank" rel="noopener noreferrer">${i + 1}</a>`;
+      }
+      // 非 external 状态:真值静态徽标(无 <a>、无 href —— 禁伪造导航),
+      // title 按 state 如实说明(C-3 truthful representation)。
+      const reason =
+        NON_CLICKABLE_TITLES[src.link_state ?? "legacy"] ?? NON_CLICKABLE_TITLES.legacy;
+      return `<span class="ask-ai-ref ask-ai-ref-static" title="${escapeHtml(reason)}">${i + 1}</span>`;
+    });
+    const trimmed = cleaned.replace(/[。，、.;；\s]+$/, "");
+    const isChinese = /[一-鿿]/.test(trimmed);
+    const period = isChinese ? "。" : ".";
+    return `${trimmed}${period} ${icons.join(" ")}`;
+  }).join("\n");
   html = html.replace(/\n/g, "<br>");
   return sanitizeHtml(html);
 }

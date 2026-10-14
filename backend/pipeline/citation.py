@@ -83,6 +83,24 @@ def is_first_party_case_source(
     )
     return _INTERNAL_VISIBILITY_MARKER not in visibility
 
+
+def is_upload_mode_source(result: SearchResult) -> bool:
+    """Whether authoritative source policy marked this result as an upload."""
+    return getattr(result, "source_upload_mode", False) is True
+
+
+def is_citable_first_party_case_source(result: SearchResult) -> bool:
+    """Whether a first-party knowledge case may receive a visitor citation.
+
+    Upload identity comes from the authoritative DataSource policy and is
+    attached to the request-local SearchResult by SourceVisibilityGuard.
+    """
+    return (
+        is_first_party_case_source(result.source_type, result.product, result.channel_visibility)
+        and not is_upload_mode_source(result)
+    )
+
+
 _I18N_PREFIXES = (
     "/i18n/en/docusaurus-plugin-content-docs/current/",
     "/i18n/zh-CN/docusaurus-plugin-content-docs/current/",
@@ -107,6 +125,9 @@ def normalize_source_path(url: str) -> str:
 
 CITABLE_SECTION_HEADER = "## 可引用资料"
 BACKGROUND_SECTION_HEADER = "## 背景资料(仅供理解上下文,禁止引用,严禁在其内容后标注 [N])"
+UPLOAD_SECTION_HEADER = (
+    "## 后台上传资料(可用于回答;仅由此处支持的事实不得标注 [N] 或归因于可引用资料)"
+)
 
 
 @dataclass
@@ -144,7 +165,8 @@ def build_citation_context(
     Returns:
         :class:`CitationContext`。公开源 chunk 按其所属源的编号归组;
         第 5 个公开页之外的 chunk 从上下文丢弃(否则可被引用但访客不可见);
-        非公开但参与生成的 chunk(filesystem 内部案例等)进背景资料段。
+        非公开但参与生成的 chunk(filesystem 内部案例等)进背景资料段;
+        权威 upload-mode chunk 进入可用于回答但不可引用的独立段。
     """
     if taxonomy is None:
         from backend.product_taxonomy import get_taxonomy
@@ -169,6 +191,7 @@ def build_citation_context(
     source_texts: dict[int, list[str]] = defaultdict(list)
     source_products: dict[int, str] = {}
     background_chunks: list[str] = []
+    upload_chunks: list[str] = []
     dropped_public_chunks = 0
 
     # INC-1 血统修订:终组合逐项身份(仅元数据,零内容)
@@ -177,11 +200,15 @@ def build_citation_context(
     dropped_public_ids: list[dict] = []
 
     for r in reranked:
-        idx = url_to_idx.get(normalize_source_path(r.url))
-        if (
-            idx is None
-            and is_first_party_case_source(r.source_type, r.product, r.channel_visibility)
-        ):
+        upload_mode = is_upload_mode_source(r)
+        # Upload chunks stay outside the numbered context even if stale URL
+        # metadata happens to collide with a visitor-visible source.
+        idx = (
+            None
+            if upload_mode
+            else url_to_idx.get(normalize_source_path(r.url))
+        )
+        if idx is None and is_citable_first_party_case_source(r):
             # #28:第一方知识案例按 source_id 匹配 path-less 编号来源
             idx = case_idx_by_source.get(r.source_id)
         if idx is not None:
@@ -191,9 +218,12 @@ def build_citation_context(
             citable_ids.append(
                 {"source_id": r.source_id, "chunk_index": r.chunk_index, "citation_no": idx}
             )
-        elif r.source_type in PUBLIC_SOURCE_TYPES or is_first_party_case_source(
-            r.source_type, r.product, r.channel_visibility
-        ):
+        elif upload_mode:
+            # Authoritative upload identity wins over stale public chunk type or
+            # URL metadata. Keep the content available without visitor citation.
+            upload_chunks.append(r.text or "")
+            background_ids.append({"source_id": r.source_id, "chunk_index": r.chunk_index})
+        elif r.source_type in PUBLIC_SOURCE_TYPES or is_citable_first_party_case_source(r):
             # 公开但排在可见集合之外:保留即可被引用 → 不可见引用,丢弃
             dropped_public_chunks += 1
             dropped_public_ids.append({"source_id": r.source_id, "chunk_index": r.chunk_index})
@@ -224,10 +254,13 @@ def build_citation_context(
         context += (
             "\n\n" + BACKGROUND_SECTION_HEADER + "\n\n" + "\n\n---\n\n".join(background_chunks)
         )
+    if upload_chunks:
+        context += "\n\n" + UPLOAD_SECTION_HEADER + "\n\n" + "\n\n---\n\n".join(upload_chunks)
 
     stats = {
         "public_chunks": sum(len(v) for v in source_texts.values()),
-        "background_chunks": len(background_chunks),
+        "background_chunks": len(background_chunks) + len(upload_chunks),
+        "upload_background_chunks": len(upload_chunks),
         "dropped_public_chunks": dropped_public_chunks,
         # INC-1 血统修订:逐项身份表(citable.citation_no = 引用编号语义)
         "citable": citable_ids,

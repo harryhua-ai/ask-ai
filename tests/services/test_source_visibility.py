@@ -127,6 +127,34 @@ async def test_upload_visibility_requires_valid_explicit_public_grant():
     assert visibility_for_source("github", {}) == ("widget", "api")
 
 
+async def test_guard_resolution_exposes_authoritative_upload_mode_and_channel_grant():
+    from backend.services.source_visibility import (
+        SourceVisibilityGuard,
+        policy_for_source,
+    )
+
+    upload_policy = policy_for_source(
+        "filesystem", {"upload_mode": True, "channel_visibility": ["widget"]}
+    )
+    case_policy = policy_for_source("filesystem", {"channel_visibility": ["widget"]})
+    non_filesystem_policy = policy_for_source("github", {"upload_mode": True})
+    assert upload_policy.upload_mode is True
+    assert case_policy.upload_mode is False
+    assert non_filesystem_policy.upload_mode is False
+
+    async def load_policy():
+        return {"upload-source": upload_policy}
+
+    guard = SourceVisibilityGuard(load_policy, ttl=60)
+    widget = await guard.resolve("upload-source/internal.md", "widget")
+    api = await guard.resolve("upload-source/internal.md", "api")
+
+    assert widget.allowed is True
+    assert widget.upload_mode is True
+    assert api.allowed is False
+    assert api.upload_mode is True
+
+
 async def test_guard_blocks_lagging_chunk_metadata_after_upload_grant_revoked():
     """Authoritative source snapshot blocks a stale public chunk projection."""
     from backend.services.source_visibility import visibility_for_source

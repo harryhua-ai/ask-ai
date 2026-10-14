@@ -31,19 +31,44 @@ def _make_llm_response(content: str = "answer") -> LLMResponse:
     )
 
 
-def _build_orchestrator(reranked: list[SearchResult]):
+def _build_orchestrator(
+    reranked: list[SearchResult],
+    *,
+    answer: str = "answer",
+    visibility_guard=None,
+):
     """构造最小编排器:searcher/reranker 返回 reranked,LLM 返回固定答案。"""
     searcher = MagicMock()
     searcher.search.return_value = reranked
     reranker = MagicMock()
     reranker.rerank.return_value = reranked
     reranker.rerank_scored.return_value = (reranked, [])
-    reranker.rerank_scored.return_value = (reranked, [])
+    if visibility_guard is not None:
+        # Preserve request-local metadata attached by the visibility guard.
+        reranker.rerank_scored.side_effect = lambda _query, results, **_kwargs: (results, [])
     llm = AsyncMock()
-    llm.generate.return_value = _make_llm_response()
+
+    async def _generate(messages, task=None, **_kwargs):
+        if task == "task_understanding":
+            prompt = messages[-1]["content"]
+            query = prompt.rsplit("## 用户输入\n", 1)[-1].strip()
+            structured = {
+                "category": "product",
+                "reason": "test fixture",
+                "confidence": 0.9,
+                "interaction_mode": "standard",
+                "evidence_intent": "factual",
+                "extracted_query": query,
+                "rewritten_query": query,
+            }
+            return _make_llm_response(json.dumps(structured, ensure_ascii=False))
+        return _make_llm_response(answer)
+
+    llm.generate.side_effect = _generate
+    llm.describe_chain = MagicMock(return_value=None)
 
     async def _stream(*_args, **_kwargs):
-        yield "answer"
+        yield answer
 
     # 生产 llm.stream 是普通方法(调用即返回 async 生成器,非协程),
     # 故用普通函数注入,不能用 AsyncMock(其 __call__ 会先返回协程)。
@@ -54,8 +79,208 @@ def _build_orchestrator(reranked: list[SearchResult]):
         llm=llm,
         system_prompt="You are helpful.",
         min_results_to_answer=1,
+        visibility_guard=visibility_guard,
     )
     return rag, llm
+
+
+def _upload_aware_visibility_guard(results: list[SearchResult]):
+    """Build the real guard from authoritative source-type/config fixtures."""
+    from backend.services.source_visibility import SourceVisibilityGuard, policy_for_source
+
+    policies = {}
+    for result in results:
+        source_prefix = result.source_id.split("/", 1)[0]
+        config = (
+            {"upload_mode": True, "channel_visibility": ["widget"]}
+            if source_prefix.startswith("upload-")
+            else {}
+        )
+        # The source row is authoritative; chunk source_type may be historical.
+        source_type = "filesystem" if source_prefix.startswith("upload-") else result.source_type
+        policies[source_prefix] = policy_for_source(source_type, config)
+
+    async def load_policies():
+        return policies
+
+    return SourceVisibilityGuard(load_policies, ttl=60)
+
+
+@pytest.mark.unit
+async def test_upload_only_knowledge_stays_in_generation_context_without_visitor_source():
+    upload = SearchResult(
+        text="上传资料说明设备需要 12 V 电源。",
+        source_id="upload-support/internal-guide.md",
+        source_type="filesystem",
+        product="knowledge",
+        title="不可公开的内部文件名",
+        url="",
+        score=0.9,
+        chunk_index=0,
+    )
+    rag, llm = _build_orchestrator(
+        [upload],
+        answer="设备需要 12 V 电源 [1]。",
+        visibility_guard=_upload_aware_visibility_guard([upload]),
+    )
+
+    result = await rag.answer("设备需要什么电源", "widget")
+    events = [json.loads(event) async for event in rag.stream_answer("设备需要什么电源", "widget")]
+    source_event = next(event for event in events if event["type"] == "sources")
+    complete_event = next(event for event in events if event["type"] == "complete")
+
+    assert result.sources == []
+    assert "[1]" not in result.answer
+    assert source_event["sources"] == result.sources
+    assert complete_event["sources"] == result.sources
+    assert complete_event["answer"] == result.answer
+    generation_messages = next(
+        call.args[0]
+        for call in reversed(llm.generate.call_args_list)
+        if call.kwargs.get("task") == "generation"
+    )
+    prompt = str(generation_messages)
+    assert "设备需要 12 V 电源" in prompt
+    assert "后台上传资料" in prompt
+    assert "后台上传资料」可以支持回答" in prompt
+    assert "不可公开的内部文件名" not in prompt
+    assert "upload-support/internal-guide.md" not in prompt
+    assert "/srv/private/internal-guide.md" not in prompt
+
+
+@pytest.mark.unit
+async def test_mixed_upload_and_public_sources_share_contiguous_visible_citations_in_sync_and_stream():
+    upload = SearchResult(
+        text="仅上传资料支持：安装前检查现场空间。",
+        source_id="upload-support/internal-guide.md",
+        # Stale chunk metadata must not override authoritative DataSource type.
+        source_type="github",
+        product="knowledge",
+        title="内部安装指南",
+        # Simulate stale historical URL metadata colliding with a public page.
+        url="https://github.com/camthink-ai/wiki/blob/main/docs/ne301/power.md",
+        score=0.95,
+        chunk_index=0,
+    )
+    public = SearchResult(
+        text="公开 Wiki 说明设备工作电压为 24 V。",
+        source_id="wiki/main/docs/ne301/power.md",
+        source_type="github",
+        product="ne301",
+        title="NE301 供电说明",
+        url="https://github.com/camthink-ai/wiki/blob/main/docs/ne301/power.md",
+        score=0.8,
+        chunk_index=0,
+    )
+    answer = "公开 Wiki 说明工作电压为 24 V [1]。\n安装前还应检查现场空间 [2]。"
+    rag, llm = _build_orchestrator(
+        [upload, public],
+        answer=answer,
+        visibility_guard=_upload_aware_visibility_guard([upload, public]),
+    )
+
+    result = await rag.answer("供电和安装准备", "widget")
+    events = [json.loads(event) async for event in rag.stream_answer("供电和安装准备", "widget")]
+    source_event = next(event for event in events if event["type"] == "sources")
+    complete_event = next(event for event in events if event["type"] == "complete")
+
+    assert [source["title"] for source in result.sources] == ["NE301 供电说明"]
+    assert "24 V [1]" in result.answer
+    assert "[2]" not in result.answer
+    assert source_event["sources"] == result.sources
+    assert complete_event["sources"] == result.sources
+    assert complete_event["answer"] == result.answer
+    generation_messages = next(
+        call.args[0]
+        for call in reversed(llm.generate.call_args_list)
+        if call.kwargs.get("task") == "generation"
+    )
+    prompt = str(generation_messages)
+    assert "[1] [GitHub] NE301 供电说明" in prompt
+    assert "仅上传资料支持：安装前检查现场空间。" in prompt
+    assert "背景资料" in prompt
+    citable_context, upload_context = prompt.split("## 后台上传资料", 1)
+    assert "仅上传资料支持：安装前检查现场空间。" not in citable_context
+    assert "仅上传资料支持：安装前检查现场空间。" in upload_context
+    assert "内部安装指南" not in prompt
+    assert "upload-support/internal-guide.md" not in prompt
+
+
+@pytest.mark.unit
+async def test_public_only_citation_keeps_original_numbering_and_link():
+    public = SearchResult(
+        text="公开 Wiki 说明设备工作电压为 24 V。",
+        source_id="wiki/main/docs/ne301/power.md",
+        source_type="github",
+        product="ne301",
+        title="NE301 供电说明",
+        url="https://github.com/camthink-ai/wiki/blob/main/docs/ne301/power.md",
+        score=0.8,
+        chunk_index=0,
+    )
+    rag, _ = _build_orchestrator([public], answer="设备工作电压为 24 V [1]。")
+
+    result = await rag.answer("NE301 电压", "widget")
+    events = [json.loads(event) async for event in rag.stream_answer("NE301 电压", "widget")]
+    source_event = next(event for event in events if event["type"] == "sources")
+    complete_event = next(event for event in events if event["type"] == "complete")
+
+    assert len(result.sources) == 1
+    assert result.sources[0]["url"] == public.url
+    assert "24 V [1]" in result.answer
+    assert source_event["sources"] == result.sources
+    assert complete_event["sources"] == result.sources
+    assert complete_event["answer"] == result.answer
+
+
+@pytest.mark.unit
+async def test_non_upload_first_party_knowledge_case_keeps_existing_source_behavior():
+    case = SearchResult(
+        text="NE101 的供电案例内容。",
+        source_id="solution-case/ne101/power.md",
+        source_type="filesystem",
+        product="knowledge",
+        title="NE101 供电案例",
+        url="",
+        score=0.9,
+        chunk_index=0,
+    )
+    rag, _ = _build_orchestrator([case], visibility_guard=_upload_aware_visibility_guard([case]))
+
+    result = await rag.answer("NE101 供电案例", "widget")
+
+    assert len(result.sources) == 1
+    assert result.sources[0]["title"] == "NE101 供电案例"
+    assert result.sources[0]["url"] == ""
+    assert result.sources[0]["source_id"] == case.source_id
+
+
+@pytest.mark.unit
+async def test_non_upload_internal_background_remains_context_only():
+    internal = SearchResult(
+        text="内部背景信息，不作为访客回答依据。",
+        source_id="internal-case/ne101/private.md",
+        source_type="filesystem",
+        product="knowledge",
+        title="内部案例",
+        url="file:///srv/private/case.md",
+        score=0.9,
+        chunk_index=0,
+        channel_visibility=("widget", "internal"),
+    )
+    rag, llm = _build_orchestrator([internal])
+
+    await rag.answer("NE101 案例", "widget")
+
+    generation_messages = next(
+        call.args[0]
+        for call in reversed(llm.generate.call_args_list)
+        if call.kwargs.get("task") == "generation"
+    )
+    prompt = str(generation_messages)
+    assert "## 背景资料(仅供理解上下文,禁止引用,严禁在其内容后标注 [N])" in prompt
+    assert "仅供理解上下文,禁止作为回答依据" in prompt
+    assert "内部背景信息，不作为访客回答依据。" in prompt
 
 
 @pytest.mark.unit
