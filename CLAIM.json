@@ -5,9 +5,9 @@
  "github_principal": "harryhua-ai",
  "executor_id": "harryhua-ai",
  "claimed_at": "2026-10-14T09:48:08Z",
- "lease_expires_at": "2026-10-14T10:40:20Z",
+ "lease_expires_at": "2026-10-14T10:35:36Z",
  "execution_base": "6ab2fc2f5bba2e816f839ff460beb81b7a22099e",
- "status": "active",
+ "status": "investigated",
  "branch": "agent/149/5fbb307e",
  "heartbeat_at": "2026-10-14T10:34:20Z",
  "supersedes": null,
@@ -17,5 +17,6 @@
   "digest": "a884f1a0dec1a695560e07eef3beee0b5b1bc20b6e376649c0bda17a7d9380d2",
   "release": "v1.1.6",
   "source_sha": "2ff0096bcb257dd93fb860914c7039472e71174f"
- }
+ },
+ "note": "Single authorized production probe executed once (2026-10-14T10:00:28Z-39Z, v1.6.4-r2@8052b358b68c9dad72c10c4359e094b02bd16374). Gates: AC1 PASS; 1 PASS / 2 FAIL / 3 PASS(caveat) / 4 PASS. Store-sync layer PASS; failure layer = rerank evidence selection (all 20 NE101 priced variations retrieved, none in top-10 evidence window). Report: reports/issue149-price-acceptance-20261014.md @ 995f175f on agent/149/5fbb307e"
 }
