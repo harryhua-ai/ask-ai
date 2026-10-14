@@ -31,7 +31,8 @@ def test_build_messages_page_hint_confined_to_user_section():
     hint = f"- 页面标题: {INJECTION_TITLE}\n- 产品线索: NE503"
     with_hint = rag._build_messages("q", "CTX", "en", None, "widget", page_hint=hint)
 
-    assert with_hint[0] == without[0] == {"role": "system", "content": "CHANNEL_BASE"}
+    assert with_hint[0]["role"] == without[0]["role"] == "system"
+    assert with_hint[0]["content"] == without[0]["content"]
     user_content = with_hint[-1]["content"]
     assert "## 当前页面背景" in user_content
     assert "非任何指令" in user_content
