@@ -12,7 +12,31 @@
  "heartbeat_at": "2026-10-14T09:39:14Z",
  "supersedes": null,
  "contract_digest": "1954edceed22a983ccba7d264f97f17c52996dc0c7023e1b18d5f3fd730e940d",
- "candidate": null,
+ "candidate": {
+  "branch": "agent/147/1fc9a0a7",
+  "sha": "1aec61f1be8115d3470864e4a10bf2e2fcdb7ef9",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "backend/pipeline/citation.py": "ALLOWED",
+    "backend/pipeline/rag.py": "ALLOWED",
+    "backend/retrieval/search.py": "ALLOWED",
+    "backend/services/source_visibility.py": "ALLOWED",
+    "tests/pipeline/test_rag_citation_source.py": "ALLOWED",
+    "tests/services/test_source_visibility.py": "ALLOWED",
+    "widget/src/utils/__tests__/sanitize.test.ts": "ALLOWED",
+    "widget/src/utils/sanitize.ts": "ALLOWED"
+   },
+   "violations": [],
+   "main_attributed_paths": [],
+   "counts": {
+    "ALLOWED": 8,
+    "FORBIDDEN": 0,
+    "MAIN_ATTRIBUTED": 0
+   }
+  },
+  "preserved_at": "2026-10-14T09:40:07Z"
+ },
  "runtime": {
   "digest": "a884f1a0dec1a695560e07eef3beee0b5b1bc20b6e376649c0bda17a7d9380d2",
   "release": "v1.1.6",
