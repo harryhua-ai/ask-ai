@@ -5,9 +5,9 @@
  "github_principal": "harryhua-ai",
  "executor_id": "harryhua-ai",
  "claimed_at": "2026-10-14T02:40:43Z",
- "lease_expires_at": "2026-10-14T03:08:39Z",
+ "lease_expires_at": "2026-10-14T03:05:13Z",
  "execution_base": "34f48cfd4b6294bbb2da6b9efa599091fba294d6",
- "status": "active",
+ "status": "investigated",
  "branch": "agent/142/a20a0b92",
  "heartbeat_at": "2026-10-14T03:02:39Z",
  "supersedes": null,
@@ -17,5 +17,6 @@
   "digest": "743a713193def2e7afd5c9c614e05968a1ea50b2c6249d6c5ff219cbc5441096",
   "release": "v1.1.4",
   "source_sha": "49ce4bd886115b4e001005343d67a54d7ed5d57e"
- }
+ },
+ "note": "\u53ea\u8bfb\u8c03\u67e5\u5b8c\u6210:\u8fd0\u884c\u6001\u4e00\u81f4\u6027/\u73af\u5883\u8bbf\u95ee/\u6e05\u5355\u4e8b\u5b9e\u5df2\u9a8c\u8bc1;\u955c\u50cf\u5c31\u7eea\u6027BLOCKED(#141 CI\u7ea2);owner\u51b3\u7b56\u7f3a\u53e31\u9879;\u5907\u4efd\u57fa\u7ebfUNKNOWN\u3002\u62a5\u544a reports/issue142-release-readiness-investigation-20261014.md"
 }
