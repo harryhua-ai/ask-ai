@@ -12,7 +12,25 @@
  "heartbeat_at": "2026-10-15T05:22:07Z",
  "supersedes": null,
  "contract_digest": "b225c4c6512734a61264fe68d151f7cb301e6caa835e87123365e8a07ba85afe",
- "candidate": null,
+ "candidate": {
+  "branch": "agent/159/560e34a5",
+  "sha": "ba20fbbbc001148cdd0a16647f428f659eaf3e58",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "deploy/prod/compatibility.json": "ALLOWED",
+    "tests/deploy/test_issue159_rollback_compat_truth.py": "ALLOWED"
+   },
+   "violations": [],
+   "main_attributed_paths": [],
+   "counts": {
+    "ALLOWED": 2,
+    "FORBIDDEN": 0,
+    "MAIN_ATTRIBUTED": 0
+   }
+  },
+  "preserved_at": "2026-10-15T05:23:13Z"
+ },
  "runtime": {
   "digest": "a884f1a0dec1a695560e07eef3beee0b5b1bc20b6e376649c0bda17a7d9380d2",
   "release": "v1.1.6",
