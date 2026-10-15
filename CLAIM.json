@@ -12,7 +12,30 @@
  "heartbeat_at": "2026-10-15T02:41:13Z",
  "supersedes": null,
  "contract_digest": "7e1c3ec2a16d144b5bdbce9ab103ac7de45c2821edb89689348674a9e592a129",
- "candidate": null,
+ "candidate": {
+  "branch": "agent/154/2c38d6a9",
+  "sha": "72bd7ed49ba0a651d32c84879ab9063115e59024",
+  "scope": {
+   "pass": true,
+   "paths": {
+    ".github/workflows/project-iteration-create.yml": "ALLOWED",
+    ".github/workflows/project-reconcile.yml": "ALLOWED",
+    ".github/workflows/project-sync.yml": "ALLOWED",
+    "docs/engineering/project-automation.md": "ALLOWED",
+    "tests/project_automation/test_cli_workflow_contract.py": "ALLOWED",
+    "tests/project_automation/test_closed_issue_event_audit.py": "ALLOWED",
+    "tests/project_automation/test_retired_workflows_contract.py": "ALLOWED"
+   },
+   "violations": [],
+   "main_attributed_paths": [],
+   "counts": {
+    "ALLOWED": 7,
+    "FORBIDDEN": 0,
+    "MAIN_ATTRIBUTED": 0
+   }
+  },
+  "preserved_at": "2026-10-15T02:42:10Z"
+ },
  "runtime": {
   "digest": "a884f1a0dec1a695560e07eef3beee0b5b1bc20b6e376649c0bda17a7d9380d2",
   "release": "v1.1.6",
