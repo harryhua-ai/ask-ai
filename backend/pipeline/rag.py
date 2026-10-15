@@ -34,7 +34,8 @@ from backend.pipeline.citation import (
     PUBLIC_SOURCE_TYPES,
     CitationStreamFilter,
     build_citation_context,
-    is_first_party_case_source,
+    is_citable_first_party_case_source,
+    is_upload_mode_source,
     normalize_source_path,
     validate_citations,
 )
@@ -1244,11 +1245,21 @@ class RAGOrchestrator:
         results: list[SearchResult],
         channel: str,
     ) -> list[SearchResult]:
-        """可见性纵深守卫:守卫缺失/故障一律放行,不阻塞检索链路。"""
+        """按权威策略复核候选,并附加本请求的 upload-mode 源身份。"""
         if self._visibility_guard is None:
             return results
         try:
-            return [r for r in results if await self._visibility_guard.allows(r.source_id, channel)]
+            guarded: list[SearchResult] = []
+            resolve = getattr(self._visibility_guard, "resolve", None)
+            for result in results:
+                if callable(resolve):
+                    decision = await resolve(result.source_id, channel)
+                    if not decision.allowed:
+                        continue
+                    guarded.append(replace(result, source_upload_mode=decision.upload_mode))
+                elif await self._visibility_guard.allows(result.source_id, channel):
+                    guarded.append(result)
+            return guarded
         except Exception as exc:  # noqa: BLE001
             # P0-rework Case C:授权子系统故障不得变成授权旁路 → fail-closed:
             # 丢弃全部候选(下游拒答门兜底)——可用性损失,而非安全损失。
@@ -1568,7 +1579,7 @@ class RAGOrchestrator:
 
 ## 要求
 - 只依据上面的资料回答,不编造
-- 引用标记 [N] 只能使用「可引用资料」的编号;「背景资料」仅供理解上下文,禁止引用
+- 引用标记 [N] 只能使用「可引用资料」的编号;「背景资料」仅供理解上下文,禁止引用;「后台上传资料」可以支持回答,但其独有事实不得附加 [N]、不得归因于任何可引用资料
 - 精确数值(价格/电压/电流/温度/尺寸/版本号/协议等)必须与所引资料原文一致,
   严禁编造数值或以相近数值搭配 [N] 冒充有据
 - 上面的资料没有某信息 ≠ 官方没有该信息:断言"官方未提供 X"前,必须考虑该类
@@ -1580,7 +1591,7 @@ class RAGOrchestrator:
   严禁把案例中的设备标识(如 ICCID/IMSI/序列号)、客户身份或案例结论说成
   当前用户的情况;需要引用案例时必须明确表述为"一个历史案例"
 - 用 Markdown 格式,用 **粗体** 做小节标题
-- 在每段末尾用 [N] 标注该段引用的资料序号,不在句中穿插
+- 在每段末尾只为可引用资料标注 [N],不在句中穿插;仅由后台上传资料支持的段落不加 [N]
 - 不要使用 emoji
 - 不要输出文档路径
 {depth_line}- 用 {language} 回答
@@ -1623,6 +1634,10 @@ class RAGOrchestrator:
         seen: set[str] = set()
         sources: list[dict] = []
         for r in results:
+            # SourceVisibilityGuard provides upload identity from DataSource;
+            # stale chunk type/URL metadata must never expose it as a Source.
+            if is_upload_mode_source(r):
+                continue
             if r.source_type in PUBLIC_SOURCE_TYPES:
                 if not _is_renderable_public_url(r.url):
                     continue
@@ -1656,8 +1671,8 @@ class RAGOrchestrator:
                 if citation_url != r.url:
                     source["provenance_url"] = r.url
                 sources.append(source)
-            elif is_first_party_case_source(r.source_type, r.product, r.channel_visibility):
-                # #28:第一方知识案例 → 有编号可引用来源。展示以标题呈现,
+            elif is_citable_first_party_case_source(r):
+                # #28:非 upload-mode 第一方知识案例 → 有编号可引用来源。展示以标题呈现,
                 # url 置空(不外泄文件系统路径);身份按 source_id 在
                 # build_citation_context 匹配。显式 internal 标记不进入。
                 # C-3:url="" 置空路径现在以显式 "none" 状态表达非可点击,

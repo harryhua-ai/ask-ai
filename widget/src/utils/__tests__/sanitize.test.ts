@@ -166,8 +166,29 @@ describe("citation integrity (CIT-01) display layer", () => {
   });
 
   it("renders no badge when answer cites but no sources exist", () => {
-    const out = renderMarkdownSafe("text [1] here", []);
+    const out = renderMarkdownSafe("text [1] here; array `items[1]`", []);
     expect(out).not.toContain("ask-ai-ref");
+    expect(out).toContain("text  here; array");
+    expect(out).toContain("items[1]");
+  });
+
+  it("keeps only citations that map to the visitor-visible source list", () => {
+    const visibleSource: SourceLink = {
+      url: "https://wiki.camthink.ai/docs/ne301/power",
+      title: "NE301 供电说明",
+      type: "github",
+      link_state: "external",
+    };
+    document.body.innerHTML = renderMarkdownSafe(
+      "公开来源 [1]。上传资料支持的安装提示 [2]。",
+      [visibleSource],
+    );
+
+    const badges = Array.from(document.querySelectorAll("a.ask-ai-ref"));
+    expect(badges).toHaveLength(1);
+    expect(badges[0]!.textContent).toBe("1");
+    expect(badges[0]!.getAttribute("href")).toBe(visibleSource.url);
+    expect(document.body.textContent).not.toContain("[2]");
   });
 });
 

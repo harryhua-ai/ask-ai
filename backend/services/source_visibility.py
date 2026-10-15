@@ -14,7 +14,8 @@
 - Stale valid snapshot exists + refresh failure      → MAY use stale snapshot
 
 语义说明(与 Phase 2A 既有元数据一致,不引入新信任体系):
-- 权威数据 = ``data_sources.config.channel_visibility`` 渠道白名单;
+- 权威数据 = ``data_sources.type`` + ``data_sources.config.upload_mode`` /
+  ``channel_visibility``;
 - 已知源缺省该键 → 默认公开(``DEFAULT_VISIBILITY``,产品既有语义,保公开知识可用);
 - 请求渠道经 admin→widget 访客等价别名映射;``channel=None`` 属未知请求上下文 → DENY;
 - 授权失败的总代价 = 该候选被丢弃(下游拒答门兜底):可用性损失,绝不变为授权旁路。
@@ -23,6 +24,7 @@
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 from sqlalchemy import select
 
@@ -34,7 +36,24 @@ logger = logging.getLogger(__name__)
 # 注意只作用于已知源;未知/幽灵前缀一律 DENY(fail-closed)。
 DEFAULT_VISIBILITY: tuple[str, ...] = ("widget", "api")
 
-VisibilityLoader = Callable[[], Awaitable[dict[str, tuple[str, ...]]]]
+
+@dataclass(frozen=True)
+class SourceVisibilityPolicy:
+    """Authoritative source-level channel grant and upload identity."""
+
+    channels: tuple[str, ...]
+    upload_mode: bool = False
+
+
+@dataclass(frozen=True)
+class SourceVisibilityDecision:
+    """Resolved request-channel access and authoritative source identity."""
+
+    allowed: bool
+    upload_mode: bool | None
+
+
+VisibilityLoader = Callable[[], Awaitable[dict[str, SourceVisibilityPolicy | tuple[str, ...]]]]
 
 
 def _as_visibility(value: object) -> tuple[str, ...]:
@@ -67,13 +86,22 @@ def visibility_for_source(source_type: str, config: object) -> tuple[str, ...]:
     return _as_visibility(raw)
 
 
+def policy_for_source(source_type: str, config: object) -> SourceVisibilityPolicy:
+    """Resolve channel access and upload identity from one authoritative row."""
+    values = config if isinstance(config, dict) else {}
+    return SourceVisibilityPolicy(
+        channels=visibility_for_source(source_type, values),
+        upload_mode=source_type == "filesystem" and values.get("upload_mode") is True,
+    )
+
+
 class SourceVisibilityGuard:
     """按源配置复核候选可见性的纵深守卫(fail-closed,授权失败 ≠ 授权旁路)。"""
 
     def __init__(self, loader: VisibilityLoader, ttl: float = 30.0) -> None:
         self._loader = loader
         self._ttl = ttl
-        self._snapshot: dict[str, tuple[str, ...]] | None = None
+        self._snapshot: dict[str, SourceVisibilityPolicy | tuple[str, ...]] | None = None
         self._loaded_at = -float("inf")
 
     async def allows(self, source_id: str, channel: str | None) -> bool:
@@ -86,21 +114,36 @@ class SourceVisibilityGuard:
         Returns:
             True 仅当:已知源 + 渠道在白名单内。其余一律 False。
         """
+        return (await self.resolve(source_id, channel)).allowed
+
+    async def resolve(self, source_id: str, channel: str | None) -> SourceVisibilityDecision:
+        """Resolve authorization and upload identity from one cached source row."""
         probe = _visibility_probe_channel(channel)
         if probe is None:
             # 未知请求上下文:不确定性不得放行。
-            return False
+            return SourceVisibilityDecision(allowed=False, upload_mode=None)
         mapping = await self._snapshot_or_stale()
         if mapping is None:
             # Case A:无权威快照可用 → 不得放行未证实候选。
-            return False
-        visibility = mapping.get(source_id.split("/")[0])
-        if visibility is None:
+            return SourceVisibilityDecision(allowed=False, upload_mode=None)
+        raw_policy = mapping.get(source_id.split("/")[0])
+        if isinstance(raw_policy, SourceVisibilityPolicy):
+            policy = raw_policy
+        elif isinstance(raw_policy, (list, tuple)):
+            # Compatibility for injected legacy loaders; production DB loader
+            # returns the full authoritative policy below.
+            policy = SourceVisibilityPolicy(channels=tuple(raw_policy))
+        else:
             # Case B:unknown / ghost source → 不得进入生成上下文。
-            return False
-        return probe in visibility
+            return SourceVisibilityDecision(allowed=False, upload_mode=None)
+        return SourceVisibilityDecision(
+            allowed=probe in policy.channels,
+            upload_mode=policy.upload_mode,
+        )
 
-    async def _snapshot_or_stale(self) -> dict[str, tuple[str, ...]] | None:
+    async def _snapshot_or_stale(
+        self,
+    ) -> dict[str, SourceVisibilityPolicy | tuple[str, ...]] | None:
         """返回权威快照;刷新失败时沿用陈旧有效快照;从未成功过 → None。"""
         now = time.monotonic()
         if self._snapshot is not None and now - self._loaded_at < self._ttl:
@@ -121,13 +164,13 @@ class SourceVisibilityGuard:
 def make_db_loader(session_factory: Callable[[], Awaitable[object]]) -> VisibilityLoader:
     """构造从 ``data_sources`` 读全量源可见性配置的 loader。"""
 
-    async def _load() -> dict[str, tuple[str, ...]]:
+    async def _load() -> dict[str, SourceVisibilityPolicy]:
         from backend.db.models import DataSource
 
         async with session_factory() as session:  # type: ignore[operator]
             rows = (
                 await session.execute(select(DataSource.id, DataSource.type, DataSource.config))
             ).all()
-        return {rid: visibility_for_source(source_type, cfg) for rid, source_type, cfg in rows}
+        return {rid: policy_for_source(source_type, cfg) for rid, source_type, cfg in rows}
 
     return _load

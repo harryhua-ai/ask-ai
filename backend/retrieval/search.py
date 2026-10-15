@@ -141,6 +141,10 @@ class SearchResult:
     # "public" / "private";缺属性/空串的对象映射为 "unknown"(存量语义),
     # 序列化层不得把 unknown 推断为 public 或 private。
     visitor_reachability: str = "unknown"
+    # Enriched per request by SourceVisibilityGuard from DataSource.config.
+    # This is not a chunk property: historical chunk metadata can omit or
+    # disagree with the authoritative upload_mode setting.
+    source_upload_mode: bool | None = None
 
 
 class HybridSearcher:
