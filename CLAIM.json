@@ -12,7 +12,26 @@
  "heartbeat_at": "2026-10-15T10:07:53Z",
  "supersedes": null,
  "contract_digest": "51f0b8c2b81dd168262a27e3050d41b57a1a98ad977e81aa43485f56966a1ab6",
- "candidate": null,
+ "candidate": {
+  "branch": "agent/164/8f8beae2",
+  "sha": "34d92643a5ec66c3dac85411fc4dd9b962e662ea",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "reports/issue164-residual-cleanup-preflight-20261015.md": "ALLOWED",
+    "scripts/gc_preflight.py": "ALLOWED",
+    "tests/scripts/test_gc_preflight.py": "ALLOWED"
+   },
+   "violations": [],
+   "main_attributed_paths": [],
+   "counts": {
+    "ALLOWED": 3,
+    "FORBIDDEN": 0,
+    "MAIN_ATTRIBUTED": 0
+   }
+  },
+  "preserved_at": "2026-10-15T10:09:32Z"
+ },
  "runtime": {
   "digest": "a884f1a0dec1a695560e07eef3beee0b5b1bc20b6e376649c0bda17a7d9380d2",
   "release": "v1.1.6",
