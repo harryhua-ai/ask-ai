@@ -20,6 +20,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from backend.pipeline.citation import (
+    BACKGROUND_SECTION_HEADER,
+    CITABLE_SECTION_HEADER,
+    UPLOAD_SECTION_HEADER,
+)
 from backend.pipeline.evidence_planning import derive_evidence_plan
 from backend.pipeline.evidence_selection import build_coverage_report
 from backend.pipeline.product_resolver import ProductResolution
@@ -404,14 +409,29 @@ def test_truth_lines_preserved_with_strategy():
     s = _rs().ResponseStrategy(
         response_frame="recommendation", directness="guided_expansion", coverage_framing="none"
     )
-    messages = rag._build_messages(**_msg_kwargs(), strategy=s)
+    kwargs = _msg_kwargs()
+    kwargs["context"] = "\n\n".join(
+        (
+            f"{CITABLE_SECTION_HEADER}\n\n[1] [WooCommerce] NE503 商店页\n价格 $599。",
+            f"{BACKGROUND_SECTION_HEADER}\n\n历史案例曾记录 NE101 旧版固件上电后重启。",
+            f"{UPLOAD_SECTION_HEADER}\n\n上传资料独有的安装建议是预留 9 cm 间距。",
+        )
+    )
+    messages = rag._build_messages(**kwargs, strategy=s)
     user_content = messages[-1]["content"]
+    citable_section, remaining_context = user_content.split(BACKGROUND_SECTION_HEADER, 1)
+    background_section, upload_section = remaining_context.split(UPLOAD_SECTION_HEADER, 1)
+    assert "[1] [WooCommerce] NE503 商店页" in citable_section
+    assert "价格 $599。" in citable_section
+    assert "历史案例曾记录 NE101" in background_section
+    assert "上传资料独有的安装建议" in upload_section
+    assert "[1]" not in background_section + upload_section
     for line in (
         "- 只依据上面的资料回答,不编造",
-        "- 引用标记 [N] 只能使用「可引用资料」的编号",
+        "- 引用标记 [N] 只能使用「可引用资料」的编号;「背景资料」仅供理解上下文,禁止引用;「后台上传资料」可以支持回答,但其独有事实不得附加 [N]、不得归因于任何可引用资料",
         "必须与所引资料原文一致",
         "严禁把案例中的设备标识",
-        "- 在每段末尾用 [N] 标注该段引用的资料序号,不在句中穿插",
+        "- 在每段末尾只为可引用资料标注 [N],不在句中穿插;仅由后台上传资料支持的段落不加 [N]",
         "- 不要使用 emoji",
         "- 不要输出文档路径",
     ):
