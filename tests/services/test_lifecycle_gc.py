@@ -345,3 +345,197 @@ async def test_never_touches_eligible_less_serving_documents(env):
     assert report.documents_eligible == []
     assert report.documents_deleted == 0
     env.collection.data.delete_many.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# #162:普通墓碑(真实 tombstone_document 原语)≠ GC opt-in。
+# 生产 fetch_deleted/membership 路径经 tombstone_document 落 retirement 记录
+# (gc_eligible_at=None);sweep 不得据此把它们拉进 7 天自动物理清理资格。
+# --------------------------------------------------------------------------- #
+
+
+def _seed_ordinary_tombstone(s, sid: str, *, reason: str, age_days: int, now: datetime) -> Document:
+    """按生产路径建文档+版本,再经真实 tombstone_document 原语落墓碑。
+
+    ``now=`` 回填 deleted_at/retired_at(= 原语写出的 N 天前生产形态);
+    retirement 记录保持原语原样(gc_eligible_at=None),零手工元数据。
+    """
+    doc, _ = _seed_doc_with_version(s, sid, gen=None)
+    assert lifecycle.tombstone_document(s, sid, reason=reason, now=now - timedelta(days=age_days))
+    return doc
+
+
+@pytest.mark.asyncio
+async def test_ordinary_tombstone_via_real_primitive_never_auto_eligible(env):
+    """fetch_deleted/membership 普通墓碑:tombstone_days=None 时超 7 天/30 天
+    仍不进 documents_eligible;apply 亦零 Weaviate 删除(A-5 分层,#162)。"""
+    now = datetime.now(UTC)
+    with env.sync_factory() as s:
+        _seed_ordinary_tombstone(
+            s,
+            f"{SRC}/prim-fd",
+            reason="fetch_deleted:gh-probe",
+            age_days=8,
+            now=now,
+        )
+        _seed_ordinary_tombstone(
+            s,
+            f"{SRC}/prim-mem",
+            reason="membership_reconcile",
+            age_days=31,
+            now=now,
+        )
+        s.commit()
+
+    report = await sweep(env.async_factory, env.pipeline, now=now)
+    assert f"{SRC}/prim-fd" not in report.documents_eligible
+    assert f"{SRC}/prim-mem" not in report.documents_eligible
+    # 普通墓碑无自动窗可观察:不得伪装成 retirement_pending 证据面
+    assert report.retirement_pending == []
+    # dry-run 默认 + 资格为空 → 零物理动作
+    assert report.dry_run is True
+    assert report.objects_deleted == 0
+    env.collection.data.delete_many.assert_not_called()
+
+    # apply=True 也不产生任何删除(资格判定为空,非 dry-run 门控所致)
+    report_apply = await sweep(env.async_factory, env.pipeline, now=now, apply=True)
+    assert report_apply.documents_eligible == []
+    assert report_apply.documents_deleted == 0
+    env.collection.data.delete_many.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ordinary_tombstone_enters_eligibility_only_with_explicit_window(env):
+    """显式 tombstone_days:真实原语墓碑仅超窗者入资格(7 天/30 天窗分档)。"""
+    now = datetime.now(UTC)
+    with env.sync_factory() as s:
+        _seed_ordinary_tombstone(s, f"{SRC}/optin-d2", reason="fetch_deleted:x", age_days=2, now=now)
+        _seed_ordinary_tombstone(s, f"{SRC}/optin-d8", reason="fetch_deleted:x", age_days=8, now=now)
+        _seed_ordinary_tombstone(s, f"{SRC}/optin-d31", reason="membership_reconcile", age_days=31, now=now)
+        s.commit()
+
+    report = await sweep(env.async_factory, env.pipeline, now=now, tombstone_days=7)
+    assert f"{SRC}/optin-d2" not in report.documents_eligible
+    assert f"{SRC}/optin-d8" in report.documents_eligible
+    assert f"{SRC}/optin-d31" in report.documents_eligible
+
+    report30 = await sweep(env.async_factory, env.pipeline, now=now, tombstone_days=30)
+    assert report30.documents_eligible == [f"{SRC}/optin-d31"]
+
+
+@pytest.mark.asyncio
+async def test_tombstone_gc_eligible_at_malformations_never_auto_eligible(env):
+    """gc_eligible_at=null/缺省/畸形:一律不构成自动资格锚(无 opt-in 时
+    零资格;显式 opt-in 时按 deleted_at 锚走墓碑窗,#162)。"""
+    now = datetime.now(UTC)
+    cases = ("null", "missing", "malformed")
+    with env.sync_factory() as s:
+        for name in cases:
+            doc = _seed_ordinary_tombstone(
+                s, f"{SRC}/mal-{name}", reason=f"fetch_deleted:{name}", age_days=10, now=now
+            )
+            # 防御面:模拟既有/损坏行的三种 gc_eligible_at 形态(JSONB 整体重赋值)
+            orig = lifecycle.get_retirement_record(doc)
+            if name == "null":
+                record = {**orig, "gc_eligible_at": None}
+            elif name == "missing":
+                record = {k: v for k, v in orig.items() if k != "gc_eligible_at"}
+            else:
+                record = {**orig, "gc_eligible_at": "not-a-timestamp"}
+            doc.metadata_ = {**doc.metadata_, lifecycle.RETIREMENT_META_KEY: record}
+        s.commit()
+
+    report = await sweep(env.async_factory, env.pipeline, now=now)
+    for name in cases:
+        assert f"{SRC}/mal-{name}" not in report.documents_eligible
+    assert report.retirement_pending == []
+    env.collection.data.delete_many.assert_not_called()
+
+    report_opt = await sweep(env.async_factory, env.pipeline, now=now, tombstone_days=7)
+    assert sorted(report_opt.documents_eligible) == sorted(f"{SRC}/mal-{n}" for n in cases)
+
+
+# --------------------------------------------------------------------------- #
+# #162 AC2:真实 confirm_absence_retirement 的 7 天自动窗语义不变
+# --------------------------------------------------------------------------- #
+
+
+def _seed_confirmed_absence(s, sid: str, *, retired_when: datetime, now: datetime) -> Document:
+    """按生产缺席确认路径(真实原语)落确认退休;now= 回填 retired_at。"""
+    doc, _ = _seed_doc_with_version(s, sid, gen=None)
+    lifecycle.confirm_absence_retirement(
+        doc,
+        reason=lifecycle.RETIRE_REASON_DISCOVERY,
+        actor=lifecycle.ACTOR_SYNC_ABSENCE,
+        evidence={"confirmations": 2},
+        now=retired_when,
+    )
+    return doc
+
+
+@pytest.mark.asyncio
+async def test_confirmed_absence_retirement_auto_window_unchanged(env):
+    """确认缺席退休:retired_at+7d 自动资格不变 —— 未到期不合格(含显式
+    更短墓碑窗亦不得提前),到期进资格;普通墓碑不受影响同场对照。"""
+    now = datetime.now(UTC)
+    with env.sync_factory() as s:
+        _seed_confirmed_absence(s, f"{SRC}/absence-early", retired_when=now - timedelta(days=2), now=now)
+        _seed_confirmed_absence(s, f"{SRC}/absence-due", retired_when=now - timedelta(days=8), now=now)
+        s.commit()
+
+    report = await sweep(env.async_factory, env.pipeline, now=now)
+    assert f"{SRC}/absence-early" not in report.documents_eligible
+    assert f"{SRC}/absence-early" in report.retirement_pending
+    assert f"{SRC}/absence-due" in report.documents_eligible
+    env.collection.data.delete_many.assert_not_called()
+
+    # 显式更短的墓碑窗(tombstone_days=1)不压缩自动窗:提前仍不合格
+    report_opt = await sweep(env.async_factory, env.pipeline, now=now, tombstone_days=1)
+    assert f"{SRC}/absence-early" not in report_opt.documents_eligible
+    assert f"{SRC}/absence-early" in report_opt.retirement_pending
+    assert f"{SRC}/absence-due" in report_opt.documents_eligible
+
+
+@pytest.mark.asyncio
+async def test_apply_purges_confirmed_absence_document_deterministically(env):
+    """apply:到期确认缺席退休文档 → 确定性 UUID 点删 + 账本行全清 +
+    审计计数一致 + 幂等(第二轮零资格零删除)。"""
+    now = datetime.now(UTC)
+    with env.sync_factory() as s:
+        doc, version = _seed_doc_with_version(s, f"{SRC}/absence-doomed", gen=None, chunks=1)
+        lifecycle.confirm_absence_retirement(
+            doc,
+            reason=lifecycle.RETIRE_REASON_DISCOVERY,
+            actor=lifecycle.ACTOR_SYNC_ABSENCE,
+            now=now - timedelta(days=8),
+        )
+        s.commit()
+        ordinal = version.generation_ordinal
+
+    report = await sweep(env.async_factory, env.pipeline, now=now, apply=True)
+    assert f"{SRC}/absence-doomed" in report.documents_eligible
+    assert report.documents_deleted == 1
+    assert report.versions_deleted == 1
+    assert report.chunk_rows_deleted == 1
+    got = {
+        str(v)
+        for c in env.collection.data.delete_many.call_args_list
+        for v in c.kwargs["where"].value
+    }
+    assert got == set(
+        chunk_uuids_for_version(f"{SRC}/absence-doomed", str(lifecycle.LEGACY_GENERATION_ID), ordinal, 1)
+    )
+    with env.sync_factory() as s:
+        assert (
+            s.execute(
+                select(Document).where(Document.source_id == f"{SRC}/absence-doomed")
+            ).scalar_one_or_none()
+            is None
+        )
+
+    # 幂等:行已清除,第二轮 sweep 零资格、零删除
+    env.collection.data.delete_many.reset_mock()
+    report2 = await sweep(env.async_factory, env.pipeline, now=now, apply=True)
+    assert report2.documents_eligible == []
+    assert report2.documents_deleted == 0
+    env.collection.data.delete_many.assert_not_called()

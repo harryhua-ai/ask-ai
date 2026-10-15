@@ -174,10 +174,13 @@ async def sweep(
         doomed.extend(sup_rows)
 
         # ---- v1.6.4 Track A(#25):发现确认退休行的 7 天自动窗(A-2 冻结时序)
-        # metadata 带 retirement 标记的 DELETED 行按
-        # ``gc_eligible_at = retired_at + 7d`` **自动**取得物理清除资格,
-        # 不依赖墓碑 opt-in 配置(A-5:普通墓碑 GC 仍 opt-in,分层不变);
-        # gc_eligible_at 缺失(防御)→ 回退 deleted_at + 7d 同窗。
+        # 自动资格锚**只认** retirement 记录内显式可解析的 ``gc_eligible_at``
+        # (confirm_absence_retirement 落笔 retired_at + 7d)。普通墓碑
+        # (tombstone_document 原语写 gc_eligible_at=None;含键缺省/畸形
+        # 的防御形态)不设隐式默认 —— **绝不回退 deleted_at + 7d**(#162:
+        # 该回退会把全部普通墓碑偷偷拉进 7 天自动物理清理,违背 A-5
+        # 「墓碑 GC 仍 opt-in」分层);其资格仅由运营显式配置的
+        # ``tombstone_days`` 墓碑窗裁决(下方 opt-in 分支,deleted_at 锚)。
         ret_rows = (
             await session.execute(
                 select(Document).where(
@@ -190,8 +193,8 @@ async def sweep(
             record = lifecycle.get_retirement_record(row) or {}
             eligible = _parse_iso_or_none(record.get("gc_eligible_at"))
             if eligible is None:
-                anchor = row.deleted_at or ts
-                eligible = anchor + timedelta(days=lifecycle.RETIRED_RETENTION_DAYS)
+                # 普通墓碑(或畸形记录):无自动窗,交 opt-in 墓碑窗裁决
+                continue
             if eligible <= ts:
                 doomed.append(row)
             else:
@@ -205,12 +208,16 @@ async def sweep(
                         Document.lifecycle == lifecycle.DocLifecycle.DELETED,
                         Document.deleted_at.is_not(None),
                         Document.deleted_at <= del_cut,
-                        # 普通(非发现确认)墓碑:维持 opt-in 语义不变
-                        Document.metadata_[lifecycle.RETIREMENT_META_KEY].is_(None),
                     )
                 )
             ).scalars().all()
-            doomed.extend(del_rows)
+            for row in del_rows:
+                # 持显式自动窗锚者(发现确认退休)只走自动窗(上方已裁决):
+                # 墓碑窗更短也不得提前(A-2 时序不被 opt-in 配置压缩)。
+                record = lifecycle.get_retirement_record(row) or {}
+                if _parse_iso_or_none(record.get("gc_eligible_at")) is not None:
+                    continue
+                doomed.append(row)
         report.documents_eligible = [d.source_id for d in doomed]
         doc_versions: dict[str, list[DocumentVersion]] = {}
         if doomed:
