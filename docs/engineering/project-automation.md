@@ -1,14 +1,26 @@
-# Project Automation — Operating Contract
+# GitHub Projects Automation — Historical Operating Contract (已停用)
 
-Deterministic GitHub automation so routine Project maintenance needs only an Issue edit:
-**Issue (body + control labels) = authority → GitHub Actions = deterministic synchronizer → Project = derived projection.**
-The Project is never an independent Source of Truth.
+> **状态：已停用｜历史说明（2026-10-15）**
+>
+> The three Project-only workflow files below have been removed from `.github/workflows`. After this change reaches
+> the default branch, Issue events, the weekly schedule, and `workflow_dispatch` no longer have Project automation
+> workflows to run. The former Action entrypoints cannot create new Project writes.
+>
+> GitHub Project #2 and its existing items, fields, and labels are retained; this change does not call the Project
+> API. The CLI and automation code remain for historical and offline regression reference. Do not invoke their write
+> commands unless separately authorized. Restoring any Project Actions workflow requires future independent User
+> authorization and review. All sections below describe the retired behavior and are not current operating instructions.
+
+Historical model: **Issue (body + control labels) = authority → GitHub Actions = deterministic synchronizer → Project
+= derived projection.** The Project was never an independent Source of Truth.
 
 Project: [@harryhua-ai's ask-ai project](https://github.com/users/harryhua-ai/projects/2) (number 2, user-owned).
 
 ---
 
-## For Role A / humans
+## For Role A / humans — historical reference (已停用)
+
+The following were the former planning instructions; they do not describe a current automation path.
 
 Routine planning = edit the Issue only. Add/remove canonical labels; the Project converges automatically
 (`project-sync.yml` runs on opened/edited/labeled/unlabeled/closed/reopened).
@@ -38,20 +50,20 @@ Rules of the road:
 - The label vocabulary is closed. Other `status:*`/`priority:*` values (e.g. `status:discovery`) are reported as
   unrecognized and change nothing.
 
-## For maintainers
+## For maintainers — historical reference (已停用)
 
 ### Workflows
 
-| File | Trigger | Purpose |
-|---|---|---|
-| `.github/workflows/project-sync.yml` | Issue events + `workflow_dispatch` (issue_number) | Workflow A: converge one Issue's Iteration/Priority/Status. Idempotent; verified after write. |
-| `.github/workflows/project-iteration-create.yml` | `workflow_dispatch` only | Workflow B: privileged iteration creation with fail-closed full-replace protocol. |
-| `.github/workflows/project-reconcile.yml` | `workflow_dispatch` (+ weekly Monday 06:00 UTC audit) | Workflow C: detect/repair drift; report ambiguity. |
+| Historical file name | Former trigger | Former purpose | Current status |
+|---|---|---|---|
+| `.github/workflows/project-sync.yml` | Issue events + `workflow_dispatch` (issue_number) | Workflow A: converge one Issue's Iteration/Priority/Status. Idempotent; verified after write. | Removed from `.github/workflows`; inactive after merge to the default branch. |
+| `.github/workflows/project-iteration-create.yml` | `workflow_dispatch` only | Workflow B: privileged iteration creation with fail-closed full-replace protocol. | Removed from `.github/workflows`; inactive after merge to the default branch. |
+| `.github/workflows/project-reconcile.yml` | `workflow_dispatch` + weekly Monday 06:00 UTC audit | Workflow C: detect/repair drift; report ambiguity. | Removed from `.github/workflows`; inactive after merge to the default branch. |
 
-All three share one exclusive concurrency group `project-automation` (no cancellation) — iteration configuration
-mutation can never race reconciliation or sync.
+Historically, all three shared one exclusive concurrency group `project-automation` (no cancellation). No current
+Project workflow uses this group.
 
-### Label vocabulary (canonical)
+### Label vocabulary (canonical in the historical model)
 
 `iteration:<key>` (key = slug of iteration title code token) · `priority:p0|p1|p2` · `status:backlog|in-progress`
 (mutation-capable values; `status:in-review` is RESERVED — see below)
@@ -95,7 +107,10 @@ mutation** (and never a guessed nearest option) until an option is authorized by
 
 No Project field/option/iteration/item ID is ever hardcoded; IDs are re-resolved per run and tolerated to regenerate.
 
-### Authentication (required secret)
+### Authentication (historical secret requirement — retired)
+
+`PROJECT_SYNC_TOKEN` was required by the removed Actions workflows. Those workflows no longer require a repository
+secret; do not create or refresh one for the retired automation.
 
 User-owned Projects v2 are **not** accessible to the repository `GITHUB_TOKEN`.
 
@@ -103,7 +118,7 @@ User-owned Projects v2 are **not** accessible to the repository `GITHUB_TOKEN`.
 - Token: classic PAT with **`repo`** + **`project`** scopes, or fine-grained PAT with **Projects: Read/Write**.
 - Missing/invalid token → the job fails immediately with a clean `AUTHENTICATION ERROR`.
 
-### Iteration creation safety (Workflow B)
+### Iteration creation safety (historical Workflow B)
 
 GitHub's `updateProjectV2Field(iterationConfiguration)` full-replaces the iteration set and **regenerates every
 iteration ID**, orphaning item values (observed twice on this Project). Workflow B therefore runs a transaction:
@@ -127,14 +142,14 @@ renames. New iteration naming follows the existing convention `<KEY> — <THEME>
 CLI exit codes: `0` success/no-change · `1` hard error · `2` visible findings needing attention (conflict, unknown
 iteration/option). Job summary lists Issue, requested state, findings.
 
-### Reconciliation (Workflow C)
+### Reconciliation (historical Workflow C)
 
 Auto-repairs deterministic drift: missing membership, wrong Priority/Iteration/Status, closed ≠ Done, reopened still
 Done (reopened Issues converge to their `status:*` label, or `open` when unlabeled).
 Reports without guessing: conflicting labels, unknown control labels, unknown iteration labels, unknown Project options,
 draft items (no Issue authority), Project members without control labels (not opted in).
 
-### Bootstrap / migration (one-time, auditable, reversible)
+### Bootstrap / migration (historical, one-time, auditable, reversible)
 
 `python3 scripts/project_automation/cli.py bootstrap --dry-run` then `--apply`:
 
@@ -146,22 +161,15 @@ Dry run is read-only. Apply is reversible: remove the added labels (each run's r
 Status quo preserved: closed Issues need no `status:*` label; `Discovery`/`Acceptance` statuses are surfaced as
 `needs_review` (no canonical label is invented).
 
-### Local operations
+### Local operations (historical; do not use for Project writes)
 
-```bash
-GH_TOKEN="$(gh auth token)" python3 scripts/project_automation/cli.py <sync|reconcile|bootstrap|ensure-labels|iteration-create> ...
-# every command accepts --dry-run (default) / --apply; full test suite:
-.venv/bin/python -m pytest tests/project_automation -q
-```
+The CLI examples and Project mutation tests belong to the former operating model. The code remains for historical and
+offline regression reference. It can still write Project data if separately invoked with a valid token; do not invoke
+`--apply` without future independent User authorization and review.
 
-### Activation boundary (IMPLEMENTATION ACCEPTED ≠ AUTOMATION ACTIVE)
+### Retirement boundary (2026-10-15)
 
-Merging this automation does NOT activate it. The activation gate sequence is:
-
-```
-candidate accepted → merge to main → PROJECT_SYNC_TOKEN configured/verified
-→ bootstrap --apply → first real Issue event → GitHub Action succeeds
-→ Project convergence independently verified → AUTOMATION ACTIVE
-```
-
-Until that chain completes, the Project remains manually governed and this document describes the target model only.
+The three workflow files are removed in this change. Once the change reaches the default branch, GitHub has no
+Project-only workflow definition for the former Issue events, weekly schedule, or manual dispatch inputs. This retires
+the automation entrypoints; it does not delete the Project or alter its historical data. Any restoration requires
+future independent User authorization and review.

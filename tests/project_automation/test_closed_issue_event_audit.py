@@ -1,4 +1,4 @@
-"""CLOSED-issue event audit — live-defect regression tests.
+"""CLOSED-issue sync behavior — live-defect regression tests.
 
 Root causes proven from real Actions evidence (runs 34599644360/34599655896/
 34599672245/34599689927):
@@ -10,21 +10,13 @@ D — sync_issue passes the plan containing `add_membership` straight to
 B — the single global concurrency group `project-automation` lets GitHub
     replace every PENDING per-issue run in a label burst; all but the last
     event's run are cancelled (runs for #20/#21/#34/#45 at 23:26Z), so those
-    issues never converge. Per-issue concurrency keys fix this; the dispatch
-    path also crashed on a leading '#' (`--issue "#4"`), so the workflow must
-    sanitize the issue number.
+    issues never converge. Per-issue concurrency keys and dispatch input
+    sanitization addressed those findings. Workflow-level assertions were
+    removed when the Project Actions entrypoints were retired.
 """
-import pathlib
-
-import pytest
-
 import sys
 sys.path.insert(0, "scripts")
-from project_automation.errors import ProjectMutationFailure
 from project_automation.service import Settings, sync_issue
-
-WORKFLOW = pathlib.Path(".github/workflows/project-sync.yml")
-
 
 class _NonMemberFakeTransport:
     """Live-shape transport where the issue is NOT yet a Project member.
@@ -118,29 +110,6 @@ class TestSyncNonMemberConvergence:
         report = sync_issue(ft, s, 11, dry_run=True)
         kinds = [m["kind"] for m in report["mutations"]]
         assert "add_membership" in kinds and "set_iteration" in kinds
-
-
-class TestSyncWorkflowContract:
-    """Workflow-level regression: burst survival + dispatch sanitization."""
-
-    def _workflow(self):
-        import yaml
-        return yaml.safe_load(WORKFLOW.read_text())
-
-    def test_labeled_and_unlabeled_triggers_present(self):
-        types = self._workflow()[True]["issues"]["types"]
-        for t in ("labeled", "unlabeled", "opened", "edited", "closed", "reopened"):
-            assert t in types
-
-    def test_concurrency_group_is_per_issue(self):
-        # global group let GitHub cancel all but the last run of a label burst
-        conc = self._workflow()["concurrency"]
-        assert "github.event.issue.number" in conc["group"]
-
-    def test_dispatch_issue_number_sanitized(self):
-        # run 34658662368 died on `--issue "#4"`: invalid int value
-        text = WORKFLOW.read_text()
-        assert 'number="${number##\\#}"' in text  # leading-# strip before CLI
 
 
 class TestClosedIssueSemanticsUnchanged:
