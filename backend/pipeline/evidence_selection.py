@@ -211,6 +211,32 @@ def _is_published_case_page(result) -> bool:
     return any(signal in hay for signal in _PUBLISHED_CASE_TITLE_SIGNALS)
 
 
+def is_first_party_solution_page(result) -> bool:
+    """候选是否为第一方官方 Solution 页(#148 AC1;纯结构事实谓词)。
+
+    判据 = 持久化 URL 的 ``/solutions/`` 段结构信号(与 :data:`_SOLUTION_URL_SIGNALS`
+    同一词表)—— 官方方案页的 generic authority 事实,语言无关、非 exact-URL。
+    普通 Wiki 片段的泛化 solution 词面(标题/章节)或连字符目录名
+    (如 ``4-edge-ai-solutions/``)不构成该形态。
+    """
+    url = (getattr(result, "url", None) or "").lower()
+    return any(signal in url for signal in _SOLUTION_URL_SIGNALS)
+
+
+def is_first_party_authority_page(result) -> bool:
+    """候选是否为第一方公开权威页形态(#148 AC2/AC3;纯结构事实谓词)。
+
+    两类结构事实:官方 ``/solutions/`` 段方案页(:func:`is_first_party_solution_page`)
+    与第一方公开 case-study 页(web_crawl/website 连接器 + case 谓词)。
+    用于终局可见 source 槽位的权威形态优先分配;filesystem 内部知识案例是
+    合法可引用来源(#28)但不构成该公开权威形态。
+    """
+    if is_first_party_solution_page(result):
+        return True
+    source_type = getattr(result, "source_type", None) or ""
+    return source_type in _SOURCE_PUBLISHED_CASE_TYPES and _is_published_case_page(result)
+
+
 def evidence_matches_slot(
     slot: EvidenceSlot,
     candidate,

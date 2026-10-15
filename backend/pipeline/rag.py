@@ -53,6 +53,8 @@ from backend.pipeline.evidence_selection import (
     build_coverage_report,
     build_evidence_stage,
     context_id_sets,
+    evidence_matches_slot,
+    is_first_party_authority_page,
     order_candidates_for_plan,
 )
 from backend.pipeline.intent import IntentResult
@@ -117,7 +119,13 @@ def _public_reservation_trace(stages: dict[str, Any]) -> dict[str, Any]:
             if isinstance(p, dict)
             and p.get("fired") is not False
             and (
-                p.get("rule") in {"R1_required_slot_target", "R1_first_party_case", "R2_page_completion", "R3a_spec_pool"}
+                p.get("rule") in {
+                    "R1_required_slot_target",
+                    "R1_first_party_case",
+                    "R1_official_solution_page",
+                    "R2_page_completion",
+                    "R3a_spec_pool",
+                }
                 or (p.get("rule") == "R3b_spec_rescue" and p.get("promoted"))
             )
         ]
@@ -136,6 +144,10 @@ def _public_reservation_trace(stages: dict[str, Any]) -> dict[str, Any]:
     if isinstance(reservation, dict) and reservation.get("solution_retention"):
         public["solution_retention"] = {
             "retained_count": len(reservation["solution_retention"]),
+        }
+    if isinstance(reservation, dict) and reservation.get("first_party_case_retention"):
+        public["first_party_case_retention"] = {
+            "retained_count": len(reservation["first_party_case_retention"]),
         }
     return public
 
@@ -1599,7 +1611,13 @@ class RAGOrchestrator:
         messages.append({"role": "user", "content": user_content})
         return messages
 
-    def _extract_sources(self, results: list[SearchResult]) -> list[dict]:
+    def _extract_sources(
+        self,
+        results: list[SearchResult],
+        *,
+        plan: Any | None = None,
+        taxonomy: Any = None,
+    ) -> list[dict]:
         """从重排结果中提取来源元数据,按归一化路径去重 + 过滤内部源。
 
         同一文档的多个翻译版本(如 ``docs/`` 与 ``i18n/en/...``)只保留
@@ -1609,6 +1627,14 @@ class RAGOrchestrator:
         官网等公开源)。filesystem(support 内部案例)虽参与检索与生成,但不作为
         对外展示的 source(避免内部客户工单路径外泄)。过滤不补足——若某问题召回
         的公开源不足 5 条,sources 列表就短,不强行用内部源填充。
+
+        **权威形态优先(#148)**:证据计划在册且匹配其槽位的第一方公开权威页
+        (官方 ``/solutions/`` 段方案页、case-study 页)优先分配可见 source
+        槽位 —— 这些页支持材料性方案/部署主张,却常因位置靠后被 Wiki+内部
+        案例占满的 5 槽挤出(生产实证 #145 EN:入上下文零引用,部署证明被
+        错误归因到内部案例)。槽位总量、去重、白名单与资格语义不变;权威
+        页不存在时恒等(零行为变更);upload-mode/不可渲染 URL 的既有排除
+        先于一切(权威重排只影响迭代次序,被排除项从不占用槽位)。
 
         **Citation canonical URL**(CIT-URL Contract):只有带有效 Docusaurus
         frontmatter slug 的 wiki-documents GitHub blob URL 才映射为
@@ -1625,15 +1651,38 @@ class RAGOrchestrator:
 
         Args:
             results: 重排后的 SearchResult 列表(rerank 降序)。
+            plan: 证据计划(#148 权威形态优先;None/空槽位 = 既有恒等行为)。
+            taxonomy: 产品 taxonomy(槽位匹配用)。
 
         Returns:
             去重 + 过滤后的来源字典列表,字段:``url`` / ``title`` / ``type`` /
             ``product`` / ``link_state``(映射发生时附加 ``provenance_url``;
             知识案例附加 ``source_id``)。
         """
+        ordered = results
+        if plan is not None and getattr(plan, "slots", ()):
+            targets = tuple(getattr(plan, "resolution_targets", ()) or ())
+            authority = [
+                r
+                for r in results
+                if is_first_party_authority_page(r)
+                and any(
+                    evidence_matches_slot(
+                        s, r, resolution_targets=targets, taxonomy=taxonomy
+                    )
+                    for s in plan.slots
+                )
+            ]
+            if authority:
+                authority_keys = {(r.source_id, r.chunk_index) for r in authority}
+                ordered = [
+                    r for r in results if (r.source_id, r.chunk_index) in authority_keys
+                ] + [
+                    r for r in results if (r.source_id, r.chunk_index) not in authority_keys
+                ]
         seen: set[str] = set()
         sources: list[dict] = []
-        for r in results:
+        for r in ordered:
             # SourceVisibilityGuard provides upload identity from DataSource;
             # stale chunk type/URL metadata must never expose it as a Source.
             if is_upload_mode_source(r):
@@ -2314,21 +2363,29 @@ class RAGOrchestrator:
                 self._top_k,
                 getattr(self._reranker, "threshold", 0.3),
             )
-            # B2-5(#31):官方 Solution 页保留 —— 组合的 [:top_k] 截断会把
-            # 追加在幸存者之后的 F-1' 晋升逐出;required 方案槽的阈下保留
-            # 晋升(正相关下限,保留语义而非竞争落选)按身份回填:
-            # 总量有界(≤ MAX_PROMOTIONS)、零 LLM、比较路径不参与。
+            # B2-5(#31)+ #148:官方 Solution 页与 first-party Case 页保留 ——
+            # 组合的 [:top_k] 截断会把追加在幸存者之后的 F-1' 晋升逐出;
+            # required 方案槽的阈下保留晋升(正相关下限,保留语义而非竞争
+            # 落选)与 first-party case 晋升(#148:内部案例不得仅因晋升被
+            # 截断逐出而独占 case 证明位)按身份回填:总量有界
+            # (≤ MAX_PROMOTIONS)、零 LLM、比较路径不参与。
             if _reserved:
                 _kept = {(r.source_id, r.chunk_index) for r in reranked}
-                _solution_keys = {
-                    (p.get("source_id"), p.get("chunk_index"))
-                    for p in res_info.get("promotions", [])
-                    if p.get("role") == ROLE_SOLUTION_GUIDE
-                }
+                _solution_keys: set[tuple[str | None, int | None]] = set()
+                _case_keys: set[tuple[str | None, int | None]] = set()
+                for p in res_info.get("promotions", []):
+                    key = (p.get("source_id"), p.get("chunk_index"))
+                    if p.get("role") == ROLE_SOLUTION_GUIDE:
+                        _solution_keys.add(key)
+                    elif (
+                        p.get("role") == ROLE_CASE_EVIDENCE
+                        and p.get("rule") == "R1_first_party_case"
+                    ):
+                        _case_keys.add(key)
                 _retained = [
                     r
                     for r in _reserved
-                    if (r.source_id, r.chunk_index) in _solution_keys
+                    if (r.source_id, r.chunk_index) in (_solution_keys | _case_keys)
                     and (r.source_id, r.chunk_index) not in _kept
                 ]
                 if _retained:
@@ -2336,6 +2393,12 @@ class RAGOrchestrator:
                     res_info.setdefault("solution_retention", []).extend(
                         {"source_id": r.source_id, "chunk_index": r.chunk_index}
                         for r in _retained
+                        if (r.source_id, r.chunk_index) in _solution_keys
+                    )
+                    res_info.setdefault("first_party_case_retention", []).extend(
+                        {"source_id": r.source_id, "chunk_index": r.chunk_index}
+                        for r in _retained
+                        if (r.source_id, r.chunk_index) in _case_keys
                     )
 
         # INC-5:确定性证据选择/组合——required 槽命中证据稳定前置
@@ -2345,7 +2408,7 @@ class RAGOrchestrator:
         if plan.slots:
             reranked, selection_info = order_candidates_for_plan(plan, reranked, taxonomy=taxonomy)
 
-        sources = self._extract_sources(reranked)
+        sources = self._extract_sources(reranked, plan=plan, taxonomy=taxonomy)
         # 引用完整性:LLM 编号集 = 访客可见集合(权威编号上下文);
         # CIT-03:编号携带产品标签,产品边界启用时同步做资格校验
         cite_ctx = build_citation_context(reranked, sources, taxonomy=taxonomy)
@@ -3302,21 +3365,28 @@ class RAGOrchestrator:
                 self._top_k,
                 getattr(self._reranker, "threshold", 0.3),
             )
-            # B2-5(#31):官方 Solution 页保留(与 answer 同位同语义)——
-            # 组合的 [:top_k] 截断会把追加在幸存者之后的 F-1' 晋升逐出;
-            # required 方案槽的阈下保留晋升(正相关下限,保留语义而非竞争
-            # 落选)按身份回填:总量有界(≤ MAX_PROMOTIONS)、零 LLM。
+            # B2-5(#31)+ #148:官方 Solution 页与 first-party Case 页保留
+            # (与 answer 同位同语义)—— 组合的 [:top_k] 截断会把追加在
+            # 幸存者之后的 F-1' 晋升逐出;required 方案槽的阈下保留晋升
+            # (正相关下限,保留语义而非竞争落选)与 first-party case 晋升
+            # (#148)按身份回填:总量有界(≤ MAX_PROMOTIONS)、零 LLM。
             if _reserved:
                 _kept = {(r.source_id, r.chunk_index) for r in reranked}
-                _solution_keys = {
-                    (p.get("source_id"), p.get("chunk_index"))
-                    for p in res_info.get("promotions", [])
-                    if p.get("role") == ROLE_SOLUTION_GUIDE
-                }
+                _solution_keys: set[tuple[str | None, int | None]] = set()
+                _case_keys: set[tuple[str | None, int | None]] = set()
+                for p in res_info.get("promotions", []):
+                    key = (p.get("source_id"), p.get("chunk_index"))
+                    if p.get("role") == ROLE_SOLUTION_GUIDE:
+                        _solution_keys.add(key)
+                    elif (
+                        p.get("role") == ROLE_CASE_EVIDENCE
+                        and p.get("rule") == "R1_first_party_case"
+                    ):
+                        _case_keys.add(key)
                 _retained = [
                     r
                     for r in _reserved
-                    if (r.source_id, r.chunk_index) in _solution_keys
+                    if (r.source_id, r.chunk_index) in (_solution_keys | _case_keys)
                     and (r.source_id, r.chunk_index) not in _kept
                 ]
                 if _retained:
@@ -3324,6 +3394,12 @@ class RAGOrchestrator:
                     res_info.setdefault("solution_retention", []).extend(
                         {"source_id": r.source_id, "chunk_index": r.chunk_index}
                         for r in _retained
+                        if (r.source_id, r.chunk_index) in _solution_keys
+                    )
+                    res_info.setdefault("first_party_case_retention", []).extend(
+                        {"source_id": r.source_id, "chunk_index": r.chunk_index}
+                        for r in _retained
+                        if (r.source_id, r.chunk_index) in _case_keys
                     )
 
         # INC-5:确定性证据选择/组合(与 answer 同位同语义,parity)——
@@ -3333,7 +3409,7 @@ class RAGOrchestrator:
         if plan.slots:
             reranked, selection_info = order_candidates_for_plan(plan, reranked, taxonomy=taxonomy)
 
-        sources = self._extract_sources(reranked)
+        sources = self._extract_sources(reranked, plan=plan, taxonomy=taxonomy)
         # 引用完整性:LLM 编号集 = 访客可见集合(权威编号上下文);
         # CIT-03:编号携带产品标签,产品边界启用时同步做资格校验
         cite_ctx = build_citation_context(reranked, sources, taxonomy=taxonomy)

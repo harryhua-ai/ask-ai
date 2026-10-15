@@ -40,6 +40,13 @@ R1 晋升的阈值门控放宽为正相关下限(:data:`SOLUTION_RETENTION_FLOOR
 幸存才触发」+ MAX_PROMOTIONS + 证据存在性(fail-open 不补位)约束;调用方
 需在 user-facing 组合截断(compose [:top_k])后按身份回填被逐出的保留晋升
 (rag.py answer/stream 两路径同位同语义)。
+
+Issue #148(生产取证 #145):SOLUTION_GUIDE 槽互补性 —— 泛化 solution 词面
+的普通 Wiki 幸存者不再虚假替代一手官方 Solution 页(URL 段结构信号,
+:data:`SOLUTION_RETENTION_FLOOR` 同纪律;官方页池内不可得时零变化)。
+配套:调用方对 ``R1_first_party_case`` 晋升执行同身份回填(组合截断曾把
+first-party case 晋升逐出而仅回填方案槽),可见 source 槽位按权威形态
+优先分配(rag.py ``_extract_sources``)。
 """
 
 from dataclasses import replace
@@ -59,6 +66,7 @@ from backend.pipeline.evidence_selection import (
     _is_published_case_page,
     _product_slug,
     evidence_matches_slot,
+    is_first_party_solution_page,
     resolved_scope,
 )
 
@@ -264,6 +272,39 @@ def reserve_required_slots(
                 continue
             if slot.role == ROLE_STORE_OFFICIAL:
                 met = any(title_anchored(s, taxonomy) for s in surv_m)
+            elif slot.role == ROLE_SOLUTION_GUIDE:
+                # Issue #148(AC1)角色槽互补性:普通 Wiki 片段的泛化 solution
+                # 词面不得虚假替代一手官方 Solution 页 —— 池内存在官方方案页
+                # (URL 段结构信号)而幸存者中无该形态时,槽位视为未满足并
+                # 晋升最优官方页(正相关下限,与 B2-5 同一纪律)。官方页
+                # 不存在(池内不可得)时既有语义零变化:wiki 幸存者合法满足
+                # 槽位(fail-open,不虚构、不强宣称)。晋升不可用(全部已被
+                # 占用/不合格)时同样回落既有 met 语义。
+                pool_official = [
+                    r
+                    for r in _matching(
+                        slot,
+                        [r for r, _ in pool_scores],
+                        plan=plan,
+                        taxonomy=taxonomy,
+                        target=target,
+                    )
+                    if is_first_party_solution_page(r)
+                ]
+                if pool_official and not any(
+                    is_first_party_solution_page(s) for s in surv_m
+                ):
+                    _before = len(fired)
+                    _promote(
+                        "R1_official_solution_page",
+                        slot,
+                        target,
+                        pool_official,
+                        floor=SOLUTION_RETENTION_FLOOR,
+                    )
+                    if len(fired) > _before:
+                        continue
+                met = bool(surv_m)
             else:
                 met = bool(surv_m)
             if met:
