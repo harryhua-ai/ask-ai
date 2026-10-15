@@ -42,6 +42,7 @@
 """
 
 from dataclasses import dataclass, replace
+from urllib.parse import urlsplit
 
 from backend.pipeline.citation import PUBLIC_SOURCE_TYPES
 from backend.pipeline.evidence_planning import (
@@ -77,13 +78,17 @@ _SOLUTION_SIGNALS: tuple[str, ...] = (
     "deployment",
 )
 
-#: 第一方官方方案段 URL 结构信号(#106;小写包含;与
-#: _PUBLISHED_CASE_URL_SIGNALS 同一词表纪律 —— 段级路径信号,非 exact-URL)。
-#: 生产实证:官方 Solution 页标题是描述性命名(不含 "solution" 字样),
-#: 词面信号天然缺席;/solutions/ 段结构是仅存的 generic authority 事实。
-#: 带斜杠段形态避免误命中正文式 slug(如 /blog/our-solution-to-delivery/)。
+#: 方案角色 URL path 信号(#106;小写;非 exact-URL)。它可匹配方案语义,但
+#: 不能单独证明第一方身份;:func:`is_first_party_solution_page` 还要求
+#: 第一方网站连接器与结构化 path 段同时成立。
 _SOLUTION_URL_SIGNALS: tuple[str, ...] = (
     "/solutions/",
+)
+
+# A path alone cannot establish first-party ownership (a GitHub blob can also
+# contain /solutions/); require a connector that carries first-party website pages.
+_SOURCE_FIRST_PARTY_SOLUTION_TYPES: frozenset[str] = frozenset(
+    {"web_crawl", "website"}
 )
 
 #: 案例证据连接器类型(support 案例存为 filesystem,product=knowledge)
@@ -191,9 +196,8 @@ def _has_solution_signal(result) -> bool:
     hay = f"{result.title or ''}\n{result.doc_section or ''}".lower()
     if any(signal in hay for signal in _SOLUTION_SIGNALS):
         return True
-    # Issue #106:URL 段结构信号(与 case 谓词的 URL 信号同构)—— 官方
-    # /solutions/ 段页面 title 是描述性命名,词面信号天然缺席;段结构是
-    # 第一方方案身份的 generic 强信号(非 exact-URL,词表纪律不变)。
+    # Issue #106:URL path 段是方案角色信号,与 case 谓词同为结构事实;
+    # 它可用于一般 SOLUTION_GUIDE 匹配,但不能单独证明第一方来源身份。
     url = (getattr(result, "url", None) or "").lower()
     return any(signal in url for signal in _SOLUTION_URL_SIGNALS)
 
@@ -209,6 +213,42 @@ def _is_published_case_page(result) -> bool:
         return True
     hay = f"{getattr(result, 'title', None) or ''}\n{getattr(result, 'doc_section', None) or ''}".lower()
     return any(signal in hay for signal in _PUBLISHED_CASE_TITLE_SIGNALS)
+
+
+def is_first_party_solution_page(result) -> bool:
+    """候选是否为第一方官方 Solution 页(#148 AC1;纯结构事实谓词).
+
+    判据 = 第一方网站连接器身份(``web_crawl`` / ``website``)与 HTTP(S) URL
+    path 中完整 ``solutions`` 段同时成立。该组合是通用结构信号,语言无关、
+    非 exact-URL 或固定域名规则。普通 GitHub/Wiki blob 的相同路径、标题/章节
+    的泛化 solution 词面、以及连字符目录名都不能建立第一方页面身份。
+    """
+    source_type = getattr(result, "source_type", None) or ""
+    if source_type not in _SOURCE_FIRST_PARTY_SOLUTION_TYPES:
+        return False
+    try:
+        parsed = urlsplit(str(getattr(result, "url", None) or ""))
+    except ValueError:
+        return False
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return False
+    path_segments = {segment.lower() for segment in parsed.path.split("/") if segment}
+    return "solutions" in path_segments
+
+
+def is_first_party_authority_page(result) -> bool:
+    """候选是否为第一方公开权威页形态(#148 AC2/AC3;纯结构事实谓词)。
+
+    两类结构事实:第一方网站连接器 + ``/solutions/`` path 段
+    (:func:`is_first_party_solution_page`)与第一方公开 case-study 页
+    (web_crawl/website 连接器 + case 谓词)。
+    用于终局可见 source 槽位的权威形态优先分配;filesystem 内部知识案例是
+    合法可引用来源(#28)但不构成该公开权威形态。
+    """
+    if is_first_party_solution_page(result):
+        return True
+    source_type = getattr(result, "source_type", None) or ""
+    return source_type in _SOURCE_PUBLISHED_CASE_TYPES and _is_published_case_page(result)
 
 
 def evidence_matches_slot(
