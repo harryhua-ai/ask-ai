@@ -36,5 +36,11 @@
   "digest": "a884f1a0dec1a695560e07eef3beee0b5b1bc20b6e376649c0bda17a7d9380d2",
   "release": "v1.1.6",
   "source_sha": "2ff0096bcb257dd93fb860914c7039472e71174f"
+ },
+ "delivery": {
+  "pr": 166,
+  "sha": "34d92643a5ec66c3dac85411fc4dd9b962e662ea",
+  "note": "",
+  "delivered_at": "2026-10-15T10:11:16Z"
  }
 }
