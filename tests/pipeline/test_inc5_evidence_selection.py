@@ -16,6 +16,7 @@
 """
 
 import json
+from dataclasses import replace as _replace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -130,6 +131,41 @@ def _rag(payload: dict, candidates: list[SearchResult]) -> RAGOrchestrator:
     reranker.rerank_scored.side_effect = lambda q, results, top_k=None: (list(results)[: top_k or 10], [])
     return RAGOrchestrator(
         searcher, reranker, _make_llm(payload), system_prompt="s", min_results_to_answer=1
+    )
+
+
+def _issue151_rag(candidates: list[SearchResult]) -> RAGOrchestrator:
+    """Give recalled fixtures deterministic scores and keep the production top-10."""
+    searcher = MagicMock()
+    searcher.search.return_value = list(candidates)
+    searcher.search_symbols.return_value = []
+    searcher.search_bucket.return_value = []
+    score_by_id = {(r.source_id, r.chunk_index): r.score for r in candidates}
+    reranker = MagicMock()
+    reranker.threshold = 0.3
+
+    def _score(_query, results, top_k=10):
+        pool = sorted(
+            ((r, score_by_id[(r.source_id, r.chunk_index)]) for r in results),
+            key=lambda pair: pair[1],
+            reverse=True,
+        )
+        qualified = [_replace(r, score=score) for r, score in pool if score >= 0.3]
+        return qualified[:top_k], pool
+
+    reranker.rerank_scored.side_effect = _score
+    reranker.rerank.side_effect = lambda query, results, top_k=10: _score(
+        query, results, top_k
+    )[0]
+    llm = _make_llm(_payload("commercial", "factual"))
+    llm.describe_chain = MagicMock(return_value={})
+    return RAGOrchestrator(
+        searcher,
+        reranker,
+        llm,
+        system_prompt="s",
+        min_results_to_answer=1,
+        top_k=10,
     )
 
 
@@ -589,6 +625,174 @@ async def test_acceptance_o_answer_stream_evidence_parity():
     complete = [e for e in events if e["type"] == "complete"][-1]
     assert r1.trace_payload["stages"]["evidence"] == complete["trace_payload"]["stages"]["evidence"]
     assert complete["trace_payload"]["stages"]["evidence"]["coverage"]["coverage_complete"] is True
+
+
+@pytest.mark.unit
+async def test_issue151_answer_and_stream_keep_each_target_store_source_citable():
+    """三目标 variation 全部召回时，answer 与 stream 的来源和覆盖逐目标一致。"""
+    labels = {
+        "ne301": "NeoEyes NE301 Wireless Edge AI Camera",
+        "ne101": "NeoEyes NE101 Modular Sensing Camera",
+        "ne503": "NeoEye NE503 Edge AI Camera",
+    }
+    candidates = [
+        _sr(
+            f"store/{target}/variation-{i}",
+            "woocommerce",
+            target,
+            labels[target],
+            f"True variant {i} price=${50 + i}.00 instock SKU={target}-{i}",
+            score=score,
+        )
+        for target, scores in {
+            "ne301": (0.99, 0.98, 0.97, 0.96, 0.95),
+            "ne101": (0.80, 0.79),
+            "ne503": (0.78, 0.77),
+        }.items()
+        for i, score in enumerate(scores, start=1)
+    ]
+    candidates.extend(
+        _sr(
+            f"site/ne301-guide-{i}",
+            "website",
+            "ne301",
+            f"NE301 deployment guide {i}",
+            f"Non-store technical evidence {i}",
+            score=score,
+        )
+        for i, score in enumerate((0.94, 0.93, 0.92, 0.91, 0.90), start=1)
+    )
+    query = "NE301, NE101 and NE503 have which configurations and prices?"
+    targets = set(labels)
+
+    answer = await _issue151_rag(candidates).answer(query, "widget")
+    events = await _collect(_issue151_rag(candidates), query)
+    source_event = next(event for event in events if event["type"] == "sources")
+    complete = next(event for event in events if event["type"] == "complete")
+
+    def _cited_store_products(sources, citation_stats):
+        return {
+            sources[item["citation_no"] - 1]["product"]
+            for item in citation_stats["citable"]
+            if sources[item["citation_no"] - 1]["type"] == "woocommerce"
+        }
+
+    answer_citation = answer.trace_payload["stages"]["citation_integrity"]
+    stream_citation = complete["trace_payload"]["stages"]["citation_integrity"]
+    assert len(answer.reranked_results) <= 10
+    assert complete["trace_payload"]["stages"]["rerank"]["count"] <= 10
+    assert answer.sources == source_event["sources"] == complete["sources"]
+    assert {
+        source["product"]
+        for source in answer.sources
+        if source["type"] == "woocommerce"
+    } == targets
+    assert _cited_store_products(answer.sources, answer_citation) == targets
+    assert _cited_store_products(complete["sources"], stream_citation) == targets
+    assert all(
+        1 <= item["citation_no"] <= len(answer.sources)
+        for item in answer_citation["citable"]
+    )
+
+    for event_coverage in (
+        answer.trace_payload["stages"]["evidence"]["coverage"],
+        complete["trace_payload"]["stages"]["evidence"]["coverage"],
+    ):
+        store_slots = {
+            tuple(slot["product_scope"]): slot
+            for slot in event_coverage["slots"]
+            if slot["role"] == _ROLE_STORE_OFFICIAL
+        }
+        assert set(store_slots) == {(target,) for target in targets}
+        assert all(slot["covered"] for slot in store_slots.values())
+        assert event_coverage["required_total"] == 3
+        assert event_coverage["required_covered"] == 3
+
+
+@pytest.mark.unit
+async def test_issue151_missing_target_is_reported_as_partial_without_claiming_no_price():
+    labels = {
+        "ne301": "NeoEyes NE301 Wireless Edge AI Camera",
+        "ne101": "NeoEyes NE101 Modular Sensing Camera",
+        "ne503": "NeoEye NE503 Edge AI Camera",
+    }
+    candidates = [
+        _sr(
+            f"store/{target}/variation-1",
+            "woocommerce",
+            target,
+            labels[target],
+            f"True variant price=${50 + i}.00 instock SKU={target}-{i}",
+            score=score,
+        )
+        for i, (target, score) in enumerate((("ne301", 0.99), ("ne101", 0.85)), start=1)
+    ]
+    rag = _issue151_rag(candidates)
+    query = "NE301, NE101 and NE503 have which configurations and prices?"
+    result = await rag.answer(query, "widget")
+
+    coverage = result.trace_payload["stages"]["evidence"]["coverage"]
+    store_slots = {
+        tuple(slot["product_scope"]): slot
+        for slot in coverage["slots"]
+        if slot["role"] == _ROLE_STORE_OFFICIAL
+    }
+    assert store_slots[("ne301",)]["covered"] is True
+    assert store_slots[("ne101",)]["covered"] is True
+    assert store_slots[("ne503",)]["covered"] is False
+    assert coverage["coverage_complete"] is False
+    assert coverage["missing_required"] == ["STORE_OFFICIAL(ne503)"]
+    assert {source["product"] for source in result.sources if source["type"] == "woocommerce"} == {
+        "ne301",
+        "ne101",
+    }
+    strategy = result.trace_payload["stages"]["response_strategy"]
+    assert strategy["coverage_framing"] == "partial_supported"
+    assert strategy["gap_labels"] == ["STORE_OFFICIAL(ne503)"]
+    generation_messages = rag._llm.generate.call_args_list[-1].args[0]
+    assert any("STORE_OFFICIAL(ne503)" in message["content"] for message in generation_messages)
+
+
+@pytest.mark.unit
+def test_issue151_store_source_order_round_robins_before_five_source_cap():
+    from backend.pipeline.evidence_planning import derive_evidence_plan
+    from backend.pipeline.evidence_selection import order_candidates_for_plan
+    from backend.pipeline.product_resolver import ProductResolution
+    from backend.pipeline.task_understanding import TaskUnderstanding
+
+    targets = ("ne301", "ne101", "ne503")
+    plan = derive_evidence_plan(
+        TaskUnderstanding(
+            category="commercial",
+            reason="test",
+            confidence=1.0,
+            extracted_query="prices",
+            rewritten_query="prices",
+        ),
+        ProductResolution("exact", targets, "query"),
+    )
+    labels = {
+        "ne301": "NeoEyes NE301 Wireless Edge AI Camera",
+        "ne101": "NeoEyes NE101 Modular Sensing Camera",
+        "ne503": "NeoEye NE503 Edge AI Camera",
+    }
+    candidates = [
+        _sr(
+            f"store/{target}/variant-{index}",
+            "woocommerce",
+            target,
+            labels[target],
+            f"variant {index} price=${40 + index}.00",
+            score=1.0 - (index / 100),
+        )
+        for target, count in (("ne301", 7), ("ne101", 1), ("ne503", 1))
+        for index in range(1, count + 1)
+    ]
+
+    ordered, _ = order_candidates_for_plan(plan, candidates, taxonomy=None)
+    sources = object.__new__(RAGOrchestrator)._extract_sources(ordered)
+    assert [result.product for result in ordered[:3]] == list(targets)
+    assert {source["product"] for source in sources if source["type"] == "woocommerce"} == set(targets)
 
 
 @pytest.mark.unit

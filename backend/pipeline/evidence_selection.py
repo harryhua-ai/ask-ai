@@ -41,7 +41,7 @@
 计入覆盖;matched 仍如实保留候选面语义匹配(诊断:证据存在但未达生成)。
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from backend.pipeline.citation import PUBLIC_SOURCE_TYPES
 from backend.pipeline.evidence_planning import (
@@ -344,6 +344,14 @@ def order_candidates_for_plan(
         return list(candidates), info
 
     targets = tuple(plan.resolution_targets or ())
+    store_slots = [s for s in required_slots if s.role == ROLE_STORE_OFFICIAL]
+    store_targets = tuple(
+        dict.fromkeys(
+            target
+            for slot in store_slots
+            for target in resolved_scope(slot, targets)
+        )
+    )
     primary: list = []
     secondary: list = []
     for r in candidates:
@@ -355,6 +363,36 @@ def order_candidates_for_plan(
             info["required_matched"] += 1
         else:
             secondary.append(r)
+
+    # A required Store role can cover several explicit products in commercial
+    # exact mode. Put the first surviving Store candidate for each product
+    # ahead of additional variants from any one product. This keeps each
+    # target represented inside the existing five-source citation window.
+    if len(store_targets) > 1:
+        target_first: list = []
+        target_first_objects: set[int] = set()
+        for target in store_targets:
+            for candidate in primary:
+                if _product_slug(candidate, taxonomy) != target:
+                    continue
+                if not any(
+                    evidence_matches_slot(
+                        slot,
+                        candidate,
+                        resolution_targets=targets,
+                        taxonomy=taxonomy,
+                    )
+                    for slot in store_slots
+                ):
+                    continue
+                target_first.append(candidate)
+                target_first_objects.add(id(candidate))
+                break
+        if target_first:
+            primary = target_first + [
+                candidate for candidate in primary if id(candidate) not in target_first_objects
+            ]
+
     ordered = primary + secondary
     info["reordered"] = [(r.source_id, r.chunk_index) for r in ordered] != [
         (r.source_id, r.chunk_index) for r in candidates
@@ -405,32 +443,41 @@ def build_coverage_report(
     targets = tuple(plan.resolution_targets or ())
     slot_coverages: list[SlotCoverage] = []
     for slot in plan.slots:
-        matched: list[tuple[str, int]] = []
-        truncated = False
-        in_context = 0
-        require_citable = slot.citation_requirement == CITATION_CITABLE_REQUIRED
-        for r in candidates:
-            if not evidence_matches_slot(slot, r, resolution_targets=targets, taxonomy=taxonomy):
-                continue
-            key = (r.source_id, r.chunk_index)
-            available = key in citable_ids or (not require_citable and key in background_ids)
-            if available:
-                in_context += 1
-            if len(matched) < _MAX_MATCHED_PER_SLOT:
-                matched.append(key)
-            else:
-                truncated = True
-        slot_coverages.append(
-            SlotCoverage(
-                role=slot.role,
-                product_scope=resolved_scope(slot, targets),
-                required=slot.required,
-                citation_requirement=slot.citation_requirement,
-                covered=in_context > 0,
-                matched=tuple(matched),
-                matched_truncated=truncated,
-            )
+        scope = resolved_scope(slot, targets)
+        scoped_slots = (
+            [replace(slot, product_scope=(target,)) for target in scope]
+            if slot.role == ROLE_STORE_OFFICIAL and slot.required and len(scope) > 1
+            else [slot]
         )
+        for scoped_slot in scoped_slots:
+            matched: list[tuple[str, int]] = []
+            truncated = False
+            in_context = 0
+            require_citable = scoped_slot.citation_requirement == CITATION_CITABLE_REQUIRED
+            for r in candidates:
+                if not evidence_matches_slot(
+                    scoped_slot, r, resolution_targets=targets, taxonomy=taxonomy
+                ):
+                    continue
+                key = (r.source_id, r.chunk_index)
+                available = key in citable_ids or (not require_citable and key in background_ids)
+                if available:
+                    in_context += 1
+                if len(matched) < _MAX_MATCHED_PER_SLOT:
+                    matched.append(key)
+                else:
+                    truncated = True
+            slot_coverages.append(
+                SlotCoverage(
+                    role=scoped_slot.role,
+                    product_scope=resolved_scope(scoped_slot, targets),
+                    required=scoped_slot.required,
+                    citation_requirement=scoped_slot.citation_requirement,
+                    covered=in_context > 0,
+                    matched=tuple(matched),
+                    matched_truncated=truncated,
+                )
+            )
 
     required = [s for s in slot_coverages if s.required]
     required_total = len(required)

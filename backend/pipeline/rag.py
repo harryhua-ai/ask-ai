@@ -44,12 +44,14 @@ from backend.pipeline.evidence_planning import (
     EVIDENCE_INTENT_RECOMMENDATION,
     ROLE_CASE_EVIDENCE,
     ROLE_SOLUTION_GUIDE,
+    ROLE_STORE_OFFICIAL,
     derive_evidence_plan,
 )
 from backend.pipeline.evidence_reservation import reserve_plan_evidence
 from backend.pipeline.evidence_selection import (
     _has_solution_signal,
     _is_published_case_page,
+    _product_slug,
     build_coverage_report,
     build_evidence_stage,
     context_id_sets,
@@ -746,6 +748,114 @@ def _compose_user_facing_evidence(
     ]:
         return list(evidence)
     return composed
+
+
+def _retain_required_store_promotions(
+    evidence: list[SearchResult],
+    reserved: list[SearchResult],
+    reservation_info: dict[str, Any],
+    top_k: int,
+    plan: Any,
+    taxonomy: Any,
+) -> list[SearchResult]:
+    """Keep missing-target Store reservations inside the existing evidence budget.
+
+    F-1' may find a qualified Store candidate for a target absent from the
+    rerank survivors. The generic user-facing composition can then truncate
+    that appended candidate behind other products' survivors. Restore only
+    successful required STORE_OFFICIAL promotions, then put one available
+    Store candidate per resolved target ahead of additional variants. Keep the
+    window at ``top_k``. If the budget is smaller than the number of available
+    targets, resolver order gives deterministic partial coverage; no candidate
+    is invented or admitted below the existing gate.
+    """
+    promotions = reservation_info.get("promotions", ())
+    required_targets = [
+        (
+            promotion.get("target"),
+            (promotion.get("source_id"), promotion.get("chunk_index")),
+        )
+        for promotion in promotions
+        if isinstance(promotion, dict)
+        and promotion.get("rule") == "R1_required_slot_target"
+        and promotion.get("role") == ROLE_STORE_OFFICIAL
+    ]
+    if not required_targets or top_k <= 0:
+        return list(evidence)
+
+    store_slots = [
+        slot
+        for slot in getattr(plan, "slots", ())
+        if slot.required and slot.role == ROLE_STORE_OFFICIAL
+    ]
+    target_order: list[str] = []
+    for slot in store_slots:
+        scope = tuple(slot.product_scope or getattr(plan, "resolution_targets", ()) or ())
+        for target in scope:
+            if target not in target_order:
+                target_order.append(target)
+
+    plan_targets = tuple(getattr(plan, "resolution_targets", ()) or ())
+    by_key = {(r.source_id, r.chunk_index): r for r in evidence}
+    evidence_keys = set(by_key)
+    required_by_target = {target: key for target, key in required_targets if target}
+    for target, key in required_targets:
+        if key not in by_key:
+            reserved_candidate = next(
+                (r for r in reserved if (r.source_id, r.chunk_index) == key), None
+            )
+            if reserved_candidate is not None:
+                by_key[key] = reserved_candidate
+
+    target_priority: list[tuple[str | None, SearchResult]] = []
+    if target_order:
+        for target in target_order:
+            matches = [
+                r
+                for key, r in by_key.items()
+                if _product_slug(r, taxonomy) == target
+                and (key in evidence_keys or required_by_target.get(target) == key)
+                and any(
+                    evidence_matches_slot(
+                        slot,
+                        r,
+                        resolution_targets=plan_targets,
+                        taxonomy=taxonomy,
+                    )
+                    for slot in store_slots
+                )
+            ]
+            if matches:
+                target_priority.append((target, max(matches, key=lambda r: r.score or 0.0)))
+    else:
+        for target, key in required_targets:
+            candidate = by_key.get(key)
+            if candidate is not None:
+                target_priority.append((target, candidate))
+
+    if not target_priority:
+        return list(evidence)
+
+    prioritized_keys = {
+        (candidate.source_id, candidate.chunk_index)
+        for _target, candidate in target_priority
+    }
+    prioritized = [candidate for _target, candidate in target_priority]
+    retained = (prioritized + [
+        r for r in evidence if (r.source_id, r.chunk_index) not in prioritized_keys
+    ])[:top_k]
+    retained_keys = {(r.source_id, r.chunk_index) for r in retained}
+    reservation_info["store_target_retention"] = [
+        {
+            "target": target,
+            "source_id": candidate.source_id,
+            "chunk_index": candidate.chunk_index,
+        }
+        for target, candidate in target_priority
+        if (candidate.source_id, candidate.chunk_index) in retained_keys
+        and required_by_target.get(target) == (candidate.source_id, candidate.chunk_index)
+    ]
+    return retained
 
 
 def _requested_hardware_revision(query: str) -> str | None:
@@ -2401,6 +2511,11 @@ class RAGOrchestrator:
                         if (r.source_id, r.chunk_index) in _case_keys
                     )
 
+        if _reserved:
+            reranked = _retain_required_store_promotions(
+                reranked, _reserved, res_info, self._top_k, plan, taxonomy
+            )
+
         # INC-5:确定性证据选择/组合——required 槽命中证据稳定前置
         # (纯函数,零 LLM;不增删证据只定序,既有排名/剪枝/上下文安全约束保持;
         # 定序决定可见源截断预算的归属,故必须先于 sources 提取)
@@ -3401,6 +3516,11 @@ class RAGOrchestrator:
                         for r in _retained
                         if (r.source_id, r.chunk_index) in _case_keys
                     )
+
+        if _reserved:
+            reranked = _retain_required_store_promotions(
+                reranked, _reserved, res_info, self._top_k, plan, taxonomy
+            )
 
         # INC-5:确定性证据选择/组合(与 answer 同位同语义,parity)——
         # required 槽命中证据稳定前置;定序决定可见源截断预算归属,

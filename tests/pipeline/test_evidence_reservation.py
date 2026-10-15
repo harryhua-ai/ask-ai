@@ -12,15 +12,27 @@
 
 from dataclasses import replace as _replace
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 
+from backend.pipeline.citation import build_citation_context
 from backend.pipeline.evidence_planning import derive_evidence_plan
 from backend.pipeline.evidence_reservation import (
     MAX_PROMOTIONS,
     reserve_plan_evidence,
     reserve_required_slots,
     title_anchored,
+)
+from backend.pipeline.evidence_selection import (
+    build_coverage_report,
+    context_id_sets,
+    order_candidates_for_plan,
+)
+from backend.pipeline.rag import (
+    RAGOrchestrator,
+    _compose_user_facing_evidence,
+    _retain_required_store_promotions,
 )
 from backend.retrieval.search import SearchResult
 
@@ -35,6 +47,7 @@ def _sr(
     chunk_index: int = 0,
     score: float = 0.9,
     chunk_type: str = "paragraph",
+    channel_visibility: tuple[str, ...] = ("widget", "api"),
 ) -> SearchResult:
     return SearchResult(
         text=text,
@@ -46,7 +59,7 @@ def _sr(
         score=score,
         chunk_index=chunk_index,
         chunk_type=chunk_type,
-        channel_visibility=("widget", "api"),
+        channel_visibility=channel_visibility,
     )
 
 
@@ -62,7 +75,11 @@ WIKI_N301 = _sr("wiki/battery-page-a", "github", "ne301", "0-overview", "NE301 �
 class _Taxonomy:
     """最小 taxonomy 桩:canonicalize/extract_products/display_name/is_targetable。"""
 
-    _NAMES = {"ne101": "NeoEye NE101", "ne301": "NeoEye NE301"}
+    _NAMES: ClassVar[dict[str, str]] = {
+        "ne101": "NeoEye NE101",
+        "ne301": "NeoEye NE301",
+        "ne503": "NeoEye NE503 Edge AI Camera",
+    }
 
     def canonicalize(self, label):
         if not label:
@@ -147,6 +164,27 @@ def test_below_threshold_never_promoted():
     survivors = [ACC_N101]
     pool = [(weak, 0.1)]
     promoted, _ = reserve_required_slots(plan, survivors, pool, taxonomy=_TAX, threshold=0.3)
+    assert promoted == []
+
+
+@pytest.mark.unit
+def test_r1_never_promotes_a_store_candidate_rejected_by_eligibility():
+    denied = _sr(
+        "store/ne101/denied",
+        "woocommerce",
+        "ne101",
+        "NeoEyes NE101 Modular Sensing Camera",
+        score=0.8,
+        channel_visibility=("api",),
+    )
+    promoted, _ = reserve_required_slots(
+        _COMMERCIAL_2T(),
+        [],
+        [(denied, 0.8)],
+        taxonomy=_TAX,
+        threshold=0.3,
+        is_eligible=lambda result: "widget" in result.channel_visibility,
+    )
     assert promoted == []
 
 
@@ -338,3 +376,162 @@ async def test_zero_llm_zero_retrieval_when_all_slots_met():
         searcher=_Searcher(), reranker=object(),
     )
     assert promoted == [] and info["fired"] is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_issue151_red_multi_target_store_variants_reach_terminal_citations():
+    """#149 同构：多目标 Store 变体均在池中，但 A 的变体挤掉 B/C 的终局引用。"""
+    targets = ("ne301", "ne101", "ne503")
+    plan = _plan("commercial", targets)
+    labels = {
+        "ne301": "NeoEyes NE301 Wireless Edge AI Camera",
+        "ne101": "NeoEyes NE101 Modular Sensing Camera",
+        "ne503": "NeoEye NE503 Edge AI Camera",
+    }
+    store_candidates = {
+        target: [
+            _sr(
+                f"store/{target}/variation-{i}",
+                "woocommerce",
+                target,
+                labels[target],
+                f"真实变体 {i} price=${50 + i}.00 instock SKU={target}-{i}",
+                score=score,
+            )
+            for i, score in enumerate(scores, start=1)
+        ]
+        for target, scores in {
+            "ne301": (0.99, 0.98, 0.97, 0.96, 0.95),
+            "ne101": (0.80, 0.79),
+            "ne503": (0.78, 0.77),
+        }.items()
+    }
+    other = [
+        _sr(
+            f"site/ne301-guide-{i}",
+            "website",
+            "ne301",
+            f"NE301 deployment guide {i}",
+            f"Non-store technical evidence {i}",
+            score=score,
+        )
+        for i, score in enumerate((0.94, 0.93, 0.92, 0.91, 0.90), start=1)
+    ]
+    pool = [*store_candidates["ne301"], *other, *store_candidates["ne101"], *store_candidates["ne503"]]
+    pool_scores = sorted(((r, r.score) for r in pool), key=lambda pair: pair[1], reverse=True)
+    survivors = [_replace(r, score=score) for r, score in pool_scores[:10]]
+
+    # All three products have genuine variation candidates in the recall pool.
+    assert all(store_candidates[target] for target in targets)
+    reserved, reservation_info = await reserve_plan_evidence(
+        plan,
+        survivors,
+        pool_scores,
+        taxonomy=_TAX,
+        threshold=0.3,
+    )
+    promoted_targets = {
+        promotion.get("target")
+        for promotion in reservation_info["promotions"]
+        if promotion.get("rule") == "R1_required_slot_target"
+    }
+    assert promoted_targets == {"ne101", "ne503"}
+
+    # 当前 answer/stream 顺序：先拼接晋升，再按用户面与 top-k 截断。
+    composed = _compose_user_facing_evidence(
+        survivors + reserved, pool_scores, top_k=10, rerank_threshold=0.3
+    )
+    composed = _retain_required_store_promotions(
+        composed, reserved, reservation_info, top_k=10, plan=plan, taxonomy=_TAX
+    )
+    final_evidence, _ = order_candidates_for_plan(plan, composed, taxonomy=_TAX)
+    source_extractor = object.__new__(RAGOrchestrator)
+    sources = source_extractor._extract_sources(final_evidence)
+    citation_context = build_citation_context(final_evidence, sources, taxonomy=_TAX)
+    citable = {
+        (item["source_id"], item["chunk_index"]): item["citation_no"]
+        for item in citation_context.stats["citable"]
+    }
+    cited_store_targets = {
+        result.product
+        for result in final_evidence
+        if result.source_type == "woocommerce"
+        and (result.source_id, result.chunk_index) in citable
+    }
+    citable_ids, background_ids = context_id_sets(citation_context.stats)
+    coverage = build_coverage_report(
+        plan,
+        final_evidence,
+        taxonomy=_TAX,
+        citable_ids=citable_ids,
+        background_ids=background_ids,
+    )
+
+    assert len(final_evidence) <= 10
+    assert cited_store_targets == set(targets)
+    assert {source["product"] for source in sources if source["type"] == "woocommerce"} >= set(targets)
+    assert all(1 <= citation_no <= len(sources) for citation_no in citable.values())
+    assert coverage.required_total == 3
+    assert coverage.required_covered == 3
+    assert {slot.product_scope for slot in coverage.slots if slot.role == "STORE_OFFICIAL"} == {
+        (target,) for target in targets
+    }
+
+    # A two-item top-k cannot cover three targets; preserve the finite budget
+    # and report the omitted target instead of synthesizing/claiming its price.
+    small_composed = _compose_user_facing_evidence(
+        survivors + reserved, pool_scores, top_k=2, rerank_threshold=0.3
+    )
+    small_composed = _retain_required_store_promotions(
+        small_composed, reserved, reservation_info, top_k=2, plan=plan, taxonomy=_TAX
+    )
+    small_final, _ = order_candidates_for_plan(plan, small_composed, taxonomy=_TAX)
+    small_sources = source_extractor._extract_sources(small_final)
+    small_context = build_citation_context(small_final, small_sources, taxonomy=_TAX)
+    small_citable, small_background = context_id_sets(small_context.stats)
+    small_coverage = build_coverage_report(
+        plan,
+        small_final,
+        taxonomy=_TAX,
+        citable_ids=small_citable,
+        background_ids=small_background,
+    )
+    assert len(small_final) == 2
+    assert {r.product for r in small_final} == {"ne301", "ne101"}
+    assert small_coverage.required_total == 3
+    assert small_coverage.required_covered == 2
+    assert small_coverage.missing_required == ("STORE_OFFICIAL(ne503)",)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_issue151_missing_target_stays_uncovered_without_invented_store_evidence():
+    plan = _plan("commercial", ("ne301", "ne101", "ne503"))
+    available = [MAIN_N301_1, MAIN_N101_1]
+    pool_scores = [(MAIN_N301_1, 0.75), (MAIN_N101_1, 0.78)]
+    reserved, _ = await reserve_plan_evidence(
+        plan,
+        available,
+        pool_scores,
+        taxonomy=_TAX,
+        threshold=0.3,
+    )
+    selected, _ = order_candidates_for_plan(plan, available + reserved, taxonomy=_TAX)
+    source_extractor = object.__new__(RAGOrchestrator)
+    sources = source_extractor._extract_sources(selected)
+    citation_context = build_citation_context(selected, sources, taxonomy=_TAX)
+    citable_ids, background_ids = context_id_sets(citation_context.stats)
+    coverage = build_coverage_report(
+        plan,
+        selected,
+        taxonomy=_TAX,
+        citable_ids=citable_ids,
+        background_ids=background_ids,
+    )
+
+    store_products = {source["product"] for source in sources if source["type"] == "woocommerce"}
+    assert store_products == {"ne301", "ne101"}
+    assert coverage.required_total == 3
+    assert coverage.required_covered == 2
+    assert coverage.missing_required == ("STORE_OFFICIAL(ne503)",)
