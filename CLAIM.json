@@ -12,7 +12,24 @@
  "heartbeat_at": "2026-10-15T01:10:13Z",
  "supersedes": null,
  "contract_digest": "a95028246ea1b72c64030b07e05d92209ae5bbe6b703daece06aed8c4350683c",
- "candidate": null,
+ "candidate": {
+  "branch": "agent/153/8cd3484b",
+  "sha": "99cd0ceda91a2da68af7ef47add27af15aab9c6e",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "tests/pipeline/test_inc7_response_strategy.py": "ALLOWED"
+   },
+   "violations": [],
+   "main_attributed_paths": [],
+   "counts": {
+    "ALLOWED": 1,
+    "FORBIDDEN": 0,
+    "MAIN_ATTRIBUTED": 0
+   }
+  },
+  "preserved_at": "2026-10-15T01:11:22Z"
+ },
  "runtime": {
   "digest": "a884f1a0dec1a695560e07eef3beee0b5b1bc20b6e376649c0bda17a7d9380d2",
   "release": "v1.1.6",
