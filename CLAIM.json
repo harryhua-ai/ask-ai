@@ -12,7 +12,27 @@
  "heartbeat_at": "2026-10-15T01:54:00Z",
  "supersedes": null,
  "contract_digest": "d711e2c5bb9f14c9340fa8f3172f998760cb6994dad9cea1ba38deb9e808399d",
- "candidate": null,
+ "candidate": {
+  "branch": "agent/151/974b966e",
+  "sha": "ab27abc8d7cd9856f05aea5a50497460335aa129",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "backend/pipeline/evidence_selection.py": "ALLOWED",
+    "backend/pipeline/rag.py": "ALLOWED",
+    "tests/pipeline/test_evidence_reservation.py": "ALLOWED",
+    "tests/pipeline/test_inc5_evidence_selection.py": "ALLOWED"
+   },
+   "violations": [],
+   "main_attributed_paths": [],
+   "counts": {
+    "ALLOWED": 4,
+    "FORBIDDEN": 0,
+    "MAIN_ATTRIBUTED": 0
+   }
+  },
+  "preserved_at": "2026-10-15T01:54:56Z"
+ },
  "runtime": {
   "digest": "a884f1a0dec1a695560e07eef3beee0b5b1bc20b6e376649c0bda17a7d9380d2",
   "release": "v1.1.6",
