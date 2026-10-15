@@ -13,6 +13,7 @@
   ],
   "dependencies": [],
   "rollback": {
-    "previous_compatible": true
+    "previous_compatible": false,
+    "remediation_gate": "upload-source-acl-verified-issue-121"
   }
 }
