@@ -12,7 +12,30 @@
  "heartbeat_at": "2026-10-15T10:40:44Z",
  "supersedes": null,
  "contract_digest": "e3d830d0a1fdc1f10621bbeb579a3a0bcd04d1b81f468f9656d818ce5da81c43",
- "candidate": null,
+ "candidate": {
+  "branch": "agent/114/b2acdec5",
+  "sha": "a7ce0b4245ef4b4c8a2f2bbde030c2b9a44af607",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "deploy/prod/geoip2/README.md": "ALLOWED",
+    "deploy/prod/geoip2/geoip2.env.example": "ALLOWED",
+    "deploy/prod/geoip2/nginx-geoip2.conf.example": "ALLOWED",
+    "deploy/prod/geoip2/precheck-geoip2.sh": "ALLOWED",
+    "deploy/prod/geoip2/update-geolite2.sh": "ALLOWED",
+    "tests/api/test_geoip2_ingress_contract_offline.py": "ALLOWED",
+    "tests/deploy/test_geoip2_candidate_static.py": "ALLOWED"
+   },
+   "violations": [],
+   "main_attributed_paths": [],
+   "counts": {
+    "ALLOWED": 7,
+    "FORBIDDEN": 0,
+    "MAIN_ATTRIBUTED": 0
+   }
+  },
+  "preserved_at": "2026-10-15T10:41:18Z"
+ },
  "runtime": {
   "digest": "a884f1a0dec1a695560e07eef3beee0b5b1bc20b6e376649c0bda17a7d9380d2",
   "release": "v1.1.6",
