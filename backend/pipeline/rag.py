@@ -1739,7 +1739,7 @@ class RAGOrchestrator:
         的公开源不足 5 条,sources 列表就短,不强行用内部源填充。
 
         **权威形态优先(#148)**:证据计划在册且匹配其槽位的第一方公开权威页
-        (官方 ``/solutions/`` 段方案页、case-study 页)优先分配可见 source
+        (网站连接器上的 ``/solutions/`` path 段方案页、case-study 页)优先分配可见 source
         槽位 —— 这些页支持材料性方案/部署主张,却常因位置靠后被 Wiki+内部
         案例占满的 5 槽挤出(生产实证 #145 EN:入上下文零引用,部署证明被
         错误归因到内部案例)。槽位总量、去重、白名单与资格语义不变;权威
@@ -1769,27 +1769,68 @@ class RAGOrchestrator:
             ``product`` / ``link_state``(映射发生时附加 ``provenance_url``;
             知识案例附加 ``source_id``)。
         """
+        def _is_visible_source_candidate(result: SearchResult) -> bool:
+            if is_upload_mode_source(result):
+                return False
+            if result.source_type in PUBLIC_SOURCE_TYPES:
+                if not _is_renderable_public_url(result.url):
+                    return False
+                citation_url = wiki_canonical_url(
+                    result.url,
+                    frontmatter_slug=getattr(result, "frontmatter_slug", None),
+                )
+                return _is_renderable_public_url(citation_url)
+            return is_citable_first_party_case_source(result)
+
         ordered = results
         if plan is not None and getattr(plan, "slots", ()):
             targets = tuple(getattr(plan, "resolution_targets", ()) or ())
+            visible_candidates = [r for r in results if _is_visible_source_candidate(r)]
             authority = [
                 r
-                for r in results
+                for r in visible_candidates
                 if is_first_party_authority_page(r)
                 and any(
                     evidence_matches_slot(
-                        s, r, resolution_targets=targets, taxonomy=taxonomy
+                        slot, r, resolution_targets=targets, taxonomy=taxonomy
                     )
-                    for s in plan.slots
+                    for slot in plan.slots
                 )
             ]
             if authority:
-                authority_keys = {(r.source_id, r.chunk_index) for r in authority}
-                ordered = [
-                    r for r in results if (r.source_id, r.chunk_index) in authority_keys
-                ] + [
-                    r for r in results if (r.source_id, r.chunk_index) not in authority_keys
-                ]
+                authority_object_ids = {id(r) for r in authority}
+                authority_representatives: list[SearchResult] = []
+                required_representatives: list[SearchResult] = []
+                for slot in plan.slots:
+                    slot_matches = [
+                        r
+                        for r in visible_candidates
+                        if evidence_matches_slot(
+                            slot, r, resolution_targets=targets, taxonomy=taxonomy
+                        )
+                    ]
+                    slot_authorities = [
+                        r for r in slot_matches if id(r) in authority_object_ids
+                    ]
+                    if slot_authorities:
+                        authority_representatives.append(slot_authorities[0])
+                    if slot.required and slot_matches:
+                        # Give each required role one place in the finite citation
+                        # window. Prefer a first-party authority for Solution/Case
+                        # roles when one matches; otherwise retain the best ranked
+                        # eligible match (including the required WooCommerce Store).
+                        required_representatives.append(
+                            (slot_authorities or slot_matches)[0]
+                        )
+
+                priority = authority_representatives + required_representatives + authority
+                ordered = []
+                priority_object_ids: set[int] = set()
+                for result in priority:
+                    if id(result) not in priority_object_ids:
+                        ordered.append(result)
+                        priority_object_ids.add(id(result))
+                ordered.extend(r for r in results if id(r) not in priority_object_ids)
         seen: set[str] = set()
         sources: list[dict] = []
         for r in ordered:

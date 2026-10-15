@@ -34,12 +34,15 @@ import pytest
 
 from backend.pipeline.evidence_planning import (
     CITATION_BACKGROUND_ALLOWED,
-    EvidenceSlot,
     ROLE_CASE_EVIDENCE,
     ROLE_SOLUTION_GUIDE,
+    ROLE_STORE_OFFICIAL,
+    EvidencePlan,
+    EvidenceSlot,
 )
 from backend.pipeline.evidence_reservation import reserve_required_slots
 from backend.pipeline.evidence_selection import (
+    evidence_matches_slot,
     is_first_party_authority_page,
     is_first_party_solution_page,
 )
@@ -129,6 +132,16 @@ IMPOSTOR_PAGE = _sr(
     "Delivery Logistics Notes",
     "BLOG: 无方案语义的普通博文。",
     url="https://www.example-iot.com/blog/our-solution-to-delivery/",
+)
+
+#: 普通 GitHub Wiki blob 的 ``/solutions/`` 路径不能建立第一方身份。
+GITHUB_SOLUTIONS_IMPOSTOR = _sr(
+    "github-wiki/solutions/setup",
+    "github",
+    "tl300",
+    "Setup guide",
+    "GITHUB-WIKI: community setup notes.",
+    url="https://github.com/example/wiki/blob/main/solutions/setup.md",
 )
 
 
@@ -412,6 +425,85 @@ async def test_stream_sources_parity_with_sync_authorities():
     assert FIRST_PARTY_CASE.url in {s.get("url", "") for s in streamed_sources}
 
 
+async def test_mixed_solution_and_store_plan_preserves_store_within_five_sources(monkeypatch):
+    """Mixed required roles share the fixed five-source window in answer and SSE."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    solution_pages = [
+        _sr(
+            f"official/solutions/tl300-{index}",
+            "web_crawl",
+            "tl300",
+            f"TL300 solution architecture {index}",
+            f"SOLUTION-PAGE-{index}: architecture and deployment details.",
+            url=f"https://www.example-iot.com/solutions/tl300-{index}/",
+            score=0.95 - index / 100,
+        )
+        for index in range(1, 6)
+    ]
+    store = _sr(
+        "woocommerce/tl300-store",
+        "woocommerce",
+        "tl300",
+        "TL300 Store product and price",
+        "STORE-PRICE-BODY: $129 official price and stock details.",
+        url="https://shop.example-iot.com/store/tl300/",
+        score=0.80,
+    )
+    pool = [*solution_pages, store]
+    plan = EvidencePlan(
+        slots=(
+            EvidenceSlot(role=ROLE_SOLUTION_GUIDE, required=True),
+            EvidenceSlot(role=ROLE_STORE_OFFICIAL, required=True),
+        ),
+        evidence_intent="recommendation",
+    )
+    monkeypatch.setattr(
+        "backend.pipeline.rag.derive_evidence_plan", lambda *_args, **_kwargs: plan
+    )
+
+    scores = {f"SOLUTION-PAGE-{index}": 0.95 - index / 100 for index in range(1, 6)}
+    scores["STORE-PRICE-BODY"] = 0.80
+    rag = _rag(pool, scores)
+    rag._llm.describe_chain = None
+    generated_messages: list[tuple[str, list[dict]]] = []
+
+    async def _generate(messages, **kwargs):
+        generated_messages.append(("sync", messages))
+        return MagicMock(content=json.dumps(_payload("product", "recommendation")))
+
+    async def _stream(messages, **kwargs):
+        generated_messages.append(("stream", messages))
+        yield "The official price is $129 [1]."
+
+    rag._llm.generate = AsyncMock(side_effect=_generate)
+    rag._llm.stream = _stream
+
+    sync = await rag.answer("Recommend a solution and price for TL300", "widget")
+    streamed_sources = None
+    async for event in rag.stream_answer("Recommend a solution and price for TL300", "widget"):
+        payload = json.loads(event)
+        if payload.get("type") == "sources":
+            streamed_sources = payload.get("sources")
+
+    assert sync.is_answered
+    assert len(sync.sources) == 5, "the public citation source cap remains five"
+    assert store.url in {source.get("url") for source in sync.sources}, (
+        "a required WooCommerce Store source must retain a citation slot beside "
+        "first-party Solution authorities"
+    )
+    assert streamed_sources == sync.sources, "SSE and synchronous source sets must match"
+    modes_with_store_body = {
+        mode
+        for mode, messages in generated_messages
+        if any("STORE-PRICE-BODY" in message.get("content", "") for message in messages)
+    }
+    assert modes_with_store_body == {"sync", "stream"}, (
+        "build_citation_context must retain the official Store body in both "
+        "synchronous and streamed generation"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # AC1 负面边界 — 真实无匹配时不强宣称(fail-open 零动作)
 # --------------------------------------------------------------------------- #
@@ -551,6 +643,30 @@ def test_r1_solution_impostor_url_page_not_promoted():
     assert not any(f.get("rule") == "R1_official_solution_page" for f in fired)
 
 
+def test_r1_github_solutions_path_cannot_suppress_real_first_party_page():
+    """A GitHub blob path is ordinary Solution evidence, never first-party identity."""
+    assert is_first_party_solution_page(GITHUB_SOLUTIONS_IMPOSTOR) is False
+    assert is_first_party_authority_page(GITHUB_SOLUTIONS_IMPOSTOR) is False
+    assert evidence_matches_slot(_solution_slot(), GITHUB_SOLUTIONS_IMPOSTOR) is True
+
+    promoted, fired = reserve_required_slots(
+        _PlanStub([_solution_slot()]),
+        survivors=[GITHUB_SOLUTIONS_IMPOSTOR],
+        pool_scores=[
+            (GITHUB_SOLUTIONS_IMPOSTOR, 0.85),
+            (OFFICIAL_SOLUTION, 0.20),
+        ],
+        taxonomy=None,
+        threshold=0.3,
+    )
+    promoted_ids = {(result.source_id, result.chunk_index) for result in promoted}
+    assert (OFFICIAL_SOLUTION.source_id, OFFICIAL_SOLUTION.chunk_index) in promoted_ids, (
+        "a GitHub /solutions/ path must not make R1 believe a real first-party "
+        "Solution page already survives"
+    )
+    assert any(item.get("rule") == "R1_official_solution_page" for item in fired)
+
+
 # --------------------------------------------------------------------------- #
 # 单元级 — 权威形态谓词(通用结构信号;语言无关)
 # --------------------------------------------------------------------------- #
@@ -558,6 +674,14 @@ def test_r1_solution_impostor_url_page_not_promoted():
 
 def test_first_party_authority_predicates_structural_matrix():
     assert is_first_party_solution_page(OFFICIAL_SOLUTION) is True
+    path_in_query_only = _sr(
+        "iot-site/blog/solution-link",
+        "web_crawl",
+        "tl300",
+        "Deployment notes",
+        url="https://www.example-iot.com/blog/?next=/solutions/setup/",
+    )
+    assert is_first_party_solution_page(path_in_query_only) is False
     assert is_first_party_solution_page(WIKI_SOLUTION_DESC) is False, (
         "wiki blob path carrying 'solutions' as a hyphenated directory name "
         "is not the /solutions/ segment authority form"
