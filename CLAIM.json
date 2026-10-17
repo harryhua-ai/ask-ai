@@ -38,8 +38,8 @@
  },
  "delivery": {
   "pr": 169,
-  "sha": "9f304e2a9f5ba9c348008b79bfe38f52900d6c67",
-  "note": "",
-  "delivered_at": "2026-10-17T03:18:36Z"
+  "sha": "edfe106ae1440541e874d6b5ca52db385cdac4a0",
+  "note": "R2 closes A blockers 1 and 2: fail-closed local TEST_DATABASE_URL and chunk-first fixture cleanup with zero residue.",
+  "delivered_at": "2026-10-17T04:40:28Z"
  }
 }
