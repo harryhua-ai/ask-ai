@@ -264,12 +264,30 @@ def _enc_meta(meta: dict) -> bytes:
     return bytes(out)
 
 
+def _enc_str_any(s: str) -> bytes:
+    """按官方规范编码 utf8 string(支持 29/30/31 变长 size 标记):
+    <29 直接 5 位;29..284 = 29+1B;285..65820 = 285+2B;≥65821 = 65821+3B。"""
+    b = s.encode()
+    n = len(b)
+    if n < 29:
+        return bytes([(2 << 5) | n]) + b
+    if n < 285:
+        return bytes([(2 << 5) | 29, n - 29]) + b
+    if n < 65_821:
+        return bytes([(2 << 5) | 30]) + (n - 285).to_bytes(2, "big") + b
+    return bytes([(2 << 5) | 31]) + (n - 65_821).to_bytes(3, "big") + b
+
+
 def _build_synthetic_mmdb(
-    db_type: str = "GeoLite2-Country", corrupt_node0_right: int | None = None
+    db_type: str = "GeoLite2-Country",
+    corrupt_node0_right: int | None = None,
+    description: bytes | None = None,
+    datablob: bytes | None = None,
 ) -> bytes:
     """最小合法 MMDB(record_size=24,3 节点):走树可命中/未命中两路。
     node0: 0→node1, 1→node2;node1: 0/0(not found);node2: 0→not found,
-    1→数据指针。corrupt_node0_right 用于构造越界数据指针的损坏树。"""
+    1→数据指针。corrupt_node0_right 用于构造越界数据指针的损坏树。
+    (规范:数据指针值 ≥ node_count+16;+0..+15 落在 16B 分隔符内 = 非法。)"""
     mod = _mmdb_helpers()
     marker = mod.METADATA_MARKER
     right0 = 2 if corrupt_node0_right is None else corrupt_node0_right
@@ -278,16 +296,16 @@ def _build_synthetic_mmdb(
         + right0.to_bytes(3, "big")  # node0 右记录(损坏时 = 越界数据指针)
         + bytes([0, 0, 0]) * 2  # node1: 0/0 → not found
         + bytes([0, 0, 0])  # node2 左:0 → not found
-        + (3).to_bytes(3, "big")  # node2 右:数据指针(node_count+0)
+        + (3 + 16).to_bytes(3, "big")  # node2 右:数据指针 = node_count+16 → 数据段偏移 0
     )
     sep = marker + b"\x00\x00"  # 16B 数据段分隔符
-    datablob = b"\x00" * 8
+    datablob = b"\x00" * 8 if datablob is None else datablob
     meta = {
         "binary_format_major_version": _enc_uint16(2),
         "binary_format_minor_version": _enc_uint16(0),
         "build_epoch": bytes([0x08, 0x02]) + (1700000000).to_bytes(8, "big"),
         "database_type": _enc_str(db_type),
-        "description": bytes([7 << 5]),
+        "description": description if description is not None else bytes([7 << 5]),
         "ip_version": _enc_uint16(4),
         "languages": bytes([0x00, 0x04]),  # extended: array, size 0
         "node_count": _enc_uint32(3),
@@ -320,6 +338,8 @@ def test_mmdb_validator_accepts_wellformed_synthetic(tmp_path):
         (lambda b: _build_synthetic_mmdb(corrupt_node0_right=200000), "走树越界数据指针"),
         (lambda b: _build_synthetic_mmdb(db_type="GeoLite2-City"), "database_type 不符"),
         (lambda b: bytes(len(b)), "无 metadata 标记"),
+        # R3 阻塞 ① 负例:数据指针落在 16B 分隔符内部(offset 1..15)= 规范非法
+        (lambda b: _build_synthetic_mmdb(corrupt_node0_right=3 + 5), "数据指针落入分隔符内部"),
     ],
 )
 def test_mmdb_validator_rejects_malformed(tmp_path, mutate, reason):
@@ -328,6 +348,128 @@ def test_mmdb_validator_rejects_malformed(tmp_path, mutate, reason):
     f.write_bytes(mutate(_build_synthetic_mmdb()))
     with pytest.raises(mod.MMDBInvalid):
         mod.validate_file(str(f), min_bytes=0)
+
+
+class TestMMDBSpecVarSizeAndPointer:
+    """R3 阻塞 ①:变长 size 与 pointer 编解码必须与 MaxMind DB v2 官方规范一致。
+
+    旧实现:29/30/31 ⇒ +7/+7+256/+7+256+65536(恰差 22)→ 合法长字符串被
+    截短 → metadata 错位误拒;pointer 按 0/1/2/3 字节读且无偏移基数 → 全错。
+    官方规范(https://maxmind.github.io/MaxMind-DB/):29+1B / 285+2B /
+    65,821+3B;pointer 宽度 1/2/3/4 字节,基数 0/2048/526,336/0。
+    """
+
+    @pytest.mark.parametrize("n", [29, 284, 285, 300, 65_820, 65_821, 65_825])
+    def test_varsize_string_roundtrip(self, n):
+        """marker 29/30/31 三档及边界:解码必须还原完整字符串。"""
+        mod = _mmdb_helpers()
+        s = "x" * n
+        enc = _enc_str_any(s)
+        val, pos = mod._decode(enc, 0)
+        assert val == s and pos == len(enc)
+
+    def test_long_description_synthetic_mmdb_passes(self, tmp_path):
+        """合成合法 MMDB 含 >28B description(真实 GeoLite2 文件形态:走
+        marker 29)—— 旧实现截短 22B → metadata 错位误拒;修正后必须通过。"""
+        mod = _mmdb_helpers()
+        desc = "GeoLite2 Country offline structural validation fixture (fake data only)"
+        assert len(desc.encode()) >= 29  # 走 marker 29 变长路径
+        f = tmp_path / "long-desc.mmdb"
+        f.write_bytes(_build_synthetic_mmdb(description=_enc_str_any(desc)))
+        assert "硬结构校验通过" in mod.validate_file(str(f), min_bytes=0)
+
+    def test_pointer_widths_and_bases_per_spec(self):
+        """四种指针宽度 1/2/3/4 字节、基数 0/2048/526,336/0(4 字节档低 3 位
+        忽略),且解析即解引用(pointer_base 由调用方给定,目标落位精确)。"""
+        mod = _mmdb_helpers()
+        target = _enc_str("OK")  # 目标值统一为 "OK"(3 字节)
+
+        def stub(head: bytes, target_offset: int, pointer_base: int):
+            """head 后接填充至 target_offset,再放目标值;返回 (缓冲, 期望值)。"""
+            body = bytearray(head)
+            body.extend(b"\x00" * (target_offset - len(head)))
+            body.extend(target)
+            val, pos = mod._decode(bytes(body), 0, pointer_base=pointer_base)
+            return val, pos, bytes(body)
+
+        # width 0:1 字节,值 = 低 3 位<<8 | next,基数 0;低 3 位参与取值
+        val, pos, _ = stub(bytes([(1 << 5) | (0 << 3) | 0b000, 0x02]), 2, 0)
+        assert val == "OK" and pos == 2
+        val, pos, _ = stub(bytes([(1 << 5) | (0 << 3) | 0b001, 0x02]), 0x102, 0)
+        assert val == "OK" and pos == 2
+        # width 1:2 字节,值 = 低 3 位<<16 | next2,基数 2048
+        val, pos, _ = stub(bytes([(1 << 5) | (1 << 3) | 0b000, 0x00, 0x00]), 2048, 0)
+        assert val == "OK" and pos == 3
+        val, pos, _ = stub(
+            bytes([(1 << 5) | (1 << 3) | 0b001, 0x01, 0x00]), (1 << 16) + 0x100 + 2048, 0
+        )
+        assert val == "OK" and pos == 3
+        # width 2:3 字节,值 = 低 3 位<<24 | next3,基数 526,336
+        val, pos, _ = stub(bytes([(1 << 5) | (2 << 3) | 0b000, 0x00, 0x00, 0x00]), 526_336, 0)
+        assert val == "OK" and pos == 4
+        # width 3:4 字节读满 32 位,低 3 位忽略,基数 0
+        val, pos, _ = stub(bytes([(1 << 5) | (3 << 3) | 0b111, 0x00, 0x00, 0x00, 0x05]), 5, 0)
+        assert val == "OK" and pos == 5
+        # pointer_base 语义:目标 = pointer_base + 指针值(metadata 传 metadata 起点)
+        val, _, _ = stub(bytes([(1 << 5) | (0 << 3) | 0b000, 0x00]), 100, 100)
+        assert val == "OK"
+
+    def test_data_section_pointer_dereference(self, tmp_path):
+        """数据段内共享值经 pointer 解引用(真实库压缩形态):记录值 →
+        数据段偏移 0 处的 pointer → 偏移 5 处的字符串,走树+解码全链一致。"""
+        mod = _mmdb_helpers()
+        # 数据段:[0]=pointer 控制字(width0,high=0),[1]=目标偏移 5,[5..7]="SE"
+        blob = bytes([0b001_00_000, 0x05]) + b"\x00" * 3 + _enc_str("SE")
+        assert len(blob) == 8
+        f = tmp_path / "ptr.mmdb"
+        f.write_bytes(_build_synthetic_mmdb(datablob=blob))
+        data = f.read_bytes()
+        mod.validate_bytes(data, min_bytes=0)  # 结构门通过
+        # 手工走树(node0 --1--> node2;node2 --1--> 数据记录 = node_count+16
+        # → 数据段偏移 0)+ 解码:pointer → 偏移 5 处字符串
+        meta, _ = mod._decode(data, data.rfind(mod.METADATA_MARKER) + len(mod.METADATA_MARKER))
+        tree_size = meta["node_count"] * meta["record_size"] * 2 // 8
+        bits = [1, 1]
+        node = 0
+        while True:
+            rec = mod._read_record(data, node, bits.pop(0), meta["record_size"], tree_size)
+            assert rec != 0
+            if rec >= meta["node_count"]:
+                break
+            node = rec
+        val, _ = mod._decode(
+            data, tree_size + (rec - meta["node_count"]), pointer_base=tree_size + 16
+        )
+        assert val == "SE"
+
+    def test_real_world_mmdb_cross_check_if_provided(self, tmp_path):
+        """真实 MaxMind 文件离线一致性验证(可选,不引入凭据/许可前置)。
+
+        R3 一次性实证(已记录于 README §8):公开 MaxMind-DB test-data 的
+        GeoLite2-Country-Test.mmdb(sha256 87b5464d8ea1f348994f89b029f01ef4
+        38c6f5c1e040a825e375e4dbe28da321,13,733B;description 76B 走 marker
+        29;record_size=28 nibble 拆分、ip_version=6、node_count=896)在本
+        校验器下通过,metadata 全字段与官方 maxminddb reader 一致,且
+        244/244 个源数据网络记录级一致。生产 GeoLite2 文件本身仍属 owner
+        许可前置(UNKNOWN 保持,不下载);提供真实文件路径时本用例自动复验。"""
+        path = os.environ.get("MMDB_REAL_WORLD_FILE")
+        if not path:
+            pytest.skip("UNKNOWN: 未提供真实 MaxMind 文件(生产库属 owner 许可前置)")
+        mod = _mmdb_helpers()
+        raw = Path(path).read_bytes()
+        assert "硬结构校验通过" in mod.validate_bytes(raw, min_bytes=0)
+        import hashlib
+
+        if hashlib.sha256(raw).hexdigest() == (
+            "87b5464d8ea1f348994f89b029f01ef438c6f5c1e040a825e375e4dbe28da321"
+        ):
+            meta, _ = mod._decode(raw, raw.rfind(mod.METADATA_MARKER) + len(mod.METADATA_MARKER))
+            # R3 一次性验证中经官方 maxminddb 3.2.0 reader 比对的权威值
+            assert meta["node_count"] == 896 and meta["record_size"] == 28
+            assert meta["ip_version"] == 6 and meta["binary_format_major_version"] == 2
+            assert meta["description"] == {
+                "en": "GeoLite2 Country Test Database (fake GeoIP2 data, for example purposes only)"
+            }
 
 
 # --------------------------------------------------------------------------- #
@@ -409,6 +551,150 @@ class TestPublishBinding:
     def test_public_host_ip_rejected(self):
         ok, _ = _pc().check_publish_binding("203.0.113.7")
         assert not ok
+
+
+def _bindings(ports: dict, backend_port: int = 18000):
+    import json as _json
+
+    return _pc().check_publish_bindings(_json.dumps(ports), backend_port=backend_port)
+
+
+class TestPublishBindingsAllMappings:
+    """R3 阻塞 ②:G8 必须审计**全部**发布映射的**每一条** HostIp/HostPort
+    (单项缺失/非法 fail closed),并与 nginx 实际使用端口一致。
+    旧实现只取第一条绑定:第一条 127.0.0.1、第二条 0.0.0.0 时假 PASS。"""
+
+    def test_all_loopback_single_binding_passes(self):
+        ok, msg = _bindings({"8000/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18000"}]})
+        assert ok and "loopback" in msg
+
+    def test_dual_stack_loopback_passes(self):
+        ok, _ = _bindings(
+            {
+                "8000/tcp": [
+                    {"HostIp": "127.0.0.1", "HostPort": "18000"},
+                    {"HostIp": "::1", "HostPort": "18000"},
+                ]
+            }
+        )
+        assert ok
+
+    def test_second_binding_public_rejected(self):
+        ok, _ = _bindings(
+            {
+                "8000/tcp": [
+                    {"HostIp": "127.0.0.1", "HostPort": "18000"},
+                    {"HostIp": "0.0.0.0", "HostPort": "18000"},
+                ]
+            }
+        )
+        assert not ok
+
+    def test_binding_order_swapped_still_rejected(self):
+        """负例 fixture:双绑定顺序互换(不安全项在前)同样必拒。"""
+        ok, _ = _bindings(
+            {
+                "8000/tcp": [
+                    {"HostIp": "0.0.0.0", "HostPort": "18000"},
+                    {"HostIp": "127.0.0.1", "HostPort": "18000"},
+                ]
+            }
+        )
+        assert not ok
+
+    def test_ipv4_loopback_with_ipv6_wildcard_rejected(self):
+        """负例 fixture:IPv4+IPv6 混合(0.0.0.0 已挡,:: 也必须挡)。"""
+        ok, _ = _bindings(
+            {
+                "8000/tcp": [
+                    {"HostIp": "127.0.0.1", "HostPort": "18000"},
+                    {"HostIp": "::", "HostPort": "18000"},
+                ]
+            }
+        )
+        assert not ok
+
+    def test_missing_hostip_field_rejected(self):
+        """单项字段缺失 = fail closed(不得当作通配猜测)。"""
+        ok, _ = _bindings({"8000/tcp": [{"HostPort": "18000"}]})
+        assert not ok
+
+    def test_missing_hostport_field_rejected(self):
+        ok, _ = _bindings({"8000/tcp": [{"HostIp": "127.0.0.1"}]})
+        assert not ok
+
+    def test_non_integer_hostport_rejected(self):
+        ok, _ = _bindings({"8000/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18000-18010"}]})
+        assert not ok
+
+    def test_extra_published_public_port_rejected(self):
+        """其它容器端口公开发布同样纳入审计(非 loopback 必拒)。"""
+        ok, _ = _bindings(
+            {
+                "8000/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18000"}],
+                "9090/tcp": [{"HostIp": "0.0.0.0", "HostPort": "9090"}],
+            }
+        )
+        assert not ok
+
+    def test_nginx_facing_port_mismatch_rejected(self):
+        """审计的绑定必须与 nginx 实际使用的 backend 端口一致。"""
+        ok, msg = _bindings({"8000/tcp": [{"HostIp": "127.0.0.1", "HostPort": "19999"}]})
+        assert not ok and "端口" in msg
+
+    def test_missing_container_port_mapping_rejected(self):
+        ok, _ = _bindings({"9999/tcp": [{"HostIp": "127.0.0.1", "HostPort": "9999"}]})
+        assert not ok
+
+    def test_empty_or_unparsable_fail_closed(self):
+        import json as _json
+
+        for payload in ("", "not-json", _json.dumps([]), _json.dumps({})):
+            ok, _ = _pc().check_publish_bindings(payload, backend_port=18000)
+            assert not ok, payload
+        # 绑定列表为 null(未发布)
+        ok, _ = _bindings({"8000/tcp": None})
+        assert not ok
+
+    def test_messages_never_echo_binding_values(self):
+        """红线:结论消息不回显 HostIp/HostPort 值(不落入持久日志)。"""
+        import json as _json
+
+        for ports in (
+            {"8000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "18000"}]},
+            {"8000/tcp": [{"HostIp": "203.0.113.7", "HostPort": "18000"}]},
+            {"8000/tcp": [{"HostPort": "18000"}]},
+            {"8000/tcp": [{"HostIp": "127.0.0.1", "HostPort": "19999"}]},
+        ):
+            _, msg = _pc().check_publish_bindings(_json.dumps(ports), backend_port=18000)
+            for v in ("0.0.0.0", "203.0.113.7", "18000", "19999"):
+                assert v not in msg, (ports, msg)
+
+
+def test_bindings_cli_never_echoes_host_ip():
+    """集成级字符串不泄露:bindings 子进程对公开发布绑定的全部输出中
+    不得出现宿主 IP 字面量(R2 实证 G8 FAIL 消息插值 ${HOSTIP} 泄漏)。"""
+    import json as _json
+
+    payload = _json.dumps(
+        {
+            "8000/tcp": [
+                {"HostIp": "127.0.0.1", "HostPort": "18000"},
+                {"HostIp": "203.0.113.7", "HostPort": "18001"},
+            ]
+        }
+    )
+    r = subprocess.run(
+        [sys.executable, str(PRECHECK_CHECKS), "bindings", "--backend-port", "18000"],
+        input=payload,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    combined = r.stdout + r.stderr
+    assert r.returncode == 1, combined
+    assert "203.0.113.7" not in combined and "18001" not in combined, combined
 
 
 _NGINX_OK = """http {
@@ -555,6 +841,203 @@ class TestEffectiveNginxConfig:
         assert ok
 
 
+_NGINX_CHAIN_HEAD = """http {
+    geoip2 /etc/nginx/geoip/GeoLite2-Country.mmdb {
+        auto_reload 5m;
+        $ask_ai_geoip_country_code country iso_code;
+    }
+    map $ask_ai_geoip_country_code $ask_ai_geo_country {
+        default "";
+        XX "";
+    }
+    server {
+        listen 443 ssl;
+"""
+
+
+def _two_location_dump(first: str, second: str) -> str:
+    """两个 location 反代同一 backend 端口;first/second 为 location 体。"""
+    return _NGINX_CHAIN_HEAD + f"""        {first}
+        {second}
+    }}
+}}
+"""
+
+
+_LOC_SAFE = """location /api/ {
+            proxy_pass http://127.0.0.1:18000;
+            proxy_set_header geo-country $ask_ai_geo_country;
+        }"""
+
+_LOC_UNSAFE = """location / {
+            proxy_pass http://127.0.0.1:18000;
+        }"""
+
+
+class TestAllBackendPathsAudited:
+    """R3 阻塞 ③:多条 backend 反代路径必须**全部**逐一证明生效层无条件
+    同名头覆盖 —— 旧实现找到首个 :port 路径即 break,第二条不安全路由假 PASS。"""
+
+    def test_second_unsafe_path_rejected(self):
+        dump = _two_location_dump(_LOC_SAFE, _LOC_UNSAFE)
+        ok, msg = _ngx(dump=dump)
+        assert not ok and "覆盖链断裂" in msg
+
+    def test_unsafe_first_swapped_still_rejected(self):
+        """负例 fixture:顺序互换(不安全项在前)同样必拒。"""
+        dump = _two_location_dump(_LOC_UNSAFE, _LOC_SAFE)
+        ok, _ = _ngx(dump=dump)
+        assert not ok
+
+    def test_both_paths_with_header_passes(self):
+        safe = _LOC_SAFE.replace("location /api/", "location /api2/")
+        dump = _two_location_dump(_LOC_SAFE, safe)
+        ok, _ = _ngx(dump=dump)
+        assert ok
+
+    def test_second_vhost_without_header_rejected(self):
+        """server 级多 vhost:第一个 vhost 覆盖、第二个裸 proxy_pass 必拒。"""
+        dump = _NGINX_CHAIN_HEAD + """        location / {
+            proxy_pass http://127.0.0.1:18000;
+            proxy_set_header geo-country $ask_ai_geo_country;
+        }
+    }
+    server {
+        listen 8443 ssl;
+        location / {
+            proxy_pass http://127.0.0.1:18000;
+        }
+    }
+}
+"""
+        ok, _ = _ngx(dump=dump)
+        assert not ok
+
+    def test_vhost_order_swapped_still_rejected(self):
+        dump = _NGINX_CHAIN_HEAD + """        location / {
+            proxy_pass http://127.0.0.1:18000;
+        }
+    }
+    server {
+        listen 8443 ssl;
+        location / {
+            proxy_pass http://127.0.0.1:18000;
+            proxy_set_header geo-country $ask_ai_geo_country;
+        }
+    }
+}
+"""
+        ok, _ = _ngx(dump=dump)
+        assert not ok
+
+    def test_nested_location_inheritance_shadow_rejected(self):
+        """继承遮蔽:server 级有 geo 头,但中间层 location /a 有任一
+        proxy_set_header(仅 Host)⇒ 内层 /a/b 生效层 = /a,geo 头失效。
+        旧实现跳过中间层直接看 server 级 → 假 PASS。"""
+        dump = _NGINX_CHAIN_HEAD + """        proxy_set_header geo-country $ask_ai_geo_country;
+        location /a/ {
+            proxy_set_header Host $host;
+            location /a/b/ {
+                proxy_pass http://127.0.0.1:18000;
+            }
+        }
+    }
+}
+"""
+        ok, _ = _ngx(dump=dump)
+        assert not ok
+
+    def test_intermediate_level_header_passes_when_covered(self):
+        """同型配置但 geo 头落在中间层(遮蔽后生效层恰有计算值)⇒ 通过。"""
+        dump = _NGINX_CHAIN_HEAD + """        location /a/ {
+            proxy_set_header Host $host;
+            proxy_set_header geo-country $ask_ai_geo_country;
+            location /a/b/ {
+                proxy_pass http://127.0.0.1:18000;
+            }
+        }
+    }
+}
+"""
+        ok, _ = _ngx(dump=dump)
+        assert ok
+
+    def test_upstream_backend_path_with_header_passes(self):
+        """显式 upstream(其 server 含 backend 端口)= 可审计 backend 路径;
+        旧实现按 :port 字面匹配 → 合法 upstream 部署被误拒。"""
+        dump = (
+            "http {\n    upstream ask_backend {\n        server 127.0.0.1:18000;\n    }\n"
+            + _NGINX_CHAIN_HEAD[len("http {\n") :]
+            + """        location / {
+            proxy_pass http://ask_backend;
+            proxy_set_header geo-country $ask_ai_geo_country;
+        }
+    }
+}
+"""
+        )
+        ok, _ = _ngx(dump=dump)
+        assert ok
+
+    def test_upstream_backend_path_without_header_rejected(self):
+        dump = (
+            "http {\n    upstream ask_backend {\n        server 127.0.0.1:18000;\n    }\n"
+            + _NGINX_CHAIN_HEAD[len("http {\n") :]
+            + """        location / {
+            proxy_pass http://ask_backend;
+        }
+    }
+}
+"""
+        )
+        ok, _ = _ngx(dump=dump)
+        assert not ok
+
+    def test_upstream_without_explicit_port_rejected(self):
+        """歧义 upstream 命名(server 无显式端口)→ 无法审计 → 拒绝。"""
+        dump = (
+            "http {\n    upstream ask_backend {\n        server 127.0.0.1;\n    }\n"
+            + _NGINX_CHAIN_HEAD[len("http {\n") :]
+            + """        location / {
+            proxy_pass http://ask_backend;
+            proxy_set_header geo-country $ask_ai_geo_country;
+        }
+    }
+}
+"""
+        )
+        ok, _ = _ngx(dump=dump)
+        assert not ok
+
+    def test_unauditable_variable_proxy_pass_rejected(self):
+        """变量型 proxy_pass(不能证明是否可达 backend)→ 不可审计 → 拒绝。"""
+        dump = _NGINX_OK.replace(
+            "    server {",
+            """    server {
+        location /assets/ {
+            proxy_pass http://$upstream_assets;
+        }""",
+            1,
+        )
+        ok, msg = _ngx(dump=dump)
+        assert not ok and "不可审计" in msg
+
+    def test_set_real_ip_from_rejected(self):
+        """生效配置含 set_real_ip_from(可伪造 XFF 可被提升为 $remote_addr;
+        受信 RealIP 拓扑不可机械证实)→ fail closed,而非仅 README 声明。"""
+        dump = _NGINX_OK.replace(
+            "http {",
+            "http {\n    set_real_ip_from 127.0.0.1;\n    real_ip_header X-Forwarded-For;",
+        )
+        ok, msg = _ngx(dump=dump)
+        assert not ok and "real_ip" in msg
+
+    def test_real_ip_header_without_set_from_rejected(self):
+        dump = _NGINX_OK.replace("http {", "http {\n    real_ip_header X-Forwarded-For;")
+        ok, _ = _ngx(dump=dump)
+        assert not ok
+
+
 def test_precheck_checks_cli_wiring():
     r = subprocess.run(
         [sys.executable, str(PRECHECK_CHECKS), "binding", "--host-ip", "0.0.0.0"],
@@ -572,6 +1055,50 @@ def test_precheck_checks_cli_wiring():
         check=False,
     )
     assert r.returncode == 0 and "精确相等" in r.stdout
+
+
+class TestPrecheckShellGates:
+    """R3 阻塞 ②/④:precheck-geoip2.sh 入口与 G8 接线面机械断言。"""
+
+    def _run(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(PRECHECK_SH), *args],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+
+    def test_expect_typo_rejected_immediately(self):
+        """R3 阻塞 ④:--expect onn(拼写错误)必须在 root 检查前非零退出,
+        不得静默落入 off 语义(旧实现按 off 路径可返回 0「未检查却成功」)。"""
+        for bad in ("onn", "ON", "On", "1", "yes", ""):
+            r = self._run("--expect", bad)
+            combined = r.stdout + r.stderr
+            assert r.returncode != 0, (bad, combined)
+            assert "off|on" in combined, (bad, combined)
+            assert "sudo" not in combined, f"{bad}: 校验必须先于 root 检查: {combined}"
+
+    def test_expect_missing_value_rejected(self):
+        r = self._run("--expect")
+        combined = r.stdout + r.stderr
+        assert r.returncode != 0 and "off|on" in combined and "sudo" not in combined
+
+    def test_expect_valid_values_reach_root_check(self):
+        """合法值(off/on)才进入后续门检(非 root 下表现为 sudo 提示)。"""
+        for good in ("off", "on"):
+            r = self._run("--expect", good)
+            combined = r.stdout + r.stderr
+            assert "sudo" in combined, (good, combined)
+
+    def test_g8_audits_all_published_bindings(self):
+        """R3 阻塞 ②接线:G8 必须读**全部**发布映射(json .NetworkSettings.Ports
+        → precheck_checks bindings 子命令),且 FAIL 消息不得插值 HOSTIP。"""
+        text = PRECHECK_SH.read_text(encoding="utf-8")
+        assert "json .NetworkSettings.Ports" in text, "G8 必须审计全部发布映射"
+        assert "bindings --backend-port" in text, "G8 必须走 check_publish_bindings 全量审计"
+        assert "binding --host-ip" not in text, "G8 不得只审单条绑定"
+        assert "${HOSTIP" not in text, "G8 结论消息不得插值 HOSTIP(日志泄漏红线)"
 
 
 # --------------------------------------------------------------------------- #

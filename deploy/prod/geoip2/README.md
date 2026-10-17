@@ -17,12 +17,12 @@
 |---|---|---|
 | `nginx-geoip2.conf.example` | 宿主 Nginx GeoIP2 边缘配置示例(全注释态;片段 A=http 级 geoip2+map,片段 B=vhost 覆盖同名头) | AC2 |
 | `geoip2.env.example` | backend 三元组 env 装配示例(compose `env_file` 通道;全注释态) | AC2 |
-| `mmdb_validate.py` | MMDB **硬结构校验**(stdlib:完整 metadata 解码 + 字段语义 + 走树越界门;更新脚本与预检共用) | AC4 |
-| `precheck_checks.py` | 预检机械门纯函数库(CIDR=网关 /32 精确相等、nginx -T 生效配置覆盖链、发布端口绑定) | AC1/AC5 |
+| `mmdb_validate.py` | MMDB **硬结构校验**(stdlib:完整 metadata 解码 + 字段语义 + 走树越界门;R3:变长 size 29/30/31 与 pointer 1/2/3/4 字节按官方规范解码,已对真实 MaxMind 公开测试库离线交叉验证,见 §9);更新脚本与预检共用 | AC4 |
+| `precheck_checks.py` | 预检机械门纯函数库(CIDR=网关 /32 精确相等、nginx -T 生效配置覆盖链、发布端口绑定;R3:**全部**发布映射逐条审计、**全部** backend 反代路径逐条证明、real_ip_* 拓扑 fail-closed) | AC1/AC5 |
 | `update-geolite2.sh` | MMDB 合法下载/硬校验/原子替换/失败恢复/常备回滚(凭据**零 argv**,只进 0600 curl 配置文件) | AC4 |
-| `precheck-geoip2.sh` | fail-closed 上线预检(`--expect off\|on` 两态门检 + G8 发布端口边界;全程类别化输出) | AC1/AC5 |
+| `precheck-geoip2.sh` | fail-closed 上线预检(`--expect off\|on` **严格两态**,非法值立即非零退出 + G8 全部发布绑定审计;全程类别化输出,绑定值零回显) | AC1/AC5 |
 | `../../tests/api/test_geoip2_ingress_contract_offline.py` | AC3 离线安全矩阵(15 用例;TEST_DATABASE_URL fail-closed) | AC3 |
-| `../../../tests/deploy/test_geoip2_candidate_static.py` | 默认关闭/凭据红线/机械门负向 fixture/DSN 守卫(49 用例) | AC2/AC4/AC5 |
+| `../../../tests/deploy/test_geoip2_candidate_static.py` | 默认关闭/凭据红线/机械门负向 fixture/DSN 守卫(91 用例;另 1 个真实文件复验用例在未提供 `MMDB_REAL_WORLD_FILE` 时 skip = UNKNOWN 保留) | AC2/AC4/AC5 |
 
 ---
 
@@ -49,7 +49,7 @@ ls;零写面、零配置变更、零生产 /ask)。逐项结论:
 | # | 未知项 | 为什么读不到/未定 | 补齐方式(阶段 P 前置) |
 |---|---|---|---|
 | U1 | **GeoLite2 许可接受与 license key**(MMDB 使用权) | MaxMind 账户/许可接受是 owner 法律行为,B 无权代办(契约 forbidden 项) | owner 在 maxmind.com 接受 GeoLite2 EULA、开户、把 key 写入宿主 `/etc/ask-ai-geoip/geolite2-license.key`(0600) |
-| U2 | **MMDB 文件本身** | 宿主全盘探针无任何 `.mmdb`(库从未安装) | U1 之后经 `update-geolite2.sh` 首次下载+硬校验 |
+| U2 | **MMDB 文件本身** | 宿主全盘探针无任何 `.mmdb`(库从未安装)。R3 补充:**格式级兼容已实证** —— 公开 MaxMind-DB test-data 的 `GeoLite2-Country-Test.mmdb`(sha256 `87b5464d…da321`,无需凭据/许可)经本校验器通过,且 metadata 全字段、244/244 个源数据网络记录级与官方 maxminddb reader 一致(§9);生产 GeoLite2 文件本身仍属 UNKNOWN | U1 之后经 `update-geolite2.sh` 首次下载+硬校验 |
 | U3 | **GeoLite2 数据对真实访客 IP 的命中质量/国家级准确率** | 不对生产 /ask(契约禁项);无真实流量样本可离线度量 | 阶段 P 受控验证:上线后按 §5 观测 `country_source='ingress'` 占比与 Admin 分布,Unknown 比例异常即回退 |
 | U4 | **端到端(nginx→backend)真实头可达性** | 同上,禁生产探针;离线矩阵(AC3)已证明 backend 语义,nginx→backend 一跳属运行态 | 阶段 P 单请求受控验证(见 §4 清单第 9 步) |
 | U5 | **性能影响数字(p95 等)** | 不虚构实测生产 p95(契约明令);本地微基准不代表生产 GPU 机型负载 | §6 性能验收方法(方法而非数字) |
@@ -88,7 +88,9 @@ ls;零写面、零配置变更、零生产 /ask)。逐项结论:
 
 Accept-Language / 时区 / 用户输入 / LLM 推断一律不读取;**不配置 real_ip_\***
 (X-Forwarded-For 可伪造,不得提升为 `$remote_addr`)。结构断言
-`test_nginx_example_does_not_promote_xff_to_remote_addr` 固化。
+`test_nginx_example_does_not_promote_xff_to_remote_addr` 固化;R3 起预检 G7
+同权重机械强制:生效配置出现 `real_ip_*`/`set_real_ip_from` 即 FAIL(fail-closed,
+而非仅本文档声明 —— 受信 RealIP 拓扑不可机械证实,README §9 ③)。
 
 ### 2.3 Unknown 语义与失败模式(R2 修正:失败模式不再假称良性)
 
@@ -282,3 +284,24 @@ sudo nginx -t && sudo systemctl reload nginx \
 | 3 | GeoLite2 key/MMDB 校验/回滚不安全 | 凭据**零 argv**(只进 0600 curl 配置文件 `-K`;stderr 经脱敏器抹 key/license_key 后输出;不 set -x);MMDB 校验 = `mmdb_validate.py` 硬结构解析(完整 metadata 解码+字段语义+布局一致+走树越界门,合成 MMDB 正/负样本单测);成功更新后 **保留 .bak**(--rollback 恒可用,旧实现成功即删);§4.1/示例回退改 `mv` 真禁用 + 各步独立/nginx -t 失败不中断;离线负测覆盖(成功替换后回滚可用、畸形 MMDB 拒、凭据不暴露、损坏配置回退序列) |
 | 4 | 离线测试可能写非测试库 | `TEST_DATABASE_URL` 强制显式 + 库名含 `test` + APP_MODE=prod 拒绝,收集期 fail-closed(`_resolve_test_dsn` 先于任何 load_settings);种子/清理只作用本组合成 site_id 行;4 个子进程守卫测试证明缺 URL/非测试库/prod 均不可运行 |
 | 5 | 文档准确性 | §2.3 失败模式改为「未证实为自动抑制,hard-stop/回滚处置」;§6 删除未实测微秒口径(方法保留、数字不宣称);§7(c) 改为「未证实直至边界收口+G8 验证」;§2.1/§5 同步条件化 |
+
+---
+
+## 9. R3 修正记录(A 2026-10-17T02:56Z REQUEST_CHANGES 四项阻塞逐条处置)
+
+全部为 R2 新增 G3/G7/G8 与配置入口机械门的 bounded correction;R1/R2 已接受面
+(G8/G6b/G7 机制本体、key 零 argv、.bak 保留、DSN fail-closed、文档矫正)零回退。
+TDD:四项均先 RED(旧码假 PASS/误拒/泄漏逐一复现)再 GREEN。
+
+| # | A 阻塞 | RED 实证(旧码) | 修法与 GREEN 证据 |
+|---|---|---|---|
+| ① | AC4/G3:`mmdb_validate._decode` 变长 size 公式与 pointer 解码错误,合法 MMDB 被误拒 | 公开 MaxMind-DB test-data `GeoLite2-Country-Test.mmdb`(真实合法文件,description 76B 走 marker 29)被拒:`map 键非字符串(结构异常)`;规范用例 12 failed | 29/30/31 ⇒ **+29/+285/+65,821**(旧 +7/+263/+71,679 恰差 22);pointer **1/2/3/4 字节宽、基数 0/2048/526,336/0**(4 字节档读满 32 位、低 3 位忽略),解析即解引用(`pointer_base` 参数:数据段传数据段起点,metadata 传 metadata 起点);走树数据指针按规范定址(`tree_size + (rec-node_count)`)且 rec−node_count ∈ 1..15(分隔符内部)必拒、=0(分隔符首字节空 map,真实文件实证存在,官方 reader 返回 None)放行。负例 fixture:marker 29/30/31 边界(29/284/285/300/65,820/65,821/65,825)、四档 pointer 精确算术、长 description 合法文件必过、指针入分隔符必拒、数据段共享值 pointer 解引用全链。**真实文件离线一致性验证**(一次性,非仓库依赖):GeoLite2-Country-Test.mmdb(sha256 `87b5464d8ea1f348994f89b029f01ef438c6f5c1e040a825e375e4dbe28da321`,13,733B;record_size=28 nibble 拆分、ip_version=6、node_count=896)校验通过,metadata 全字段与官方 `maxminddb` 3.2.0 reader 一致,**244/244** 个源数据网络记录级一致(含 IPv6 网络与真实 pointer 压缩形态);生产 GeoLite2 文件本身仍 UNKNOWN(U1/U2,不下载)。该验证可经 `MMDB_REAL_WORLD_FILE=<路径>` 复跑,未提供时 skip=UNKNOWN 保留 |
+| ② | AC1/AC5/G8:只查第一条 Docker HostIp(漏公开绑定)+ FAIL 消息插值真实宿主 IP(日志泄漏) | `TestPublishBindingsAllMappings` 13 用例:第一条 127.0.0.1、第二条 0.0.0.0 时旧码假 PASS;`${HOSTIP}` 插值泄漏 | `check_publish_bindings`:对 `NetworkSettings.Ports` **全部端口全部绑定**逐条审计 —— HostIp 缺失/空/非 loopback 单项否决(顺序无关:双绑定互换、IPv4+IPv6 混合均必拒);HostPort 缺失/非整数必拒;与 nginx 实际使用的 backend 端口交叉一致,不一致必拒;JSON 不可得/为空/形态非法 fail-closed。G8 改走 `bindings` 子命令(stdin 读 JSON,不落盘),G8b 对**全部** HostPort 逐一 `ss` 交叉核验。泄漏红线:结论只输出类别与计数,HostIp/HostPort **零回显**(集成级子进程字符串不泄露测试 + `${HOSTIP` 插值静态禁用) |
+| ③ | AC1/AC2/AC5/G7:多条 backend 反代路径只审第一条 + real_ip 拓扑未审 | `TestAllBackendPathsAudited` 12 用例:双 location/vhost「第一条安全第二条不安全」旧码假 PASS(顺序互换对照);嵌套 location 继承遮蔽假 PASS;显式 upstream 部署被误拒;变量型 proxy_pass 不可审计;set_real_ip_from 旧码放行 | 生效配置内 **全部** proxy_pass 逐条分类:显式 `:backend_port` 或显式含该端口的 upstream = backend 路径;变量型/歧义 upstream(server 无显式端口)= 不可审计 → **拒绝**(fail-closed);每条 backend 路径按 nginx 继承语义从内向外取第一个含任一 `proxy_set_header` 的层级(location 内层→外层→server→http)证明无条件 `proxy_set_header <头>=$<map 变量>`,任一条断裂 = FAIL;容器标签 #序号消歧(第二 vhost 不再借用第一 vhost 的覆盖);R4(静态值/if 包裹)全配置不变。R5 新增:生效配置含 `real_ip_*`/`set_real_ip_from` 一律 FAIL(可伪造 XFF 可被提升为 `$remote_addr`,受信 RealIP 拓扑不可机械证实),不再仅 README 声明 |
+| ④ | AC5:`--expect` 入口无穷尽校验 | `--expect onn/ON/1/yes/''` 旧码静默按 off 路径继续(经 sudo 检查后可 exit 0 =「未检查启用态却成功」) | 入口严格限定 `off|on`:非法值/缺值/空值/多余位置参数一律**立即 exit 2**(先于 root 检查,绝不静默回落 off 语义);负例 fixture 六种非法值断言非零退出 + 提示含 `off|on` + 无 sudo 字样,合法两值到达门检 |
+
+回归计数(R3 交付时):tests/deploy 全目录 **151 passed + 1 skip**(skip = 真实文件
+复验用例,未提供 `MMDB_REAL_WORLD_FILE` 时按 UNKNOWN 保留);聚焦回归
+**193 passed + 1 skip**(AC3 离线契约 15 + geo_country 12 + persistence 3 +
+migration 12 + 静态候选 91+1);ruff/black/isort 清洁;`bash -n` 两脚本通过;
+零 backend 代码改动、零 compose 改动、零生产触碰。

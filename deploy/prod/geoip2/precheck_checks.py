@@ -14,12 +14,14 @@ R2 审查修正:precheck-geoip2.sh 的两处核心门从「源码 grep / 含网�
   网关 /32 授信被旁路,信任模型不成立)。
 
 红线:所有结论只输出类别/布尔/计数,**不回显**真实网关/子网/CIDR/头名值
-(操作员现场比对;禁止落入持久日志/Issue)。
+(操作员现场比对;禁止落入持久日志/Issue)。发布绑定的 HostIp/HostPort
+同样**不回显**(R3 阻塞 ②:旧 G8 FAIL 消息插值真实宿主 IP = 日志泄漏)。
 
-CLI(precheck-geoip2.sh 调用;nginx 模式从 stdin 读 dump,不落盘):
-    python3 precheck_checks.py cidr    --cidrs S --gateway G
-    python3 precheck_checks.py nginx   --header H --mmdb P --port N --expect on|off < dump
-    python3 precheck_checks.py binding --host-ip IP
+CLI(precheck-geoip2.sh 调用;nginx dump / ports JSON 从 stdin 读,不落盘):
+    python3 precheck_checks.py cidr     --cidrs S --gateway G
+    python3 precheck_checks.py nginx    --header H --mmdb P --port N --expect on|off < dump
+    python3 precheck_checks.py binding  --host-ip IP
+    python3 precheck_checks.py bindings --backend-port N [--container-port P] < ports.json
 退出码 0=PASS,1=FAIL;stdout 一行类别消息。
 """
 
@@ -27,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
+import json
 import sys
 
 GEOIP2_VAR = "$ask_ai_geoip_country_code"
@@ -60,6 +63,13 @@ def check_trusted_cidrs_exact(cidrs_text: str, gateway: str) -> tuple[bool, str]
 
 
 # ------------------------------------------------------------------ binding --
+_LOOPBACK_IPS = ("127.0.0.1", "::1")
+
+
+def _binding_is_loopback(host_ip: str) -> bool:
+    return (host_ip or "").strip() in _LOOPBACK_IPS
+
+
 def check_publish_binding(host_ip: str) -> tuple[bool, str]:
     """backend 发布端口绑定必须为 loopback(受信跳边界,fail-closed)。
 
@@ -68,7 +78,7 @@ def check_publish_binding(host_ip: str) -> tuple[bool, str]:
     被旁路。收口(loopback 绑定或等效宿主防火墙)属**另行授权的网络变更**,
     未验证前必须保持 off。"""
     ip = (host_ip or "").strip()
-    if ip in ("127.0.0.1", "::1"):
+    if ip in _LOOPBACK_IPS:
         return True, "发布端口仅绑定 loopback(受信跳边界成立)"
     if ip in ("0.0.0.0", "::", ""):
         return False, (
@@ -79,7 +89,105 @@ def check_publish_binding(host_ip: str) -> tuple[bool, str]:
     return False, "发布端口绑定非 loopback 地址 —— 同 0.0.0.0,受信跳边界不成立,保持 off"
 
 
+def check_publish_bindings(
+    ports_json: str, *, backend_port: int, container_port: str = "8000/tcp"
+) -> tuple[bool, str]:
+    """R3 修正(阻塞 ②):审计**全部**发布映射的**每一条** HostIp/HostPort。
+
+    旧实现只取 `NetworkSettings.Ports[port][0].HostIp` 单值:第一条 loopback、
+    第二条 0.0.0.0/::/公网 IP 时假 PASS;FAIL 消息还插值真实宿主 IP(日志泄漏)。
+    本函数(fail-closed,类别输出,零值回显):
+      - 发布映射 JSON 不可得/不可解析/为空 = FAIL;
+      - 目标容器端口无映射或绑定列表为空 = FAIL;
+      - 任一端口任一条绑定:HostIp 缺失/空/非 loopback = FAIL(单项否决);
+      - 目标端口的任一条绑定 HostPort 缺失/非整数 = FAIL;
+      - 目标端口绑定 HostPort 必须含 nginx 实际使用的 backend_port = FAIL(不一致)。
+    """
+    try:
+        ports = json.loads(ports_json or "")
+    except ValueError:
+        return False, "发布端口映射不可解析(JSON)—— 绑定审计无法成立,保持 off"
+    if not isinstance(ports, dict) or not ports:
+        return False, "发布端口映射为空或形态非法 —— backend 无受审计的发布面,保持 off"
+
+    bindings = ports.get(container_port)
+    if not isinstance(bindings, list) or not bindings:
+        return (
+            False,
+            f"目标容器端口({container_port})无发布绑定 —— nginx 无法到达 backend,保持 off",
+        )
+
+    host_ports: list[str] = []
+    for port_key, entries in ports.items():
+        if not isinstance(entries, list):
+            return False, "发布映射条目形态非法 —— fail closed,保持 off"
+        for entry in entries:
+            if not isinstance(entry, dict):
+                return False, "发布绑定形态非法 —— fail closed,保持 off"
+            hip = entry.get("HostIp")
+            if hip is None or str(hip).strip() == "":
+                return False, "存在缺失 HostIp 的发布绑定(单项缺失 = fail closed),保持 off"
+            if not _binding_is_loopback(str(hip)):
+                return False, (
+                    "存在非 loopback 的发布绑定(全部映射逐一审计)—— 外部/同网段流量可经 "
+                    "DNAT 伪装成网桥网关 peer,网关 /32 授信被旁路;保持 off。"
+                    "收口需另行授权(loopback 绑定或防火墙),验证与回滚见 README §2.4"
+                )
+            if port_key == container_port:
+                hport = entry.get("HostPort")
+                if hport is None or str(hport).strip() == "":
+                    return False, "存在缺失 HostPort 的发布绑定(单项缺失 = fail closed),保持 off"
+                if not str(hport).strip().isdigit():
+                    return False, "存在非法 HostPort 的发布绑定 —— fail closed,保持 off"
+                host_ports.append(str(hport).strip())
+
+    if not host_ports:
+        return False, "目标容器端口发布绑定不可审计 —— fail closed,保持 off"
+    if str(backend_port) not in host_ports:
+        return (
+            False,
+            "发布绑定与 nginx 实际使用的 backend 端口不一致 —— 所审非所转,保持 off",
+        )
+    return (
+        True,
+        (
+            f"全部发布映射(含目标端口 {len(host_ports)} 条绑定)仅绑定 loopback,"
+            "且含 nginx 使用的 backend 端口(受信跳边界成立)"
+        ),
+    )
+
+
 # -------------------------------------------------------------------- nginx --
+def _proxy_authority(arg: str) -> str | None:
+    """从 proxy_pass 参数提取 authority(scheme://host[:port][/path])。
+
+    变量型/不可解析目标返回 None(= 不可审计,fail closed)。"""
+    rest = arg.split("://", 1)[1] if "://" in arg else arg
+    auth = rest.split("/", 1)[0].strip()
+    if not auth or "$" in auth or "{" in auth:
+        return None
+    return auth
+
+
+def _split_host_port(authority: str) -> tuple[str | None, int | None]:
+    """authority → (host, port);port = 显式端口或 None(默认 80 语义)。"""
+    auth = (authority or "").strip()
+    if not auth:
+        return None, None
+    if auth.startswith("["):  # [v6 字面量][:port]
+        end = auth.find("]")
+        if end == -1:
+            return auth, None
+        host, rest = auth[: end + 1], auth[end + 1 :]
+        if rest.startswith(":") and rest[1:].isdigit():
+            return host, int(rest[1:])
+        return host, None
+    if auth.rsplit(":", 1)[-1].isdigit() and ":" in auth:
+        host, port = auth.rsplit(":", 1)
+        return host, int(port)
+    return auth, None
+
+
 class _Parser:
     """nginx 配置 tokenize + 嵌套解析(nginx -T dump:注释已被剥离)。"""
 
@@ -161,12 +269,25 @@ class _Parser:
 
 
 def _walk(items: list[tuple[str, list[str], list | None]], ctx: tuple[str, ...] = ()):
-    """深度遍历,携带上下文标签链(如 http→server→location /)。"""
+    """深度遍历,携带上下文标签链(如 http→server→location /)。
+
+    R3 修正(阻塞 ③):同层同名容器(server/location/if)追加 **#序号**
+    消歧 —— 否则第二个 vhost 的 location 与第一个共享同一 ctx 元组,
+    「第二个 vhost 裸 proxy_pass」会借用第一个 vhost 的头覆盖假 PASS。"""
+    seen: dict[tuple[tuple[str, ...], str], int] = {}
     for name, args, block in items:
         yield ctx, name, args, block
         if block is not None:
             label = f"{name} {' '.join(args)}" if name in ("location", "if") else name
-            yield from _walk(block, ctx + (label,))
+            key = (ctx, label)
+            seen[key] = seen.get(key, 0) + 1
+            uniq = label if seen[key] == 1 else f"{label}#{seen[key]}"
+            yield from _walk(block, ctx + (uniq,))
+
+
+def _label_kind(label: str) -> str:
+    """去掉消歧 #序号 后的容器种类(server / location …)。"""
+    return label.split("#", 1)[0]
 
 
 def check_effective_nginx_config(
@@ -184,13 +305,16 @@ def check_effective_nginx_config(
          auto_reload 且定义了输出变量;
       R2 该输出变量被恰好 1 个 map 消费,map 输出变量为下发变量,块内
          default→空串 且 XX→空串;
-      R3 存在 proxy_pass 指向 backend 端口的 location;该 location 自身
-         (若其内有任何 proxy_set_header;否则其 server 级)必须含
-         proxy_set_header <header> $<map 输出变量>(nginx 的
-         proxy_set_header 不按指令继承 —— location 内一旦出现任何
-         proxy_set_header,父级全部失效,故必须落在生效层);
-      R4 全配置内该头名不得出现任何非计算值的其它取值(静态值/他处
-         覆盖),也不得包在 if 块内(无条件覆盖语义)。
+      R3 **全部**指向 backend 端口的 proxy_pass 路径(含显式 upstream)
+         逐一证明生效层有无条件 proxy_set_header <header>=$<map 变量>:
+         生效层按 nginx 继承语义从内向外取第一个含任一 proxy_set_header
+         的层级(location 内层→外层→server→http);任何一条路径断裂 =
+         FAIL。不能审计的路径(变量型 proxy_pass / 歧义 upstream 命名)=
+         FAIL(拒绝不能审计的额外路径);
+      R4 全配置内该头名不得有静态值/他处覆盖/if 包裹(无条件覆盖语义);
+      R5 生效配置不得含 real_ip_*/set_real_ip_from(可伪造 XFF 可被提升为
+         $remote_addr;受信 RealIP 拓扑不可机械证实 → fail closed,而非仅
+         文档声明「不要配置」)。
     off 模式规则:生效配置中不得出现 geoip2 指令、消费 geoip2 变量的
       map、或下发 geo 头的 proxy_set_header。
     """
@@ -245,51 +369,105 @@ def check_effective_nginx_config(
     if not xx or xx[0] != [""]:
         return False, "map 缺 XX→空串(保留码必须不下发头)"
 
-    api_ctx = None
+    # R5:受信 RealIP 拓扑不可机械证实 → 任何 real_ip_* 都 fail closed
+    real_ip = [n for _, n, _, _ in flat if n.startswith("real_ip_") or n == "set_real_ip_from"]
+    if real_ip:
+        return False, (
+            "生效配置含 real_ip_*/set_real_ip_from(可伪造 X-Forwarded-For 可被提升为"
+            "$remote_addr;受信 RealIP 拓扑不可机械证实)→ 保持 off"
+        )
+
+    # ---- R3:枚举全部 backend 路径,不可审计路径 fail closed -------------
+    # upstream 名 → server 显式端口集合(None = 存在无端口 server,歧义)
+    upstreams: dict[str, set[int] | None] = {}
+    for _, name, args, block in flat:
+        if name == "upstream" and args and block is not None:
+            entries = [srv.split()[0] for n, a, _ in block if n == "server" for srv in a]
+            ports = {_split_host_port(e)[1] for e in entries}
+            prev = upstreams.get(args[0], ports)
+            if None in ports or prev is None:  # 无显式端口 server = 歧义命名
+                upstreams[args[0]] = None
+            else:
+                upstreams[args[0]] = ports | prev
+
+    def _classify(arg: str) -> bool | None:
+        """proxy_pass 目标分类:True=backend 路径 / False=与 backend 无关 /
+        None=不可审计(变量、歧义 upstream)。"""
+        host, port = _split_host_port(_proxy_authority(arg) or "")
+        if host is None:
+            return None
+        if port == backend_port:
+            return True
+        if host in upstreams:
+            ups = upstreams[host]
+            if ups is None:  # upstream 含无显式端口的 server = 歧义命名
+                return None
+            return backend_port in ups
+        return False  # 显式其它端口或无端口域名(默认 80 ≠ backend 端口)
+
+    backend_paths: list[tuple[str, ...]] = []
     for c, a in ppass:
-        if any(f":{backend_port}" in arg for arg in a):
-            api_ctx = c
-            break
-    if api_ctx is None:
+        for arg in a:
+            verdict = _classify(arg)
+            if verdict is None:
+                return (
+                    False,
+                    (
+                        "存在不可审计的 proxy_pass 目标(变量型/歧义 upstream 命名)"
+                        "—— 无法证明是否为 backend 路径,fail closed,保持 off"
+                    ),
+                )
+            if verdict:
+                backend_paths.append(c)
+                break
+    if not backend_paths:
         return False, "生效配置未找到指向 backend 端口的 proxy_pass —— 保持 off"
 
-    def _direct_children(ctx_prefix: tuple[str, ...]) -> list[list[str]]:
-        return [a for c, a in psh if c == ctx_prefix]
+    # nginx 继承遮蔽:从内向外找第一个含任一 proxy_set_header 的层级,
+    # 该层即为生效层;同名头必须是 $<map 变量>(无条件计算值)。
+    def _effective_level_has_header(ctx: tuple[str, ...]) -> bool:
+        levels: list[tuple[str, ...]] = []
+        for i, label in enumerate(ctx):
+            if _label_kind(label).startswith("location"):
+                levels.append(ctx[: i + 1])
+        levels.reverse()  # 内层 → 外层
+        srv = [i for i, label in enumerate(ctx) if _label_kind(label) == "server"]
+        if srv:
+            levels.append(ctx[: srv[-1] + 1])
+        if ctx and _label_kind(ctx[0]) == "http":
+            levels.append(ctx[:1])
+        for level in levels:
+            at_level = [a for c, a in psh if c == level]
+            if at_level:  # 继承在此层被遮蔽并终止
+                return any(a and a[0].lower() == header_l and a[1:] == [mvar] for a in at_level)
+        return False
 
     # R4 先行:全配置内该头名不得有任何非计算值/包 if 的出现(精确归因),
-    # 再做 R3 生效层存在性判定。
+    # 再对**每条** backend 路径做生效层判定。
     for c, a in psh:
         if a and a[0].lower() == header_l:
-            if any(step.startswith("if ") or step == "if" for step in c):
+            if any(_label_kind(step) == "if" or _label_kind(step).startswith("if ") for step in c):
                 return False, "geo 头下发被包在 if 块内 —— 无条件覆盖语义破坏,保持 off"
             if a[1:] != [mvar]:
                 return False, "存在非计算值的同名头(静态值/他处覆盖)—— 保持 off"
 
-    loc_levels = [i for i, c in enumerate(api_ctx) if c.startswith("location ")]
-    srv_levels = [i for i, c in enumerate(api_ctx) if c == "server"]
-    matched = False
-    if loc_levels:
-        loc_ctx = api_ctx[: loc_levels[-1] + 1]
-        children = _direct_children(loc_ctx)
-        if children:  # location 级有任一 proxy_set_header ⇒ 生效层就是这里
-            matched = any(a and a[0].lower() == header_l and a[1:] == [mvar] for a in children)
-        else:
-            srv_ctx = api_ctx[: srv_levels[-1] + 1] if srv_levels else api_ctx
-            matched = any(
-                a and a[0].lower() == header_l and a[1:] == [mvar]
-                for a in _direct_children(srv_ctx)
-            )
-    else:
-        srv_ctx = api_ctx[: srv_levels[-1] + 1] if srv_levels else api_ctx
-        matched = any(
-            a and a[0].lower() == header_l and a[1:] == [mvar] for a in _direct_children(srv_ctx)
-        )
-    if not matched:
+    broken = sum(1 for ctx in backend_paths if not _effective_level_has_header(ctx))
+    if broken:
         return (
             False,
-            "生效 location/server 层未找到无条件 proxy_set_header <头>=$<map 变量>(静态值或缺失均不合格)—— 覆盖链断裂,保持 off",
+            (
+                f"存在生效层缺失无条件 proxy_set_header <头>=$<map 变量的 backend 路径"
+                f"(共 {len(backend_paths)} 条 backend 路径,{broken} 条断裂;"
+                "静态值或缺失均不合格)—— 覆盖链断裂,保持 off"
+            ),
         )
-    return True, "nginx 生效配置覆盖链完整(geoip2+map+无条件同名头覆盖,基于 nginx -T dump)"
+    return (
+        True,
+        (
+            f"nginx 生效配置覆盖链完整(geoip2+map+全部 {len(backend_paths)} 条 backend"
+            "路径无条件同名头覆盖,基于 nginx -T dump)"
+        ),
+    )
 
 
 # ----------------------------------------------------------------------- CLI --
@@ -304,8 +482,11 @@ def _cli() -> int:
     pn.add_argument("--mmdb", required=True)
     pn.add_argument("--port", type=int, required=True)
     pn.add_argument("--expect", choices=("on", "off"), default="on")
-    pb = sub.add_parser("binding", help="发布端口 loopback 边界")
+    pb = sub.add_parser("binding", help="发布端口 loopback 边界(单条绑定)")
     pb.add_argument("--host-ip", required=True)
+    pbs = sub.add_parser("bindings", help="全部发布映射逐一审计(R3 阻塞 ②)")
+    pbs.add_argument("--backend-port", type=int, required=True)
+    pbs.add_argument("--container-port", default="8000/tcp")
     args = parser.parse_args()
 
     if args.mode == "cidr":
@@ -317,6 +498,10 @@ def _cli() -> int:
             mmdb_path=args.mmdb,
             backend_port=args.port,
             expect=args.expect,
+        )
+    elif args.mode == "bindings":
+        ok, msg = check_publish_bindings(
+            sys.stdin.read(), backend_port=args.backend_port, container_port=args.container_port
         )
     else:
         ok, msg = check_publish_binding(args.host_ip)

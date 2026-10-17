@@ -8,6 +8,11 @@ R2 审查修正:旧校验只查「metadata 标记子串 + 体积下限」,mmdblo
  1. 完整 MMDB metadata 解码:控制字节驱动的 data-section 解码器(pointer /
     extended / string / map / array / uint / double / float / boolean),
     任何越界/截断/非法控制字节都拒绝;
+    R3 修正(阻塞 ①):变长 size(29/30/31 ⇒ +29/+285/+65,821)与 pointer
+    (1/2/3/4 字节宽,基数 0/2048/526,336/0,4 字节档低 3 位忽略)按官方
+    规范解码并即解引用 —— 旧实现把真实合法 MaxMind 文件误拒(实证:公开
+    MaxMind-DB test-data 的 GeoLite2-Country-Test.mmdb,description 76 字节
+    走 marker 29,旧实现 metadata 错位 → 误拒)。
  2. metadata 字段语义校验:database_type 必须为 GeoLite2-Country、
     binary_format_major_version=2、ip_version∈{4,6}、record_size∈{24,28,32}、
     node_count≥1;
@@ -49,19 +54,26 @@ def _read(buf: bytes, pos: int, n: int) -> bytes:
     return buf[pos : pos + n]
 
 
-class _DataPtr:
-    """data-section 指针占位(解码期只记偏移)。"""
+# R3 修正(阻塞 ①):变长 size 与 pointer 编解码对齐 MaxMind DB v2 官方规范
+# (https://maxmind.github.io/MaxMind-DB/):
+#   - size 子段 29/30/31 ⇒ 实长 = 29+1B / 285+2B / 65,821+3B(旧实现 +7/+263/
+#     +71679 恰差 22,会把合法长 description 截短 → metadata 错位误拒);
+#   - pointer 4 档宽度 1/2/3/4 字节,偏移基数 0/2048/526,336/0(4 字节档读满
+#     32 位、低 3 位忽略)。旧实现按 0/1/2/3 字节读且无基数,全部错位。
+_SIZE_BASE_29 = 29
+_SIZE_BASE_30 = 285
+_SIZE_BASE_31 = 65_821
+_POINTER_BASE = {0: 0, 1: 2048, 2: 526_336, 3: 0}
 
-    __slots__ = ("offset",)
 
-    def __init__(self, offset: int) -> None:
-        self.offset = offset
+def _decode(buf: bytes, pos: int, depth: int = 0, pointer_base: int = 0) -> tuple[object, int]:
+    """按 MaxMind DB 数据段格式解码一个值,返回 (value, next_pos)。
 
-
-def _decode(buf: bytes, pos: int, depth: int = 0) -> tuple[object, int]:
-    """按 MaxMind DB 数据段格式解码一个值,返回 (value, next_pos)。"""
+    pointer_base:pointer 指向目标段的起点(数据段解码传数据段起点;
+    metadata 内 pointer 按规范相对 metadata 起点,由调用方传入)。
+    解析即解引用(规范:指针不得指向指针;深度门防环)。"""
     if depth > _MAX_DECODE_DEPTH:
-        raise MMDBInvalid("metadata 嵌套过深(结构异常)")
+        raise MMDBInvalid("metadata 嵌套/指针链过深(结构异常)")
     ctrl = _read(buf, pos, 1)[0]
     pos += 1
     tnum = ctrl >> 5
@@ -69,9 +81,16 @@ def _decode(buf: bytes, pos: int, depth: int = 0) -> tuple[object, int]:
     if tnum == 1:  # pointer:3 位 size 子段 = 指针尺寸档(0-3)
         psize = (ctrl >> 3) & 0x3
         high = ctrl & 0x7
-        raw = _read(buf, pos, psize)
-        pos += psize
-        return _DataPtr((high << (8 * psize)) | int.from_bytes(raw, "big")), pos
+        nbytes = psize + 1
+        raw = _read(buf, pos, nbytes)
+        pos += nbytes
+        if psize == 3:  # 4 字节档:读满 32 位,低 3 位控制位忽略
+            pval = int.from_bytes(raw, "big")
+        else:
+            pval = (high << (8 * nbytes)) | int.from_bytes(raw, "big")
+        pval += _POINTER_BASE[psize]
+        value, _ = _decode(buf, pointer_base + pval, depth + 1, pointer_base)
+        return value, pos
 
     size = ctrl & 0x1F
     if tnum == 0:  # extended:下一字节 = 真实类型 - 7
@@ -86,13 +105,13 @@ def _decode(buf: bytes, pos: int, depth: int = 0) -> tuple[object, int]:
         return None, pos
 
     if size == 29:
-        size = _read(buf, pos, 1)[0] + 7
+        size = _SIZE_BASE_29 + _read(buf, pos, 1)[0]
         pos += 1
     elif size == 30:
-        size = int.from_bytes(_read(buf, pos, 2), "big") + 7 + 256
+        size = _SIZE_BASE_30 + int.from_bytes(_read(buf, pos, 2), "big")
         pos += 2
     elif size == 31:
-        size = int.from_bytes(_read(buf, pos, 3), "big") + 7 + 256 + 65536
+        size = _SIZE_BASE_31 + int.from_bytes(_read(buf, pos, 3), "big")
         pos += 3
 
     if tnum == 2:  # utf8 string
@@ -121,15 +140,15 @@ def _decode(buf: bytes, pos: int, depth: int = 0) -> tuple[object, int]:
     if tnum == 7:  # map
         out: dict = {}
         for _ in range(size):
-            key, pos = _decode(buf, pos, depth + 1)
+            key, pos = _decode(buf, pos, depth + 1, pointer_base)
             if not isinstance(key, str):
                 raise MMDBInvalid("map 键非字符串(结构异常)")
-            out[key], pos = _decode(buf, pos, depth + 1)
+            out[key], pos = _decode(buf, pos, depth + 1, pointer_base)
         return out, pos
     if tnum == 11:  # array
         out_list: list = []
         for _ in range(size):
-            item, pos = _decode(buf, pos, depth + 1)
+            item, pos = _decode(buf, pos, depth + 1, pointer_base)
             out_list.append(item)
         return out_list, pos
     if tnum == 12:  # data cache container:规范允许但不会出现在落盘文件
@@ -170,7 +189,6 @@ def _walk_tree(
     node_count: int,
     record_size: int,
     tree_size: int,
-    data_start: int,
     data_end: int,
     ip_version: int,
 ) -> int:
@@ -199,9 +217,16 @@ def _walk_tree(
             if rec < node_count:
                 node = rec
                 continue
+            # R3 修正(阻塞 ①):数据指针文件内位置 = tree_size + (rec - node_count)。
+            # 规范:rec=node_count+n(n=1..15)落在 16 字节分隔符内部 = 非法,拒绝;
+            # rec==node_count(offset 0 = 分隔符首字节,解码为空 map)在真实
+            # MaxMind 文件的「无数据」路径上实证存在(公开 test-data
+            # GeoLite2-Country-Test.mmdb;官方 reader 对其返回 None),放行。
             offset = rec - node_count
-            absolute = data_start + offset
-            if not (data_start <= absolute < data_end):
+            if 0 < offset < _DATA_SECTION_SEPARATOR_BYTES:
+                raise MMDBInvalid("数据指针落入数据段分隔符内部(结构异常)")
+            absolute = tree_size + offset
+            if absolute >= data_end:
                 raise MMDBInvalid("数据指针越出数据段(结构异常)")
             break
         else:
@@ -221,7 +246,9 @@ def validate_bytes(
     if idx == -1:
         raise MMDBInvalid("metadata 标记缺失")
 
-    meta, end_pos = _decode(data, idx + len(METADATA_MARKER))
+    meta, end_pos = _decode(
+        data, idx + len(METADATA_MARKER), pointer_base=idx + len(METADATA_MARKER)
+    )
     if end_pos != len(data):
         raise MMDBInvalid("metadata 未精确消费到 EOF(尾部截断或附加垃圾)")
     if not isinstance(meta, dict):
@@ -251,7 +278,6 @@ def validate_bytes(
         node_count=node_count,
         record_size=record_size,
         tree_size=tree_size,
-        data_start=data_start,
         data_end=idx,
         ip_version=meta.get("ip_version"),
     )

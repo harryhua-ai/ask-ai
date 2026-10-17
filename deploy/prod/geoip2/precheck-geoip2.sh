@@ -4,6 +4,9 @@
 # Issue #114 阶段 E 交付(AC1 检查方式 / AC5 预检清单的机械执行面)
 # R2 修正版:G6b 精确网关 /32;G7 基于 nginx -T 生效配置;新增 G8 发布端口
 # 边界(受信跳可达性);G5 全程类别化输出(真实网关/子网/CIDR 值不回显)。
+# R3 修正版:--expect 入口严格 off|on(非法立即非零退出);G8 审计全部发布
+# 映射的每一条绑定(不再只看第一条)且结论不回显绑定值;G7 生效配置由
+# precheck_checks 全量枚举 backend 路径并拒绝 real_ip_* 拓扑(fail-closed)。
 #
 # 用途:阶段 P(受权操作者)在真实启用前后各跑一次;任一门 FAIL 即退出码 1
 # 并给出结论「保持 off」。本脚本零写面:不改任何配置、不 reload、不发生产
@@ -25,9 +28,25 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# R3 修正(阻塞 ④):--expect 入口严格限定 off|on —— 任何其它值(含拼写
+# 错误/空值)立即非零退出,绝不静默落入 off 语义(旧实现 `--expect onn`
+# 按 off 路径校验,可能出现「未检查启用态却 exit 0」的假成功)。
 EXPECT="off"
 case "${1:-}" in
-    --expect) EXPECT="${2:?用法: $0 --expect {off|on}}" ;;
+    --expect)
+        if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
+            echo "非法参数: --expect 需要恰好一个值(off|on)。用法: $0 --expect {off|on}" >&2
+            exit 2
+        fi
+        case "$2" in
+            off|on) EXPECT="$2" ;;
+            *) echo "非法参数: --expect 只接受 off|on(收到其它值,拒绝静默回落)" >&2 ; exit 2 ;;
+        esac
+        if [ "$#" -ne 2 ]; then
+            echo "非法参数: 多余的位置参数。用法: $0 --expect {off|on}" >&2
+            exit 2
+        fi
+        ;;
     -h|--help) echo "用法: $0 --expect {off|on}"; exit 0 ;;
     "") ;;
     *) echo "未知参数: $1"; exit 2 ;;
@@ -187,25 +206,35 @@ else
     fi
 fi
 
-# G8 发布端口边界(R1 修正):受信跳可达性 fail-closed --------------------------
+# G8 发布端口边界(R1 修正 / R3 阻塞 ②):受信跳可达性 fail-closed -----------
 # 0.0.0.0/:: 发布 = 外部与同网段流量可经 DNAT 伪装成网桥网关 peer,网关 /32
 # 授信被旁路 ⇒ 必须仅 loopback 绑定(或等效防火墙)。该收口属另行授权的网络
 # 变更(README §2.4):执行须 owner 授权,验证 = 本门复验,回滚 = 恢复原 ports。
-HOSTIP=$(docker inspect "$BACKEND_CONTAINER" \
-    --format '{{(index (index .NetworkSettings.Ports "8000/tcp") 0).HostIp}}' 2>/dev/null || true)
-HOSTPORT=$(docker inspect "$BACKEND_CONTAINER" \
-    --format '{{(index (index .NetworkSettings.Ports "8000/tcp") 0).HostPort}}' 2>/dev/null || true)
-if python3 "$SCRIPT_DIR/precheck_checks.py" binding --host-ip "$HOSTIP"; then
-    gate G8 PASS "backend 发布端口仅绑定 loopback(受信跳边界成立)"
+# R3:审计**全部**发布映射的**每一条** HostIp/HostPort(旧实现只取第一条,
+# 「第一条 loopback、第二条 0.0.0.0」会假 PASS),并与 nginx 实际使用的
+# backend 端口交叉一致;结论只输出类别与计数,**不回显**任何绑定值(旧
+# FAIL 消息插值 HOSTIP 变量会把真实宿主内部 IP 写入持久日志 = 泄漏)。
+PORTS_JSON=$(docker inspect "$BACKEND_CONTAINER" --format '{{json .NetworkSettings.Ports}}' 2>/dev/null || true)
+HOSTPORTS=$(docker inspect "$BACKEND_CONTAINER" \
+    --format '{{range $p, $b := .NetworkSettings.Ports}}{{range $b}}{{.HostPort}}
+{{end}}{{end}}' 2>/dev/null | sort -u | tr '\n' ' ' || true)
+if printf '%s' "$PORTS_JSON" | python3 "$SCRIPT_DIR/precheck_checks.py" bindings --backend-port "$BACKEND_PORT"; then
+    gate G8 PASS "backend 全部发布映射仅绑定 loopback 且与 nginx 端口一致(受信跳边界成立)"
 else
-    gate G8 FAIL "backend 发布端口绑定非 loopback(HOSTIP 类别: ${HOSTIP:-不可得})—— 保持 off;收口为另行授权变更(README §2.4)"
+    gate G8 FAIL "backend 存在非 loopback/缺失/非法/端口不一致的发布绑定(类别见上一行)—— 保持 off;收口为另行授权变更(README §2.4)"
 fi
 # G8b 宿主监听交叉核验(best-effort;iptables DNAT 直通模式可能无 ss 条目)
-if command -v ss >/dev/null 2>&1 && [ -n "$HOSTPORT" ]; then
-    if ss -ltn 2>/dev/null | awk -v p=":$HOSTPORT" '$4 ~ p {print $4}' | grep -qvE '^(127\.0\.0\.1|\[::1\])'; then
-        gate G8 FAIL "宿主存在非 loopback 监听于发布端口(类别: 非 loopback)—— 保持 off"
+if command -v ss >/dev/null 2>&1 && [ -n "${HOSTPORTS// /}" ]; then
+    G8B_LEAK=0
+    for hp in $HOSTPORTS; do
+        if ss -ltn 2>/dev/null | awk -v p=":$hp" '$4 ~ p {print $4}' | grep -qvE '^(127\.0\.0\.1|\[::1\])'; then
+            G8B_LEAK=1
+        fi
+    done
+    if [ "$G8B_LEAK" -eq 1 ]; then
+        gate G8 FAIL "宿主存在非 loopback 监听于某发布端口(类别: 非 loopback)—— 保持 off"
     else
-        gate G8 PASS "宿主监听交叉核验无非 loopback 条目(或 DNAT 直通无 ss 条目)"
+        gate G8 PASS "宿主监听交叉核验全部发布端口无非 loopback 条目(或 DNAT 直通无 ss 条目)"
     fi
 else
     gate G8 PASS "ss 不可用/端口未得 —— 交叉核验跳过(以 G8 docker inspect 绑定为准)"
