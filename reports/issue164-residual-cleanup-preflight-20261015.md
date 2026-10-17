@@ -3,6 +3,7 @@
 - 日期：2026-10-15 ｜ 执行：Role B（Claim `harryhua-ai-20261015T093039-9986714b`）
 - 分支：`agent/164/8f8beae2`（base `16d01b89` = main @ #162/PR #163 修复合入点）
 - **R2（2026-10-17，对 A 复审 REQUEST_CHANGES 的逐项修正）**：delta 见 §0。核心变化——**§6 由「既有 GC 足够」改为 HARD NO-GO**（删除回执/元数据排序被证明前禁用既有 GC apply）；预检新增 **820-only 范围门**与清单守恒代码门；证据工件归类为 **B-REPORTED、非持久**。
+- **R3（2026-10-17，对 A 02:26Z REQUEST_CHANGES 三项阻塞的逐项修正）**：delta 见 §0b。空 allowlist 清单恒为空集；空白 source_id 一致 fail-closed；live parity 不可静默旁路（skip/混合输入 → `unverified` + exit 4）。HARD NO-GO 结论与 820-only 范围门不变。
 - **全程零生产写入声明**：本 Task 对生产 PostgreSQL 与 Weaviate 仅执行 SELECT / GraphQL Get / Aggregate 只读取证；未运行 GC `--apply`、未开启 `LIFECYCLE_GC_APPLY`、未变更任何配置/索引/缓存、未触发 `/api/ask`。同步容器日志仅 `docker logs --since` 只读查看。
 - 生产基线：`v1.6.4-r2`（三容器同镜像，Weaviate 1.28.0，PostgreSQL 16）；**#162 修复未部署**（见 §6 约束）。
 
@@ -15,6 +16,17 @@
 3. **预检 fail-closed 证明补全**：a) `--allowlist-json` 的 `sha256` **缺失/为空/不匹配一律 exit 2**（`load_allowlist` 强制）；b) live `_sweep_crosscheck` 现在**同时比对文档与代两个资格面**，任一漂移即 exit 3 并在报告写明漂移面与两侧集合；c) 修正 `as_dict()` 先于 drift violation 追加的顺序颠倒——报告 violations 与 exit code 现在一致；d) 清单守恒升级为**代码门**：distinct UUID、非空 `source_id` 绑定、源↔UUID 绑定与 PG 可推导集合一致性，破坏即 fail-closed。以上均有负向 fixture 证明非零退出与真实审计输出；live parity 未被压制（无漂移路径由真实 `lifecycle_gc.sweep` 契约测试覆盖）。
 4. **审计证据边界 → 快照归类 B-REPORTED、非持久**。532,783 对象 UUID 清单与 PG 身份 CSV 仅存于操作员本地易失 `/tmp`，公开报告哈希仅前 16 位（**非校验级**）——不存在可独立访问的持久受限证据通道。R2 如实降级：§2 工件为 **B-REPORTED（报告方陈述），不可独立复核**；**任何执行窗的 preflight 必须重新做同快照全审计采集**（全新三表导出 + 全量清单，完整长度校验和入受限通道），不得引用本报告数字作为执行依据。
 5. **SessionFactory 错配修正**：R1 的 `main()` 把 `async_sessionmaker[AsyncSession]` 传给同步用法的 `_load_live_rows`、把同步 sessionmaker 传给内部 `async with`/`await` 的 `_sweep_crosscheck`→`lifecycle_gc.sweep`——live 路径进入即 TypeError 崩溃（离线复算路径不受影响，故 R1 未暴露）。R2 按各函数调用约定配置正确工厂（生产访问保持全只读），并新增离线 fake SessionFactory 契约测试（`TestSessionFactoryContracts`：sync/async 各自契约 + 拒错配 + main() 双路径接线断言）。
+
+
+---
+
+## 0b. R3 修正说明（对 A 2026-10-17T02:26Z REQUEST_CHANGES 三项阻塞的逐项处置）
+
+1. **空 allowlist 泄漏全量清单（安全边界错误）→ 清单恒为空集**。`load_allowlist` 本就容许合法的 `{"sources":[],"sha256":<空集哈希>}`，但 `compute_ledger` 的 `in_scope = doomed_set & (allowed_deleted_sources or doomed_set)` 用 falsy `or` 把空 set 替换成全量 doomed——违规路径的清单与 `manifest_sha256` 会包含未授权 UUID，违背「目标外 UUID 绝不进入清单」强边界。R3 显式区分 `None`（未提供 allowlist，仅内部路径，语义不变）与空 set（**授权 0 篇**）：空 allowlist 下 `derived_deletable_uuids` 恒为 `[]`、manifest 对应空集（`sha256(b"")`）。负例 fixture：空 allowlist + 非空 doomed → exit 2 **且** 清单为空（`TestR3EmptyAllowlistNeverLeaksManifest`，单元级 + CLI 级）。
+2. **source_id 空串绕过守恒门 → 一致按无有效身份 fail-closed**。修复前守恒门只认 `sid is None`；`_load_live_inventory`（Weaviate 属性）与离线 JSONL 均可携带 `""`/纯空白，无身份对象在其他条件正常时 `violations` 保持空并以 exit 0 计入审计总数。R3 将 None、空串、纯空白一致计为 `null_binding` violation（源↔UUID 绑定校验同步用同一身份谓词），负例 fixture 复现「修复前 exit 0」并证明修复后非零退出 + 报告真实列示（`TestR3BlankSourceIdFailClosed`，单元级参数化 + CLI 级）。
+3. **live 资格双面 parity 可被静默旁路 → 强制 parity，旁路通道 unverified + exit 4**。修复前：`--skip-sweep-crosscheck` 可在 live 模式跳过真实 `lifecycle_gc.sweep(apply=False)` 对账；`--inventory-jsonl` 未配齐三件冻结 CSV 时会读当前 live PG（混合不同时点数据）并直接 `drift=None`——两种情况都可能 EXIT_OK 且报告不标 unverified。R3 起可供授权判断的 live preflight **强制**双面 parity；仅存的显式 debug 通道（`--skip-sweep-crosscheck`、冻结清单 × live PG 混合输入）必须输出 `unverified=true` + 原因，并以 `EXIT_UNVERIFIED=4` 退出（violations/漂移存在时仍取更强的 exit 2/3），不可作为安全门 PASS；CSV 三件不成组同给 → 直接 exit 2（不再静默忽略）。负例 fixture：潜伏漂移 + skip 参数（对账确实未跑、非 PASS）、混合输入（修复前 EXIT_OK → 修复后 exit 4）、部分 CSV 参数（exit 2）、未跳过时 parity 仍强制（漂移走 exit 3 通道）（`TestR3ParityNotSilentlyBypassable`）。
+
+**不变项**：HARD NO-GO 结论、820-only 范围门、§3 表格观测数字、零生产写入边界、生产 `lifecycle_gc.py` 只读——R3 均未触碰（#164 之外，#138 继续 NO-GO）。
 
 
 ---
@@ -89,22 +101,22 @@
 
 ## 4. 只读预检程序与离线回归（AC3）
 
-**新增**：`scripts/gc_preflight.py`（只读预检）+ `tests/scripts/test_gc_preflight.py`（47 项 fixture 回归，零网络/零 PG/零 Weaviate）。
+**新增**：`scripts/gc_preflight.py`（只读预检）+ `tests/scripts/test_gc_preflight.py`（60 项 fixture 回归，零网络/零 PG/零 Weaviate）。
 
 - **零写构造**：Weaviate 句柄经 `ReadOnlyCollection` 代理（`delete*/insert*/replace*/update*/purge*` 属性即抛 `NotReadOnly`，先于 `getattr` 拦截）；账本构造为纯函数（不接任何写入句柄）；PG 仅 SELECT。
-- **外溢 fail-closed**：`--allowlist-json`（冻结 820 source_id 清点）；**R2：`sha256` 自描述强制**——缺失/为空/与 sources 全集不匹配一律 exit 2（`load_allowlist`/`AllowlistRejected`）；doomed ⊄ allowlist → violations + exit 2，外溢文档 UUID 绝不入清单（含退役代路径，R2 范围门）。
+- **外溢 fail-closed**：`--allowlist-json`（冻结 820 source_id 清点）；**R2：`sha256` 自描述强制**——缺失/为空/与 sources 全集不匹配一律 exit 2（`load_allowlist`/`AllowlistRejected`）；doomed ⊄ allowlist → violations + exit 2，外溢文档 UUID 绝不入清单（含退役代路径，R2 范围门）。**R3：空 allowlist（`sources: []` + 合法哈希）=授权 0 篇**，与「未提供」显式区分——违规路径的清单/manifest 恒为空集，绝不回退全量。
 - **820-only 范围门（R2）**：合格退役代触及的目标外文档 UUID 单列 `out_of_scope_generation_uuids`（需另行授权）+ violation exit 2，绝不并入清理清单；该触达面由可推导集合决定、与对象在场无关。
 - **精确身份**：清单只能由 `chunk_uuids_for_version` 推导；测试与 main 路径做 parity 断言（含 legacy ordinal-0 命名空间）。
 - **attempts≠success**：`GCReport.objects_deleted` 在 main 代码中 = `len(uuids)` 尝试数、忽略 `delete_many` 返回（`backend/services/lifecycle_gc.py` `_delete_version_objects`）——预检以只读在场探针区分 `present/missing/orphan`，并在守恒式中单列；**R2：该回执缺陷连同元数据排序缺陷构成 §6 HARD NO-GO**，预检输出恒带 `gc_apply_hard_no_go=true`（特征钉死测试固化危险事实，生产 GC 本体不在本 Candidate 改动）。
 - **orphan 单列**：任何不可推导残留对象只进 `orphan_uuids_*` 计数与违规项，绝不并入清理清单；目标内出现 orphan 即 exit 2（本次实测为 0）。
-- **清单守恒代码门（R2）**：distinct UUID、非空 `source_id` 绑定、源↔UUID 绑定与 PG 可推导集合一致性由 `compute_ledger` 强制（负向 fixture 证明各自独立触发 violation），守恒不再是假设。
-- **资格漂移检测（R2 加固）**：liveness 模式下同时跑真实 `lifecycle_gc.sweep(apply=False)`（A-5 dry-run 默认）与本地重算，**文档与代两个资格面都比对**，任一不一致 exit 3；漂移 violation 先于报告序列化追加（修复 R1 的 `as_dict()` 顺序颠倒——报告 violations 与 exit code 现已一致）。
+- **清单守恒代码门（R2；R3 收紧身份谓词）**：distinct UUID、非空 `source_id` 绑定、源↔UUID 绑定与 PG 可推导集合一致性由 `compute_ledger` 强制（负向 fixture 证明各自独立触发 violation），守恒不再是假设。**R3：None/空串/纯空白 source_id 一致按无有效身份 fail-closed**（修复前空串可静默以 exit 0 计入审计）。
+- **资格漂移检测（R2 加固；R3 强制）**：liveness 模式下同时跑真实 `lifecycle_gc.sweep(apply=False)`（A-5 dry-run 默认）与本地重算，**文档与代两个资格面都比对**，任一不一致 exit 3；漂移 violation 先于报告序列化追加（修复 R1 的 `as_dict()` 顺序颠倒——报告 violations 与 exit code 现已一致）。**R3：可供授权判断的 live preflight 强制该对账**——`--skip-sweep-crosscheck` 与「冻结清单 JSONL × 当前 live PG 混合输入」只能得到 `unverified=true` + `EXIT_UNVERIFIED=4`（不可作为安全门 PASS）；CSV 冻结工件三件不成组同给 → exit 2。
 - **SessionFactory 契约（R2）**：`_load_live_rows` 只接受同步会话工厂（sync 上下文 + 同步 execute），`_sweep_crosscheck` 只接受异步会话工厂（async 上下文 + await execute）；错配显式 TypeError。R1 的 main() 错配（live 路径进入即崩）已修正，契约由离线 fake 工厂测试钉死（生产访问保持全只读 SELECT）。
 - **可复用现有命令**：`python scripts/gc_lifecycle.py --report-json out.json`（dry-run 默认 + `LIFECYCLE_GC_APPLY` config gate）——`--apply` 缺 config 门时显式拒绝，仍是安全可复用的资格报告工具（**注意：R2 后其 dry-run 资格输出仅供观察，不代表可安全 apply**，见 §6）。
 - **离线复现**：本报告 §3 全部数字可用冻结工件离线复现（工件为 B-REPORTED、非持久，见 §2——复现需操作员本地仍保留工件或重新采集）：
   `python scripts/gc_preflight.py --tombstone-days 30 --allowlist-json <allowlist> --inventory-jsonl <inv.jsonl> --docs-csv <d.csv> --versions-csv <v.csv> --gens-csv <g.csv> --now-iso 2026-10-15T09:42:00+00:00`
 
-测试结果：`pytest tests/scripts/test_gc_preflight.py` → **47 passed**（R1 20 项 + R2 新增 27 项：sha256 负例、820-only 范围门、HARD NO-GO 与危险事实特征钉死、双面漂移/顺序负例、清单守恒代码门、fake SessionFactory 契约）；`pytest tests/scripts` → 426 passed, 5 skipped；`pytest tests/ -k "lifecycle or gc or preflight"` → 196 passed。
+测试结果：`pytest tests/scripts/test_gc_preflight.py` → **60 passed**（R1 20 项 + R2 新增 27 项 + R3 新增 13 项：空 allowlist 清单空集负例×4、空白 source_id 负例×5、parity 不可静默旁路负例×4——各自先 RED 复现错误 PASS/错误清单/exit-0 旁路，再 GREEN）；`pytest tests/scripts` → 439 passed, 5 skipped；`pytest tests/ -k "lifecycle or gc or preflight"` → 209 passed。
 
 ## 5. AC5 安全门（清理前必须 PASS）
 

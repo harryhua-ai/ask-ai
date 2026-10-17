@@ -1,4 +1,4 @@
-"""GC 残留清理只读预检(Issue #164;AC3;R2 对 A 复审五项阻塞加固)。
+"""GC 残留清理只读预检(Issue #164;AC3;R3 对 A 三项阻塞加固)。
 
 对「已删文档残留向量」建立可复核的精确身份账本并裁决:
   - 当前 main(#162)GC 资格语义下, tombstone_days=T 能精确覆盖哪些 UUID;
@@ -10,6 +10,18 @@
     触碰它们,预检必须把该触达面显式 fail-closed);
   - **清单守恒是代码门(R2)**:distinct UUID / 非空 source_id 绑定 /
     源↔UUID 绑定与 PG 可推导集合一致性,由 compute_ledger 强制。
+
+**R3(对 A 2026-10-17T02:26Z REQUEST_CHANGES 三项阻塞)**:
+  - 空 allowlist(`sources: []` + 合法 sha256)= 授权 **0 篇**,与
+    None(未提供,仅内部路径)显式区分 —— 违规路径的清理清单/manifest
+    恒为空集,绝不回退到全量 doomed。
+  - None/空串/纯空白 source_id 一致按「无有效身份」fail-closed,
+    不再只认 None(live Weaviate 属性与离线 JSONL 均可携带空串)。
+  - 可供授权判断的 live preflight **强制** sweep 文档+代双面 parity;
+    `--skip-sweep-crosscheck` 与「冻结清单 JSONL × 当前 live PG」
+    混合输入是仅有的显式 debug 通道,必须标记 ``unverified`` 且以
+    ``EXIT_UNVERIFIED``(4)退出 —— 绝不产生可误认的 PASS;
+    CSV 冻结工件三件不成组同给 → 直接 fail-closed。
 
 **GC apply 硬否决(R2,AC4)**:现状生产 GC 的删除回执与元数据排序未被
 证明安全(见 ``HARD_NO_GO_REASONS``),本预检输出恒带
@@ -65,6 +77,9 @@ logger = logging.getLogger("gc_preflight")
 EXIT_OK = 0
 EXIT_FAILCLOSED = 2
 EXIT_ELIGIBILITY_DRIFT = 3
+# R3:结果未经双面 parity 证明(跳过对账/混合时点输入)时的退出码 ——
+# 非零,不可作为授权安全门 PASS;仅显式 debug 通道。
+EXIT_UNVERIFIED = 4
 
 
 # --------------------------------------------------------------------------- #
@@ -325,7 +340,13 @@ def compute_ledger(
 
     res = LedgerResult(tombstone_days=tombstone_days, now=now)
 
-    # ---- R2 清单守恒门(代码强制,不是假设)----
+    # ---- R2/R3 清单守恒门(代码强制,不是假设)----
+    # R3(阻塞②):无有效身份 = None、空串或纯空白 source_id —— 一致
+    # fail-closed(live Weaviate 属性与离线 JSONL 均可能携带空串,
+    # 只认 None 会让无身份对象在 violations 为空时以 exit 0 计入审计)。
+    def _has_identity(sid) -> bool:
+        return sid is not None and str(sid).strip() != ""
+
     seen: dict[str, str | None] = {}
     duplicate_entries = 0
     null_binding = 0
@@ -334,7 +355,7 @@ def compute_ledger(
             duplicate_entries += 1
         else:
             seen[uid] = sid
-        if sid is None:
+        if not _has_identity(sid):
             null_binding += 1
     if duplicate_entries:
         res.violations.append(
@@ -342,7 +363,7 @@ def compute_ledger(
         )
     if null_binding:
         res.violations.append(
-            f"fail-closed: 清单含 {null_binding} 个 null source_id 绑定(身份不可核对)"
+            f"fail-closed: 清单含 {null_binding} 个 null/空白 source_id 绑定(无有效身份,身份不可核对)"
         )
 
     doomed = doomed_document_rows(docs, tombstone_days, now)
@@ -354,7 +375,13 @@ def compute_ledger(
                 f"fail-closed: doomed 集合超出冻结 allowlist {len(res.spillover_sources)} 篇(外溢面拒绝)"
             )
     # 外溢文档的 UUID 一律不入清单:清单只覆盖 allowlist 内的 doomed。
-    in_scope = doomed_set & (allowed_deleted_sources or doomed_set)
+    # R3(阻塞①):None=未提供 allowlist;空 set=**授权 0 篇** —— 两者显式
+    # 区分(falsy `or` 会把空 set 替换成全量 doomed,使违规路径的清单泄漏
+    # 未授权 UUID)。空 allowlist 下清单恒为空集,manifest 对应空集。
+    if allowed_deleted_sources is None:
+        in_scope = doomed_set
+    else:
+        in_scope = doomed_set & allowed_deleted_sources
     res.doomed_sources = sorted(in_scope)
     in_scope_sources = set(res.doomed_sources)
 
@@ -419,7 +446,7 @@ def compute_ledger(
     binding_mismatch = [
         (uid, sid)
         for uid, sid in inventory
-        if sid is not None and uid in uuid_owners and sid not in uuid_owners[uid]
+        if _has_identity(sid) and uid in uuid_owners and sid not in uuid_owners[uid]
     ]
     if binding_mismatch:
         res.violations.append(
@@ -642,7 +669,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--now-iso", type=str, default=None,
                         help="离线复算的裁决时刻(ISO);缺省=当前 UTC")
     parser.add_argument("--report-json", type=str, default=None)
-    parser.add_argument("--skip-sweep-crosscheck", action="store_true")
+    parser.add_argument("--skip-sweep-crosscheck", action="store_true",
+                        help="debug 专用:跳过 live sweep 双面对账(结果标记 "
+                             "unverified 并以 exit 4 退出,不可作为授权安全门)")
     args = parser.parse_args(argv)
 
     try:
@@ -652,7 +681,24 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_FAILCLOSED
 
     offline_pg = bool(args.docs_csv and args.versions_csv and args.gens_csv)
+    if bool(args.docs_csv or args.versions_csv or args.gens_csv) and not offline_pg:
+        # R3(阻塞③):CSV 冻结工件必须三件成组;部分提供会让其余输入面
+        # 落回当前 live PG(混合时点歧义),显式拒绝,绝不静默忽略参数。
+        print(
+            "fail-closed: CSV 冻结工件参数必须三件成组同给"
+            "(--docs-csv/--versions-csv/--gens-csv);部分提供=混合时点歧义",
+            file=sys.stderr,
+        )
+        return EXIT_FAILCLOSED
     now = _parse_ts(args.now_iso) if args.now_iso else datetime.now(UTC)
+
+    # R3(阻塞③):可供授权判断的 live preflight 强制双面 parity。
+    # 仅两种**显式非授权通道**可绕过对账,它们必须标记 unverified 并以
+    # 不可作为安全门通过的非零状态(EXIT_UNVERIFIED)退出:
+    #   a) --skip-sweep-crosscheck(live debug 逃生口);
+    #   b) 冻结清单 JSONL × 当前 live PG(混合不同时点数据,无 parity 证明)。
+    unverified = False
+    unverified_reason: str | None = None
 
     if args.inventory_jsonl:
         inventory = []
@@ -671,6 +717,11 @@ def main(argv: list[str] | None = None) -> int:
             settings = load_settings()
             docs, versions, gens = _load_live_rows(
                 get_sync_session_factory(settings.postgres_dsn)
+            )
+            unverified = True
+            unverified_reason = (
+                "混合输入:--inventory-jsonl(冻结时点清单)× 当前 live PG(另一时点身份行),"
+                "无双面 parity 证明;本结果仅限 debug,不可作为授权安全门"
             )
         drift = None
     elif offline_pg:
@@ -696,7 +747,13 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             client.close()
         drift = None
-        if not args.skip_sweep_crosscheck:
+        if args.skip_sweep_crosscheck:
+            unverified = True
+            unverified_reason = (
+                "live 模式跳过 sweep 双面对账(--skip-sweep-crosscheck):"
+                "无 parity 证明;本结果仅限 debug,不可作为授权安全门"
+            )
+        else:
             # R2:sweep 是 async 契约 → 异步会话工厂(不是同步 sessionmaker)。
             gc_docs, gc_gens = asyncio.run(
                 _sweep_crosscheck(
@@ -744,6 +801,9 @@ def main(argv: list[str] | None = None) -> int:
     # R2 AC4:输出恒带 GC apply 硬否决(删除回执/元数据排序未证明前禁用)。
     out["gc_apply_hard_no_go"] = True
     out["gc_apply_hard_no_go_reasons"] = list(HARD_NO_GO_REASONS)
+    if unverified:
+        out["unverified"] = True
+        out["unverified_reason"] = unverified_reason
 
     if args.report_json:
         with open(args.report_json, "w") as f:
@@ -754,6 +814,8 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_ELIGIBILITY_DRIFT
     if result.violations:
         return EXIT_FAILCLOSED
+    if unverified:
+        return EXIT_UNVERIFIED
     return EXIT_OK
 
 

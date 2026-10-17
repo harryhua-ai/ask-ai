@@ -21,7 +21,14 @@
   一致性由 compute_ledger 强制;
 - R2(SessionFactory 契约):``_load_live_rows`` 只接受同步会话工厂
   (sync 上下文 + 同步 execute),``_sweep_crosscheck`` 只接受异步会话工厂
-  (async 上下文 + await execute),main() 两种输入路径不得错配。
+  (async 上下文 + await execute),main() 两种输入路径不得错配;
+- R3(空 allowlist 边界):空 allowlist=授权 0 篇(与 None=未提供显式区分),
+  违规路径的清理清单恒为空集、manifest 对应空集 —— 绝不回退到全量 doomed;
+- R3(空白 source_id):None/空串/纯空白 source_id 一律按无有效身份
+  fail-closed,不再只认 None;
+- R3(parity 不可静默旁路):可供授权判断的 live 预检强制 sweep 双面对账;
+  ``--skip-sweep-crosscheck`` 或「冻结清单 JSONL × 当前 live PG」混合输入
+  只能得到 unverified 标记 + 非零退出(exit 4),不可作为安全门 PASS。
 """
 
 from __future__ import annotations
@@ -42,6 +49,7 @@ from scripts.gc_preflight import (
     EXIT_ELIGIBILITY_DRIFT,
     EXIT_FAILCLOSED,
     EXIT_OK,
+    EXIT_UNVERIFIED,
     AllowlistRejected,
     GenerationRow,
     HARD_NO_GO_REASONS,
@@ -692,11 +700,12 @@ def _live_sweep_queue() -> list:
     ]
 
 
-def _run_live_main(monkeypatch, tmp_path, *, crosscheck=None):
+def _run_live_main(monkeypatch, tmp_path, *, crosscheck=None, skip_crosscheck=False):
     """live 模式 main() 端到端(fake PG/Weaviate,零网络)。
 
     返回 (exit_code, report_dict, recorded_calls)。crosscheck=None 时跑
     真实 ``_sweep_crosscheck``(→ 真实 ``lifecycle_gc.sweep``)。
+    skip_crosscheck=True 时向 main() 传 ``--skip-sweep-crosscheck``。
     """
     import backend.config as config_mod
     import backend.db.session as session_mod
@@ -761,11 +770,14 @@ def _run_live_main(monkeypatch, tmp_path, *, crosscheck=None):
 
     al = _write_allowlist(tmp_path, [SRC_A, SRC_B], sha256=True)
     rp = tmp_path / "report.json"
-    code = gc_preflight.main([
+    argv = [
         "--tombstone-days", "30",
         "--allowlist-json", str(al),
         "--report-json", str(rp),
-    ])
+    ]
+    if skip_crosscheck:
+        argv.append("--skip-sweep-crosscheck")
+    code = gc_preflight.main(argv)
     report = json.loads(rp.read_text())
     return code, report, calls
 
@@ -810,3 +822,218 @@ class TestSessionFactoryContracts:
         assert code == EXIT_OK
         assert calls["load_rows_factory"] == "sync"
         assert calls["crosscheck_factory"] == "async"
+
+
+# --------------------------------------------------------------------------- #
+# R3 增补(A 2026-10-17T02:26Z REQUEST_CHANGES 三项阻塞)
+# --------------------------------------------------------------------------- #
+
+NOW_ISO = "2026-10-15T09:42:00+00:00"
+
+OFFLINE_INVENTORY = (
+    [(_u(f"{SRC_A}#{G1}#{i}"), SRC_A) for i in range(3)]
+    + [(_u(f"{SRC_B}#{G2}#{0}"), SRC_B)]
+)
+
+
+def _write_offline_csvs(tmp_path):
+    """冻结工件 CSV(与 LIVE fixture 同一身份集合;零生产连接)。"""
+    d = tmp_path / "docs.csv"
+    d.write_text(
+        "source_id,lifecycle,deleted_at,current_version_id,ret_reason,ret_gc_anchor\n"
+        f"{SRC_A},deleted,2026-09-05T09:42:00+00:00,v-a1,,\n"
+        f"{SRC_B},deleted,2026-09-05T09:42:00+00:00,v-b1,,\n"
+    )
+    v = tmp_path / "versions.csv"
+    v.write_text(
+        "source_id,id,generation_id,generation_ordinal,chunk_count\n"
+        f"{SRC_A},v-a1,{G1},2,3\n"
+        f"{SRC_B},v-b1,{G2},3,1\n"
+    )
+    g = tmp_path / "gens.csv"
+    g.write_text("id,ordinal,status,gc_eligible_at,purged_at\n")
+    return str(d), str(v), str(g)
+
+
+def _write_inventory_jsonl(tmp_path, entries):
+    p = tmp_path / "inventory.jsonl"
+    p.write_text("".join(json.dumps({"u": u, "s": s}) + "\n" for u, s in entries))
+    return str(p)
+
+
+def _run_offline_main(tmp_path, *, allowlist_sources, inventory_entries):
+    """全离线 main() 端到端(CSV 冻结工件 + 清单 JSONL,零网络/零 PG)。"""
+    docs_csv, versions_csv, gens_csv = _write_offline_csvs(tmp_path)
+    inv = _write_inventory_jsonl(tmp_path, inventory_entries)
+    al = _write_allowlist(tmp_path, allowlist_sources, sha256=True)
+    rp = tmp_path / "report.json"
+    code = gc_preflight.main([
+        "--tombstone-days", "30",
+        "--now-iso", NOW_ISO,
+        "--allowlist-json", str(al),
+        "--inventory-jsonl", inv,
+        "--docs-csv", docs_csv,
+        "--versions-csv", versions_csv,
+        "--gens-csv", gens_csv,
+        "--report-json", str(rp),
+    ])
+    report = json.loads(rp.read_text())
+    return code, report
+
+
+class TestR3EmptyAllowlistNeverLeaksManifest:
+    """A 阻塞①:空 allowlist=授权 0 篇;违规路径清单恒为空集(绝不回退全量)。"""
+
+    def test_empty_allowlist_is_authorized_zero(self, tmp_path):
+        p = _write_allowlist(tmp_path, [], sha256=True)
+        allowed, digest = load_allowlist(str(p))
+        assert allowed == set()
+        assert digest == _allowlist_digest([])
+
+    def test_empty_allowlist_manifest_is_empty(self):
+        res = compute_ledger(
+            base_docs(), base_versions(), base_gens(), base_inventory(),
+            tombstone_days=30, now=NOW, allowed_deleted_sources=set(),
+        )
+        # 全部 doomed(A/B/C)都成外溢面:exit 2 由 violation 保证,
+        # 且清单/manifest 必须对应空集 —— 空授权绝不泄漏全量清单。
+        assert res.spillover_sources == [SRC_A, SRC_B, SRC_C]
+        assert res.doomed_sources == []
+        assert res.derived_deletable_uuids == []
+        assert res.manifest_sha256 == hashlib.sha256(b"").hexdigest()
+        assert any("外溢面拒绝" in v for v in res.violations)
+
+    def test_none_allowlist_semantics_unchanged(self):
+        # None=未提供 allowlist(内部路径):仍不做外溢裁决(既有语义)。
+        res = compute_ledger(
+            base_docs(), base_versions(), base_gens(), base_inventory(),
+            tombstone_days=30, now=NOW, allowed_deleted_sources=None,
+        )
+        assert res.spillover_sources == []
+        assert res.derived_deletable_uuids  # 既有全量推导行为不变
+
+    def test_main_empty_allowlist_exits_2_with_empty_manifest(self, tmp_path):
+        code, report = _run_offline_main(
+            tmp_path, allowlist_sources=[], inventory_entries=OFFLINE_INVENTORY
+        )
+        assert code == EXIT_FAILCLOSED
+        assert report["allowlist_size"] == 0
+        assert report["derived_deletable_uuids"] == 0
+        assert report["manifest_sha256"] == hashlib.sha256(b"").hexdigest()
+        assert any("外溢面拒绝" in v for v in report["violations"])
+
+
+class TestR3BlankSourceIdFailClosed:
+    """A 阻塞②:None/空串/纯空白 source_id 一致按无有效身份 fail-closed。"""
+
+    @pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
+    def test_blank_source_id_is_identity_violation(self, blank):
+        inv = base_inventory() + [(_u("stray-blank-binding"), blank)]
+        res = run_ledger(inventory=inv)
+        assert any("null" in v.lower() for v in res.violations)
+
+    def test_blank_source_id_blocks_exit0_path(self):
+        # 修复前:该输入 violations 为空、以 exit 0 计入审计总数(旁路)。
+        # (doomed ⊆ allowlist 消除外溢噪声,空白 source_id 是唯一问题)
+        inv = base_inventory() + [(_u("stray-blank-binding"), "")]
+        res = compute_ledger(
+            base_docs(), base_versions(), base_gens(), inv,
+            tombstone_days=30, now=NOW,
+            allowed_deleted_sources={SRC_A, SRC_B, SRC_C},
+        )
+        assert res.violations, "空白 source_id 必须产生 violation(无有效身份)"
+        # 无身份对象绝不进入清理清单。
+        assert _u("stray-blank-binding") not in res.derived_deletable_uuids
+
+    def test_main_blank_source_id_exits_failclosed_with_report(self, tmp_path):
+        inv = OFFLINE_INVENTORY + [(_u("cli-blank-binding"), "")]
+        code, report = _run_offline_main(
+            tmp_path, allowlist_sources=[SRC_A, SRC_B], inventory_entries=inv
+        )
+        assert code == EXIT_FAILCLOSED
+        assert any("null" in v.lower() for v in report["violations"])
+
+
+def _run_mixed_main(monkeypatch, tmp_path):
+    """混合输入 main() 端到端:冻结清单 JSONL × 当前 live PG(fake),零网络。"""
+    import backend.config as config_mod
+    import backend.db.session as session_mod
+
+    calls: dict = {}
+    sync_sf = FakeSyncSessionFactory([list(LIVE_DOCS), list(LIVE_VERSIONS), list(LIVE_GENS)])
+
+    real_load = gc_preflight._load_live_rows
+
+    def spy_load(sf):
+        calls["load_rows_factory"] = getattr(sf, "kind", "?")
+        return real_load(sf)
+
+    monkeypatch.setattr(gc_preflight, "_load_live_rows", spy_load)
+    monkeypatch.setattr(
+        config_mod, "load_settings",
+        lambda: SimpleNamespace(postgres_dsn="postgresql+asyncpg://fake/fake"),
+    )
+    monkeypatch.setattr(session_mod, "get_sync_session_factory", lambda dsn_or_engine: sync_sf)
+
+    inv = _write_inventory_jsonl(tmp_path, LIVE_INVENTORY)
+    al = _write_allowlist(tmp_path, [SRC_A, SRC_B], sha256=True)
+    rp = tmp_path / "report.json"
+    code = gc_preflight.main([
+        "--tombstone-days", "30",
+        "--allowlist-json", str(al),
+        "--inventory-jsonl", inv,
+        "--report-json", str(rp),
+    ])
+    report = json.loads(rp.read_text())
+    return code, report, calls
+
+
+class TestR3ParityNotSilentlyBypassable:
+    """A 阻塞③:live 预检强制双面 parity;skip/mixed 只能得不可作安全门的非零。"""
+
+    def test_skip_crosscheck_cannot_pass(self, monkeypatch, tmp_path):
+        # 潜伏资格漂移(sweep 若真跑对账必然 exit 3)+ 启用跳过参数:
+        # 不得得到可误认的 PASS,只能是 unverified + 非零。
+        code, report, calls = _run_live_main(
+            monkeypatch, tmp_path,
+            crosscheck=([SRC_C], [G0]),
+            skip_crosscheck=True,
+        )
+        assert "crosscheck_factory" not in calls  # 对账确实未跑
+        assert code == EXIT_UNVERIFIED
+        assert code != EXIT_OK
+        assert report["unverified"] is True
+        assert report["unverified_reason"]
+        assert "eligibility_drift" not in report
+
+    def test_mixed_frozen_inventory_with_live_pg_cannot_pass(self, monkeypatch, tmp_path):
+        # 冻结清单 JSONL × 当前 live PG = 混合时点、无 parity 证明:
+        # 修复前 drift=None 且 violations 空 → EXIT_OK(可误认 PASS)。
+        code, report, calls = _run_mixed_main(monkeypatch, tmp_path)
+        assert calls["load_rows_factory"] == "sync"
+        assert code == EXIT_UNVERIFIED
+        assert report["unverified"] is True
+
+    def test_partial_csv_group_failclosed(self, tmp_path):
+        # CSV 冻结工件必须三件成组;部分提供=混合时点歧义 → fail-closed。
+        docs_csv, _v, _g = _write_offline_csvs(tmp_path)
+        inv = _write_inventory_jsonl(tmp_path, OFFLINE_INVENTORY)
+        al = _write_allowlist(tmp_path, [SRC_A, SRC_B], sha256=True)
+        code = gc_preflight.main([
+            "--tombstone-days", "30",
+            "--now-iso", NOW_ISO,
+            "--allowlist-json", str(al),
+            "--inventory-jsonl", inv,
+            "--docs-csv", docs_csv,
+        ])
+        assert code == EXIT_FAILCLOSED
+
+    def test_live_without_skip_still_enforces_parity(self, monkeypatch, tmp_path):
+        # 反向锚:未跳过时双面 parity 仍强制(漂移走 exit 3 通道,
+        # 而非 unverified 通道),既有授权路径不被削弱。
+        code, report, calls = _run_live_main(
+            monkeypatch, tmp_path, crosscheck=([SRC_A, SRC_B], [])
+        )
+        assert code == EXIT_ELIGIBILITY_DRIFT
+        assert calls["crosscheck_factory"] == "async"
+        assert "unverified" not in report
