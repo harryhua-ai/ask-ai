@@ -5,9 +5,9 @@
  "github_principal": "harryhua-ai",
  "executor_id": "harryhua-ai",
  "claimed_at": "2026-10-17T08:17:36Z",
- "lease_expires_at": "2026-10-17T08:49:53Z",
+ "lease_expires_at": "2026-10-17T08:46:14Z",
  "execution_base": "7b680ac1b3f66846440902eaaa89dd1a8bf0fdae",
- "status": "active",
+ "status": "investigated",
  "branch": "agent/171/1d4124a3",
  "heartbeat_at": "2026-10-17T08:43:53Z",
  "supersedes": null,
@@ -17,5 +17,6 @@
   "digest": "a884f1a0dec1a695560e07eef3beee0b5b1bc20b6e376649c0bda17a7d9380d2",
   "release": "v1.1.6",
   "source_sha": "2ff0096bcb257dd93fb860914c7039472e71174f"
- }
+ },
+ "note": "Investigation-only \u751f\u4ea7\u53ea\u8bfb\u53d6\u8bc1\u5b8c\u6210\uff08\u5feb\u7167\u7a97 2026-10-17T08:17-08:42Z\uff09\u3002\u6b63\u5f0f\u8131\u654f note: https://github.com/harryhua-ai/ask-ai/issues/171#issuecomment-6231896377 \u3002\u8981\u70b9: \u751f\u4ea7\u8fd0\u884c v1.6.4-r2@8052b358(VERIFIED)\uff1bupload_mode=true \u6743\u5a01\u6ce8\u518c\u884c=0\uff0c\u4f46\u4e0a\u4f20\u8bed\u6599\u4ecd\u4ee5 683 docs/2,685 chunks \u8d26\u672c active+3 \u4e2a ready generation \u5728\u8d26\uff08\u65e7\u8bfb\u8bc1 247/1,097 \u7cbe\u786e\u5bf9\u5e94\u65cfB generation 165\uff09\uff0cWeaviate filesystem \u5bf9\u8c61=0\uff08\u5f53\u524d\u4e0d\u53ef\u53ec\u56de=\u6f5c\u4f0f\u6001\u975e\u5df2\u4fee\u590d\uff09\uff0c\u6587\u4ef6\u4ecd\u5728\u76d8(181+530)\uff1b\u6ce8\u518c\u6ce8\u9500\u53d1\u751f\u5728 (10-14T21:20Z, \u5feb\u7167) \u7a97\u53e3\u4e14\u65e0\u5ba1\u8ba1\u3002G1 \u53d1\u5e03\u7269 FAIL(\u65e0 r3 tag)\uff1bG2 remediation gate FAIL(\u672a\u8fbe\u6807)\uff1bG3 \u56de\u6eda\u524d\u63d0 BLOCKED(previous_compatible=false \u5fc5\u987b\u4fdd\u6301,\u65e0 ACK)\uff1bG4 \u5f53\u524d\u66b4\u9732 PASS(\u4ec5\u5f53\u524d\u65f6\u70b9)\u3002\u8bc1\u636e\u610f\u89c1: RELEASE/DEPLOY \u8bc1\u636e\u610f\u89c1 NO-GO\uff0cA \u88c1\u51b3\u3002\u65e0 Candidate\uff0c\u96f6\u751f\u4ea7\u5199\u5165\u3002"
 }
