@@ -13,6 +13,10 @@ RAG 以确定性假流替换(不调用 LLM/Weaviate),零生产 /ask 探针。
 - 三站点(site_id)+ legacy + admin 共享同一 API 路径,国家解析与站点无关;
 - env 装配三元组解析(默认 off / ingress 三键 / 非法 CIDR 项跳过 fail-closed)。
 
+DSN 纪律(R2 修正):TEST_DATABASE_URL 必须显式设置且指向专用测试库
+(库名含 'test');缺失/非测试库/APP_MODE=prod 一律在收集期拒绝,绝不回落
+配置默认 DSN。
+
 隐私:测试只用 RFC 5737/loopback 合成地址与合成国家码,无任何真实访客 IP。
 """
 
@@ -39,8 +43,47 @@ from backend.utils.budget import BudgetConfig, BudgetLimiter
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
+
+def _resolve_test_dsn() -> str:
+    """AC3/AC5 fail-closed 测试库解析(R2 修正)。
+
+    旧实现 ``os.environ.get("TEST_DATABASE_URL", _load.postgres_dsn)`` 会在
+    TEST_DATABASE_URL 缺失时静默回落配置 DSN(POSTGRES_* 环境注入/`.env`/
+    默认值 ask_ai —— 与生产库同名)。runner 若带生产 POSTGRES_* 而无显式
+    测试 URL,本文件的 init_db/迁移/DELETE 会打进生产库。现在:
+
+    - APP_MODE=prod → 一律拒绝(prod 环境禁写,与 backend.config 的迁移
+      DSN 纪律同向);
+    - TEST_DATABASE_URL 未显式设置 → 拒绝,绝不猜测任何默认 DSN;
+    - 库名必须含 ``test``(专用测试库命名纪律,与仓库 .env 的 ask_ai_test
+      口径一致)→ 拒绝 prod 形态/歧义连接。
+
+    守卫先于任何 ``load_settings()`` 调用执行 ⇒ 失败在模块导入(收集)期
+    抛出,本文件不可运行 = fail-closed。
+    """
+    if (os.environ.get("APP_MODE", "dev") or "dev").strip().lower() == "prod":
+        raise RuntimeError(
+            "APP_MODE=prod: 拒绝运行离线契约测试(生产环境禁止任何测试写面)。"
+            "请在 dev/CI 环境以专用测试库运行。"
+        )
+    dsn = (os.environ.get("TEST_DATABASE_URL") or "").strip()
+    if not dsn:
+        raise RuntimeError(
+            "TEST_DATABASE_URL 未显式设置 —— 本测试拒绝回落默认 DSN(fail-closed;"
+            "默认库名 ask_ai 与生产同名,runner 携带生产 POSTGRES_* 时会误写生产)。"
+            "请显式注入专用测试库,例如 "
+            "TEST_DATABASE_URL=postgresql+asyncpg://<user>:<pwd>@localhost:5432/ask_ai_test"
+        )
+    dbname = dsn.rsplit("/", 1)[-1].split("?", 1)[0]
+    if "test" not in dbname.lower():
+        # 库名不回显:DSN 串形不明的极端情况下回显可能带出凭据
+        raise RuntimeError("TEST_DATABASE_URL 必须指向专用测试库(库名须含 'test';值不回显)")
+    return dsn
+
+
+DSN = _resolve_test_dsn()
+
 _load = load_settings(config_dir=Path(__file__).resolve().parents[2] / "config")
-DSN = os.environ.get("TEST_DATABASE_URL", _load.postgres_dsn)
 
 _SID_PREFIX = "geoip2-probe-"
 _INGRESS_HEADER = "geo-country"
@@ -119,7 +162,8 @@ async def ingress_app():
 
 async def _seed_sites(factory) -> None:
     async with factory() as session:
-        await session.execute(delete(SiteExperience))
+        # R2 修正:只管理本测试组自己的合成站点行,不无差别清理共享表
+        await session.execute(delete(SiteExperience).where(SiteExperience.site_id.in_(_SITES)))
         for site_id, origin in _SITES.items():
             session.add(
                 SiteExperience(
@@ -135,7 +179,8 @@ async def _seed_sites(factory) -> None:
 
 async def _cleanup_sites(factory) -> None:
     async with factory() as session:
-        await session.execute(delete(SiteExperience))
+        # 只清理本测试组的合成站点行(共享测试库中其它行不动)
+        await session.execute(delete(SiteExperience).where(SiteExperience.site_id.in_(_SITES)))
         await session.commit()
 
 

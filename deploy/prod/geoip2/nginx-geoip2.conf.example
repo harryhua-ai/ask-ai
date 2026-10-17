@@ -30,8 +30,15 @@
 # 前置依赖(不满足则保持 off,fail-closed):
 #   ① 宿主已装 ngx_http_geoip2 动态模块 + libmaxminddb0(#144 探针:已装,
 #     nginx 1.18.0-6ubuntu14.x 同源包,ABI 一致);
-#   ② MMDB 已就位且校验通过(update-geolite2.sh,MaxMind 许可由 owner 接受);
-#   ③ backend 三元组 env 已装配(geoip2.env.example)且 CIDR 为精确值。
+#   ② MMDB 已就位且**硬结构校验**通过(update-geolite2.sh + mmdb_validate.py,
+#     MaxMind 许可由 owner 接受);
+#   ③ backend 三元组 env 已装配(geoip2.env.example)且 CIDR 与网桥网关 /32
+#     精确相等;
+#   ④ **发布端口边界已收口**(R1 修正):backend 发布端口仅绑定 loopback
+#     (或等效宿主防火墙)并经 precheck-geoip2.sh G8 验证。0.0.0.0 发布下,
+#     外部/同网段流量经 DNAT 后同样表现为网桥网关 peer,门 3 的网关 /32
+#     授信可被旁路 —— 此收口属另行授权的网络变更(README §2.4),未验证前
+#     保持 off。
 # ============================================================================
 
 # ----------------------------------------------------------------------------
@@ -58,8 +65,12 @@
 # }
 
 # ----------------------------------------------------------------------------
-# 片段 B(vhost 级)→ 追加到 ask-ai API vhost(唯一 proxy_pass → 127.0.0.1:18000
-# 的那个 server 块)的 location 中,与既有 proxy_set_header 行并列。
+# 片段 B(vhost 级)→ 追加到 ask-ai API vhost(唯一 proxy_pass → backend
+# 发布端口的那个 server 块)的 location 中,与既有 proxy_set_header 行并列。
+# ⚠️ proxy_pass 目标必须与发布端口绑定一致(R1 修正):按 §2.4 收口后
+# backend 仅绑定 127.0.0.1:18000,本 vhost 的 proxy_pass 必须同为
+# http://127.0.0.1:18000;若现网是 <宿主IP>:18000,须与 loopback 收口同窗
+# 一并受权修改并经 precheck G7/G8 复验。
 # 头名必须与 backend COUNTRY_INGRESS_HEADER 逐字节一致(示例用 geo-country,
 # 与 backend/config.py 注释及既有测试一致;改名需两边同步)。
 # 【默认关闭】启用 = 去掉行首 "# "。
@@ -78,12 +89,21 @@
 #     地理定位输入。$remote_addr 即 TCP 直连对端。
 #
 # ----------------------------------------------------------------------------
-# 回退 off(受权操作者执行,顺序敏感):
-#   1. sudo cp -a /etc/nginx/conf.d/ask-ai-geoip2.conf{,.disabled}
-#      (或在 vhost 中注释片段 B 行 —— 二者做其一即可断链,建议先只做此步)
-#   2. sudo nginx -t                       # 必须通过,否则回退上一版配置
-#   3. sudo systemctl reload nginx
-#   4. 回退 backend:三键 env 移除/置 off 后 docker compose up -d backend
+# 回退 off(受权操作者执行,顺序敏感;各步独立,前一步失败不得中止后步):
+#   1. sudo mv /etc/nginx/conf.d/ask-ai-geoip2.conf \
+#            /etc/nginx/conf.d/ask-ai-geoip2.conf.disabled
+#      (真禁用 = 移出 conf.d 的 *.conf include 通配;⚠️ cp 一份 .disabled
+#       原文件仍在 include 内,不是禁用。或在 vhost 中注释片段 B 行 ——
+#       二者做其一即可断链,建议先只做此步)
+#   2. sudo nginx -t && sudo systemctl reload nginx \
+#        || { sudo mv /etc/nginx/conf.d/ask-ai-geoip2.conf.disabled \
+#                        /etc/nginx/conf.d/ask-ai-geoip2.conf; \
+#             echo "nginx -t 失败,已恢复原片段配置;继续执行第 3 步"; }
+#      (nginx -t 失败不得中断后续回退 —— 后端断链与 nginx 状态相互独立)
+#   3. 回退 backend(独立执行):三键 env 移除/置 off 后
+#      docker compose -f deploy/prod/docker-compose.yml up -d backend
 #      (COUNTRY_RESOLUTION_MODE=off ⇒ resolver 恒 Unknown,与 #144 现状一致)
+#   4. MMDB 异常时:deploy/prod/geoip2/update-geolite2.sh --rollback
+#      (成功更新后 .bak 恒保留,回滚版本已验证可用)
 # 回退语义:任何一步失败,系统保持/回到 Unknown(fail-honest),不产生伪造国家。
 # ----------------------------------------------------------------------------}
