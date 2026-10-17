@@ -14,22 +14,34 @@
  "contract_digest": "ed9612c782776e5d8746b91eb89c668f7ca04e8bd62aa5b81ddcb36c145d2ff5",
  "candidate": {
   "branch": "agent/168/40be6574",
-  "sha": "edfe106ae1440541e874d6b5ca52db385cdac4a0",
+  "sha": "553c0f5cb7f48545c3a5f805231acd73a699e9ad",
   "scope": {
    "pass": true,
    "paths": {
     "backend/services/lifecycle_gc.py": "ALLOWED",
+    "deploy/prod/geoip2/README.md": "ALLOWED",
+    "deploy/prod/geoip2/geoip2.env.example": "ALLOWED",
+    "deploy/prod/geoip2/mmdb_validate.py": "ALLOWED",
+    "deploy/prod/geoip2/nginx-geoip2.conf.example": "ALLOWED",
+    "deploy/prod/geoip2/precheck-geoip2.sh": "ALLOWED",
+    "deploy/prod/geoip2/precheck_checks.py": "ALLOWED",
+    "deploy/prod/geoip2/update-geolite2.sh": "ALLOWED",
+    "reports/issue164-residual-cleanup-preflight-20261015.md": "ALLOWED",
+    "scripts/gc_preflight.py": "ALLOWED",
+    "tests/api/test_geoip2_ingress_contract_offline.py": "ALLOWED",
+    "tests/deploy/test_geoip2_candidate_static.py": "ALLOWED",
+    "tests/scripts/test_gc_preflight.py": "ALLOWED",
     "tests/services/test_lifecycle_gc.py": "ALLOWED"
    },
    "violations": [],
    "main_attributed_paths": [],
    "counts": {
-    "ALLOWED": 2,
+    "ALLOWED": 14,
     "FORBIDDEN": 0,
     "MAIN_ATTRIBUTED": 0
    }
   },
-  "preserved_at": "2026-10-17T04:38:28Z"
+  "preserved_at": "2026-10-17T05:03:29Z"
  },
  "runtime": {
   "digest": "a884f1a0dec1a695560e07eef3beee0b5b1bc20b6e376649c0bda17a7d9380d2",
