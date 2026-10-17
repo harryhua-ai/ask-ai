@@ -1,0 +1,109 @@
+# ============================================================================
+# ask-ai 受信国家信号 —— 宿主 Nginx GeoIP2 Country 边缘配置(示例)
+# Issue #114 阶段 E 交付 | 默认关闭:本文件是 .example,任何指令都未在生产
+# Nginx 生效;启用只能由受权操作者按 README.md「单次受控上线预检清单」复制
+# 片段并逐门预检(precheck-geoip2.sh --expect on)后执行。
+# ============================================================================
+#
+# 数据链路(#144 RCA 断层 → 本配置逐一闭合):
+#   访客真实 IP ──► 宿主 nginx 443 vhost(唯一 API 代理,无 CDN 前置)
+#                    │  geoip2 本地 MMDB 查询(基于 $remote_addr = 经核实
+#                    │  的真实访问 IP;不是 X-Forwarded-For,不可被客户端伪造)
+#                    │  map: 无数据/保留码 → 空串
+#                    ▼
+#   proxy_set_header <geo-country> $ask_ai_geo_country
+#                    │  · 无条件覆盖:客户端自带的同名头永远被 nginx 计算
+#                    │    值替换,不能注入伪值;
+#                    │  · nginx 语义:proxy_set_header 值为空串时该头不
+#                    │    下发 → 后端 request.headers 拿不到 → Unknown。
+#                    ▼
+#   backend resolve_request_country() 四道门(backend/services/geo_country.py):
+#   mode=ingress ∧ 头名显式配置 ∧ 直连 peer ∈ GEO_TRUSTED_PROXY_CIDRS
+#   ∧ 值为 ISO alpha-2 且非 XX → (ISO, 'ingress'),否则 (None, None)。
+#
+# 明确不作真值的输入(契约禁止):浏览器语种/时区、用户输入、LLM 推断、
+# 客户端可伪造的 X-Forwarded-For —— 本配置一概不读取。
+#
+# 隐私红线:头值只有 ISO alpha-2 国家码;IP 不落库、不进日志(geo_country.py
+# 返回接口无 IP 位置);不得把 $remote_addr 记入任何持久存储。
+#
+# 前置依赖(不满足则保持 off,fail-closed):
+#   ① 宿主已装 ngx_http_geoip2 动态模块 + libmaxminddb0(#144 探针:已装,
+#     nginx 1.18.0-6ubuntu14.x 同源包,ABI 一致);
+#   ② MMDB 已就位且**硬结构校验**通过(update-geolite2.sh + mmdb_validate.py,
+#     MaxMind 许可由 owner 接受);
+#   ③ backend 三元组 env 已装配(geoip2.env.example)且 CIDR 与网桥网关 /32
+#     精确相等;
+#   ④ **发布端口边界已收口**(R1 修正):backend 发布端口仅绑定 loopback
+#     (或等效宿主防火墙)并经 precheck-geoip2.sh G8 验证。0.0.0.0 发布下,
+#     外部/同网段流量经 DNAT 后同样表现为网桥网关 peer,门 3 的网关 /32
+#     授信可被旁路 —— 此收口属另行授权的网络变更(README §2.4),未验证前
+#     保持 off。
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# 片段 A(http 级)→ 落地路径建议:/etc/nginx/conf.d/ask-ai-geoip2.conf
+# conf.d 在 nginx.conf http{} 内被 include,geoip2/map 均为 http 级指令。
+# 【默认关闭】启用 = 去掉本片段每行行首的 "# " 并 nginx -t 通过后 reload。
+# ----------------------------------------------------------------------------
+
+# geoip2 /etc/nginx/geoip/GeoLite2-Country.mmdb {
+#     # auto_reload:周期检查 mtime+size,更新脚本原子替换后无需 reload 即生效。
+#     # 与 update-geolite2.sh 的原子替换(rename(2))配套。
+#     auto_reload 5m;
+#     # 仅取国家 ISO 码一个变量 —— 不取城市/ASN/精度,最小化数据使用面。
+#     $ask_ai_geoip_country_code country iso_code;
+# }
+#
+# map $ask_ai_geoip_country_code $ask_ai_geo_country {
+#     # 无 MMDB 数据(内网/保留段 IP、库中无此 IP)→ 空串 → 头不下发 → Unknown
+#     default "";
+#     # 保留占位码(部分上游用 XX 表达未知)→ 空串 → Unknown;
+#     # 与后端 _RESERVED_COUNTRY_CODES 双重防线(纵深,不单点依赖)。
+#     XX     "";
+#     # 其余命中值原样透传 ISO alpha-2,由后端再做 ^[A-Z]{2}$ 门校验。
+# }
+
+# ----------------------------------------------------------------------------
+# 片段 B(vhost 级)→ 追加到 ask-ai API vhost(唯一 proxy_pass → backend
+# 发布端口的那个 server 块)的 location 中,与既有 proxy_set_header 行并列。
+# ⚠️ proxy_pass 目标必须与发布端口绑定一致(R1 修正):按 §2.4 收口后
+# backend 仅绑定 127.0.0.1:18000,本 vhost 的 proxy_pass 必须同为
+# http://127.0.0.1:18000;若现网是 <宿主IP>:18000,须与 loopback 收口同窗
+# 一并受权修改并经 precheck G7/G8 复验。
+# 头名必须与 backend COUNTRY_INGRESS_HEADER 逐字节一致(示例用 geo-country,
+# 与 backend/config.py 注释及既有测试一致;改名需两边同步)。
+# 【默认关闭】启用 = 去掉行首 "# "。
+# ----------------------------------------------------------------------------
+#
+# location / {   # ← 仅为示意;实际追加到既有 location 内,不要新建 location
+#     # ↓ 此行加进现有 location 的 proxy_set_header 组(Host/X-Real-IP/... 保留)
+#     # proxy_set_header geo-country $ask_ai_geo_country;
+#     ...
+# }
+# 注意:
+#   · 该行必须**无条件存在**(不是 if 包裹):值为空串时 nginx 不下发该头,
+#     值非空时替换任何客户端同名头 —— 两种情况都满足「覆盖客户端同名国家头」。
+#   · 不要在该 vhost 配置 real_ip_* 指令把 X-Forwarded-For 提升为
+#     $remote_addr:API 域名直连无 CDN(#144 E12),XFF 可伪造,不得作为
+#     地理定位输入。$remote_addr 即 TCP 直连对端。
+#
+# ----------------------------------------------------------------------------
+# 回退 off(受权操作者执行,顺序敏感;各步独立,前一步失败不得中止后步):
+#   1. sudo mv /etc/nginx/conf.d/ask-ai-geoip2.conf \
+#            /etc/nginx/conf.d/ask-ai-geoip2.conf.disabled
+#      (真禁用 = 移出 conf.d 的 *.conf include 通配;⚠️ cp 一份 .disabled
+#       原文件仍在 include 内,不是禁用。或在 vhost 中注释片段 B 行 ——
+#       二者做其一即可断链,建议先只做此步)
+#   2. sudo nginx -t && sudo systemctl reload nginx \
+#        || { sudo mv /etc/nginx/conf.d/ask-ai-geoip2.conf.disabled \
+#                        /etc/nginx/conf.d/ask-ai-geoip2.conf; \
+#             echo "nginx -t 失败,已恢复原片段配置;继续执行第 3 步"; }
+#      (nginx -t 失败不得中断后续回退 —— 后端断链与 nginx 状态相互独立)
+#   3. 回退 backend(独立执行):三键 env 移除/置 off 后
+#      docker compose -f deploy/prod/docker-compose.yml up -d backend
+#      (COUNTRY_RESOLUTION_MODE=off ⇒ resolver 恒 Unknown,与 #144 现状一致)
+#   4. MMDB 异常时:deploy/prod/geoip2/update-geolite2.sh --rollback
+#      (成功更新后 .bak 恒保留,回滚版本已验证可用)
+# 回退语义:任何一步失败,系统保持/回到 Unknown(fail-honest),不产生伪造国家。
+# ----------------------------------------------------------------------------}
