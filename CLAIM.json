@@ -12,7 +12,24 @@
  "heartbeat_at": "2026-10-17T08:27:39Z",
  "supersedes": null,
  "contract_digest": "e7db80cade9309f4e2820e668a670bc926019f33149d041fc1729c91e7278559",
- "candidate": null,
+ "candidate": {
+  "branch": "agent/170/37eb6669",
+  "sha": "ed71d5951d5c4b4df014dbb5e80680dd992f237c",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "release-notes/v1.6.4-r3.md": "ALLOWED"
+   },
+   "violations": [],
+   "main_attributed_paths": [],
+   "counts": {
+    "ALLOWED": 1,
+    "FORBIDDEN": 0,
+    "MAIN_ATTRIBUTED": 0
+   }
+  },
+  "preserved_at": "2026-10-17T08:28:33Z"
+ },
  "runtime": {
   "digest": "a884f1a0dec1a695560e07eef3beee0b5b1bc20b6e376649c0bda17a7d9380d2",
   "release": "v1.1.6",
