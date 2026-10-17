@@ -23,18 +23,19 @@
     ``EXIT_UNVERIFIED``(4)退出 —— 绝不产生可误认的 PASS;
     CSV 冻结工件三件不成组同给 → 直接 fail-closed。
 
-**GC apply 硬否决(R2,AC4)**:现状生产 GC 的删除回执与元数据排序未被
-证明安全(见 ``HARD_NO_GO_REASONS``),本预检输出恒带
-``gc_apply_hard_no_go=true``;在本只读预检 Candidate 内不改生产 GC 本体。
+**GC apply 硬否决(AC4)**:``HARD_NO_GO_REASONS`` 只列仍开放的范围、证据、
+授权与恢复门,本预检继续输出 ``gc_apply_hard_no_go=true``。历史修复前发现
+(#164, 2026-10-15)的删除回执与元数据提交顺序问题已修复:当前运行时验证
+``delete_many`` 回执计数及精确 UUID 缺席,之后才提交 PG 元数据;这些历史问题
+不再作为现役 NO-GO 理由。本只读预检不执行 GC apply,也不授予生产执行权限。
 
 红线(本程序自身):
   - **零生产写入**:Weaviate 句柄经只读代理包裹(任何 delete/insert/replace
     调用即刻抛错),PG 仅 SELECT;绝不调用 GC apply。
   - **精确身份**:删除清单只能来自 ``chunk_uuids_for_version`` 确定性推导
     (uuid5),禁止 TEXT Like/prefix/token 命中入清单。
-  - ``GCReport.objects_deleted`` 语义=尝试数≠实际删除成功(代码
-    ``_delete_version_objects`` 返回 len(uuids) 且忽略 delete_many 结果);
-    本预检以只读存在性探针区分「可推导/在场/缺席」,不把尝试数当事实。
+  - ``GCReport.objects_deleted`` 记录经回执及删除后精确 UUID 缺席验证的删除数;
+    本预检仍以只读存在性探针区分「可推导/在场/缺席」。
 
 用法:
     python scripts/gc_preflight.py --tombstone-days 30 \
@@ -83,27 +84,18 @@ EXIT_UNVERIFIED = 4
 
 
 # --------------------------------------------------------------------------- #
-# GC apply 硬否决(R2;AC4。生产 GC 本体不在本只读预检 Candidate 中改动)
+# GC apply 硬否决(AC4;本只读预检不执行生产 GC apply)
 # --------------------------------------------------------------------------- #
 HARD_NO_GO_REASONS: tuple[str, ...] = (
-    (
-        "删除回执未验证:backend/services/lifecycle_gc.py::_delete_version_objects "
-        "忽略 collection.data.delete_many 返回的 successful/failed 计数并返回 "
-        "len(uuids) 尝试数;Weaviate 零删除或部分删除且不抛错时,"
-        "sweep(apply=True) 仍按成功记账并继续提交 DB 元数据。"
-    ),
-    (
-        "DB 元数据排序不安全:purged_at / chunk 行 / 版本行 / 文档行的删除在"
-        "「已验证的对象删除」之前提交;PG 行删除后该文档版本身份不可再推导,"
-        "残留对象将永久失去可恢复身份 —— 「事后重跑 sweep」不是恢复路径"
-        "(幂等性只在元数据未提交前成立)。"
-    ),
     (
         "既有 GC 不是 820-only:part1 独立于 tombstone_days 清扫全部合格退役代,"
         "本账本证明其触及 51 个目标外(两个 active 文档)UUID,退役代 22/83 "
         "成熟后触达面还会扩大;部分成功/中断场景必须以冻结精确 manifest "
         "驱动可恢复身份,而非依赖重跑 sweep。"
     ),
+    "live snapshot 须在执行前重采;历史快照不能证明当前 PG/Weaviate 状态。",
+    "User 执行授权尚未提供;只读预检结果不构成生产 GC apply 授权。",
+    "生产一致性与恢复前置条件尚未验证;完成核验前保持 GC apply NO-GO。",
 )
 
 
@@ -798,7 +790,7 @@ def main(argv: list[str] | None = None) -> int:
     out["allowlist_sha256"] = digest
     if drift is not None:
         out["eligibility_drift"] = drift
-    # R2 AC4:输出恒带 GC apply 硬否决(删除回执/元数据排序未证明前禁用)。
+    # AC4:输出持续恒带 GC apply 硬否决;开放理由只陈述当前未闭合的门。
     out["gc_apply_hard_no_go"] = True
     out["gc_apply_hard_no_go_reasons"] = list(HARD_NO_GO_REASONS)
     if unverified:

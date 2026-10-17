@@ -10,13 +10,21 @@
 """
 
 import os
+import subprocess
+import sys
+import textwrap
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+from uuid import UUID
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, delete, or_, select
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -31,14 +39,191 @@ from backend.pipeline.ingest import chunk_uuids_for_version
 from backend.services import document_lifecycle as lifecycle
 from backend.services.lifecycle_gc import sweep
 
-TEST_DSN = os.environ.get(
-    "TEST_DATABASE_URL",
-    "postgresql+asyncpg://ask_ai:changeme@localhost:5432/ask_ai_test",
-)
+
+def _validated_test_dsn() -> str:
+    """只允许显式指向本机专用测试库的 DSN，且不回显其中的凭据。"""
+    app_mode = os.environ.get("APP_MODE", "").strip().lower()
+    if app_mode in {"prod", "production"}:
+        raise RuntimeError("lifecycle GC integration tests refuse APP_MODE=prod")
+
+    dsn = os.environ.get("TEST_DATABASE_URL")
+    if not dsn or not dsn.strip():
+        raise RuntimeError("lifecycle GC integration tests require explicit TEST_DATABASE_URL")
+    try:
+        url = make_url(dsn)
+    except (ArgumentError, TypeError, ValueError):
+        raise RuntimeError("TEST_DATABASE_URL must be a valid isolated test DSN") from None
+
+    if url.drivername != "postgresql+asyncpg":
+        raise RuntimeError("TEST_DATABASE_URL must use the PostgreSQL asyncpg driver")
+    if url.database != "ask_ai_test":
+        raise RuntimeError("TEST_DATABASE_URL must target the dedicated ask_ai_test database")
+    if (url.host or "").lower() not in {"localhost", "127.0.0.1", "::1"}:
+        raise RuntimeError("TEST_DATABASE_URL must target a local database host")
+    return dsn
+
+
+TEST_DSN = _validated_test_dsn()
+
+
+def test_gc_fixture_rejects_unsafe_database_configuration_before_side_effects():
+    """危险 DSN、prod 模式和缺失 DSN 必须在连接/建表/清理前失败。"""
+    script = textwrap.dedent(
+        """
+        import os
+        import runpy
+        import sqlalchemy
+        import sqlalchemy.ext.asyncio
+        from sqlalchemy.orm import Session
+        from sqlalchemy.sql.schema import MetaData
+
+        side_effects = []
+
+        def blocked(name):
+            def record(*_args, **_kwargs):
+                side_effects.append(name)
+                raise AssertionError("database side effect reached")
+            return record
+
+        sqlalchemy.create_engine = blocked("sync engine")
+        sqlalchemy.ext.asyncio.create_async_engine = blocked("async engine")
+        MetaData.create_all = blocked("schema creation")
+        Session.execute = blocked("SQL execution")
+        Session.delete = blocked("row deletion")
+        Session.commit = blocked("commit")
+
+        cases = [
+            ("missing DSN", None, "test", "explicit TEST_DATABASE_URL"),
+            (
+                "production mode",
+                "postgresql+asyncpg://ask_ai:do-not-print-secret@localhost:5432/ask_ai_test",
+                "prod",
+                "APP_MODE=prod",
+            ),
+            (
+                "non-test database",
+                "postgresql+asyncpg://ask_ai:do-not-print-secret@localhost:5432/ask_ai",
+                "test",
+                "dedicated ask_ai_test database",
+            ),
+            (
+                "remote database host",
+                "postgresql+asyncpg://ask_ai:do-not-print-secret@db.prod.example:5432/ask_ai_test",
+                "test",
+                "local database host",
+            ),
+        ]
+
+        for name, dsn, app_mode, expected in cases:
+            if dsn is None:
+                os.environ.pop("TEST_DATABASE_URL", None)
+            else:
+                os.environ["TEST_DATABASE_URL"] = dsn
+            os.environ["APP_MODE"] = app_mode
+            try:
+                runpy.run_path("tests/services/test_lifecycle_gc.py", run_name="gc_safety_probe")
+            except RuntimeError as exc:
+                if expected not in str(exc):
+                    raise AssertionError(f"{name} was rejected for the wrong reason") from None
+            else:
+                raise AssertionError(f"{name} configuration was accepted")
+
+            if side_effects:
+                raise AssertionError(f"database side effects reached for {name}")
+
+        print("unsafe GC test database configurations rejected before side effects")
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "rejected before side effects" in result.stdout
+    assert "do-not-print-secret" not in output
+
 
 SRC = "p1gc-probe"
 # GC 探针代专用高位 ordinal(全局唯一约束;与 builder 等套件分配域隔离)
 PROBE_ORDINAL = 918273  # 第二枚探针代用 PROBE_ORDINAL+1(ordinal 全局唯一)
+
+
+@dataclass(frozen=True)
+class _DeleteManyReceipt:
+    failed: int
+    matches: int
+    objects: None
+    successful: int
+
+
+class _FakeWeaviate:
+    """离线对象存储假体:删除回执、存活 UUID 和读回相互独立。"""
+
+    _UNSET = object()
+
+    def __init__(self) -> None:
+        self.objects: set[str] = set()
+        self.failed_uuids: set[str] = set()
+        self.suppressed_uuids: set[str] = set()
+        self.receipt_override = self._UNSET
+        self.raise_after_delete = False
+        self.read_fail_calls: set[int] = set()
+        self.read_overrides: dict[int, object] = {}
+        self.data = SimpleNamespace(delete_many=MagicMock(side_effect=self._delete_many))
+        self.query = SimpleNamespace(fetch_objects=MagicMock(side_effect=self._fetch_objects))
+
+    @staticmethod
+    def _filter_uuids(filter_) -> set[str]:
+        values = getattr(filter_, "value", None)
+        if not isinstance(values, (list, tuple, set)):
+            raise TypeError(f"fake received a non UUID-list filter: {filter_!r}")
+        return {str(value).lower() for value in values}
+
+    def seed_uuids(self, uuids) -> None:
+        self.objects.update(str(value).lower() for value in uuids)
+
+    def _fetch_objects(self, *, filters, limit=None, **_kwargs):
+        call_number = self.query.fetch_objects.call_count
+        if call_number in self.read_fail_calls:
+            raise RuntimeError("simulated Weaviate readback failure")
+        if call_number in self.read_overrides:
+            return self.read_overrides[call_number]
+        requested = self._filter_uuids(filters)
+        found = sorted(requested & self.objects)
+        if limit is not None:
+            found = found[:limit]
+        return SimpleNamespace(objects=[SimpleNamespace(uuid=UUID(value)) for value in found])
+
+    def _delete_many(self, *, where, **_kwargs):
+        requested = self._filter_uuids(where)
+        matched = requested & self.objects
+        failed = matched & self.failed_uuids
+        successful = matched - failed
+        removed = successful - self.suppressed_uuids
+        self.objects.difference_update(removed)
+        if self.raise_after_delete:
+            self.raise_after_delete = False
+            raise RuntimeError("simulated delete timeout after partial application")
+        if self.receipt_override is not self._UNSET:
+            return self.receipt_override
+        return _DeleteManyReceipt(
+            failed=len(failed),
+            matches=len(matched),
+            objects=None,
+            successful=len(successful),
+        )
+
+    def clear_faults(self) -> None:
+        self.failed_uuids.clear()
+        self.suppressed_uuids.clear()
+        self.receipt_override = self._UNSET
+        self.raise_after_delete = False
+        self.read_fail_calls.clear()
+        self.read_overrides.clear()
 
 
 @pytest_asyncio.fixture()
@@ -52,10 +237,11 @@ async def env():
     with sync_factory() as s:
         _purge(s)
 
-    collection = MagicMock()
+    collection = _FakeWeaviate()
     pipeline = SimpleNamespace(_collection=collection, _session_factory=sync_factory)
     yield SimpleNamespace(
         sync_factory=sync_factory,
+        sync_engine=sync_engine,
         async_factory=async_sf,
         collection=collection,
         pipeline=pipeline,
@@ -67,32 +253,30 @@ async def env():
 
 
 def _purge(s) -> None:
-    for row in s.execute(
-        select(Document).where(Document.source_id.like(f"{SRC}%"))
-    ).scalars():
-        s.delete(row)
-    for row in s.execute(
-        select(DocumentVersion).where(DocumentVersion.source_id.like(f"{SRC}%"))
-    ).scalars():
-        s.delete(row)
-    for row in s.execute(
-        select(DocumentVersionChunk).where(
-            DocumentVersionChunk.version_id.in_(
-                select(DocumentVersion.id).where(DocumentVersion.source_id.like(f"{SRC}%"))
-            )
-        )
-    ).scalars():
-        s.delete(row)
-    for row in s.execute(
-        select(IndexGeneration).where(
+    version_ids = list(
+        s.execute(
+            select(DocumentVersion.id).where(DocumentVersion.source_id.like(f"{SRC}%"))
+        ).scalars()
+    )
+    # props 条件也清理旧版 teardown 已遗留、现已失去 version_id 反查路径的测试孤儿行。
+    chunk_scope = DocumentVersionChunk.props["source_id"].as_string().like(f"{SRC}%")
+    if version_ids:
+        chunk_scope = or_(chunk_scope, DocumentVersionChunk.version_id.in_(version_ids))
+    s.execute(delete(DocumentVersionChunk).where(chunk_scope))
+    if version_ids:
+        s.execute(delete(DocumentVersion).where(DocumentVersion.id.in_(version_ids)))
+    s.execute(delete(Document).where(Document.source_id.like(f"{SRC}%")))
+    s.execute(
+        delete(IndexGeneration).where(
             (IndexGeneration.source_id == SRC) | (IndexGeneration.ordinal == PROBE_ORDINAL)
         )
-    ).scalars():
-        s.delete(row)
+    )
     s.commit()
 
 
-def _seed_retired_generation(s, *, gc_eligible_at: datetime, ordinal: int | None = None) -> IndexGeneration:
+def _seed_retired_generation(
+    s, *, gc_eligible_at: datetime, ordinal: int | None = None
+) -> IndexGeneration:
     gen = IndexGeneration(
         ordinal=ordinal or PROBE_ORDINAL,
         source_id=SRC,
@@ -144,6 +328,9 @@ def _seed_doc_with_version(
         url=doc.url,
         chunk_count=chunks,
     )
+    if gen is not None:
+        gen.doc_count += 1
+        gen.chunk_count += chunks
     s.add(version)
     s.flush()
     for i in range(chunks):
@@ -158,6 +345,38 @@ def _seed_doc_with_version(
     doc.current_version_id = version.id
     s.flush()
     return doc, version
+
+
+def test_gc_fixture_purge_does_not_leave_orphaned_synthetic_chunks(env):
+    """fixture teardown 及重复清理后都不能残留合成 chunk 行。"""
+    source_id = f"{SRC}/purge-chunk-order"
+    with env.sync_factory() as s:
+        synthetic_chunks = (
+            s.execute(
+                select(DocumentVersionChunk).where(
+                    DocumentVersionChunk.props["source_id"].as_string().like(f"{SRC}%")
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert synthetic_chunks == []
+
+        _doc, _version = _seed_doc_with_version(s, source_id, gen=None, chunks=2)
+        s.commit()
+
+        _purge(s)
+        _purge(s)
+        remaining_chunks = (
+            s.execute(
+                select(DocumentVersionChunk).where(
+                    DocumentVersionChunk.props["source_id"].as_string().like(f"{SRC}%")
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert remaining_chunks == []
 
 
 # --------------------------------------------------------------------------- #
@@ -243,6 +462,7 @@ async def test_apply_purges_due_generation_via_exact_uuids(env):
         s.commit()
         version_id = version.id
         ordinal = version.generation_ordinal
+        env.collection.seed_uuids(chunk_uuids_for_version(f"{SRC}/genver", str(gen_id), ordinal, 2))
 
     report = await sweep(env.async_factory, env.pipeline, now=now, apply=True)
     assert report.dry_run is False
@@ -257,15 +477,19 @@ async def test_apply_purges_due_generation_via_exact_uuids(env):
     assert got == expected_uuids
 
     with env.sync_factory() as s:
-        chunks = s.execute(
-            select(DocumentVersionChunk).where(
-                DocumentVersionChunk.version_id == version_id
+        chunks = (
+            s.execute(
+                select(DocumentVersionChunk).where(DocumentVersionChunk.version_id == version_id)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert chunks == []  # 持久副本已清
-        versions = s.execute(
-            select(DocumentVersion).where(DocumentVersion.id == version_id)
-        ).scalars().all()
+        versions = (
+            s.execute(select(DocumentVersion).where(DocumentVersion.id == version_id))
+            .scalars()
+            .all()
+        )
         assert len(versions) == 1  # 版本元数据行保留(链可回放)
         gen_row = s.execute(
             select(IndexGeneration).where(IndexGeneration.id == gen_id)
@@ -274,6 +498,388 @@ async def test_apply_purges_due_generation_via_exact_uuids(env):
     # 幂等:purged 盖章后不再进资格
     report2 = await sweep(env.async_factory, env.pipeline, now=now, apply=True)
     assert str(gen_id) not in report2.generations_eligible
+
+
+@pytest.mark.asyncio
+async def test_partial_delete_receipt_does_not_purge_generation_identity(env):
+    """部分 Weaviate 删除回执必须阻止 chunk 行清理和 purged_at 提交。"""
+    now = datetime.now(UTC)
+    with env.sync_factory() as s:
+        gen = _seed_retired_generation(s, gc_eligible_at=now - timedelta(hours=1))
+        gen_id = gen.id
+        _, version = _seed_doc_with_version(s, f"{SRC}/partial-gen", gen=gen, chunks=2)
+        version_id = version.id
+        ordinal = version.generation_ordinal
+        s.commit()
+
+    # Weaviate 报告 2 个匹配、1 个失败、仅 1 个成功，并只移除成功对象。
+    uuids = chunk_uuids_for_version(f"{SRC}/partial-gen", str(gen_id), ordinal, 2)
+    env.collection.seed_uuids(uuids)
+    env.collection.failed_uuids.add(uuids[-1])
+    report = await sweep(env.async_factory, env.pipeline, now=now, apply=True)
+
+    with env.sync_factory() as s:
+        generation = s.execute(
+            select(IndexGeneration).where(IndexGeneration.id == gen_id)
+        ).scalar_one()
+        chunks = (
+            s.execute(
+                select(DocumentVersionChunk).where(DocumentVersionChunk.version_id == version_id)
+            )
+            .scalars()
+            .all()
+        )
+    assert generation.purged_at is None
+    assert len(chunks) == 2
+    assert report.errors
+    assert report.objects_deleted == 0
+
+    # 新进程只凭保留的 PG 身份重试；首轮已删 UUID 不再需要 PG 记录重建。
+    objects_left = len(set(uuids) & env.collection.objects)
+    env.collection.clear_faults()
+    restarted_pipeline = SimpleNamespace(
+        _collection=env.collection,
+        _session_factory=sessionmaker(env.sync_engine, expire_on_commit=False),
+    )
+    retry = await sweep(env.async_factory, restarted_pipeline, now=now, apply=True)
+    assert retry.errors == []
+    assert retry.objects_deleted == objects_left == 1
+    with env.sync_factory() as s:
+        assert (
+            s.execute(
+                select(DocumentVersionChunk).where(DocumentVersionChunk.version_id == version_id)
+            )
+            .scalars()
+            .all()
+            == []
+        )
+        assert (
+            s.execute(select(IndexGeneration).where(IndexGeneration.id == gen_id))
+            .scalar_one()
+            .purged_at
+            is not None
+        )
+
+
+def _seed_gc_candidate(env, kind: str, now: datetime, *, chunks: int = 2):
+    source_id = f"{SRC}/{kind}-candidate"
+    with env.sync_factory() as s:
+        if kind == "generation":
+            generation = _seed_retired_generation(s, gc_eligible_at=now - timedelta(hours=1))
+            generation_id = generation.id
+            _doc, version = _seed_doc_with_version(s, source_id, gen=generation, chunks=chunks)
+            target_id = generation.id
+        else:
+            _doc, version = _seed_doc_with_version(
+                s,
+                source_id,
+                gen=None,
+                chunks=chunks,
+                lifecycle_state="superseded",
+                superseded_at=now - timedelta(days=9),
+            )
+            generation_id = version.generation_id
+            target_id = source_id
+        version_id = version.id
+        ordinal = version.generation_ordinal
+        s.commit()
+
+    uuids = chunk_uuids_for_version(source_id, str(generation_id), ordinal, chunks)
+    env.collection.seed_uuids(uuids)
+    return SimpleNamespace(
+        kind=kind,
+        source_id=source_id,
+        target_id=target_id,
+        generation_id=generation_id,
+        version_id=version_id,
+        ordinal=ordinal,
+        chunks=chunks,
+        uuids=set(uuids),
+    )
+
+
+def _assert_gc_identity_retained(env, target, *, chunk_rows: int = 2) -> None:
+    with env.sync_factory() as s:
+        chunks = (
+            s.execute(
+                select(DocumentVersionChunk).where(
+                    DocumentVersionChunk.version_id == target.version_id
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(chunks) == chunk_rows
+        if target.kind == "generation":
+            assert (
+                s.execute(select(IndexGeneration).where(IndexGeneration.id == target.generation_id))
+                .scalar_one()
+                .purged_at
+                is None
+            )
+            assert (
+                s.execute(
+                    select(DocumentVersion).where(DocumentVersion.id == target.version_id)
+                ).scalar_one_or_none()
+                is not None
+            )
+        else:
+            assert (
+                s.execute(
+                    select(Document).where(Document.source_id == target.source_id)
+                ).scalar_one_or_none()
+                is not None
+            )
+            assert (
+                s.execute(
+                    select(DocumentVersion).where(DocumentVersion.id == target.version_id)
+                ).scalar_one_or_none()
+                is not None
+            )
+
+
+def _assert_gc_identity_cleared(env, target) -> None:
+    with env.sync_factory() as s:
+        assert (
+            s.execute(
+                select(DocumentVersionChunk).where(
+                    DocumentVersionChunk.version_id == target.version_id
+                )
+            )
+            .scalars()
+            .all()
+            == []
+        )
+        if target.kind == "generation":
+            assert (
+                s.execute(select(IndexGeneration).where(IndexGeneration.id == target.generation_id))
+                .scalar_one()
+                .purged_at
+                is not None
+            )
+            assert (
+                s.execute(
+                    select(DocumentVersion).where(DocumentVersion.id == target.version_id)
+                ).scalar_one_or_none()
+                is not None
+            )
+        else:
+            assert (
+                s.execute(
+                    select(Document).where(Document.source_id == target.source_id)
+                ).scalar_one_or_none()
+                is None
+            )
+            assert (
+                s.execute(
+                    select(DocumentVersion).where(DocumentVersion.id == target.version_id)
+                ).scalar_one_or_none()
+                is None
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["generation", "document"])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "partial_receipt",
+        "short_success_receipt",
+        "full_failure",
+        "zero_delete",
+        "unreadable_receipt",
+        "malformed_receipt",
+        "readback_failure",
+        "readback_mismatch",
+        "delete_exception",
+    ],
+)
+async def test_apply_failure_preserves_identity_and_retry_recovers(env, kind, failure):
+    """两条路径对失败/不可信证据 fail closed，重启后可从 PG 身份恢复。"""
+    now = datetime.now(UTC)
+    target = _seed_gc_candidate(env, kind, now)
+
+    if failure == "partial_receipt":
+        env.collection.failed_uuids.add(next(iter(target.uuids)))
+    elif failure == "short_success_receipt":
+        env.collection.suppressed_uuids.add(next(iter(target.uuids)))
+        env.collection.receipt_override = _DeleteManyReceipt(0, 1, None, 1)
+    elif failure == "full_failure":
+        env.collection.failed_uuids.update(target.uuids)
+    elif failure == "zero_delete":
+        env.collection.suppressed_uuids.update(target.uuids)
+        env.collection.receipt_override = _DeleteManyReceipt(0, 0, None, 0)
+    elif failure == "unreadable_receipt":
+        env.collection.receipt_override = None
+    elif failure == "malformed_receipt":
+        env.collection.receipt_override = SimpleNamespace(failed=0, matches=2)
+    elif failure == "readback_failure":
+        env.collection.read_fail_calls.add(2)
+    elif failure == "readback_mismatch":
+        env.collection.suppressed_uuids.update(target.uuids)
+    elif failure == "delete_exception":
+        env.collection.raise_after_delete = True
+
+    report = await sweep(env.async_factory, env.pipeline, now=now, apply=True)
+    assert report.errors
+    assert report.objects_deleted == 0
+    _assert_gc_identity_retained(env, target)
+
+    # 用新 PG session factory 模拟进程重启；只允许剩余的 UUID 再被点名。
+    objects_left = len(target.uuids & env.collection.objects)
+    env.collection.clear_faults()
+    restarted_pipeline = SimpleNamespace(
+        _collection=env.collection,
+        _session_factory=sessionmaker(env.sync_engine, expire_on_commit=False),
+    )
+    retry = await sweep(env.async_factory, restarted_pipeline, now=now, apply=True)
+    assert retry.errors == []
+    assert retry.objects_deleted == objects_left
+    _assert_gc_identity_cleared(env, target)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["generation", "document"])
+@pytest.mark.parametrize("state", ["zero_chunks", "objects_already_absent"])
+async def test_apply_accepts_empty_or_already_absent_uuid_set(env, kind, state):
+    """空 UUID 范围或已缺席对象经读回确认后可以完成 PG 清理。"""
+    now = datetime.now(UTC)
+    target = _seed_gc_candidate(env, kind, now, chunks=0 if state == "zero_chunks" else 2)
+    if state == "objects_already_absent":
+        env.collection.objects.difference_update(target.uuids)
+
+    report = await sweep(env.async_factory, env.pipeline, now=now, apply=True)
+
+    assert report.errors == []
+    assert report.objects_deleted == 0
+    env.collection.data.delete_many.assert_not_called()
+    _assert_gc_identity_cleared(env, target)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["generation", "document"])
+async def test_apply_blocks_inconsistent_version_or_generation_identity(env, kind):
+    """PG chunk 范围与版本/代身份不一致时必须在任何 Weaviate 删除前阻断。"""
+    now = datetime.now(UTC)
+    target = _seed_gc_candidate(env, kind, now)
+    with env.sync_factory() as s:
+        if kind == "generation":
+            generation = s.execute(
+                select(IndexGeneration).where(IndexGeneration.id == target.generation_id)
+            ).scalar_one()
+            generation.chunk_count += 1
+        else:
+            version = s.execute(
+                select(DocumentVersion).where(DocumentVersion.id == target.version_id)
+            ).scalar_one()
+            version.chunk_count += 1
+        s.commit()
+
+    report = await sweep(env.async_factory, env.pipeline, now=now, apply=True)
+
+    assert report.errors
+    assert env.collection.data.delete_many.call_count == 0
+    assert target.uuids <= env.collection.objects
+    if kind == "generation":
+        with env.sync_factory() as s:
+            assert (
+                s.execute(select(IndexGeneration).where(IndexGeneration.id == target.generation_id))
+                .scalar_one()
+                .purged_at
+                is None
+            )
+    else:
+        _assert_gc_identity_retained(env, target)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["generation", "document"])
+async def test_apply_blocks_when_version_identity_rows_are_missing(env, kind):
+    """已有 PG 账本不足以恢复精确版本 UUID 时，不猜测也不删除向量。"""
+    now = datetime.now(UTC)
+    target = _seed_gc_candidate(env, kind, now)
+    with env.sync_factory() as s:
+        for chunk in s.execute(
+            select(DocumentVersionChunk).where(DocumentVersionChunk.version_id == target.version_id)
+        ).scalars():
+            s.delete(chunk)
+        version = s.execute(
+            select(DocumentVersion).where(DocumentVersion.id == target.version_id)
+        ).scalar_one()
+        s.delete(version)
+        s.commit()
+
+    report = await sweep(env.async_factory, env.pipeline, now=now, apply=True)
+
+    assert report.errors
+    assert env.collection.data.delete_many.call_count == 0
+    assert target.uuids <= env.collection.objects
+    with env.sync_factory() as s:
+        if kind == "generation":
+            assert (
+                s.execute(select(IndexGeneration).where(IndexGeneration.id == target.generation_id))
+                .scalar_one()
+                .purged_at
+                is None
+            )
+        else:
+            assert (
+                s.execute(
+                    select(Document).where(Document.source_id == target.source_id)
+                ).scalar_one_or_none()
+                is not None
+            )
+
+
+class _FailOnceCommitFactory:
+    def __init__(self, session_factory):
+        self.session_factory = session_factory
+        self.armed = True
+
+    def __call__(self):
+        session = self.session_factory()
+        if self.armed:
+            self.armed = False
+
+            def fail_commit():
+                raise RuntimeError("simulated PostgreSQL commit interruption")
+
+            session.commit = fail_commit
+        return session
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["generation", "document"])
+async def test_pg_commit_interruption_keeps_identity_for_process_restart(env, kind):
+    """Weaviate 已确认删除但 PG commit 中断时保留身份；重启可零删重试。"""
+    now = datetime.now(UTC)
+    target = _seed_gc_candidate(env, kind, now)
+    interrupted_pipeline = SimpleNamespace(
+        _collection=env.collection,
+        _session_factory=_FailOnceCommitFactory(env.sync_factory),
+    )
+
+    first = await sweep(env.async_factory, interrupted_pipeline, now=now, apply=True)
+
+    assert first.errors
+    assert first.objects_deleted == target.chunks
+    assert first.chunk_rows_deleted == 0
+    assert first.versions_deleted == 0
+    assert first.documents_deleted == 0
+    assert env.collection.objects.isdisjoint(target.uuids)
+    _assert_gc_identity_retained(env, target)
+
+    calls_after_interruption = env.collection.data.delete_many.call_count
+    restarted_pipeline = SimpleNamespace(
+        _collection=env.collection,
+        _session_factory=sessionmaker(env.sync_engine, expire_on_commit=False),
+    )
+    retry = await sweep(env.async_factory, restarted_pipeline, now=now, apply=True)
+
+    assert retry.errors == []
+    assert retry.objects_deleted == 0
+    assert env.collection.data.delete_many.call_count == calls_after_interruption
+    _assert_gc_identity_cleared(env, target)
 
 
 @pytest.mark.asyncio
@@ -292,6 +898,11 @@ async def test_apply_purges_doomed_document_rows_and_objects(env):
         s.commit()
         version_id = version.id
         ordinal = version.generation_ordinal
+        env.collection.seed_uuids(
+            chunk_uuids_for_version(
+                f"{SRC}/doomed", str(lifecycle.LEGACY_GENERATION_ID), ordinal, 1
+            )
+        )
 
     report = await sweep(env.async_factory, env.pipeline, now=now, apply=True)
     assert f"{SRC}/doomed" in report.documents_eligible
@@ -300,9 +911,7 @@ async def test_apply_purges_doomed_document_rows_and_objects(env):
     assert report.chunk_rows_deleted == 1
 
     expected_uuids = set(
-        chunk_uuids_for_version(
-            f"{SRC}/doomed", str(lifecycle.LEGACY_GENERATION_ID), ordinal, 1
-        )
+        chunk_uuids_for_version(f"{SRC}/doomed", str(lifecycle.LEGACY_GENERATION_ID), ordinal, 1)
     )
     got = {
         str(v)
@@ -323,6 +932,100 @@ async def test_apply_purges_doomed_document_rows_and_objects(env):
                 select(DocumentVersion).where(DocumentVersion.id == version_id)
             ).scalar_one_or_none()
             is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_document_gc_after_generation_gc_uses_retained_version_identity(env):
+    """先代 GC 移除 chunk 副本后，文档 GC 仍用版本身份确认并清理元数据。"""
+    now = datetime.now(UTC)
+    with env.sync_factory() as s:
+        generation = _seed_retired_generation(s, gc_eligible_at=now - timedelta(hours=1))
+        generation_id = generation.id
+        doc, version = _seed_doc_with_version(
+            s,
+            f"{SRC}/doc-after-gen-gc",
+            gen=generation,
+            chunks=2,
+            lifecycle_state="superseded",
+            superseded_at=now - timedelta(days=9),
+        )
+        version_id = version.id
+        uuids = chunk_uuids_for_version(
+            doc.source_id, str(generation_id), version.generation_ordinal, 2
+        )
+        s.commit()
+    env.collection.seed_uuids(uuids)
+
+    report = await sweep(env.async_factory, env.pipeline, now=now, apply=True)
+
+    assert report.errors == []
+    assert report.objects_deleted == 2
+    with env.sync_factory() as s:
+        assert (
+            s.execute(select(IndexGeneration).where(IndexGeneration.id == generation_id))
+            .scalar_one()
+            .purged_at
+            is not None
+        )
+        assert (
+            s.execute(
+                select(DocumentVersionChunk).where(DocumentVersionChunk.version_id == version_id)
+            )
+            .scalars()
+            .all()
+            == []
+        )
+        assert (
+            s.execute(
+                select(Document).where(Document.source_id == doc.source_id)
+            ).scalar_one_or_none()
+            is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_document_gc_updates_generation_counts_before_later_generation_gc(env):
+    """文档先合格时同步调整未退休代计数，避免后续代 GC 丢失范围身份。"""
+    now = datetime.now(UTC)
+    with env.sync_factory() as s:
+        generation = _seed_retired_generation(s, gc_eligible_at=now + timedelta(days=1))
+        generation_id = generation.id
+        doc, version = _seed_doc_with_version(
+            s,
+            f"{SRC}/doc-before-gen-gc",
+            gen=generation,
+            chunks=2,
+            lifecycle_state="superseded",
+            superseded_at=now - timedelta(days=9),
+        )
+        uuids = chunk_uuids_for_version(
+            doc.source_id, str(generation_id), version.generation_ordinal, 2
+        )
+        s.commit()
+    env.collection.seed_uuids(uuids)
+
+    document_report = await sweep(env.async_factory, env.pipeline, now=now, apply=True)
+    assert document_report.errors == []
+    assert document_report.documents_deleted == 1
+    with env.sync_factory() as s:
+        generation = s.execute(
+            select(IndexGeneration).where(IndexGeneration.id == generation_id)
+        ).scalar_one()
+        assert generation.doc_count == 0
+        assert generation.chunk_count == 0
+
+    generation_report = await sweep(
+        env.async_factory, env.pipeline, now=now + timedelta(days=2), apply=True
+    )
+    assert generation_report.errors == []
+    assert str(generation_id) in generation_report.generations_eligible
+    with env.sync_factory() as s:
+        assert (
+            s.execute(select(IndexGeneration).where(IndexGeneration.id == generation_id))
+            .scalar_one()
+            .purged_at
+            is not None
         )
 
 
@@ -409,9 +1112,15 @@ async def test_ordinary_tombstone_enters_eligibility_only_with_explicit_window(e
     """显式 tombstone_days:真实原语墓碑仅超窗者入资格(7 天/30 天窗分档)。"""
     now = datetime.now(UTC)
     with env.sync_factory() as s:
-        _seed_ordinary_tombstone(s, f"{SRC}/optin-d2", reason="fetch_deleted:x", age_days=2, now=now)
-        _seed_ordinary_tombstone(s, f"{SRC}/optin-d8", reason="fetch_deleted:x", age_days=8, now=now)
-        _seed_ordinary_tombstone(s, f"{SRC}/optin-d31", reason="membership_reconcile", age_days=31, now=now)
+        _seed_ordinary_tombstone(
+            s, f"{SRC}/optin-d2", reason="fetch_deleted:x", age_days=2, now=now
+        )
+        _seed_ordinary_tombstone(
+            s, f"{SRC}/optin-d8", reason="fetch_deleted:x", age_days=8, now=now
+        )
+        _seed_ordinary_tombstone(
+            s, f"{SRC}/optin-d31", reason="membership_reconcile", age_days=31, now=now
+        )
         s.commit()
 
     report = await sweep(env.async_factory, env.pipeline, now=now, tombstone_days=7)
@@ -479,8 +1188,12 @@ async def test_confirmed_absence_retirement_auto_window_unchanged(env):
     更短墓碑窗亦不得提前),到期进资格;普通墓碑不受影响同场对照。"""
     now = datetime.now(UTC)
     with env.sync_factory() as s:
-        _seed_confirmed_absence(s, f"{SRC}/absence-early", retired_when=now - timedelta(days=2), now=now)
-        _seed_confirmed_absence(s, f"{SRC}/absence-due", retired_when=now - timedelta(days=8), now=now)
+        _seed_confirmed_absence(
+            s, f"{SRC}/absence-early", retired_when=now - timedelta(days=2), now=now
+        )
+        _seed_confirmed_absence(
+            s, f"{SRC}/absence-due", retired_when=now - timedelta(days=8), now=now
+        )
         s.commit()
 
     report = await sweep(env.async_factory, env.pipeline, now=now)
@@ -511,6 +1224,11 @@ async def test_apply_purges_confirmed_absence_document_deterministically(env):
         )
         s.commit()
         ordinal = version.generation_ordinal
+        env.collection.seed_uuids(
+            chunk_uuids_for_version(
+                f"{SRC}/absence-doomed", str(lifecycle.LEGACY_GENERATION_ID), ordinal, 1
+            )
+        )
 
     report = await sweep(env.async_factory, env.pipeline, now=now, apply=True)
     assert f"{SRC}/absence-doomed" in report.documents_eligible
@@ -523,7 +1241,9 @@ async def test_apply_purges_confirmed_absence_document_deterministically(env):
         for v in c.kwargs["where"].value
     }
     assert got == set(
-        chunk_uuids_for_version(f"{SRC}/absence-doomed", str(lifecycle.LEGACY_GENERATION_ID), ordinal, 1)
+        chunk_uuids_for_version(
+            f"{SRC}/absence-doomed", str(lifecycle.LEGACY_GENERATION_ID), ordinal, 1
+        )
     )
     with env.sync_factory() as s:
         assert (

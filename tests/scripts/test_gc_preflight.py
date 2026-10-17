@@ -7,11 +7,11 @@
   外溢文档 UUID 绝不入清理清单;
 - dry-run 绝无 Weaviate DELETE/PG 写入(只读代理拦截 + 账本构造零写路径);
 - 删除身份只能来自 ``chunk_uuids_for_version`` 确定性推导(P0-A);
-- ``objects_deleted``=尝试数≠实际成功:预检以在场/缺席探针区分;
+- ``objects_deleted``=运行时确认删除数;预检仍以在场/缺席探针独立核对;
 - #162 语义回归:普通墓碑在 tombstone_days=None 下一律不合格;
-- R2(GC apply 硬否决):现状 ``_delete_version_objects`` 忽略 delete_many
-  回执、sweep(apply=True) 在零/部分删除时仍提交元数据 —— 输出必须携带
-  HARD NO-GO 且生产 GC 本体不在本 Candidate 中改动;
+- GC apply 硬否决:历史修复前发现(#164, 2026-10-15)的删除回执与提交顺序
+  问题现已在运行时修复;当前测试验证回执计数和精确 UUID 缺席后才提交 PG。
+  现役 HARD NO-GO 只列仍开放的范围、live snapshot、User 授权与生产恢复门;
 - R2(820-only 范围门):合格退役代触及的目标外文档 UUID 绝不入清单,
   单列「需另行授权」并 fail-closed;
 - R2(allowlist sha256 强制):缺失/空/不匹配一律拒绝;
@@ -162,7 +162,7 @@ class TestConservation:
         assert G5 not in res.eligible_generation_ids
 
     def test_missing_derivable_distinguished_from_present(self):
-        # GCReport.objects_deleted=尝试数≠实际成功:缺席对象单列统计。
+        # 预检按只读库存区分缺席与在场对象,不混用运行时删除计数。
         inv = [x for x in base_inventory() if x[0] != _u(f"{SRC_A}#{G1}#{2}")]
         res = run_ledger(inventory=inv)
         assert len(res.present_uuids) == 5
@@ -448,81 +448,178 @@ class TestEightTwentyOnlyScopeGate:
         assert res.as_dict()["out_of_scope_generation_uuids"] == 2
 
 
-class TestGCApplyHardNoGo:
-    """A 阻塞 1:现状 GC apply 的删除回执/元数据排序危险事实 + 输出硬否决。"""
+class _FakeGCApplyCollection:
+    """离线 GC 对象存储:保留 UUID 读回、删除回执和对象存活状态。"""
 
-    def test_reasons_nonempty_and_cite_receipt_and_ordering(self):
+    def __init__(self, uuids, failed_uuids=()):
+        self.objects = {str(value).lower() for value in uuids}
+        self.failed_uuids = {str(value).lower() for value in failed_uuids}
+        self.read_requests = []
+        self.delete_requests = []
+        self.query = SimpleNamespace(fetch_objects=self.fetch_objects)
+        self.data = SimpleNamespace(delete_many=self.delete_many)
+
+    @staticmethod
+    def _requested(filter_):
+        values = getattr(filter_, "value", None)
+        if not isinstance(values, (list, tuple, set)):
+            raise TypeError(f"fake received a non UUID-list filter: {filter_!r}")
+        return {str(value).lower() for value in values}
+
+    def fetch_objects(self, *, filters, limit=None):
+        requested = self._requested(filters)
+        self.read_requests.append(requested)
+        found = sorted(requested & self.objects)
+        if limit is not None:
+            found = found[:limit]
+        return SimpleNamespace(
+            objects=[SimpleNamespace(uuid=uuidlib.UUID(value)) for value in found]
+        )
+
+    def delete_many(self, *, where):
+        requested = self._requested(where)
+        self.delete_requests.append(requested)
+        matched = requested & self.objects
+        failed = matched & self.failed_uuids
+        successful = matched - failed
+        self.objects.difference_update(successful)
+        return SimpleNamespace(
+            successful=len(successful),
+            failed=len(failed),
+            matches=len(matched),
+        )
+
+
+class TestGCApplyHardNoGo:
+    """A 阻塞 1:现役开放门 + 恒真硬否决;历史修复不再冒充当前缺陷。"""
+
+    def test_reasons_only_report_current_open_gates(self):
         blob = "\n".join(HARD_NO_GO_REASONS)
         assert HARD_NO_GO_REASONS
-        assert "delete_many" in blob and "purged_at" in blob
+        assert "820-only" in blob and "manifest" in blob
+        assert "live snapshot" in blob and "重采" in blob
+        assert "User" in blob and "授权" in blob
+        assert "生产一致性" in blob and "恢复前置" in blob
+        assert "忽略 collection.data.delete_many 返回" not in blob
+        assert "仍按成功记账并继续提交 DB 元数据" not in blob
+        assert "「已验证的对象删除」之前提交" not in blob
 
-    def test_delete_many_partial_failure_still_counts_attempts(self):
-        # 危险事实钉死(现码特征,生产 GC 不在本 Candidate 改动):
-        # 回执 failed>0 → 仍返回 len(uuids) 尝试数。
+    def test_delete_many_partial_failure_is_rejected_for_exact_uuids(self):
+        # 失败回执必须 fail closed;删除身份和前置读回都只能覆盖请求 UUID。
         from backend.services.lifecycle_gc import _delete_version_objects
+        from backend.pipeline.ingest import chunk_uuids_for_version
 
-        version = SimpleNamespace(
-            source_id=SRC_A, generation_id=G1, generation_ordinal=2, chunk_count=3, id="v-a1"
-        )
-        receipt = SimpleNamespace(successful=0, failed=3, matches=3)
-        calls: list = []
+        uuids = chunk_uuids_for_version(SRC_A, G1, 2, 3)
+        failed_uuid = uuids[-1]
+        collection = _FakeGCApplyCollection(uuids, failed_uuids={failed_uuid})
 
-        class _Col:
-            @property
-            def data(self):
-                return self
+        with pytest.raises(RuntimeError, match="1 failed objects"):
+            _delete_version_objects(collection, uuids)
 
-            def delete_many(self, *, where):
-                calls.append(where)
-                return receipt
+        assert collection.read_requests == [set(uuids)]
+        assert collection.delete_requests == [set(uuids)]
+        assert collection.objects == {failed_uuid}
 
-        assert _delete_version_objects(_Col(), version, 3) == 3
-        assert len(calls) == 1
-
-    def test_apply_commits_metadata_despite_zero_deletion(self):
-        # 危险事实钉死:apply=True + 全失败回执 → purged_at 仍置位 + commit 发生。
+    def test_apply_partial_delete_preserves_identity_and_retries_remaining_uuids(self):
+        # 失败回执不提交 PG 身份;重启后只删读回仍在场的 UUID,再提交 purged_at。
         from backend.services.lifecycle_gc import sweep as gc_sweep
+        from backend.services import document_lifecycle as lifecycle
+        from backend.pipeline.ingest import chunk_uuids_for_version
+        from backend.db.models import DocumentVersion, DocumentVersionChunk, IndexGeneration
 
-        fake_gen = SimpleNamespace(id=G0)
+        gen_id = G1
+        uuids = chunk_uuids_for_version(SRC_A, gen_id, 2, 3)
+        failed_uuid = uuids[-1]
+        fake_gen = SimpleNamespace(id=gen_id)
         fake_ver = SimpleNamespace(
-            source_id=SRC_B, id="v-b0", generation_id=G0, generation_ordinal=1, chunk_count=2
+            source_id=SRC_A,
+            id="v-a1",
+            generation_id=gen_id,
+            generation_ordinal=2,
+            chunk_count=3,
         )
-        fake_gen_row = SimpleNamespace(id=G0, purged_at=None)
-        receipt = SimpleNamespace(successful=0, failed=2, matches=2)
-        collection_calls: list = []
-
-        class _Col:
-            @property
-            def data(self):
-                return self
-
-            def delete_many(self, *, where):
-                collection_calls.append(where)
-                return receipt
-
-        async_sf = FakeAsyncSessionFactory([
-            [fake_gen],  # part1: 合格退役代
-            [fake_ver],  # part1: 代内版本行
-            [],          # part2: superseded
-            [],          # part2: retirement 锚行
-        ])
-        sync_sf = FakeSyncSessionFactory([
-            [],              # DocumentVersionChunk 行
-            [fake_gen_row],  # IndexGeneration 行(purged_at 将被置位)
-        ])
-
-        class _Pipeline:
-            _collection = _Col()
-            _session_factory = sync_sf
-
-        report = asyncio.run(
-            gc_sweep(async_sf, _Pipeline(), tombstone_days=None, now=NOW, apply=True)
+        fake_gen_row = SimpleNamespace(
+            id=gen_id,
+            status=lifecycle.GenerationStatus.RETIRED,
+            gc_eligible_at=NOW - timedelta(days=1),
+            purged_at=None,
+            ordinal=2,
+            doc_count=1,
+            chunk_count=3,
         )
-        assert report.objects_deleted == 2  # 尝试数;回执全失败被忽略
-        assert report.errors == []          # 无异常 → 静默成功表象
+        chunk_rows = [SimpleNamespace(chunk_index=i) for i in range(3)]
+        collection = _FakeGCApplyCollection(uuids, failed_uuids={failed_uuid})
+        pipeline = SimpleNamespace(_collection=collection)
+
+        def _identity_sync_factory():
+            class _Factory:
+                def __init__(self):
+                    self.log = []
+
+                def __call__(self):
+                    return self
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    return False
+
+                def execute(self, stmt):
+                    entity = stmt.column_descriptions[0]["entity"]
+                    self.log.append(("sync-execute", entity))
+                    if entity is IndexGeneration:
+                        rows = [fake_gen_row]
+                    elif entity is DocumentVersion:
+                        rows = [fake_ver]
+                    elif entity is DocumentVersionChunk:
+                        rows = chunk_rows
+                    else:
+                        raise AssertionError(f"unexpected sync GC query entity: {entity}")
+                    return _FakeSyncResult(rows)
+
+                def delete(self, obj):
+                    self.log.append(("delete", obj))
+
+                def commit(self):
+                    self.log.append(("commit", None))
+
+            return _Factory()
+
+        async_sf = FakeAsyncSessionFactory([[fake_gen], [], []])
+        sync_sf = _identity_sync_factory()
+        pipeline._session_factory = sync_sf
+        failed_report = asyncio.run(
+            gc_sweep(async_sf, pipeline, tombstone_days=None, now=NOW, apply=True)
+        )
+
+        assert failed_report.errors and any("1 failed objects" in error for error in failed_report.errors)
+        assert failed_report.objects_deleted == 0
+        assert failed_report.chunk_rows_deleted == 0
+        assert fake_gen_row.purged_at is None
+        assert not any(op in {"delete", "commit"} for op, _ in sync_sf.log)
+        assert collection.objects == {failed_uuid}
+        assert collection.read_requests == [set(uuids)]
+        assert collection.delete_requests == [set(uuids)]
+
+        # 模拟进程重启:PG 身份仍在,Weaviate 仅剩失败 UUID;重试后才清理并盖章。
+        collection.failed_uuids.clear()
+        retry_async_sf = FakeAsyncSessionFactory([[fake_gen], [], []])
+        retry_sync_sf = _identity_sync_factory()
+        pipeline._session_factory = retry_sync_sf
+        retry_report = asyncio.run(
+            gc_sweep(retry_async_sf, pipeline, tombstone_days=None, now=NOW, apply=True)
+        )
+
+        assert retry_report.errors == []
+        assert retry_report.objects_deleted == 1
+        assert retry_report.chunk_rows_deleted == 3
+        assert collection.objects == set()
+        assert collection.read_requests == [set(uuids), set(uuids), set(uuids)]
+        assert collection.delete_requests == [set(uuids), {failed_uuid}]
         assert fake_gen_row.purged_at == NOW
-        assert ("commit", None) in sync_sf.log
-        assert len(collection_calls) == 1
+        assert sum(op == "delete" for op, _ in retry_sync_sf.log) == 3
+        assert ("commit", None) in retry_sync_sf.log
 
     def test_main_output_carries_hard_no_go(self, monkeypatch, tmp_path):
         code, report, _calls = _run_live_main(monkeypatch, tmp_path)
@@ -687,7 +784,6 @@ def _live_sweep_queue() -> list:
     """真实 ``lifecycle_gc.sweep``(apply=False) 在 LIVE fixture 下的查询序列。"""
     return [
         [SimpleNamespace(id=G0)],  # part1: 合格退役代
-        [],                        # part1: 代内版本行
         [],                        # part2: superseded
         [],                        # part2: retirement 锚行
         [                          # part2: 墓碑窗命中(T=30, 40 天前删除)
@@ -696,7 +792,6 @@ def _live_sweep_queue() -> list:
             SimpleNamespace(source_id=SRC_B, lifecycle="deleted", superseded_at=None,
                             deleted_at=NOW - timedelta(days=40), metadata_={}),
         ],
-        [SimpleNamespace(source_id=SRC_A), SimpleNamespace(source_id=SRC_B)],
     ]
 
 
