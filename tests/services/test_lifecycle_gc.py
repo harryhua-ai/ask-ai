@@ -10,15 +10,21 @@
 """
 
 import os
+import subprocess
+import sys
+import textwrap
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, delete, or_, select
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -33,10 +39,113 @@ from backend.pipeline.ingest import chunk_uuids_for_version
 from backend.services import document_lifecycle as lifecycle
 from backend.services.lifecycle_gc import sweep
 
-TEST_DSN = os.environ.get(
-    "TEST_DATABASE_URL",
-    "postgresql+asyncpg://ask_ai:changeme@localhost:5432/ask_ai_test",
-)
+
+def _validated_test_dsn() -> str:
+    """只允许显式指向本机专用测试库的 DSN，且不回显其中的凭据。"""
+    app_mode = os.environ.get("APP_MODE", "").strip().lower()
+    if app_mode in {"prod", "production"}:
+        raise RuntimeError("lifecycle GC integration tests refuse APP_MODE=prod")
+
+    dsn = os.environ.get("TEST_DATABASE_URL")
+    if not dsn or not dsn.strip():
+        raise RuntimeError("lifecycle GC integration tests require explicit TEST_DATABASE_URL")
+    try:
+        url = make_url(dsn)
+    except (ArgumentError, TypeError, ValueError):
+        raise RuntimeError("TEST_DATABASE_URL must be a valid isolated test DSN") from None
+
+    if url.drivername != "postgresql+asyncpg":
+        raise RuntimeError("TEST_DATABASE_URL must use the PostgreSQL asyncpg driver")
+    if url.database != "ask_ai_test":
+        raise RuntimeError("TEST_DATABASE_URL must target the dedicated ask_ai_test database")
+    if (url.host or "").lower() not in {"localhost", "127.0.0.1", "::1"}:
+        raise RuntimeError("TEST_DATABASE_URL must target a local database host")
+    return dsn
+
+
+TEST_DSN = _validated_test_dsn()
+
+
+def test_gc_fixture_rejects_unsafe_database_configuration_before_side_effects():
+    """危险 DSN、prod 模式和缺失 DSN 必须在连接/建表/清理前失败。"""
+    script = textwrap.dedent(
+        """
+        import os
+        import runpy
+        import sqlalchemy
+        import sqlalchemy.ext.asyncio
+        from sqlalchemy.orm import Session
+        from sqlalchemy.sql.schema import MetaData
+
+        side_effects = []
+
+        def blocked(name):
+            def record(*_args, **_kwargs):
+                side_effects.append(name)
+                raise AssertionError("database side effect reached")
+            return record
+
+        sqlalchemy.create_engine = blocked("sync engine")
+        sqlalchemy.ext.asyncio.create_async_engine = blocked("async engine")
+        MetaData.create_all = blocked("schema creation")
+        Session.execute = blocked("SQL execution")
+        Session.delete = blocked("row deletion")
+        Session.commit = blocked("commit")
+
+        cases = [
+            ("missing DSN", None, "test", "explicit TEST_DATABASE_URL"),
+            (
+                "production mode",
+                "postgresql+asyncpg://ask_ai:do-not-print-secret@localhost:5432/ask_ai_test",
+                "prod",
+                "APP_MODE=prod",
+            ),
+            (
+                "non-test database",
+                "postgresql+asyncpg://ask_ai:do-not-print-secret@localhost:5432/ask_ai",
+                "test",
+                "dedicated ask_ai_test database",
+            ),
+            (
+                "remote database host",
+                "postgresql+asyncpg://ask_ai:do-not-print-secret@db.prod.example:5432/ask_ai_test",
+                "test",
+                "local database host",
+            ),
+        ]
+
+        for name, dsn, app_mode, expected in cases:
+            if dsn is None:
+                os.environ.pop("TEST_DATABASE_URL", None)
+            else:
+                os.environ["TEST_DATABASE_URL"] = dsn
+            os.environ["APP_MODE"] = app_mode
+            try:
+                runpy.run_path("tests/services/test_lifecycle_gc.py", run_name="gc_safety_probe")
+            except RuntimeError as exc:
+                if expected not in str(exc):
+                    raise AssertionError(f"{name} was rejected for the wrong reason") from None
+            else:
+                raise AssertionError(f"{name} configuration was accepted")
+
+            if side_effects:
+                raise AssertionError(f"database side effects reached for {name}")
+
+        print("unsafe GC test database configurations rejected before side effects")
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "rejected before side effects" in result.stdout
+    assert "do-not-print-secret" not in output
+
 
 SRC = "p1gc-probe"
 # GC 探针代专用高位 ordinal(全局唯一约束;与 builder 等套件分配域隔离)
@@ -144,26 +253,24 @@ async def env():
 
 
 def _purge(s) -> None:
-    for row in s.execute(select(Document).where(Document.source_id.like(f"{SRC}%"))).scalars():
-        s.delete(row)
-    for row in s.execute(
-        select(DocumentVersion).where(DocumentVersion.source_id.like(f"{SRC}%"))
-    ).scalars():
-        s.delete(row)
-    for row in s.execute(
-        select(DocumentVersionChunk).where(
-            DocumentVersionChunk.version_id.in_(
-                select(DocumentVersion.id).where(DocumentVersion.source_id.like(f"{SRC}%"))
-            )
-        )
-    ).scalars():
-        s.delete(row)
-    for row in s.execute(
-        select(IndexGeneration).where(
+    version_ids = list(
+        s.execute(
+            select(DocumentVersion.id).where(DocumentVersion.source_id.like(f"{SRC}%"))
+        ).scalars()
+    )
+    # props 条件也清理旧版 teardown 已遗留、现已失去 version_id 反查路径的测试孤儿行。
+    chunk_scope = DocumentVersionChunk.props["source_id"].as_string().like(f"{SRC}%")
+    if version_ids:
+        chunk_scope = or_(chunk_scope, DocumentVersionChunk.version_id.in_(version_ids))
+    s.execute(delete(DocumentVersionChunk).where(chunk_scope))
+    if version_ids:
+        s.execute(delete(DocumentVersion).where(DocumentVersion.id.in_(version_ids)))
+    s.execute(delete(Document).where(Document.source_id.like(f"{SRC}%")))
+    s.execute(
+        delete(IndexGeneration).where(
             (IndexGeneration.source_id == SRC) | (IndexGeneration.ordinal == PROBE_ORDINAL)
         )
-    ).scalars():
-        s.delete(row)
+    )
     s.commit()
 
 
@@ -238,6 +345,38 @@ def _seed_doc_with_version(
     doc.current_version_id = version.id
     s.flush()
     return doc, version
+
+
+def test_gc_fixture_purge_does_not_leave_orphaned_synthetic_chunks(env):
+    """fixture teardown 及重复清理后都不能残留合成 chunk 行。"""
+    source_id = f"{SRC}/purge-chunk-order"
+    with env.sync_factory() as s:
+        synthetic_chunks = (
+            s.execute(
+                select(DocumentVersionChunk).where(
+                    DocumentVersionChunk.props["source_id"].as_string().like(f"{SRC}%")
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert synthetic_chunks == []
+
+        _doc, _version = _seed_doc_with_version(s, source_id, gen=None, chunks=2)
+        s.commit()
+
+        _purge(s)
+        _purge(s)
+        remaining_chunks = (
+            s.execute(
+                select(DocumentVersionChunk).where(
+                    DocumentVersionChunk.props["source_id"].as_string().like(f"{SRC}%")
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert remaining_chunks == []
 
 
 # --------------------------------------------------------------------------- #
