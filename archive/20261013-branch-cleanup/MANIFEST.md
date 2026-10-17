@@ -1,0 +1,896 @@
+# 分支清理归档账本（2026-10-13）— HISTORICAL / NON-AUTHORITATIVE
+
+> **本目录声明**：本文件是 13 个待清理历史分支的归档**账本**（元数据），不是治理权威，不构成现行 Task Contract / Sprint / Iteration 语义。现行治理以 main 上的 Iteration / Priority / Status 为准（Sprint 字段已于 2026-09-15 退役）。
+
+**完整历史保存方式**：每个分支的**完整 Git 历史**（含全部提交与文件，含下方标注 RESTRICTED 的工件）已备份为 access-controlled 的 git bundle，存于操作员本地 `~/ask-ai-backups/ask-ai-branch-bundles-20261013/`（不在公开仓库内）。恢复命令（已实测）：
+
+```
+git clone <bundle 文件>          # 直接克隆出分支工作树
+# 或 git fetch <bundle> "refs/heads/*:refs/heads/*"
+```
+
+**隐私分级**：`RESTRICTED-*` 工件（含客户标识的匿名化映射、生产截图、transcript、原始 JSON）**只保存于 bundle，不进入公开 main**。仓库内仅保留本账本（路径 + blob 标识 + 分级）。
+
+## 备份文件与 SHA256
+
+- `audit__knowledge-gap-governance-20260915.bundle` sha256=d2456e2bd957c50164c73f82c10ffb0da499b745ddafb2b2073de5a593ec9d5b
+- `audit__v163-reference-traceability-20260913.bundle` sha256=e2ac1a267d22c3110ce231c978b75d5e7fb9dc023c0dfaac2e57de58bf7cb828
+- `docs__deploy-20260902.bundle` sha256=fc99346fd18dbcba5d81a90bf44d315745255024eb4b77c0f349747ac5a17c90
+- `docs__issue23-performance-discovery-20260904.bundle` sha256=a8a0805a01ca7bb400ad26f8eec6d661e49570d8a138c5adefd2dc8f60252e6f
+- `docs__issue33-first-paint-execution-rev1.bundle` sha256=8df9f4c01d5162b933603654dbf2c771284e89b6eae2b810927ab2b9324f3d6f
+- `docs__preflight-20260902.bundle` sha256=734f3eb29eaf9df8307f68f75acc385a64073fff1209b58dbf64985267f6ead2
+- `docs__v11-shared-discovery-20260904.bundle` sha256=24250a9e823e5ad06e457cc46563d0beb9c19d8b568fbd04397cee72a24f6e63
+- `docs__v162-iteration-contracts-20260912.bundle` sha256=c99c3b6890573fa7bbd2724ce3cc41304e6f79e169552c08cc51a58a77dcef5a
+- `docs__v163-design-baseline-20260912.bundle` sha256=81af564a8e1d45c9ff56479482774298603205f0b3726eee1d0ee6559870a5d3
+- `docs__v164-iteration-contracts-20260913.bundle` sha256=bb4d50102e57211358c693225f29cf0477c0410ad0c5fdf6eec20dace2aed136
+- `exec__v163-correctness-closure.bundle` sha256=65c48dd735eecda01610b171260f102d1c5337f3551780cf676a8ec486f1558e
+- `project-automation__sprint-authority-hardening-20260911.bundle` sha256=6557f139643deb255efaedc71bb7e0f0f0af01af989c341683c0058d43fef08a
+- `research__r001-knowledge-retrieval-architecture.bundle` sha256=7bdb4f6c868b3ed5a3eabfeaab4378f144ae4c948209bc61befe60da6ce8f847
+- `review__iux001-v130-production-acceptance-20260910.bundle` sha256=4becedf628c8f3b03067645fc14a2d06779e1f119ada6fe9c50dc9c259bfae78
+
+## 待删除分支（13，归档 PR 合并后执行）
+
+| # | 分支 | tip SHA | 工件数 | RESTRICTED |
+|---|---|---|---:|---:|
+| 1 | audit/knowledge-gap-governance-20260915 | 3c427c61e991a25b98888656dc8c5fde462b60ec | 3 | 1 |
+| 2 | audit/v163-reference-traceability-20260913 | 3828c4e03e33b65d1f27e8e2b882211a80e033de | 16 | 0 |
+| 3 | docs/deploy-20260902 | 8eff98927c66f99743725f53800f830bf8805d85 | 1 | 0 |
+| 4 | docs/issue23-performance-discovery-20260904 | 652b05fd80848291e3c402237db170f74a05a642 | 336 | 160 |
+| 5 | docs/issue33-first-paint-execution-rev1 | 3cf9eee3998eaaa3337cd3b79233a3c28b7e3eab | 400 | 184 |
+| 6 | docs/preflight-20260902 | 62ecedcebef81e741c2bb21b90aa82bfc7a2c5d3 | 2 | 0 |
+| 7 | docs/v11-shared-discovery-20260904 | 20ac091d9a6b5593a4ef4221c8966d68afa465e6 | 1 | 0 |
+| 8 | docs/v162-iteration-contracts-20260912 | 4823e1a004ba269b78747fd1933a0fbfa9d1fe3e | 5 | 0 |
+| 9 | docs/v163-design-baseline-20260912 | 5593d6be1f90baf00178b7c54559e5bbe54b89c4 | 9 | 2 |
+| 10 | docs/v164-iteration-contracts-20260913 | 7e8f7a34bc41f48040fc7575094c7e2e09a7c076 | 6 | 0 |
+| 11 | exec/v163-correctness-closure | c2bc1254cfb057a529c166dc3ace09862e3a513a | 1 | 0 |
+| 12 | research/r001-knowledge-retrieval-architecture | 5ba5603d9c1c7cc279e1d9fe9cce5149871632f4 | 6 | 0 |
+| 13 | review/iux001-v130-production-acceptance-20260910 | 28de53500b6c02a0208608812ea76884815df3e4 | 13 | 8 |
+
+注：`trace-b/remote-embedder-batch-corrective-20260912` 已于 2026-10-13 在首批 9 个授权删除中删除（其 TB-P1 报告已被 EMBED-422 交付取代，未单独归档）。
+`project-automation/sprint-authority-hardening-20260911` 由 A 于 2026-10-13 裁决废弃（见 PR #127 评论 6141222554），bundle 已留存后删除。
+
+## 逐分支工件账本（blob 标识 + 分级）
+
+### audit/knowledge-gap-governance-20260915（tip `3c427c61e991a25b98888656dc8c5fde462b60ec`，3 工件）
+
+- `ca04f47e9b860f4ad37e44886c8348089270f1be` reports/data/production-knowledge-gap-audit-20260915.json **RESTRICTED-raw-json**
+- `32b41078ce2d3393c9fc948f22de74186cfc9b9f` reports/production-knowledge-gap-governance-audit-20260915.md
+- `008b231f77ed90f917e4111f02ba5eabf376f88d` tests/project_automation/test_sprint_sync.py
+
+### audit/v163-reference-traceability-20260913（tip `3828c4e03e33b65d1f27e8e2b882211a80e033de`，16 工件）
+
+- `33765c4cb9cec18e5742b6da027e3a9fd24a7fb4` docs/engineering/tasks/v163-reference-gap-register.md
+- `ab7fbf3c3d1e70027ad6a2ea605e6b9b345c9173` docs/engineering/tasks/v163-reference-remediation-plan.md
+- `d4158f1331828ac787e9a87e64063572d85c907c` docs/engineering/tasks/v163-reference-remediation/matrix-DS-P1.md
+- `20f35ab1b572ceeb4c32db5e32fe9bff4e4e8b7a` docs/engineering/tasks/v163-reference-remediation/matrix-DS-P2.md
+- `149673fed38b38415db429a090f3bbb4a072b08e` docs/engineering/tasks/v163-reference-remediation/matrix-DS-P3-P4.md
+- `e62e874f44da8402f531cb40a7561216ee83ae61` docs/engineering/tasks/v163-reference-remediation/matrix-DS-P5-P6-P7.md
+- `5eb425cba88760938d682806ce76e16ebf63bd9f` docs/engineering/tasks/v163-reference-remediation/matrix-SH.md
+- `32271051dc969244e197858c8ab59b6ab09a78e5` docs/engineering/tasks/v163-reference-remediation/matrix-TI.md
+- `3d05d0115051d43afbe62b7b6c9fd31c55ee327d` docs/engineering/tasks/v163-reference-remediation/track-a-contract.md
+- `7026b416b2c70553927245243aad88e58433ea24` docs/engineering/tasks/v163-reference-remediation/track-b-contract.md
+- `29c84cd7480237dd7f0d8b82a358bbdabc37c357` docs/engineering/tasks/v163-reference-remediation/track-c-contract.md
+- `64799406c00f81a6aa716bf6c3a241ef1281287f` docs/engineering/tasks/v163-reference-remediation/track-d-contract.md
+- `f24d4f368a384629f5c2ddfe9be9340e9398013c` docs/engineering/tasks/v163-reference-remediation/track-e-contract.md
+- `8b69c264732918c6068faac55c48c7e0854aeb09` docs/engineering/tasks/v163-reference-remediation/track-f-contract.md
+- `ce186d0e705db7572db768e5aa20d0b181b1f47f` docs/engineering/tasks/v163-reference-traceability-audit.md
+- `008b231f77ed90f917e4111f02ba5eabf376f88d` tests/project_automation/test_sprint_sync.py
+
+### docs/deploy-20260902（tip `8eff98927c66f99743725f53800f830bf8805d85`，1 工件）
+
+- `639787b10755e28c48b9d9b0b3a520bb350bc543` docs/implementation/CAMTHINK_V1_PRODUCTION_DEPLOYMENT_2026-09-02.md
+
+### docs/issue23-performance-discovery-20260904（tip `652b05fd80848291e3c402237db170f74a05a642`，336 工件）
+
+- `87c1c2da650a85769d4c7e8a8515283e79d12075` engineering/CONTRACT_ISSUE23_PERFORMANCE_PATCH_20260904.md
+- `ebee96b93c2d73c26a37bb4d14a6de4f6882d6df` engineering/DUAL_AGENT_PROTOCOL.md
+- `1aaa6cae5ba88b00303cb407074a5c7e127a3e9e` engineering/EXECUTION_WINDOW_ENV_GUIDE.md
+- `6274350ad2e9bec3e64a323d5b2bc3cb6939457a` engineering/contracts/c8-c9-c10-web-data-win.md
+- `fcf70d035a48c00eabda19a21912caa920d01d3c` engineering/contracts/d4-ingest-accounting-and-consistency-calibration.md
+- `87d131bc261fa3f07f7c102579d39c8f671086f8` engineering/contracts/p1-admin-visibility-and-data-residuals.md
+- `9aa9a6fbe9b6cc5d9186b34f70c19503f721cc9e` engineering/contracts/rel-win-one-shot-release.md
+- `c46df481272919e19a8bbb1cc1faef29dcc5f665` engineering/reviews/d11-sync-consistency-prod-acceptance-review.md
+- `a9cc543081b160a40ebde934f6a505b210d7070c` engineering/reviews/d4-acc-review.md
+- `3b332cd3b0c70f740e43e4ac062a6a0c39a55390` engineering/reviews/p1-res-review.md
+- `c4e066f98ccd41bb7955c197c0153f44a8616f1a` engineering/reviews/rel-win-review.md
+- `92b21e306b1b0bf00edcd737381426311a877a1a` engineering/reviews/web-data-win-review.md
+- `474206f7225c37ae70ee42aabc470f7dc46455ae` engineering/role-A.md
+- `ec9eebf9cd15c6fbc125d66710dc7669eda2de66` engineering/role-B.md
+- `2f920493651365efed823e770ae4e1354fe9c72b` engineering/tasks/c8b-webcrawl-admin-ui-execution.md
+- `694ddf2c649a3bee78ee6108ea325452b27f5dbe` engineering/tasks/c8b-webcrawl-admin-ui-plan.md
+- `cea47d463676dc3d22f6d040f571622f6ad58ed1` engineering/tasks/c8b-webcrawl-admin-ui-review.md
+- `3502a2bf755c4a48d58449be2a28ec4727b946bd` engineering/tasks/c9-upload-fix-execution.md
+- `eebea10443dd29ba97f2de301a7efe962604db90` engineering/tasks/c9-upload-fix-review.md
+- `52a432738bbc5a785bcf3895df5940dec0888b7c` engineering/tasks/d11-sync-consistency-prod-acceptance-execution.md
+- `12e35cb9e6e1cad77be1e44b414e853c808ce4fb` engineering/tasks/d4-acc-execution.md
+- `f74b7339670ea5406f9e9eddad417ef2f0cbbaea` engineering/tasks/msw-evidence/curl-evidence.txt
+- `c85665508353ea6e6d91f286ddb10a8bb872927f` engineering/tasks/msw-evidence/g001-website.png **RESTRICTED-evidence image**
+- `e459dfaef320fe8d7b4f8a263bb5bfea3e5477e2` engineering/tasks/msw-evidence/g002-wiki.png **RESTRICTED-evidence image**
+- `11b5e95b81929a336d09fdbf21aca8f11f5190f6` engineering/tasks/msw-evidence/g003-store.png **RESTRICTED-evidence image**
+- `74cf4540a90ff66f09a91588dcb7ae4cd9a62928` engineering/tasks/msw-evidence/g004-mismatch.png **RESTRICTED-evidence image**
+- `809c5d29655896d1e4ec92d21207b63debaeb45f` engineering/tasks/msw-evidence/g005-unknown-fallback.png **RESTRICTED-evidence image**
+- `475fdcc9854f7bd6e1e6ebdd8a382296d0a403ce` engineering/tasks/msw-evidence/g006-legacy.png **RESTRICTED-evidence image**
+- `6a8a14a91944008f955ebb61550ff25a82cce46d` engineering/tasks/msw-multi-site-widget-execution.md
+- `d01a67e9cde37adff170fb5eaac50745ea351d66` engineering/tasks/msw-multi-site-widget-plan.md
+- `6b267b7e697cf08fbbc1688ae1b490109893a63a` engineering/tasks/p1-res-execution.md
+- `1b32d226eb6a8fe27b83de7e5f71756f57010d07` engineering/tasks/rel-win-execution.md
+- `fc9e7d53326c8f18c47ae1a0db8df2e01456bdc2` engineering/tasks/release-batch-20260831-closure.md
+- `a116394c94f46c90a129a5ed9a5884afef677d69` engineering/tasks/t1a-launch-package-execution.md
+- `b079d4b822b0ce8f5b49453d838d2e771a6aab6e` engineering/tasks/t1a-launch-package-plan.md
+- `fe5728448d4d14eec7122a7331b241d8c37ef025` engineering/tasks/t1a-launch-package-review.md
+- `3f7555792913f8c425b5956d66aa3bf9a79949f0` engineering/tasks/t25a-ds-health-ownership-plan.md
+- `a7f5c6b9f0b0f79afde04d003ef7e77dc9156d5a` engineering/tasks/t26-conv-list-ux-execution.md
+- `6fc065acaf1e5ad9bf1d815ff4d47449cba940d2` engineering/tasks/t26-conv-list-ux-plan.md
+- `3464b50fd9b8e5b33271e04ef6af652319121512` engineering/tasks/t26-conv-list-ux-review.md
+- `af28af1f64b322c6c040b2deba1b72684707a396` engineering/tasks/t27-llm-provider-switch-fix-execution.md
+- `39cd1569a9eeda695ea38425d970a5b76a0b9e91` engineering/tasks/t27-llm-provider-switch-fix-plan.md
+- `bfb92c034fd95c06ae517aa5624bc0176eafc3be` engineering/tasks/t27-llm-provider-switch-fix-review.md
+- `1e491b947642155d24ffcff9ca8b585a73b5a352` engineering/tasks/t28-analytics-doc-count-fix-execution.md
+- `d3cfb5d7828da77d1732a1739f827c26d0a666cf` engineering/tasks/t28-analytics-doc-count-fix-plan.md
+- `ab2c50dc454a6129860bee8bdadabb536dc2b999` engineering/tasks/t28-analytics-doc-count-fix-review.md
+- `5cdc5747f7c15ae309108bcde54d1de25da4ae15` engineering/tasks/t29-widget-citation-number-execution.md
+- `630c57696ec6fcdbefd83909baac608dc149730b` engineering/tasks/t29-widget-citation-number-plan.md
+- `2e10d51655f8635bebec6fdc87da37a3be070377` engineering/tasks/t29-widget-citation-number-review.md
+- `b87faf49e778fc9aea5c5513f8d050a7616cddf5` engineering/tasks/t30-test-db-safety-plan.md
+- `041ced732af5bf7858901dd4e588baa9c88d10cf` engineering/tasks/web-data-win-execution.md
+- `5e4aec0c872ef727e50cbe42d96c813df6dc9328` implementation/ASK_AI_CUSTOMIZATION_PROMPT_RUNTIME_EFFECTIVENESS_DISCOVERY_2026-09-02.md
+- `55e39dd4717bf973b5eea8e5353afb7e5b6fb5a5` implementation/ASK_AI_TEST_ISOLATION_FIXTURE_PERFORMANCE_CLOSURE_2026-09-03.md
+- `450e4afdefdf2ef99355bfcf7d5f4f926795578b` implementation/ASK_AI_TEST_SUITE_PERFORMANCE_ISOLATION_DISCOVERY_2026-09-03.md
+- `eb49192b668c158208f6573aaef818e46a4f6610` implementation/ASK_AI_WIDGET_WHITELIST_42_194_138_11_2026-09-02.md
+- `a23c56ace974f90bd3d21d9fc8fdeb08235e21f1` implementation/CAMTHINK_ISSUE_19_COMPARISON_CORRECTNESS_DISCOVERY_2026-09-04.md
+- `6f14927bc978e71ee2e897e0e2f2a6a9883e44b5` implementation/CAMTHINK_ISSUE_23_ANSWER_PERFORMANCE_DISCOVERY_2026-09-04.md
+- `9180d136ef6ea218435a1a350c81688c81646543` implementation/CAMTHINK_V101_INTEGRATION_REPORT_2026-09-04.md
+- `f8c6d9f0e17f718e7370560a6673a92abff4be51` implementation/CAMTHINK_V101_TRACK_A_ISSUE19_EXECUTION_2026-09-04.md
+- `7e862aca8534b28d711aa75e6983ba1faf1f5242` implementation/CAMTHINK_V101_TRACK_B_ISSUE13_14_EXECUTION_2026-09-04.md
+- `acf6e4f5acdc250943ace5fb27594b479d1d293d` implementation/CAMTHINK_V101_TRACK_C_ISSUE20_21_EXECUTION_2026-09-04.md
+- `8d4e6b896c12a3b825e2121b75bbc9e399a37a6e` implementation/CAMTHINK_V1_1_SOURCE_CENTER_SHARED_DISCOVERY_2026-09-04.md
+- `d6dace9c47063dc2b6dcae4dc1f1df4f5b0499be` implementation/CAMTHINK_V1_ACCEPTED_WORKSTREAMS_INTEGRATION_CHECKPOINT_2026-09-01.md
+- `d6579fb092ad83c4c1dbb421f474958059635679` implementation/CAMTHINK_V1_ADMIN_DATA_SOURCE_OBSERVABILITY_IMPLEMENTATION_2026-09-03.md
+- `31f884c9ddd6e3133d2646233970bbacb3cddc45` implementation/CAMTHINK_V1_ADMIN_FINAL_POLISH_DISCOVERY_2026-09-01.md
+- `42fc66321dc9de3870159930e0fb8a6ee077bf99` implementation/CAMTHINK_V1_ADMIN_FINAL_POLISH_FIX_SET_2026-09-01.md
+- `0909e2bc2ee3d83a4f8fc52d04d4c1c5e9bb998d` implementation/CAMTHINK_V1_ADMIN_P1_DATA_SOURCE_HEALTH_2026-09-01.md
+- `8ff26fddd7a0f8e57a9e58c3aa08d1a1f0a57ce3` implementation/CAMTHINK_V1_ADMIN_P1_LLM_PROVIDER_MANAGEMENT_2026-09-01.md
+- `df3fd5b39882d5aaa80fd0403a425dcee40d3102` implementation/CAMTHINK_V1_ADMIN_P1_TECHNICAL_INSIGHTS_2026-09-01.md
+- `766e17c7f98e25aaaa4d09f3221f287a52c6a5a4` implementation/CAMTHINK_V1_ANSWER_CORRECTNESS_IMPLEMENTATION_2026-09-03.md
+- `f28dba93668d2654f146632cf57fa69a6e8d353d` implementation/CAMTHINK_V1_ANSWER_CORRECTNESS_PRODUCT_BOUNDARY_DISCOVERY_2026-09-03.md
+- `5a8ea828219e27b37a7de0caa0b5f5b640054f65` implementation/CAMTHINK_V1_DATA_INGESTION_SAFETY_PROTECTION_2026-09-02.md
+- `62c5297df32b82ce53da801607ea1db24ca99f33` implementation/CAMTHINK_V1_DATA_INTEGRITY_RECONCILIATION_DISCOVERY_2026-09-03.md
+- `0b49999c2166ef63347465470c25131ce70d7064` implementation/CAMTHINK_V1_DATA_INTEGRITY_RECONCILIATION_IMPLEMENTATION_2026-09-03.md
+- `d9c87e790bc72eb924f618283bbc15cfce38f2f5` implementation/CAMTHINK_V1_DATA_SOURCE_CENTER_S0_FOUNDATION_2026-09-03.md
+- `3bae6446782b52fbdfd1aba6d6af604bea9192d3` implementation/CAMTHINK_V1_DATA_SOURCE_CENTER_SHARED_DISCOVERY_2026-09-03.md
+- `7b3a65fa2144b904582ef06332d0d245efbbc2eb` implementation/CAMTHINK_V1_DATA_SOURCE_HEALTH_PROGRESS_SHARED_DISCOVERY_2026-09-03.md
+- `207855292bceb3c3ebb326cb1b62d9e5f675b022` implementation/CAMTHINK_V1_DATA_SOURCE_RELIABILITY_DISCOVERY_2026-09-02.md
+- `7d80409aa53506fab681a90c7abc25c5a72eec54` implementation/CAMTHINK_V1_DATA_SOURCE_RELIABILITY_OBSERVABILITY_SHARED_DISCOVERY_2026-09-03.md
+- `35ae6c35562e236527d431ceba6d327cc73fbb32` implementation/CAMTHINK_V1_DATA_SOURCE_RELIABILITY_PRODUCT_CONTRACT_UX_2026-09-02.md
+- `a43afad445af0dbdc6f30d6c0b17f56316b2a5d2` implementation/CAMTHINK_V1_FINAL_RELEASE_CANDIDATE_ASSEMBLY_2026-09-03.md
+- `e333d16f0e6546f1aafbb9220bf7d9120eefc528` implementation/CAMTHINK_V1_GENERATION_FAILURE_LOCALIZATION_DISCOVERY_2026-09-03.md
+- `9b3a84b4544600fa273cf92e5355286c5fa5f953` implementation/CAMTHINK_V1_GENERATION_FAILURE_LOCALIZATION_IMPLEMENTATION_2026-09-03.md
+- `e8a2cfa848eb22cd66c3890dec534cf681dd34fa` implementation/CAMTHINK_V1_ISSUE_13_PRODUCTION_DATA_REPAIR_2026-09-04.md
+- `ccf196e48cf723347d64890265c0c7dc66f31b2f` implementation/CAMTHINK_V1_ISSUE_13_PRODUCTION_REPAIR_REVALIDATION_2026-09-04.md
+- `204896e0f5e8fb0f551afc8d57d1b1c23035d6d0` implementation/CAMTHINK_V1_LLM_PROVIDER_EMPTY_API_KEY_FOLLOWUP_2026-09-01.md
+- `3e96c04d4c484b543a4c940c81f0021025cc5c5c` implementation/CAMTHINK_V1_MAIN_FAST_FORWARD_INTEGRATION_2026-09-03.md
+- `fab00f8dd9005a1c58e19994089fcca731366872` implementation/CAMTHINK_V1_MULTI_SITE_WIDGET_INTEGRATION_2026-09-01.md
+- `3424cf814c0a9257609fb906cbc3ca3e282dcba2` implementation/CAMTHINK_V1_NATURAL_PRODUCT_ACCEPTANCE_BASELINE_2026-09-01.md
+- `97c6e29dc763c808fed0814c8d3258056239db90` implementation/CAMTHINK_V1_NON_BLOCKING_SOURCE_DELETION_ISSUE18_2026-09-03.md
+- `c1fc22b6212fe8b672f2dcfed68a98b7dff7f97c` implementation/CAMTHINK_V1_P0_KNOWLEDGE_TRUST_BOUNDARY_2026-09-01.md
+- `1b675453320b5311779f61410b4dde76c803eb6d` implementation/CAMTHINK_V1_P0_P1_INTEGRATION_GATE_2026-09-01.md
+- `272504c50a4421349a7e1927d87022ab7c565c59` implementation/CAMTHINK_V1_P1_CITATION_INTEGRITY_2026-09-01.md
+- `c740a48078c655f3e711949b45b20ae2a56ae82e` implementation/CAMTHINK_V1_P1_GENERATION_RELIABILITY_2026-09-01.md
+- `00dfaa297776a9c1d71da09b6901bbaa4133de2b` implementation/CAMTHINK_V1_P1_WEBSITE_KNOWLEDGE_COVERAGE_2026-09-01.md
+- `8f9b0deb4059f648faefa4f559da7febb7f2f2fe` implementation/CAMTHINK_V1_PA0B_PRODUCTION_UPGRADE_READINESS_DISCOVERY_2026-09-01.md
+- `f7bdd17a8554c84740e4943ebc94b57b79773ef6` implementation/CAMTHINK_V1_PA0_RELEASE_ARTIFACT_GPU_RUNTIME_2026-09-01.md
+- `639787b10755e28c48b9d9b0b3a520bb350bc543` implementation/CAMTHINK_V1_PRODUCTION_DEPLOYMENT_2026-09-02.md
+- `1b1dd13928a6ccf178beec93640c00c2564ffd18` implementation/CAMTHINK_V1_PRODUCTION_DEPLOYMENT_2026-09-03.md
+- `e99cc27f9da7d0a5dd8395b55f9b0b13c0ab48f9` implementation/CAMTHINK_V1_PRODUCTION_DEPLOYMENT_READINESS_2026-09-03.md
+- `70772b91d6290e61cffa7908e68e8cb1c433e33c` implementation/CAMTHINK_V1_PRODUCTION_READ_ONLY_ACCEPTANCE_2026-09-03.md
+- `b226e3f8fecb35e26457127b2da8cab4267d2d39` implementation/CAMTHINK_V1_PRODUCT_METADATA_UNKNOWN_CLOSURE_2026-09-03.md
+- `3408b699527a3b226821b8009a17e6ebf14996a4` implementation/CAMTHINK_V1_RELEASE_CANDIDATE_GATE_2026-09-01.md
+- `a1cc8ac2a23d731891c94ba91f5b9bd0798b644e` implementation/CAMTHINK_V1_REPO_SIMPLE_MODE_ISSUE16_2026-09-03.md
+- `0fb89d51a7325fc6f9d14e545a89a07342d8d8a5` implementation/CAMTHINK_V1_S0_INTEGRATION_BASELINE_2026-09-03.md
+- `5b8c0245c22fb2cfd92de47a9ad8fcf6644eb106` implementation/CAMTHINK_V1_SOURCE_CENTER_16_17_18_INTEGRATION_GATE_2026-09-03.md
+- `09f33be646c8535482fa711cf18913d3cf16c8d2` implementation/CAMTHINK_V1_STORE_WIDGET_ORIGIN_FIX_2026-09-03.md
+- `de93ffe9ec0707d961813c7e356724dba52ee02f` implementation/CAMTHINK_V1_STORE_WIDGET_ORIGIN_PRODUCTION_FIX_2026-09-03.md
+- `f2d824d7c46cf1774f9545ff8f92db1c66461225` implementation/CAMTHINK_V1_SYNC_EXECUTION_ISOLATION_2026-09-02.md
+- `39b5784125ac16ff63f02d02c42cb5a7e1ce0159` implementation/CAMTHINK_V1_SYNC_INTERRUPTION_RECOVERY_DISCOVERY_2026-09-02.md
+- `3bb39f4af851bc7dfbff14e2acd680f657aba9ac` implementation/CAMTHINK_V1_SYNC_INTERRUPTION_RECOVERY_IMPLEMENTATION_2026-09-03.md
+- `b8d07f1af10699e3dcd2bd39b4f37cc586e86ad4` implementation/CAMTHINK_V1_SYNC_TRUTH_BACKEND_IMPLEMENTATION_2026-09-03.md
+- `2c717d3a69a23ef1ec5d8d1aa5101a7f9221a90e` implementation/CAMTHINK_V1_SYNC_TRUTH_DATA_INTEGRITY_INTEGRATION_GATE_2026-09-03.md
+- `1a7446c13be5ed54c78fe6c63b1d6bed0b97382f` implementation/CAMTHINK_V1_THREE_CANDIDATE_INTEGRATION_GATE_2026-09-03.md
+- `483949cad96364bb61ee344e4d5c424afaa30ee2` implementation/CAMTHINK_V1_THREE_SITE_PARTNER_ORIGIN_PRODUCTION_HOTFIX_2026-09-03.md
+- `b2a939630b4daabe70dc12b7e6734365b5c3833d` implementation/CAMTHINK_V1_UNIFIED_V1_INTEGRATION_2026-09-01.md
+- `c0df766945c34179ac625a8c7420270e67c98ce1` implementation/CAMTHINK_V1_V1_0_0_PRODUCTION_MUTATION_DEPLOYMENT_2026-09-04.md
+- `b3b40ce87f6c1ca6a94f1972f1d117d345552a5e` implementation/CAMTHINK_V1_VERSION_RELEASE_GOVERNANCE_DISCOVERY_2026-09-03.md
+- `9e5ef83d639483e0f87ca694ceaf2dc4c8ca63cf` implementation/CAMTHINK_V1_VERSION_RELEASE_GOVERNANCE_IMPLEMENTATION_2026-09-03.md
+- `588e8cc546f7e855137de76e813672355a45f394` implementation/CAMTHINK_V1_WAVE0_SHARED_OBSERVABILITY_CORE_2026-09-03.md
+- `79b7b04b13cf56d1fcc86dc5d922304d47a1ba9a` implementation/CAMTHINK_V1_WEBSITE_SIMPLE_MODE_ISSUE17_2026-09-03.md
+- `8962c78dd0b25a7dc3f993238530f6bb928b8ce2` implementation/CAMTHINK_V1_WIDGET_WHITELIST_42_194_138_11_PRODUCTION_DEPLOYMENT_2026-09-02.md
+- `0e8e05dc72211283846d276abea249a4d8fb1d13` implementation/PRODUCTION_SYNC_OBSERVATION_2026-09-03_ne301-neoruntime-sdks.md
+- `f901b7acd146ec4e7367be2fd37504c86836367f` implementation/PRODUCTION_SYNC_OBSERVATION_2026-09-03_neoruntime-sdks-recreate-cuda-rca.md
+- `e315648c5266601b516d4618fcfd01b6f2f6b418` implementation/acceptance-evidence-2026-09-01/ENVIRONMENT_SNAPSHOT.md
+- `632f73b1b43047a56e8142bf1086fec8b386ca19` implementation/acceptance-evidence-2026-09-01/build_corpus.py
+- `0a1cd15b752b9401a45038fc7b5370256d0090df` implementation/acceptance-evidence-2026-09-01/corpus.jsonl
+- `779180514d337a6dbab191a4cfff5ab2f896bac7` implementation/acceptance-evidence-2026-09-01/gen_matrix.py
+- `fb4b11c097052a9dd32000dd6e3da3209ee8b681` implementation/acceptance-evidence-2026-09-01/harness.py
+- `bc060ef4d594e265599e7cf48ed5710cac78060c` implementation/acceptance-evidence-2026-09-01/judging_ground_truth.txt
+- `220e19faefd332dc91c4627629317d50ceb71fb5` implementation/acceptance-evidence-2026-09-01/judgments.jsonl
+- `493fc722b8fbcae4ccbd283f728347db891e47e3` implementation/acceptance-evidence-2026-09-01/raw/A01.json **RESTRICTED-raw-json**
+- `d25e820bba2a79d23683bc5701cdb4f4e74b398b` implementation/acceptance-evidence-2026-09-01/raw/A02.json **RESTRICTED-raw-json**
+- `9cdef7c7b0acf6a6641dc6cbc45a1645d1be2c5b` implementation/acceptance-evidence-2026-09-01/raw/A03.json **RESTRICTED-raw-json**
+- `77f922f24ca85fa39a5b6df6121e84f64694ecc1` implementation/acceptance-evidence-2026-09-01/raw/A04.json **RESTRICTED-raw-json**
+- `2abccb1d6c89279876e28dcd6595a38f3cc3e768` implementation/acceptance-evidence-2026-09-01/raw/A05.json **RESTRICTED-raw-json**
+- `863fff9ae3370ac84a9031222b194089109b6afd` implementation/acceptance-evidence-2026-09-01/raw/A06.json **RESTRICTED-raw-json**
+- `e0f866bbf198f5c178f3c1e35b49d1b8e75729bb` implementation/acceptance-evidence-2026-09-01/raw/A07.json **RESTRICTED-raw-json**
+- `c8d3b0b4da2a8728d92fc6b537010bde1b95b1e7` implementation/acceptance-evidence-2026-09-01/raw/A08.json **RESTRICTED-raw-json**
+- `8733fb587e3d4c400b0ffd664ccdb9a5ecc5279d` implementation/acceptance-evidence-2026-09-01/raw/A09.json **RESTRICTED-raw-json**
+- `813d5ad76f76f39ef11c4ad3734efdbc073e3310` implementation/acceptance-evidence-2026-09-01/raw/A10.json **RESTRICTED-raw-json**
+- `4a772f6f5ae6e32854d8ad6846564535211b02a9` implementation/acceptance-evidence-2026-09-01/raw/A11.json **RESTRICTED-raw-json**
+- `f61718d87f40231dd392b78f021ab5572cb790bf` implementation/acceptance-evidence-2026-09-01/raw/B01.json **RESTRICTED-raw-json**
+- `4f520115bb795f6a90adad008fad44ec21d28fd5` implementation/acceptance-evidence-2026-09-01/raw/B02.json **RESTRICTED-raw-json**
+- `514fdfe6dc4ca2950ee521e50ab7e6b2591b141a` implementation/acceptance-evidence-2026-09-01/raw/B03.json **RESTRICTED-raw-json**
+- `4281be8f5633a8b7de093fe82fd820cb9580278d` implementation/acceptance-evidence-2026-09-01/raw/B04.json **RESTRICTED-raw-json**
+- `ad07c7a9f400a67acffb7510bd20c7e2a341ef2c` implementation/acceptance-evidence-2026-09-01/raw/B05.json **RESTRICTED-raw-json**
+- `85ad622ce38f96c233d224a20dd1e7d60c3fa5a5` implementation/acceptance-evidence-2026-09-01/raw/B06.json **RESTRICTED-raw-json**
+- `58060f048b2f20430e36624c9bbc4b3d1f448483` implementation/acceptance-evidence-2026-09-01/raw/B07.json **RESTRICTED-raw-json**
+- `88b336bea772b8ee04faae99212dac2d6195382d` implementation/acceptance-evidence-2026-09-01/raw/B08.json **RESTRICTED-raw-json**
+- `c275b12d697da6bdf68972f4753e40db4bcee1c8` implementation/acceptance-evidence-2026-09-01/raw/B09.json **RESTRICTED-raw-json**
+- `a0306549223efdc624da3e4883582559fa7826c3` implementation/acceptance-evidence-2026-09-01/raw/B10.json **RESTRICTED-raw-json**
+- `76f8cda776dc88362a3361ad367ca6ab3e4b2610` implementation/acceptance-evidence-2026-09-01/raw/B11.json **RESTRICTED-raw-json**
+- `938d9f718308eea6a08f1adc177fb012e61a0747` implementation/acceptance-evidence-2026-09-01/raw/B12.json **RESTRICTED-raw-json**
+- `03737b2440377fff900f65fd996c86fc5d3e9879` implementation/acceptance-evidence-2026-09-01/raw/B13.json **RESTRICTED-raw-json**
+- `39ce90548830e4402ff46de245a002ca731599d0` implementation/acceptance-evidence-2026-09-01/raw/B14.json **RESTRICTED-raw-json**
+- `8a9022683f2ee6f97a6d67c6546220ef77d3e213` implementation/acceptance-evidence-2026-09-01/raw/B15.json **RESTRICTED-raw-json**
+- `ddaea5a579768aaef6100c7e0992edd7b4ea2525` implementation/acceptance-evidence-2026-09-01/raw/C01.json **RESTRICTED-raw-json**
+- `c6fbd93fbd701944036f68231c3c4a7e2fd12315` implementation/acceptance-evidence-2026-09-01/raw/C02.json **RESTRICTED-raw-json**
+- `dae24b4d3822f7237a9179587da559d17e174a49` implementation/acceptance-evidence-2026-09-01/raw/C03.json **RESTRICTED-raw-json**
+- `534d25d913a4262dbf11bcd5a2b776b215d9ceee` implementation/acceptance-evidence-2026-09-01/raw/C04.json **RESTRICTED-raw-json**
+- `5fee577697d3a5631541c61fd642023fae33e782` implementation/acceptance-evidence-2026-09-01/raw/C05.json **RESTRICTED-raw-json**
+- `5ca5239e359bc3a9dec46396e91a5c43ca7d45da` implementation/acceptance-evidence-2026-09-01/raw/C06.json **RESTRICTED-raw-json**
+- `a393e982503d69b3003732b6988c874a52874234` implementation/acceptance-evidence-2026-09-01/raw/C07.json **RESTRICTED-raw-json**
+- `0486345bf917ad1bf10b6c6e638bddb0e2069d9a` implementation/acceptance-evidence-2026-09-01/raw/C08.json **RESTRICTED-raw-json**
+- `d3d713bad8d576723884e1c559ae339da1d68bef` implementation/acceptance-evidence-2026-09-01/raw/C09.json **RESTRICTED-raw-json**
+- `c93f67f95c809922ce0244d93a2cbbef7285aa97` implementation/acceptance-evidence-2026-09-01/raw/C10.json **RESTRICTED-raw-json**
+- `5aeff448b0366d60153b0004a88f91dd10b381e1` implementation/acceptance-evidence-2026-09-01/raw/C11.json **RESTRICTED-raw-json**
+- `ed84b125c3b90f592fe1612ff849671cc6c3ff6c` implementation/acceptance-evidence-2026-09-01/raw/C12.json **RESTRICTED-raw-json**
+- `91450c11b6627699135a7eb0df9311df86930be1` implementation/acceptance-evidence-2026-09-01/raw/D01.json **RESTRICTED-raw-json**
+- `754ea947de1879a2c6c137167ff9ae10097ea3e4` implementation/acceptance-evidence-2026-09-01/raw/D02.json **RESTRICTED-raw-json**
+- `3bf15c7769ca582600988533b8da72b44d77a5b1` implementation/acceptance-evidence-2026-09-01/raw/D03.json **RESTRICTED-raw-json**
+- `73ab92fe1ed43f70d5702ab5c711d2be8bdb2bbb` implementation/acceptance-evidence-2026-09-01/raw/D04.json **RESTRICTED-raw-json**
+- `b558b16c6ffe96b96a78aff03daf4349323d58a5` implementation/acceptance-evidence-2026-09-01/raw/D05.json **RESTRICTED-raw-json**
+- `38b3affeb563dba6a2500ebc81b0bb6fa421a0a2` implementation/acceptance-evidence-2026-09-01/raw/D06.json **RESTRICTED-raw-json**
+- `bf37297c5fba4a5319d9d84def43ce0a9173b8b4` implementation/acceptance-evidence-2026-09-01/raw/D07.json **RESTRICTED-raw-json**
+- `977ab4a3d2bef11c40d0d432e4746ee327ccc660` implementation/acceptance-evidence-2026-09-01/raw/D08.json **RESTRICTED-raw-json**
+- `4d40c1e08b7fc2b3e968de930741f5bdc7177595` implementation/acceptance-evidence-2026-09-01/raw/D09.json **RESTRICTED-raw-json**
+- `0e509eee57d5be4cb508dfeb6521faef9465b39c` implementation/acceptance-evidence-2026-09-01/raw/D10.json **RESTRICTED-raw-json**
+- `5e653d4637a0fb1ffc87d6f70cf5cee6ef5ff5ff` implementation/acceptance-evidence-2026-09-01/raw/D11.json **RESTRICTED-raw-json**
+- `9816a1644a9392d63724e51beda60d96929bdef6` implementation/acceptance-evidence-2026-09-01/raw/D12.json **RESTRICTED-raw-json**
+- `87ab8146666a29bba99a7c1c3a9b9a698fcaaa82` implementation/acceptance-evidence-2026-09-01/raw/D13.json **RESTRICTED-raw-json**
+- `a944382768b197e4145f9df241d667420b9cb47a` implementation/acceptance-evidence-2026-09-01/raw/E01.json **RESTRICTED-raw-json**
+- `ca4704c0a16ab869b90ddbd0855a688b124f92d2` implementation/acceptance-evidence-2026-09-01/raw/E02.json **RESTRICTED-raw-json**
+- `cd3fbdca462036c4a1e0b3b67da4ae69b1ab9e81` implementation/acceptance-evidence-2026-09-01/raw/E03.json **RESTRICTED-raw-json**
+- `f41929b4c498afaade0440e9ee6efdd52f71ccf8` implementation/acceptance-evidence-2026-09-01/raw/E04.json **RESTRICTED-raw-json**
+- `9bac6a285c699bcd3acb9f693938189246cb20ec` implementation/acceptance-evidence-2026-09-01/raw/E05.json **RESTRICTED-raw-json**
+- `8e013e4c68fed0aaec046a02da93accf5f3ea851` implementation/acceptance-evidence-2026-09-01/raw/E06.json **RESTRICTED-raw-json**
+- `36c248348ba968d6f0724b5ccef2bdd6077068af` implementation/acceptance-evidence-2026-09-01/raw/F01.json **RESTRICTED-raw-json**
+- `91dadf0accbb96c65b293f1cd2fd9f309b31df04` implementation/acceptance-evidence-2026-09-01/raw/F02.json **RESTRICTED-raw-json**
+- `04c2e6bf11cf7a5b1be77346842f2a3f1ac9abd6` implementation/acceptance-evidence-2026-09-01/raw/F03.json **RESTRICTED-raw-json**
+- `e099ba946978a49747c838684be6c4c5c626d28f` implementation/acceptance-evidence-2026-09-01/raw/H01.json **RESTRICTED-raw-json**
+- `eb801ac94c90892a9bbd15de011be123ed22914c` implementation/acceptance-evidence-2026-09-01/raw/H02.json **RESTRICTED-raw-json**
+- `fd2bceff7af396956c84779b7635e1719d77885b` implementation/acceptance-evidence-2026-09-01/raw/H03.json **RESTRICTED-raw-json**
+- `c3887fbe54172f31c23799b1f136ac6f76d8b9f7` implementation/acceptance-evidence-2026-09-01/raw/H04.json **RESTRICTED-raw-json**
+- `6b2064b62e570536f61804480dcba4f0951a5648` implementation/acceptance-evidence-2026-09-01/raw/H05.json **RESTRICTED-raw-json**
+- `c9d564abaab9138907be74c029ff9155de25cc7d` implementation/acceptance-evidence-2026-09-01/raw/I01.json **RESTRICTED-raw-json**
+- `386399aa51519b9f1bd54a2490b6017a995198d8` implementation/acceptance-evidence-2026-09-01/raw/I02.json **RESTRICTED-raw-json**
+- `d0a741135ddf93e351454bf115e452470f351788` implementation/acceptance-evidence-2026-09-01/raw/I03.json **RESTRICTED-raw-json**
+- `8aa5ed99f356ee9c82df7fbf8b2c3641cc98696d` implementation/acceptance-evidence-2026-09-01/raw/I04.json **RESTRICTED-raw-json**
+- `93cc436865fecc2c9f482c369d8eb350bd9db473` implementation/acceptance-evidence-2026-09-01/raw/I05.json **RESTRICTED-raw-json**
+- `92787977ceac34cce65ab095e2ca40261d69c959` implementation/acceptance-evidence-2026-09-01/raw/I06.json **RESTRICTED-raw-json**
+- `c6e5c474ec73f13d9941e5e9a1d376cbd4dc9de1` implementation/acceptance-evidence-2026-09-01/raw/J01.json **RESTRICTED-raw-json**
+- `d2b7aaeb2bb7da9d2f74cb010de6224e6c93defe` implementation/acceptance-evidence-2026-09-01/raw/J02.json **RESTRICTED-raw-json**
+- `db0386dae19df69edf5c709f7f943431f1944093` implementation/acceptance-evidence-2026-09-01/raw/J03.json **RESTRICTED-raw-json**
+- `92d3dc3f17d43a3f56e1251e7a3ac944ef396851` implementation/acceptance-evidence-2026-09-01/raw/J04.json **RESTRICTED-raw-json**
+- `2108f638b76dd365a662399e2933520f7cde1ff7` implementation/acceptance-evidence-2026-09-01/raw/K1-admin.json **RESTRICTED-raw-json**
+- `ff7c6e349d2d377819314f279165d1f3635611c7` implementation/acceptance-evidence-2026-09-01/raw/K1-widget.json **RESTRICTED-raw-json**
+- `93ad6795deb6198821a25f8fb12fedd77ae5314a` implementation/acceptance-evidence-2026-09-01/raw/K2-admin.json **RESTRICTED-raw-json**
+- `f7470b8aa237d471c0fc2abd4537efd01f1b09d6` implementation/acceptance-evidence-2026-09-01/raw/K2-widget.json **RESTRICTED-raw-json**
+- `993828665cb7945035e86d1458a025e412e0a0ed` implementation/acceptance-evidence-2026-09-01/raw/K3-admin.json **RESTRICTED-raw-json**
+- `ebab68572c7bb463a7daff61fef557093dd38131` implementation/acceptance-evidence-2026-09-01/raw/K3-widget.json **RESTRICTED-raw-json**
+- `b81608dabda725de4cde4db4f01e64718c7ecd78` implementation/acceptance-evidence-2026-09-01/raw/K4-admin.json **RESTRICTED-raw-json**
+- `a9b24246f8ff376d855d136bc7234bbf186da20f` implementation/acceptance-evidence-2026-09-01/raw/K4-widget.json **RESTRICTED-raw-json**
+- `8f02cab58f14d1a5af9c9abbb4652e2ce5dcc11a` implementation/acceptance-evidence-2026-09-01/raw/K5-admin.json **RESTRICTED-raw-json**
+- `01908040a1ab0eff915ca71ba91aaae1a081a501` implementation/acceptance-evidence-2026-09-01/raw/K5-widget.json **RESTRICTED-raw-json**
+- `3ad3cb7b395f0b0d6f935010b1dd2ac173729eee` implementation/acceptance-evidence-2026-09-01/raw/K6-admin.json **RESTRICTED-raw-json**
+- `7bb0314abc5f8d61473845eb5dd4d4bcba4fcb2d` implementation/acceptance-evidence-2026-09-01/raw/K6-widget.json **RESTRICTED-raw-json**
+- `2df7e2fe56ce605b4bd354e2cea7868eeb56af37` implementation/acceptance-evidence-2026-09-01/raw/L-K1.json **RESTRICTED-raw-json**
+- `6036c87eb2f692465f2848e8afe45d458b8df695` implementation/acceptance-evidence-2026-09-01/raw/L-K2.json **RESTRICTED-raw-json**
+- `b430b31c436abd526d9e2aa941237dad2fe84144` implementation/acceptance-evidence-2026-09-01/raw/L-K3.json **RESTRICTED-raw-json**
+- `923b94172633434aa23f568a0d97a329c53e1d19` implementation/acceptance-evidence-2026-09-01/raw/L-K4.json **RESTRICTED-raw-json**
+- `b615ce34b64cce77827b1192473900f5cd7d842d` implementation/acceptance-evidence-2026-09-01/raw/L-K5.json **RESTRICTED-raw-json**
+- `447c7953167eb53b8415365b880cd6bd5d13891c` implementation/acceptance-evidence-2026-09-01/raw/L-K6.json **RESTRICTED-raw-json**
+- `981151829c54b1632bf269ce6211b9c02f374c24` implementation/acceptance-evidence-2026-09-01/run.log
+- `1c39bd5df557c63dc31aa7b0b8fd7eecfbc633cd` implementation/acceptance-evidence-2026-09-01/scenario_matrix.md
+- `79b9b74670d556cca5d1b57af038b761de752977` implementation/dsh-evidence-2026-09-01/analytics-after.png **RESTRICTED-evidence image**
+- `bd2e5cbdfbe1e587493f059e55a0cc7e7fd9db2a` implementation/dsh-evidence-2026-09-01/analytics-before.png **RESTRICTED-evidence image**
+- `cc7ca965387cf25762e1b322a4b002a9bdf0631b` implementation/dsh-evidence-2026-09-01/datasources-after.png **RESTRICTED-evidence image**
+- `3dcb90c1b9a0ffe83e373ced69883386ceb83268` implementation/dsh-evidence-2026-09-01/datasources-before.png **RESTRICTED-evidence image**
+- `4a3f112c7828f587a0b88c43c8d4874133c5f1e2` implementation/evidence/CAMTHINK_V1_UNIFIED_V1_INTEGRATION_2026-09-01/smoke-admin-conversations.png **RESTRICTED-evidence image**
+- `d117a76db713e4bd6d4c80e907f0bc48b19556e4` implementation/evidence/CAMTHINK_V1_UNIFIED_V1_INTEGRATION_2026-09-01/smoke-admin-data-sources.png **RESTRICTED-evidence image**
+- `93670da6d0aea25f2d93ec146a626de7c96258bd` implementation/evidence/CAMTHINK_V1_UNIFIED_V1_INTEGRATION_2026-09-01/smoke-admin-llm-providers.png **RESTRICTED-evidence image**
+- `4a04770a94e71badc833904f4ba14dc17cf96205` implementation/evidence/CAMTHINK_V1_UNIFIED_V1_INTEGRATION_2026-09-01/smoke-admin-tech-insights.png **RESTRICTED-evidence image**
+- `0b497dd955d2f4287e10acb43b129564e33fcc06` implementation/evidence/CAMTHINK_V1_UNIFIED_V1_INTEGRATION_2026-09-01/smoke-widget-site-experience.png **RESTRICTED-evidence image**
+- `28c6e06d9c94705c587d42d9226e58a35b0cceb3` implementation/evidence/admin-final-polish-20260901/01-login.png **RESTRICTED-evidence image**
+- `2ac6e444c6693d23320a19fb5c1a3104849e52f0` implementation/evidence/admin-final-polish-20260901/02-business-overview.png **RESTRICTED-evidence image**
+- `bcf06859dc2402944c2ca0c57d79e9492c7caa2f` implementation/evidence/admin-final-polish-20260901/03-conversations.png **RESTRICTED-evidence image**
+- `520e8f46e9653a90865c9faebcba206324817d8c` implementation/evidence/admin-final-polish-20260901/04-analytics.png **RESTRICTED-evidence image**
+- `6484194ecb403de33db3cfba281bdb8fba2ab176` implementation/evidence/admin-final-polish-20260901/05-data-sources.png **RESTRICTED-evidence image**
+- `42cd4a270923df55fd2fa3ef3db4f48ce92f243e` implementation/evidence/admin-final-polish-20260901/06-customizations.png **RESTRICTED-evidence image**
+- `49256348128e99021677816a71f8237e74cf7aa8` implementation/evidence/admin-final-polish-20260901/07-llm-providers.png **RESTRICTED-evidence image**
+- `42503b25b1b02cc1288ad7144417e57752000246` implementation/evidence/admin-final-polish-20260901/08-answer-overrides.png **RESTRICTED-evidence image**
+- `2ddd303fb1f1dea4dc22cad58265dfa7be4d3d4b` implementation/evidence/admin-final-polish-20260901/09-users.png **RESTRICTED-evidence image**
+- `fe409a4ef9cb5993fd52c318409d219ceedbfb3d` implementation/evidence/admin-final-polish-20260901/10-conversations-empty-search.png **RESTRICTED-evidence image**
+- `42cd4a270923df55fd2fa3ef3db4f48ce92f243e` implementation/evidence/admin-final-polish-20260901/11-customizations-detail.png **RESTRICTED-evidence image**
+- `d0e200d572d10fb064151d4c61b942122e0e5062` implementation/evidence/admin-final-polish-20260901/12-datasource-create-dialog.png **RESTRICTED-evidence image**
+- `49256348128e99021677816a71f8237e74cf7aa8` implementation/evidence/admin-final-polish-20260901/13-llm-providers-detail.png **RESTRICTED-evidence image**
+- `1f324fe92e8681903e6217f8ae099dc8728e975e` implementation/evidence/admin-final-polish-20260901/14-provider-add-dialog.png **RESTRICTED-evidence image**
+- `16023b4ed0517c6f7dacfdaca06b428591f99526` implementation/evidence/admin-final-polish-20260901/15-analytics-1280.png **RESTRICTED-evidence image**
+- `352a3e5232c0ef0ce5a3f497af33b0aa11d1a1ea` implementation/evidence/admin-final-polish-20260901/16-data-sources-1280.png **RESTRICTED-evidence image**
+- `5943afecaeb51281697340100a63b74eb898ab16` implementation/evidence/admin-final-polish-20260901/17-business-1280.png **RESTRICTED-evidence image**
+- `5384e2f3a7df11e818c55a3f2c4ad26e51259771` implementation/evidence/admin-final-polish-20260901/18-viewer-home.png **RESTRICTED-evidence image**
+- `80dbe409d31ea18e0451d4d3d7d6e3031bdeed49` implementation/evidence/admin-final-polish-20260901/19-viewer-data-sources.png **RESTRICTED-evidence image**
+- `512d2ff9aa46f3a6dcb94abaeac108c99d7fcbb7` implementation/evidence/admin-final-polish-20260901/20-viewer-llm-providers.png **RESTRICTED-evidence image**
+- `8b96f7e459ab05b483296f50eaf4c2251e835fbb` implementation/evidence/admin-final-polish-20260901/21-viewer-users.png **RESTRICTED-evidence image**
+- `9ed23eb7ab28f48a236d5ec1b9a2b01ecafed40e` implementation/evidence/admin-final-polish-20260901/22-viewer-conversations.png **RESTRICTED-evidence image**
+- `6a7544c4e76401012aaabeef13b7bce39d324721` implementation/evidence/admin-final-polish-20260901/23-viewer-answer-overrides.png **RESTRICTED-evidence image**
+- `03039650861090e5bb772b04d0792ffae70fb67a` implementation/evidence/admin-final-polish-20260901/24-login-error.png **RESTRICTED-evidence image**
+- `f66b82337d53574b429d06828a8e68fac8138843` implementation/evidence/admin-final-polish-20260901/overflow.txt
+- `1efb5a499afb9e8236e15519ac2f94d6da83c411` implementation/evidence/admin-final-polish-20260901/viewer-report.json **RESTRICTED-raw-json**
+- `2908c65959e834ff7899c02a35ccecfef83c354f` implementation/evidence/admin-final-polish-20260901/walkthrough-report.json **RESTRICTED-raw-json**
+- `ccf36ef10dcf200ae4323abccebc5497e21f257e` implementation/evidence/admin-final-polish-fix-20260901/acceptance-notes.json **RESTRICTED-raw-json**
+- `de5045ab0f8fdd75d12d0c6122731047e85ed47b` implementation/evidence/admin-final-polish-fix-20260901/b1-login-error.png **RESTRICTED-evidence image**
+- `801afffb002d69d10da8b16ecc4284b7192b0c65` implementation/evidence/admin-final-polish-fix-20260901/b2-business-label.png **RESTRICTED-evidence image**
+- `a41118127089bb04f4974708b0e9da4cd4c8ccbe` implementation/evidence/admin-final-polish-fix-20260901/b3-analytics-no-funnel.png **RESTRICTED-evidence image**
+- `1c632bfc6e8c3f7cb01e95b3d7981512c34d8af7` implementation/evidence/admin-final-polish-fix-20260901/b4-datasource-after-delete.png **RESTRICTED-evidence image**
+- `f237481132e3c0ff76c92ab145f3012894194dc6` implementation/evidence/admin-final-polish-fix-20260901/b5-viewer-datasources.png **RESTRICTED-evidence image**
+- `7f38ad1120a3885d626e971cbe0b42b1bc7260de` implementation/evidence/admin-final-polish-fix-20260901/b6-viewer-users-denied.png **RESTRICTED-evidence image**
+- `60e78d397ddbc1db5941437e07861024b5e221b6` implementation/evidence/technical-insights-20260901/evidence-01-high-anomaly-zero-failure.png **RESTRICTED-evidence image**
+- `f310dbeb455cb532836ccc2d5adb68217f0534d7` implementation/evidence/technical-insights-20260901/evidence-02-real-failures.png **RESTRICTED-evidence image**
+- `ff66450cbf3e428ad6e285a266896fe11422f50d` implementation/evidence/technical-insights-20260901/evidence-03-healthy.png **RESTRICTED-evidence image**
+- `345f11f71db12d7df8df00f3fd7334864cdcfe78` implementation/evidence/technical-insights-20260901/evidence-04-no-data.png **RESTRICTED-evidence image**
+- `3fec1aec7e91d26790fcb300706ebf309f453ab9` implementation/evidence/technical-insights-20260901/evidence-05-failure-deeplink.png **RESTRICTED-evidence image**
+- `85308184c538fe521ee7dc3519b02846e207f224` implementation/evidence/technical-insights-20260901/resp-02-real-failures.json **RESTRICTED-raw-json**
+- `cc6d159316249e1af99f4cb7212844f93511bf14` implementation/evidence/technical-insights-20260901/resp-05-has-failure.json **RESTRICTED-raw-json**
+- `a860d5cb64a2f32d55a015dda5c213fdd05237e4` implementation/evidence/technical-insights-20260901/resp-healthy.json **RESTRICTED-raw-json**
+- `8682e702a72f3a7611b6389c367e6226d9cc28ba` implementation/evidence/technical-insights-20260901/resp-high_anomaly_zero_failure.json **RESTRICTED-raw-json**
+- `f62eb581b8730bfd24de625132c56ba2100c8864` implementation/evidence/technical-insights-20260901/resp-no_data.json **RESTRICTED-raw-json**
+- `5ddb724fc4bc8a3839bd0e9f6533e3b490bd6adf` implementation/evidence/test-suite-perf-2026-09-03/askai_profile_runC.log
+- `f0112f0be5851fa0f21c098cd40c6214ee62ccf1` implementation/evidence/test-suite-perf-2026-09-03/askai_profile_runD.log
+- `aa0ec915b3f5351ca19573ddc15c3bde8bc60a36` implementation/evidence/test-suite-perf-2026-09-03/askai_runE_unit.log
+- `3cec4598ab5b06f4393421069a2e9030a8971ce5` implementation/evidence/test-suite-perf-2026-09-03/askai_runF_integration.log
+- `e71743e673d3ed76b2aec3347c7eb06fb8a331a4` implementation/evidence/test-suite-perf-2026-09-03/askai_runG_ci_subset.log
+- `f28534f86b67e6b8e9afe984a32cffe614c547f7` implementation/evidence/test-suite-perf-2026-09-03/profile_runA_evidence.txt
+- `6d1e0b71f223fd73001d9e7c1ee1ea9d59982479` implementation/evidence/website-coverage-20260901/web_coverage_evidence.json **RESTRICTED-raw-json**
+- `aa71ba20c4562fc74bb6afd049733d1896a080c1` implementation/p0-p1-integration-evidence-live.json **RESTRICTED-raw-json**
+- `b0bf0c959ac654503701480b7bd2552a29d9385a` implementation/p0-trust-boundary-evidence/hypothesis_experiment.py
+- `f7eeac831fd22f464a5edc75b7fb7e1087a9611c` implementation/p0-trust-boundary-evidence/p0_e2e_CASE-G001-retry.json **RESTRICTED-raw-json**
+- `2be7213ab715d88d50a31baa10b76dbb4f080250` implementation/p0-trust-boundary-evidence/p0_e2e_SEC-G001-retry.json **RESTRICTED-raw-json**
+- `0ade10936d76aef6aa6ce21d95a16f0045ef45ea` implementation/p0-trust-boundary-evidence/p0_e2e_evidence.A.json **RESTRICTED-raw-json**
+- `fa8d87078dfc70626b720f5af822f54ecaccf281` implementation/p0-trust-boundary-evidence/p0_e2e_evidence.B.json **RESTRICTED-raw-json**
+- `fcbfbda0d12ed225ee14a06b1acdb568f1f85bd2` implementation/p0-trust-boundary-evidence/p0_rework_evidence.json **RESTRICTED-raw-json**
+- `29271a092bd38115285761ade76e5f8ffb152e69` implementation/p0-trust-boundary-evidence/pytest_full_567passed.log
+- `879401821ffc678d1269c9a4e7b13816d493084a` implementation/p0-trust-boundary-evidence/pytest_full_brokenDSN.log
+- `ee4b448e7ad3cb4cc1c587394919f0769eb16aca` implementation/store-origin-fix-evidence-20260903/store-widget-answer-ne503.png **RESTRICTED-evidence image**
+- `8b4c5cd87009aeabd75765c2fbf6d84249bf2acb` implementation/v1-checkpoint-smoke-live.json **RESTRICTED-raw-json**
+- `31cf2edd119e0a8579d7aedcd28eaa71362224ef` planner-reviewer-protocol.md
+- `bc82266086539a80d87bcc7f3ea18a72a6edc36c` product-roadmap.md
+- `685acef621b6de688f8251d2171be423890183e7` product/PRODUCT_ROADMAP.md
+- `288b01124d947e628eeaaca7890cb90ebb81aabb` product/PRODUCT_STATE.md
+- `67187876df7d0d1654e68ed90fd4fb97024e123d` product/PRODUCT_VISION.md
+- `01cf7aed066dfdf3ae196aed11b5c326a6d1afef` superpowers/handoff/2026-08-05-llm-model-config.md
+- `1abfe749565b4742faea87a096f4f35000313a45` superpowers/handoff/2026-08-17-tesla-t4-docker-recovery-plan.md
+- `e19288e8298ea10e0e07a92f80377318296c70e4` superpowers/handoff/2026-08-28-env-strategy-admin-channel.md
+- `f6c2d1ed897d0bb884df0fbb78c04a3772223a5d` superpowers/handoff/2026-08-30-sync-worktree-triage.md
+- `1493e1b1a97535a17ea7eb8d82919943269ba712` superpowers/plans/2026-07-28-ask-ai-phase1.md
+- `0db45899fcf6fef08c799e4537d32493bebc8e35` superpowers/plans/2026-07-30-phase2a-indexing-optimization.md
+- `0bbdf6d33dafc11f3925dd2487804d946b162a23` superpowers/plans/2026-07-30-phase2b-admin-panel.md
+- `27591792ccd10539ef9bcb9816bcc5e5a7c954ce` superpowers/plans/2026-07-30-phase3a-answer-quality.md
+- `19230cf6b720d5e638b90f4bb279c2fce1dde258` superpowers/plans/2026-07-30-phase3b-analytics.md
+- `7759e37053299fb57424240098c51eff8d9a0301` superpowers/plans/2026-07-31-codebase-indexing-core.md
+- `3c280e0865c34453a5dc1a147aa8cbda63c2b8b6` superpowers/plans/2026-08-03-dir-picker.md
+- `186f14e2a9a6559680b741c66975c53e6057d037` superpowers/plans/2026-08-03-gpu-parallel-indexing.md
+- `edb933272b558e0fbf61e688f0ccc07cc8e2a283` superpowers/plans/2026-08-03-local-git-incremental.md
+- `a98e47f6095ed10488f070f0a783523a914d85ca` superpowers/plans/2026-08-03-symbol-retrieval.md
+- `caab9fafbb395f3713c0c8d86a05989dd76b8f23` superpowers/plans/2026-08-04-github-source-unify.md
+- `d7865d3e6a1188d7a033af1e903b30e6bbfd3538` superpowers/plans/2026-08-04-intent-routing.md
+- `2496c141362e6cdfb049538526f70e2a936358de` superpowers/plans/2026-08-04-woocommerce-connector.md
+- `89d5744c3c9c991dacafeb61575f21860b08cd96` superpowers/plans/2026-08-05-chat-attachment-phase1a.md
+- `e86da8c9c221128d216d698af548beb2395d0366` superpowers/plans/2026-08-05-datasource-unify-finalize.md
+- `22a04771ae30bdebb39036e5cccc100ffd0e1ba3` superpowers/plans/2026-08-05-llm-model-config-redesign.md
+- `30cec2c8e9f33db600864cd1647f4f1b521ddf05` superpowers/plans/2026-08-10-conversation-observability.md
+- `cb9be04527cd4f0dedc5dee7f46eca2e7d1b956e` superpowers/plans/2026-08-11-admin-phase1-plan.md
+- `5b02b4dbcd11c79dc3cc52d9eb78aa883114cd4f` superpowers/plans/2026-08-11-admin-phase2-plan.md
+- `e4ad121f201a1c4759c7295dbff53e5b7c265ace` superpowers/plans/2026-08-26-sync-consistency.md
+- `a9ea90e96ee7eeedd53aa7eaa46ca96ae85212ad` superpowers/specs/2026-07-27-ask-ai-design.md
+- `0fcd4f0e9b1916e23e6556cc7a8749ea01bf697a` superpowers/specs/2026-07-31-codebase-analysis-design.md
+- `89dc0dde4d5fa333672b04ed73601d5c3669f14c` superpowers/specs/2026-08-03-symbol-retrieval-design.md
+- `2c631ebd015757054e3ffc7d21f2201b511fc1f1` superpowers/specs/2026-08-04-github-source-unify-brainstorm.md
+- `b5594f7008e7e3c42f95deebc127339d68ea7cba` superpowers/specs/2026-08-04-intent-routing-design.md
+- `15ae82a1513ebc44045fe12d9ce9a1320b8a27fc` superpowers/specs/2026-08-05-chat-attachment-analysis-design.md
+- `cf6947c46916298ba3df8c0307ca8bf308fac1eb` superpowers/specs/2026-08-05-llm-model-config-redesign.md
+- `d46cc514e2a1ea784ee2c09ce6d8ab1aa1ddde6c` superpowers/specs/2026-08-07-conversation-observability-design.md
+- `11748184ae4a6e2c2b6a442bf8d347506bdc59b9` superpowers/specs/2026-08-11-admin-design-alignment-design.md
+- `3c63af146077739508ea74c55ead2bfe5a828ae0` superpowers/specs/2026-08-26-sync-consistency-design.md
+
+### docs/issue33-first-paint-execution-rev1（tip `3cf9eee3998eaaa3337cd3b79233a3c28b7e3eab`，400 工件）
+
+- `87c1c2da650a85769d4c7e8a8515283e79d12075` engineering/CONTRACT_ISSUE23_PERFORMANCE_PATCH_20260904.md
+- `ebee96b93c2d73c26a37bb4d14a6de4f6882d6df` engineering/DUAL_AGENT_PROTOCOL.md
+- `1aaa6cae5ba88b00303cb407074a5c7e127a3e9e` engineering/EXECUTION_WINDOW_ENV_GUIDE.md
+- `6274350ad2e9bec3e64a323d5b2bc3cb6939457a` engineering/contracts/c8-c9-c10-web-data-win.md
+- `fcf70d035a48c00eabda19a21912caa920d01d3c` engineering/contracts/d4-ingest-accounting-and-consistency-calibration.md
+- `87d131bc261fa3f07f7c102579d39c8f671086f8` engineering/contracts/p1-admin-visibility-and-data-residuals.md
+- `9aa9a6fbe9b6cc5d9186b34f70c19503f721cc9e` engineering/contracts/rel-win-one-shot-release.md
+- `18caa21817d6706d4a4a493f1091b2651b314047` engineering/discovery/I002-EVIDENCE-INTELLIGENCE-ENGINEERING-DISCOVERY.md
+- `b5b5c1655a69c98143fdc4a5e99affd003d831b2` engineering/discovery/INTELLIGENT_ANSWER_ENGINE_ENGINEERING_DISCOVERY.md
+- `c46df481272919e19a8bbb1cc1faef29dcc5f665` engineering/reviews/d11-sync-consistency-prod-acceptance-review.md
+- `a9cc543081b160a40ebde934f6a505b210d7070c` engineering/reviews/d4-acc-review.md
+- `3b332cd3b0c70f740e43e4ac062a6a0c39a55390` engineering/reviews/p1-res-review.md
+- `c4e066f98ccd41bb7955c197c0153f44a8616f1a` engineering/reviews/rel-win-review.md
+- `92b21e306b1b0bf00edcd737381426311a877a1a` engineering/reviews/web-data-win-review.md
+- `474206f7225c37ae70ee42aabc470f7dc46455ae` engineering/role-A.md
+- `ec9eebf9cd15c6fbc125d66710dc7669eda2de66` engineering/role-B.md
+- `45366ee34c376cdf9fbb4eac81bf6125c06b06bd` engineering/tasks/INC-1-ANSWER-OBSERVABILITY-execution.md
+- `8f3b7f9a39c4f42283d027d0d5c7e435bad5021b` engineering/tasks/INC-2A-EVIDENCE-METADATA-execution.md
+- `f575f2f13d68d0da335ad4b47b626efb76a3f3da` engineering/tasks/INC-3-TASK-UNDERSTANDING-CONSOLIDATION-execution.md
+- `41d09e96fe5e04dc327ea6156c62b8d19b83c458` engineering/tasks/ISSUE-33-WIDGET-FIRST-PAINT-THEME-CORRECTNESS-execution.md
+- `e2fe427628eb93380343266d5355ae8f23e74030` engineering/tasks/ISSUE-34A-GITHUB-MULTIBRANCH-CHANGE-DETECTION-execution.md
+- `e84dfa42c962633562699681b331845402df6ce4` engineering/tasks/KNOWLEDGE-STALE-LEDGER-PROD-REPAIR-execution.md
+- `0995f55ca4757e94054a6ee9c1dd0f9061d48d36` engineering/tasks/T-COMPARISON-EVIDENCE-CORRECTNESS-execution.md
+- `0139e6d98ee5ea9c294e143997df0be7e8254dfb` engineering/tasks/T-MODEL-RUNTIME-APPLY-execution.md
+- `2f920493651365efed823e770ae4e1354fe9c72b` engineering/tasks/c8b-webcrawl-admin-ui-execution.md
+- `694ddf2c649a3bee78ee6108ea325452b27f5dbe` engineering/tasks/c8b-webcrawl-admin-ui-plan.md
+- `cea47d463676dc3d22f6d040f571622f6ad58ed1` engineering/tasks/c8b-webcrawl-admin-ui-review.md
+- `3502a2bf755c4a48d58449be2a28ec4727b946bd` engineering/tasks/c9-upload-fix-execution.md
+- `eebea10443dd29ba97f2de301a7efe962604db90` engineering/tasks/c9-upload-fix-review.md
+- `52a432738bbc5a785bcf3895df5940dec0888b7c` engineering/tasks/d11-sync-consistency-prod-acceptance-execution.md
+- `12e35cb9e6e1cad77be1e44b414e853c808ce4fb` engineering/tasks/d4-acc-execution.md
+- `f74b7339670ea5406f9e9eddad417ef2f0cbbaea` engineering/tasks/msw-evidence/curl-evidence.txt
+- `c85665508353ea6e6d91f286ddb10a8bb872927f` engineering/tasks/msw-evidence/g001-website.png **RESTRICTED-evidence image**
+- `e459dfaef320fe8d7b4f8a263bb5bfea3e5477e2` engineering/tasks/msw-evidence/g002-wiki.png **RESTRICTED-evidence image**
+- `11b5e95b81929a336d09fdbf21aca8f11f5190f6` engineering/tasks/msw-evidence/g003-store.png **RESTRICTED-evidence image**
+- `74cf4540a90ff66f09a91588dcb7ae4cd9a62928` engineering/tasks/msw-evidence/g004-mismatch.png **RESTRICTED-evidence image**
+- `809c5d29655896d1e4ec92d21207b63debaeb45f` engineering/tasks/msw-evidence/g005-unknown-fallback.png **RESTRICTED-evidence image**
+- `475fdcc9854f7bd6e1e6ebdd8a382296d0a403ce` engineering/tasks/msw-evidence/g006-legacy.png **RESTRICTED-evidence image**
+- `6a8a14a91944008f955ebb61550ff25a82cce46d` engineering/tasks/msw-multi-site-widget-execution.md
+- `d01a67e9cde37adff170fb5eaac50745ea351d66` engineering/tasks/msw-multi-site-widget-plan.md
+- `6b267b7e697cf08fbbc1688ae1b490109893a63a` engineering/tasks/p1-res-execution.md
+- `1b32d226eb6a8fe27b83de7e5f71756f57010d07` engineering/tasks/rel-win-execution.md
+- `fc9e7d53326c8f18c47ae1a0db8df2e01456bdc2` engineering/tasks/release-batch-20260831-closure.md
+- `a116394c94f46c90a129a5ed9a5884afef677d69` engineering/tasks/t1a-launch-package-execution.md
+- `b079d4b822b0ce8f5b49453d838d2e771a6aab6e` engineering/tasks/t1a-launch-package-plan.md
+- `fe5728448d4d14eec7122a7331b241d8c37ef025` engineering/tasks/t1a-launch-package-review.md
+- `3f7555792913f8c425b5956d66aa3bf9a79949f0` engineering/tasks/t25a-ds-health-ownership-plan.md
+- `a7f5c6b9f0b0f79afde04d003ef7e77dc9156d5a` engineering/tasks/t26-conv-list-ux-execution.md
+- `6fc065acaf1e5ad9bf1d815ff4d47449cba940d2` engineering/tasks/t26-conv-list-ux-plan.md
+- `3464b50fd9b8e5b33271e04ef6af652319121512` engineering/tasks/t26-conv-list-ux-review.md
+- `af28af1f64b322c6c040b2deba1b72684707a396` engineering/tasks/t27-llm-provider-switch-fix-execution.md
+- `39cd1569a9eeda695ea38425d970a5b76a0b9e91` engineering/tasks/t27-llm-provider-switch-fix-plan.md
+- `bfb92c034fd95c06ae517aa5624bc0176eafc3be` engineering/tasks/t27-llm-provider-switch-fix-review.md
+- `1e491b947642155d24ffcff9ca8b585a73b5a352` engineering/tasks/t28-analytics-doc-count-fix-execution.md
+- `d3cfb5d7828da77d1732a1739f827c26d0a666cf` engineering/tasks/t28-analytics-doc-count-fix-plan.md
+- `ab2c50dc454a6129860bee8bdadabb536dc2b999` engineering/tasks/t28-analytics-doc-count-fix-review.md
+- `5cdc5747f7c15ae309108bcde54d1de25da4ae15` engineering/tasks/t29-widget-citation-number-execution.md
+- `630c57696ec6fcdbefd83909baac608dc149730b` engineering/tasks/t29-widget-citation-number-plan.md
+- `2e10d51655f8635bebec6fdc87da37a3be070377` engineering/tasks/t29-widget-citation-number-review.md
+- `b87faf49e778fc9aea5c5513f8d050a7616cddf5` engineering/tasks/t30-test-db-safety-plan.md
+- `041ced732af5bf7858901dd4e588baa9c88d10cf` engineering/tasks/web-data-win-execution.md
+- `b0783b2fa263543ecb974035256bdf0d6cf1bb28` evaluation/BENCHMARK_V1_ADMISSION_GROUND_TRUTH_2026-09-07.md
+- `13a40bf2dd1ed62b056e8157c0ffd7861581858d` evaluation/BENCHMARK_V1_COVERAGE_GAP_COMPLETION_2026-09-07.md
+- `c4b07586529014ccdf4f714565e8b18afea861be` evaluation/BENCHMARK_V1_FINAL_FREEZE_2026-09-07.md
+- `e23bfead4664e72c5f5f75465fe69578086f9515` evaluation/BENCHMARK_V1_GROUND_TRUTH_REVALIDATION_2026-09-05.md
+- `72bdec4a0234714820d3f0918087e6f55535b646` evaluation/BENCHMARK_V1_HISTORICAL_CORPUS_MIGRATION_DISCOVERY_2026-09-05.md
+- `c69826752af330474cee5a1ebbd549195193908a` evaluation/BENCHMARK_V1_MARKING_CONTRACT_REWRITE_2026-09-07.md
+- `ae516449277a3aedc3e721a3c93be567ad97d167` evaluation/BENCHMARK_V1_UNIFIED_NORMALIZATION_2026-09-07.md
+- `10dab0733af7158ef2aeb8880cdb7dda73de386d` evaluation/benchmark_v1/admission_ground_truth_24_2026-09-07.json **RESTRICTED-raw-json**
+- `bdc8c9078df42ccc657757717dfd68ef4261e747` evaluation/benchmark_v1/baseline_v1_2026-09-07/BASELINE_V1_2026-09-07.md
+- `e8c935b252972775727482feeb8f393f86cbfd64` evaluation/benchmark_v1/baseline_v1_2026-09-07/attribution/FAILURE_ATTRIBUTION_AMENDMENT_2026-09-07.md
+- `1de836768ce9b2cb688e88aaf96c88fcb346b93d` evaluation/benchmark_v1/baseline_v1_2026-09-07/attribution/FAILURE_ATTRIBUTION_V1_2026-09-07.md
+- `8b1fffb508491179e1980e13e73b3b73e1f5e528` evaluation/benchmark_v1/baseline_v1_2026-09-07/attribution/failure_attribution_v1.json **RESTRICTED-raw-json**
+- `c704adf58d96becf05f69a394cf8b3bee779dcc6` evaluation/benchmark_v1/baseline_v1_2026-09-07/attribution/failure_clusters_v1.json **RESTRICTED-raw-json**
+- `a93bd285c22b3117161357e0baefe09d73e825c0` evaluation/benchmark_v1/baseline_v1_2026-09-07/attribution/quantification_v1.json **RESTRICTED-raw-json**
+- `8c41476a9101bd6ef00cd1306d2f57c8b0d637a6` evaluation/benchmark_v1/baseline_v1_2026-09-07/attribution/systemic_capability_gaps_v1.json **RESTRICTED-raw-json**
+- `bd8fb9d6144123794fe7bb25f40c35dcb3506842` evaluation/benchmark_v1/baseline_v1_2026-09-07/attribution/zero_source_analysis_v1.json **RESTRICTED-raw-json**
+- `1ef2516c18add289aa9b1b47f75ee9e26e65de8e` evaluation/benchmark_v1/baseline_v1_2026-09-07/baseline_judged_results.jsonl
+- `437eaa0ce3c834c588297947ef23fa5d6a27e50f` evaluation/benchmark_v1/baseline_v1_2026-09-07/baseline_manifest_v1.json **RESTRICTED-raw-json**
+- `d433df94a10588e23aacde4eb9abf6402bdbc11f` evaluation/benchmark_v1/baseline_v1_2026-09-07/baseline_results_raw.jsonl
+- `4040918c6e90b2fdd087d90295371c119174c5cc` evaluation/benchmark_v1/baseline_v1_2026-09-07/baseline_score_summary_v1.json **RESTRICTED-raw-json**
+- `4fd8342eaa4b609972b116220a68eca01ea8a9ab` evaluation/benchmark_v1/baseline_v1_2026-09-07/review/BASELINE_V1_INDEPENDENT_REVIEW_2026-09-07.md
+- `fb0df5f4b459022530bef97ce34048adf9ca5be6` evaluation/benchmark_v1/baseline_v1_2026-09-07/review/baseline_independent_recalculation_v1.json **RESTRICTED-raw-json**
+- `5576735d05602f56ec6160e08764e4173493f53a` evaluation/benchmark_v1/baseline_v1_2026-09-07/review/critical_fail_adjudication_v1.json **RESTRICTED-raw-json**
+- `58575d11d3fe8991c5d306911cf57a3752e93741` evaluation/benchmark_v1/baseline_v1_2026-09-07/review/human_calibration_results_v1.jsonl
+- `9f181b35419701bd10df68585d08c030de08cb5e` evaluation/benchmark_v1/baseline_v1_2026-09-07/review/human_calibration_sample_v1.json **RESTRICTED-raw-json**
+- `182c3f8db3dc6e9052d531c0bd6c9d8a1210f8b3` evaluation/benchmark_v1/baseline_v1_2026-09-07/review/judge_calibration_summary_v1.json **RESTRICTED-raw-json**
+- `8f44237d179164c54c9852d51d11a6c43e476dec` evaluation/benchmark_v1/baseline_v1_2026-09-07/review/observed_failure_inventory_v1.json **RESTRICTED-raw-json**
+- `19c35c26f0bb7e15710a9217ccc4df3a9c5501e8` evaluation/benchmark_v1/coverage_gap_additions_2026-09-07.json **RESTRICTED-raw-json**
+- `f38ec510fe1759bf7c511d180448bcb46dcf1526` evaluation/benchmark_v1/freeze_v1/anonymization_map_v1.json **RESTRICTED-PII original identifiers**
+- `2a06125b59418bfe53e92e9c329db5cf565ed0ec` evaluation/benchmark_v1/ground_truth_revalidation_41.json **RESTRICTED-raw-json**
+- `5f0f6a70822350307e12e6cc2304f60117bb2d32` evaluation/benchmark_v1/marking_contracts_c30.json **RESTRICTED-raw-json**
+- `8b9c335dd769f0eeebd2bbc73ebaae269972b7d8` evaluation/benchmark_v1/migration_inventory_117.json **RESTRICTED-raw-json**
+- `edfbdb4fb0db28ef71f1c5a3af304526c6bc87f8` evaluation/benchmark_v1/unified_benchmark_contracts_121_2026-09-07.json **RESTRICTED-raw-json**
+- `971176e1a923febf72fd1ad372d1984d24c48fa0` evaluation/benchmark_v1/unified_schema_v1_2026-09-07.json **RESTRICTED-raw-json**
+- `a04999224d50cc0f01c6373df70d2393f6113cfe` evidence/issue33-theme-flash/after-config.png **RESTRICTED-evidence image**
+- `6cfad491135e94d5b5c3780f7d41b730b1959d1c` evidence/issue33-theme-flash/first-paint-default.png **RESTRICTED-evidence image**
+- `a04999224d50cc0f01c6373df70d2393f6113cfe` evidence/issue33-theme-flash/fixed/first-visible-resolved.png **RESTRICTED-evidence image**
+- `c193dbe17d80ccabd5e2c45f8dbcfb9960ca181a` evidence/issue33-theme-flash/fixed/pending-no-launcher.png **RESTRICTED-evidence image**
+- `c408b18248e56603377f230cdb97978450aa1bb5` evidence/issue33-theme-flash/index-override.html
+- `397a4502cac7ab6c5b092793b7b02ce9fef02158` evidence/issue33-theme-flash/index.html
+- `827c78160bfb3e913d62740ba6206a2ecabe997a` evidence/issue33-theme-flash/server.py
+- `5e4aec0c872ef727e50cbe42d96c813df6dc9328` implementation/ASK_AI_CUSTOMIZATION_PROMPT_RUNTIME_EFFECTIVENESS_DISCOVERY_2026-09-02.md
+- `55e39dd4717bf973b5eea8e5353afb7e5b6fb5a5` implementation/ASK_AI_TEST_ISOLATION_FIXTURE_PERFORMANCE_CLOSURE_2026-09-03.md
+- `450e4afdefdf2ef99355bfcf7d5f4f926795578b` implementation/ASK_AI_TEST_SUITE_PERFORMANCE_ISOLATION_DISCOVERY_2026-09-03.md
+- `eb49192b668c158208f6573aaef818e46a4f6610` implementation/ASK_AI_WIDGET_WHITELIST_42_194_138_11_2026-09-02.md
+- `9b46c6684d3463e95afefa0f67923e20f9a92d2c` implementation/CAMTHINK_GPU_RUNTIME_HARDWARE_AWARE_DISCOVERY_2026-09-04.md
+- `f8e3ac48e359f663eb4692217bfb0a9e186338ed` implementation/CAMTHINK_GPU_RUNTIME_MODELS_ADMIN_EXECUTION_2026-09-04.md
+- `a23c56ace974f90bd3d21d9fc8fdeb08235e21f1` implementation/CAMTHINK_ISSUE_19_COMPARISON_CORRECTNESS_DISCOVERY_2026-09-04.md
+- `b325e54e94324c362ffc76486b2d351245f5cd78` implementation/CAMTHINK_ISSUE_22_DISCOVERY_GOVERNANCE_EXECUTION_2026-09-04.md
+- `6f14927bc978e71ee2e897e0e2f2a6a9883e44b5` implementation/CAMTHINK_ISSUE_23_ANSWER_PERFORMANCE_DISCOVERY_2026-09-04.md
+- `a5b99df32bb0d13b164dfc89430679e12c49ff78` implementation/CAMTHINK_ISSUE_23_PERFORMANCE_PATCH_EXECUTION_2026-09-04.md
+- `557a0936bc56767195346692b86912f1832c2e8f` implementation/CAMTHINK_ISSUE_24_WIDGET_LAUNCHER_APPEARANCE_DISCOVERY_2026-09-04.md
+- `32d83424b1a255d947cd696eba6c8fcedbe4d9eb` implementation/CAMTHINK_ISSUE_24_WIDGET_LAUNCHER_APPEARANCE_EXECUTION_2026-09-04.md
+- `d4807ae9f8fbefa7333f2a7b228992bcb9f8d5a1` implementation/CAMTHINK_ISSUE_24_WIDGET_LAUNCHER_APPEARANCE_REV1_2026-09-04.md
+- `9180d136ef6ea218435a1a350c81688c81646543` implementation/CAMTHINK_V101_INTEGRATION_REPORT_2026-09-04.md
+- `f8c6d9f0e17f718e7370560a6673a92abff4be51` implementation/CAMTHINK_V101_TRACK_A_ISSUE19_EXECUTION_2026-09-04.md
+- `7e862aca8534b28d711aa75e6983ba1faf1f5242` implementation/CAMTHINK_V101_TRACK_B_ISSUE13_14_EXECUTION_2026-09-04.md
+- `acf6e4f5acdc250943ace5fb27594b479d1d293d` implementation/CAMTHINK_V101_TRACK_C_ISSUE20_21_EXECUTION_2026-09-04.md
+- `8cb76cab77a107f1e30e9d737381318619a0618d` implementation/CAMTHINK_V1_0_1_PRODUCTION_RELEASE_2026-09-04.md
+- `05e3d90bb176067cf233078a2e706e9001f511e4` implementation/CAMTHINK_V1_1_INTEGRATION_VERIFICATION_2026-09-04.md
+- `0196e9549331e42d9e5a9f3a107812983ed7b501` implementation/CAMTHINK_V1_1_PRODUCTION_RELEASE_2026-09-04.md
+- `8d4e6b896c12a3b825e2121b75bbc9e399a37a6e` implementation/CAMTHINK_V1_1_SOURCE_CENTER_SHARED_DISCOVERY_2026-09-04.md
+- `d6dace9c47063dc2b6dcae4dc1f1df4f5b0499be` implementation/CAMTHINK_V1_ACCEPTED_WORKSTREAMS_INTEGRATION_CHECKPOINT_2026-09-01.md
+- `d6579fb092ad83c4c1dbb421f474958059635679` implementation/CAMTHINK_V1_ADMIN_DATA_SOURCE_OBSERVABILITY_IMPLEMENTATION_2026-09-03.md
+- `31f884c9ddd6e3133d2646233970bbacb3cddc45` implementation/CAMTHINK_V1_ADMIN_FINAL_POLISH_DISCOVERY_2026-09-01.md
+- `42fc66321dc9de3870159930e0fb8a6ee077bf99` implementation/CAMTHINK_V1_ADMIN_FINAL_POLISH_FIX_SET_2026-09-01.md
+- `0909e2bc2ee3d83a4f8fc52d04d4c1c5e9bb998d` implementation/CAMTHINK_V1_ADMIN_P1_DATA_SOURCE_HEALTH_2026-09-01.md
+- `8ff26fddd7a0f8e57a9e58c3aa08d1a1f0a57ce3` implementation/CAMTHINK_V1_ADMIN_P1_LLM_PROVIDER_MANAGEMENT_2026-09-01.md
+- `df3fd5b39882d5aaa80fd0403a425dcee40d3102` implementation/CAMTHINK_V1_ADMIN_P1_TECHNICAL_INSIGHTS_2026-09-01.md
+- `766e17c7f98e25aaaa4d09f3221f287a52c6a5a4` implementation/CAMTHINK_V1_ANSWER_CORRECTNESS_IMPLEMENTATION_2026-09-03.md
+- `f28dba93668d2654f146632cf57fa69a6e8d353d` implementation/CAMTHINK_V1_ANSWER_CORRECTNESS_PRODUCT_BOUNDARY_DISCOVERY_2026-09-03.md
+- `5a8ea828219e27b37a7de0caa0b5f5b640054f65` implementation/CAMTHINK_V1_DATA_INGESTION_SAFETY_PROTECTION_2026-09-02.md
+- `62c5297df32b82ce53da801607ea1db24ca99f33` implementation/CAMTHINK_V1_DATA_INTEGRITY_RECONCILIATION_DISCOVERY_2026-09-03.md
+- `0b49999c2166ef63347465470c25131ce70d7064` implementation/CAMTHINK_V1_DATA_INTEGRITY_RECONCILIATION_IMPLEMENTATION_2026-09-03.md
+- `d9c87e790bc72eb924f618283bbc15cfce38f2f5` implementation/CAMTHINK_V1_DATA_SOURCE_CENTER_S0_FOUNDATION_2026-09-03.md
+- `3bae6446782b52fbdfd1aba6d6af604bea9192d3` implementation/CAMTHINK_V1_DATA_SOURCE_CENTER_SHARED_DISCOVERY_2026-09-03.md
+- `7b3a65fa2144b904582ef06332d0d245efbbc2eb` implementation/CAMTHINK_V1_DATA_SOURCE_HEALTH_PROGRESS_SHARED_DISCOVERY_2026-09-03.md
+- `207855292bceb3c3ebb326cb1b62d9e5f675b022` implementation/CAMTHINK_V1_DATA_SOURCE_RELIABILITY_DISCOVERY_2026-09-02.md
+- `7d80409aa53506fab681a90c7abc25c5a72eec54` implementation/CAMTHINK_V1_DATA_SOURCE_RELIABILITY_OBSERVABILITY_SHARED_DISCOVERY_2026-09-03.md
+- `35ae6c35562e236527d431ceba6d327cc73fbb32` implementation/CAMTHINK_V1_DATA_SOURCE_RELIABILITY_PRODUCT_CONTRACT_UX_2026-09-02.md
+- `a43afad445af0dbdc6f30d6c0b17f56316b2a5d2` implementation/CAMTHINK_V1_FINAL_RELEASE_CANDIDATE_ASSEMBLY_2026-09-03.md
+- `e333d16f0e6546f1aafbb9220bf7d9120eefc528` implementation/CAMTHINK_V1_GENERATION_FAILURE_LOCALIZATION_DISCOVERY_2026-09-03.md
+- `9b3a84b4544600fa273cf92e5355286c5fa5f953` implementation/CAMTHINK_V1_GENERATION_FAILURE_LOCALIZATION_IMPLEMENTATION_2026-09-03.md
+- `e8a2cfa848eb22cd66c3890dec534cf681dd34fa` implementation/CAMTHINK_V1_ISSUE_13_PRODUCTION_DATA_REPAIR_2026-09-04.md
+- `ccf196e48cf723347d64890265c0c7dc66f31b2f` implementation/CAMTHINK_V1_ISSUE_13_PRODUCTION_REPAIR_REVALIDATION_2026-09-04.md
+- `204896e0f5e8fb0f551afc8d57d1b1c23035d6d0` implementation/CAMTHINK_V1_LLM_PROVIDER_EMPTY_API_KEY_FOLLOWUP_2026-09-01.md
+- `3e96c04d4c484b543a4c940c81f0021025cc5c5c` implementation/CAMTHINK_V1_MAIN_FAST_FORWARD_INTEGRATION_2026-09-03.md
+- `fab00f8dd9005a1c58e19994089fcca731366872` implementation/CAMTHINK_V1_MULTI_SITE_WIDGET_INTEGRATION_2026-09-01.md
+- `3424cf814c0a9257609fb906cbc3ca3e282dcba2` implementation/CAMTHINK_V1_NATURAL_PRODUCT_ACCEPTANCE_BASELINE_2026-09-01.md
+- `97c6e29dc763c808fed0814c8d3258056239db90` implementation/CAMTHINK_V1_NON_BLOCKING_SOURCE_DELETION_ISSUE18_2026-09-03.md
+- `c1fc22b6212fe8b672f2dcfed68a98b7dff7f97c` implementation/CAMTHINK_V1_P0_KNOWLEDGE_TRUST_BOUNDARY_2026-09-01.md
+- `1b675453320b5311779f61410b4dde76c803eb6d` implementation/CAMTHINK_V1_P0_P1_INTEGRATION_GATE_2026-09-01.md
+- `272504c50a4421349a7e1927d87022ab7c565c59` implementation/CAMTHINK_V1_P1_CITATION_INTEGRITY_2026-09-01.md
+- `c740a48078c655f3e711949b45b20ae2a56ae82e` implementation/CAMTHINK_V1_P1_GENERATION_RELIABILITY_2026-09-01.md
+- `00dfaa297776a9c1d71da09b6901bbaa4133de2b` implementation/CAMTHINK_V1_P1_WEBSITE_KNOWLEDGE_COVERAGE_2026-09-01.md
+- `8f9b0deb4059f648faefa4f559da7febb7f2f2fe` implementation/CAMTHINK_V1_PA0B_PRODUCTION_UPGRADE_READINESS_DISCOVERY_2026-09-01.md
+- `f7bdd17a8554c84740e4943ebc94b57b79773ef6` implementation/CAMTHINK_V1_PA0_RELEASE_ARTIFACT_GPU_RUNTIME_2026-09-01.md
+- `639787b10755e28c48b9d9b0b3a520bb350bc543` implementation/CAMTHINK_V1_PRODUCTION_DEPLOYMENT_2026-09-02.md
+- `1b1dd13928a6ccf178beec93640c00c2564ffd18` implementation/CAMTHINK_V1_PRODUCTION_DEPLOYMENT_2026-09-03.md
+- `e99cc27f9da7d0a5dd8395b55f9b0b13c0ab48f9` implementation/CAMTHINK_V1_PRODUCTION_DEPLOYMENT_READINESS_2026-09-03.md
+- `70772b91d6290e61cffa7908e68e8cb1c433e33c` implementation/CAMTHINK_V1_PRODUCTION_READ_ONLY_ACCEPTANCE_2026-09-03.md
+- `b226e3f8fecb35e26457127b2da8cab4267d2d39` implementation/CAMTHINK_V1_PRODUCT_METADATA_UNKNOWN_CLOSURE_2026-09-03.md
+- `3408b699527a3b226821b8009a17e6ebf14996a4` implementation/CAMTHINK_V1_RELEASE_CANDIDATE_GATE_2026-09-01.md
+- `a1cc8ac2a23d731891c94ba91f5b9bd0798b644e` implementation/CAMTHINK_V1_REPO_SIMPLE_MODE_ISSUE16_2026-09-03.md
+- `0fb89d51a7325fc6f9d14e545a89a07342d8d8a5` implementation/CAMTHINK_V1_S0_INTEGRATION_BASELINE_2026-09-03.md
+- `5b8c0245c22fb2cfd92de47a9ad8fcf6644eb106` implementation/CAMTHINK_V1_SOURCE_CENTER_16_17_18_INTEGRATION_GATE_2026-09-03.md
+- `09f33be646c8535482fa711cf18913d3cf16c8d2` implementation/CAMTHINK_V1_STORE_WIDGET_ORIGIN_FIX_2026-09-03.md
+- `de93ffe9ec0707d961813c7e356724dba52ee02f` implementation/CAMTHINK_V1_STORE_WIDGET_ORIGIN_PRODUCTION_FIX_2026-09-03.md
+- `f2d824d7c46cf1774f9545ff8f92db1c66461225` implementation/CAMTHINK_V1_SYNC_EXECUTION_ISOLATION_2026-09-02.md
+- `39b5784125ac16ff63f02d02c42cb5a7e1ce0159` implementation/CAMTHINK_V1_SYNC_INTERRUPTION_RECOVERY_DISCOVERY_2026-09-02.md
+- `3bb39f4af851bc7dfbff14e2acd680f657aba9ac` implementation/CAMTHINK_V1_SYNC_INTERRUPTION_RECOVERY_IMPLEMENTATION_2026-09-03.md
+- `b8d07f1af10699e3dcd2bd39b4f37cc586e86ad4` implementation/CAMTHINK_V1_SYNC_TRUTH_BACKEND_IMPLEMENTATION_2026-09-03.md
+- `2c717d3a69a23ef1ec5d8d1aa5101a7f9221a90e` implementation/CAMTHINK_V1_SYNC_TRUTH_DATA_INTEGRITY_INTEGRATION_GATE_2026-09-03.md
+- `1a7446c13be5ed54c78fe6c63b1d6bed0b97382f` implementation/CAMTHINK_V1_THREE_CANDIDATE_INTEGRATION_GATE_2026-09-03.md
+- `483949cad96364bb61ee344e4d5c424afaa30ee2` implementation/CAMTHINK_V1_THREE_SITE_PARTNER_ORIGIN_PRODUCTION_HOTFIX_2026-09-03.md
+- `b2a939630b4daabe70dc12b7e6734365b5c3833d` implementation/CAMTHINK_V1_UNIFIED_V1_INTEGRATION_2026-09-01.md
+- `c0df766945c34179ac625a8c7420270e67c98ce1` implementation/CAMTHINK_V1_V1_0_0_PRODUCTION_MUTATION_DEPLOYMENT_2026-09-04.md
+- `b3b40ce87f6c1ca6a94f1972f1d117d345552a5e` implementation/CAMTHINK_V1_VERSION_RELEASE_GOVERNANCE_DISCOVERY_2026-09-03.md
+- `9e5ef83d639483e0f87ca694ceaf2dc4c8ca63cf` implementation/CAMTHINK_V1_VERSION_RELEASE_GOVERNANCE_IMPLEMENTATION_2026-09-03.md
+- `588e8cc546f7e855137de76e813672355a45f394` implementation/CAMTHINK_V1_WAVE0_SHARED_OBSERVABILITY_CORE_2026-09-03.md
+- `79b7b04b13cf56d1fcc86dc5d922304d47a1ba9a` implementation/CAMTHINK_V1_WEBSITE_SIMPLE_MODE_ISSUE17_2026-09-03.md
+- `8962c78dd0b25a7dc3f993238530f6bb928b8ce2` implementation/CAMTHINK_V1_WIDGET_WHITELIST_42_194_138_11_PRODUCTION_DEPLOYMENT_2026-09-02.md
+- `0e8e05dc72211283846d276abea249a4d8fb1d13` implementation/PRODUCTION_SYNC_OBSERVATION_2026-09-03_ne301-neoruntime-sdks.md
+- `f901b7acd146ec4e7367be2fd37504c86836367f` implementation/PRODUCTION_SYNC_OBSERVATION_2026-09-03_neoruntime-sdks-recreate-cuda-rca.md
+- `e315648c5266601b516d4618fcfd01b6f2f6b418` implementation/acceptance-evidence-2026-09-01/ENVIRONMENT_SNAPSHOT.md
+- `632f73b1b43047a56e8142bf1086fec8b386ca19` implementation/acceptance-evidence-2026-09-01/build_corpus.py
+- `0a1cd15b752b9401a45038fc7b5370256d0090df` implementation/acceptance-evidence-2026-09-01/corpus.jsonl
+- `779180514d337a6dbab191a4cfff5ab2f896bac7` implementation/acceptance-evidence-2026-09-01/gen_matrix.py
+- `fb4b11c097052a9dd32000dd6e3da3209ee8b681` implementation/acceptance-evidence-2026-09-01/harness.py
+- `bc060ef4d594e265599e7cf48ed5710cac78060c` implementation/acceptance-evidence-2026-09-01/judging_ground_truth.txt
+- `220e19faefd332dc91c4627629317d50ceb71fb5` implementation/acceptance-evidence-2026-09-01/judgments.jsonl
+- `493fc722b8fbcae4ccbd283f728347db891e47e3` implementation/acceptance-evidence-2026-09-01/raw/A01.json **RESTRICTED-raw-json**
+- `d25e820bba2a79d23683bc5701cdb4f4e74b398b` implementation/acceptance-evidence-2026-09-01/raw/A02.json **RESTRICTED-raw-json**
+- `9cdef7c7b0acf6a6641dc6cbc45a1645d1be2c5b` implementation/acceptance-evidence-2026-09-01/raw/A03.json **RESTRICTED-raw-json**
+- `77f922f24ca85fa39a5b6df6121e84f64694ecc1` implementation/acceptance-evidence-2026-09-01/raw/A04.json **RESTRICTED-raw-json**
+- `2abccb1d6c89279876e28dcd6595a38f3cc3e768` implementation/acceptance-evidence-2026-09-01/raw/A05.json **RESTRICTED-raw-json**
+- `863fff9ae3370ac84a9031222b194089109b6afd` implementation/acceptance-evidence-2026-09-01/raw/A06.json **RESTRICTED-raw-json**
+- `e0f866bbf198f5c178f3c1e35b49d1b8e75729bb` implementation/acceptance-evidence-2026-09-01/raw/A07.json **RESTRICTED-raw-json**
+- `c8d3b0b4da2a8728d92fc6b537010bde1b95b1e7` implementation/acceptance-evidence-2026-09-01/raw/A08.json **RESTRICTED-raw-json**
+- `8733fb587e3d4c400b0ffd664ccdb9a5ecc5279d` implementation/acceptance-evidence-2026-09-01/raw/A09.json **RESTRICTED-raw-json**
+- `813d5ad76f76f39ef11c4ad3734efdbc073e3310` implementation/acceptance-evidence-2026-09-01/raw/A10.json **RESTRICTED-raw-json**
+- `4a772f6f5ae6e32854d8ad6846564535211b02a9` implementation/acceptance-evidence-2026-09-01/raw/A11.json **RESTRICTED-raw-json**
+- `f61718d87f40231dd392b78f021ab5572cb790bf` implementation/acceptance-evidence-2026-09-01/raw/B01.json **RESTRICTED-raw-json**
+- `4f520115bb795f6a90adad008fad44ec21d28fd5` implementation/acceptance-evidence-2026-09-01/raw/B02.json **RESTRICTED-raw-json**
+- `514fdfe6dc4ca2950ee521e50ab7e6b2591b141a` implementation/acceptance-evidence-2026-09-01/raw/B03.json **RESTRICTED-raw-json**
+- `4281be8f5633a8b7de093fe82fd820cb9580278d` implementation/acceptance-evidence-2026-09-01/raw/B04.json **RESTRICTED-raw-json**
+- `ad07c7a9f400a67acffb7510bd20c7e2a341ef2c` implementation/acceptance-evidence-2026-09-01/raw/B05.json **RESTRICTED-raw-json**
+- `85ad622ce38f96c233d224a20dd1e7d60c3fa5a5` implementation/acceptance-evidence-2026-09-01/raw/B06.json **RESTRICTED-raw-json**
+- `58060f048b2f20430e36624c9bbc4b3d1f448483` implementation/acceptance-evidence-2026-09-01/raw/B07.json **RESTRICTED-raw-json**
+- `88b336bea772b8ee04faae99212dac2d6195382d` implementation/acceptance-evidence-2026-09-01/raw/B08.json **RESTRICTED-raw-json**
+- `c275b12d697da6bdf68972f4753e40db4bcee1c8` implementation/acceptance-evidence-2026-09-01/raw/B09.json **RESTRICTED-raw-json**
+- `a0306549223efdc624da3e4883582559fa7826c3` implementation/acceptance-evidence-2026-09-01/raw/B10.json **RESTRICTED-raw-json**
+- `76f8cda776dc88362a3361ad367ca6ab3e4b2610` implementation/acceptance-evidence-2026-09-01/raw/B11.json **RESTRICTED-raw-json**
+- `938d9f718308eea6a08f1adc177fb012e61a0747` implementation/acceptance-evidence-2026-09-01/raw/B12.json **RESTRICTED-raw-json**
+- `03737b2440377fff900f65fd996c86fc5d3e9879` implementation/acceptance-evidence-2026-09-01/raw/B13.json **RESTRICTED-raw-json**
+- `39ce90548830e4402ff46de245a002ca731599d0` implementation/acceptance-evidence-2026-09-01/raw/B14.json **RESTRICTED-raw-json**
+- `8a9022683f2ee6f97a6d67c6546220ef77d3e213` implementation/acceptance-evidence-2026-09-01/raw/B15.json **RESTRICTED-raw-json**
+- `ddaea5a579768aaef6100c7e0992edd7b4ea2525` implementation/acceptance-evidence-2026-09-01/raw/C01.json **RESTRICTED-raw-json**
+- `c6fbd93fbd701944036f68231c3c4a7e2fd12315` implementation/acceptance-evidence-2026-09-01/raw/C02.json **RESTRICTED-raw-json**
+- `dae24b4d3822f7237a9179587da559d17e174a49` implementation/acceptance-evidence-2026-09-01/raw/C03.json **RESTRICTED-raw-json**
+- `534d25d913a4262dbf11bcd5a2b776b215d9ceee` implementation/acceptance-evidence-2026-09-01/raw/C04.json **RESTRICTED-raw-json**
+- `5fee577697d3a5631541c61fd642023fae33e782` implementation/acceptance-evidence-2026-09-01/raw/C05.json **RESTRICTED-raw-json**
+- `5ca5239e359bc3a9dec46396e91a5c43ca7d45da` implementation/acceptance-evidence-2026-09-01/raw/C06.json **RESTRICTED-raw-json**
+- `a393e982503d69b3003732b6988c874a52874234` implementation/acceptance-evidence-2026-09-01/raw/C07.json **RESTRICTED-raw-json**
+- `0486345bf917ad1bf10b6c6e638bddb0e2069d9a` implementation/acceptance-evidence-2026-09-01/raw/C08.json **RESTRICTED-raw-json**
+- `d3d713bad8d576723884e1c559ae339da1d68bef` implementation/acceptance-evidence-2026-09-01/raw/C09.json **RESTRICTED-raw-json**
+- `c93f67f95c809922ce0244d93a2cbbef7285aa97` implementation/acceptance-evidence-2026-09-01/raw/C10.json **RESTRICTED-raw-json**
+- `5aeff448b0366d60153b0004a88f91dd10b381e1` implementation/acceptance-evidence-2026-09-01/raw/C11.json **RESTRICTED-raw-json**
+- `ed84b125c3b90f592fe1612ff849671cc6c3ff6c` implementation/acceptance-evidence-2026-09-01/raw/C12.json **RESTRICTED-raw-json**
+- `91450c11b6627699135a7eb0df9311df86930be1` implementation/acceptance-evidence-2026-09-01/raw/D01.json **RESTRICTED-raw-json**
+- `754ea947de1879a2c6c137167ff9ae10097ea3e4` implementation/acceptance-evidence-2026-09-01/raw/D02.json **RESTRICTED-raw-json**
+- `3bf15c7769ca582600988533b8da72b44d77a5b1` implementation/acceptance-evidence-2026-09-01/raw/D03.json **RESTRICTED-raw-json**
+- `73ab92fe1ed43f70d5702ab5c711d2be8bdb2bbb` implementation/acceptance-evidence-2026-09-01/raw/D04.json **RESTRICTED-raw-json**
+- `b558b16c6ffe96b96a78aff03daf4349323d58a5` implementation/acceptance-evidence-2026-09-01/raw/D05.json **RESTRICTED-raw-json**
+- `38b3affeb563dba6a2500ebc81b0bb6fa421a0a2` implementation/acceptance-evidence-2026-09-01/raw/D06.json **RESTRICTED-raw-json**
+- `bf37297c5fba4a5319d9d84def43ce0a9173b8b4` implementation/acceptance-evidence-2026-09-01/raw/D07.json **RESTRICTED-raw-json**
+- `977ab4a3d2bef11c40d0d432e4746ee327ccc660` implementation/acceptance-evidence-2026-09-01/raw/D08.json **RESTRICTED-raw-json**
+- `4d40c1e08b7fc2b3e968de930741f5bdc7177595` implementation/acceptance-evidence-2026-09-01/raw/D09.json **RESTRICTED-raw-json**
+- `0e509eee57d5be4cb508dfeb6521faef9465b39c` implementation/acceptance-evidence-2026-09-01/raw/D10.json **RESTRICTED-raw-json**
+- `5e653d4637a0fb1ffc87d6f70cf5cee6ef5ff5ff` implementation/acceptance-evidence-2026-09-01/raw/D11.json **RESTRICTED-raw-json**
+- `9816a1644a9392d63724e51beda60d96929bdef6` implementation/acceptance-evidence-2026-09-01/raw/D12.json **RESTRICTED-raw-json**
+- `87ab8146666a29bba99a7c1c3a9b9a698fcaaa82` implementation/acceptance-evidence-2026-09-01/raw/D13.json **RESTRICTED-raw-json**
+- `a944382768b197e4145f9df241d667420b9cb47a` implementation/acceptance-evidence-2026-09-01/raw/E01.json **RESTRICTED-raw-json**
+- `ca4704c0a16ab869b90ddbd0855a688b124f92d2` implementation/acceptance-evidence-2026-09-01/raw/E02.json **RESTRICTED-raw-json**
+- `cd3fbdca462036c4a1e0b3b67da4ae69b1ab9e81` implementation/acceptance-evidence-2026-09-01/raw/E03.json **RESTRICTED-raw-json**
+- `f41929b4c498afaade0440e9ee6efdd52f71ccf8` implementation/acceptance-evidence-2026-09-01/raw/E04.json **RESTRICTED-raw-json**
+- `9bac6a285c699bcd3acb9f693938189246cb20ec` implementation/acceptance-evidence-2026-09-01/raw/E05.json **RESTRICTED-raw-json**
+- `8e013e4c68fed0aaec046a02da93accf5f3ea851` implementation/acceptance-evidence-2026-09-01/raw/E06.json **RESTRICTED-raw-json**
+- `36c248348ba968d6f0724b5ccef2bdd6077068af` implementation/acceptance-evidence-2026-09-01/raw/F01.json **RESTRICTED-raw-json**
+- `91dadf0accbb96c65b293f1cd2fd9f309b31df04` implementation/acceptance-evidence-2026-09-01/raw/F02.json **RESTRICTED-raw-json**
+- `04c2e6bf11cf7a5b1be77346842f2a3f1ac9abd6` implementation/acceptance-evidence-2026-09-01/raw/F03.json **RESTRICTED-raw-json**
+- `e099ba946978a49747c838684be6c4c5c626d28f` implementation/acceptance-evidence-2026-09-01/raw/H01.json **RESTRICTED-raw-json**
+- `eb801ac94c90892a9bbd15de011be123ed22914c` implementation/acceptance-evidence-2026-09-01/raw/H02.json **RESTRICTED-raw-json**
+- `fd2bceff7af396956c84779b7635e1719d77885b` implementation/acceptance-evidence-2026-09-01/raw/H03.json **RESTRICTED-raw-json**
+- `c3887fbe54172f31c23799b1f136ac6f76d8b9f7` implementation/acceptance-evidence-2026-09-01/raw/H04.json **RESTRICTED-raw-json**
+- `6b2064b62e570536f61804480dcba4f0951a5648` implementation/acceptance-evidence-2026-09-01/raw/H05.json **RESTRICTED-raw-json**
+- `c9d564abaab9138907be74c029ff9155de25cc7d` implementation/acceptance-evidence-2026-09-01/raw/I01.json **RESTRICTED-raw-json**
+- `386399aa51519b9f1bd54a2490b6017a995198d8` implementation/acceptance-evidence-2026-09-01/raw/I02.json **RESTRICTED-raw-json**
+- `d0a741135ddf93e351454bf115e452470f351788` implementation/acceptance-evidence-2026-09-01/raw/I03.json **RESTRICTED-raw-json**
+- `8aa5ed99f356ee9c82df7fbf8b2c3641cc98696d` implementation/acceptance-evidence-2026-09-01/raw/I04.json **RESTRICTED-raw-json**
+- `93cc436865fecc2c9f482c369d8eb350bd9db473` implementation/acceptance-evidence-2026-09-01/raw/I05.json **RESTRICTED-raw-json**
+- `92787977ceac34cce65ab095e2ca40261d69c959` implementation/acceptance-evidence-2026-09-01/raw/I06.json **RESTRICTED-raw-json**
+- `c6e5c474ec73f13d9941e5e9a1d376cbd4dc9de1` implementation/acceptance-evidence-2026-09-01/raw/J01.json **RESTRICTED-raw-json**
+- `d2b7aaeb2bb7da9d2f74cb010de6224e6c93defe` implementation/acceptance-evidence-2026-09-01/raw/J02.json **RESTRICTED-raw-json**
+- `db0386dae19df69edf5c709f7f943431f1944093` implementation/acceptance-evidence-2026-09-01/raw/J03.json **RESTRICTED-raw-json**
+- `92d3dc3f17d43a3f56e1251e7a3ac944ef396851` implementation/acceptance-evidence-2026-09-01/raw/J04.json **RESTRICTED-raw-json**
+- `2108f638b76dd365a662399e2933520f7cde1ff7` implementation/acceptance-evidence-2026-09-01/raw/K1-admin.json **RESTRICTED-raw-json**
+- `ff7c6e349d2d377819314f279165d1f3635611c7` implementation/acceptance-evidence-2026-09-01/raw/K1-widget.json **RESTRICTED-raw-json**
+- `93ad6795deb6198821a25f8fb12fedd77ae5314a` implementation/acceptance-evidence-2026-09-01/raw/K2-admin.json **RESTRICTED-raw-json**
+- `f7470b8aa237d471c0fc2abd4537efd01f1b09d6` implementation/acceptance-evidence-2026-09-01/raw/K2-widget.json **RESTRICTED-raw-json**
+- `993828665cb7945035e86d1458a025e412e0a0ed` implementation/acceptance-evidence-2026-09-01/raw/K3-admin.json **RESTRICTED-raw-json**
+- `ebab68572c7bb463a7daff61fef557093dd38131` implementation/acceptance-evidence-2026-09-01/raw/K3-widget.json **RESTRICTED-raw-json**
+- `b81608dabda725de4cde4db4f01e64718c7ecd78` implementation/acceptance-evidence-2026-09-01/raw/K4-admin.json **RESTRICTED-raw-json**
+- `a9b24246f8ff376d855d136bc7234bbf186da20f` implementation/acceptance-evidence-2026-09-01/raw/K4-widget.json **RESTRICTED-raw-json**
+- `8f02cab58f14d1a5af9c9abbb4652e2ce5dcc11a` implementation/acceptance-evidence-2026-09-01/raw/K5-admin.json **RESTRICTED-raw-json**
+- `01908040a1ab0eff915ca71ba91aaae1a081a501` implementation/acceptance-evidence-2026-09-01/raw/K5-widget.json **RESTRICTED-raw-json**
+- `3ad3cb7b395f0b0d6f935010b1dd2ac173729eee` implementation/acceptance-evidence-2026-09-01/raw/K6-admin.json **RESTRICTED-raw-json**
+- `7bb0314abc5f8d61473845eb5dd4d4bcba4fcb2d` implementation/acceptance-evidence-2026-09-01/raw/K6-widget.json **RESTRICTED-raw-json**
+- `2df7e2fe56ce605b4bd354e2cea7868eeb56af37` implementation/acceptance-evidence-2026-09-01/raw/L-K1.json **RESTRICTED-raw-json**
+- `6036c87eb2f692465f2848e8afe45d458b8df695` implementation/acceptance-evidence-2026-09-01/raw/L-K2.json **RESTRICTED-raw-json**
+- `b430b31c436abd526d9e2aa941237dad2fe84144` implementation/acceptance-evidence-2026-09-01/raw/L-K3.json **RESTRICTED-raw-json**
+- `923b94172633434aa23f568a0d97a329c53e1d19` implementation/acceptance-evidence-2026-09-01/raw/L-K4.json **RESTRICTED-raw-json**
+- `b615ce34b64cce77827b1192473900f5cd7d842d` implementation/acceptance-evidence-2026-09-01/raw/L-K5.json **RESTRICTED-raw-json**
+- `447c7953167eb53b8415365b880cd6bd5d13891c` implementation/acceptance-evidence-2026-09-01/raw/L-K6.json **RESTRICTED-raw-json**
+- `981151829c54b1632bf269ce6211b9c02f374c24` implementation/acceptance-evidence-2026-09-01/run.log
+- `1c39bd5df557c63dc31aa7b0b8fd7eecfbc633cd` implementation/acceptance-evidence-2026-09-01/scenario_matrix.md
+- `79b9b74670d556cca5d1b57af038b761de752977` implementation/dsh-evidence-2026-09-01/analytics-after.png **RESTRICTED-evidence image**
+- `bd2e5cbdfbe1e587493f059e55a0cc7e7fd9db2a` implementation/dsh-evidence-2026-09-01/analytics-before.png **RESTRICTED-evidence image**
+- `cc7ca965387cf25762e1b322a4b002a9bdf0631b` implementation/dsh-evidence-2026-09-01/datasources-after.png **RESTRICTED-evidence image**
+- `3dcb90c1b9a0ffe83e373ced69883386ceb83268` implementation/dsh-evidence-2026-09-01/datasources-before.png **RESTRICTED-evidence image**
+- `4a3f112c7828f587a0b88c43c8d4874133c5f1e2` implementation/evidence/CAMTHINK_V1_UNIFIED_V1_INTEGRATION_2026-09-01/smoke-admin-conversations.png **RESTRICTED-evidence image**
+- `d117a76db713e4bd6d4c80e907f0bc48b19556e4` implementation/evidence/CAMTHINK_V1_UNIFIED_V1_INTEGRATION_2026-09-01/smoke-admin-data-sources.png **RESTRICTED-evidence image**
+- `93670da6d0aea25f2d93ec146a626de7c96258bd` implementation/evidence/CAMTHINK_V1_UNIFIED_V1_INTEGRATION_2026-09-01/smoke-admin-llm-providers.png **RESTRICTED-evidence image**
+- `4a04770a94e71badc833904f4ba14dc17cf96205` implementation/evidence/CAMTHINK_V1_UNIFIED_V1_INTEGRATION_2026-09-01/smoke-admin-tech-insights.png **RESTRICTED-evidence image**
+- `0b497dd955d2f4287e10acb43b129564e33fcc06` implementation/evidence/CAMTHINK_V1_UNIFIED_V1_INTEGRATION_2026-09-01/smoke-widget-site-experience.png **RESTRICTED-evidence image**
+- `28c6e06d9c94705c587d42d9226e58a35b0cceb3` implementation/evidence/admin-final-polish-20260901/01-login.png **RESTRICTED-evidence image**
+- `2ac6e444c6693d23320a19fb5c1a3104849e52f0` implementation/evidence/admin-final-polish-20260901/02-business-overview.png **RESTRICTED-evidence image**
+- `bcf06859dc2402944c2ca0c57d79e9492c7caa2f` implementation/evidence/admin-final-polish-20260901/03-conversations.png **RESTRICTED-evidence image**
+- `520e8f46e9653a90865c9faebcba206324817d8c` implementation/evidence/admin-final-polish-20260901/04-analytics.png **RESTRICTED-evidence image**
+- `6484194ecb403de33db3cfba281bdb8fba2ab176` implementation/evidence/admin-final-polish-20260901/05-data-sources.png **RESTRICTED-evidence image**
+- `42cd4a270923df55fd2fa3ef3db4f48ce92f243e` implementation/evidence/admin-final-polish-20260901/06-customizations.png **RESTRICTED-evidence image**
+- `49256348128e99021677816a71f8237e74cf7aa8` implementation/evidence/admin-final-polish-20260901/07-llm-providers.png **RESTRICTED-evidence image**
+- `42503b25b1b02cc1288ad7144417e57752000246` implementation/evidence/admin-final-polish-20260901/08-answer-overrides.png **RESTRICTED-evidence image**
+- `2ddd303fb1f1dea4dc22cad58265dfa7be4d3d4b` implementation/evidence/admin-final-polish-20260901/09-users.png **RESTRICTED-evidence image**
+- `fe409a4ef9cb5993fd52c318409d219ceedbfb3d` implementation/evidence/admin-final-polish-20260901/10-conversations-empty-search.png **RESTRICTED-evidence image**
+- `42cd4a270923df55fd2fa3ef3db4f48ce92f243e` implementation/evidence/admin-final-polish-20260901/11-customizations-detail.png **RESTRICTED-evidence image**
+- `d0e200d572d10fb064151d4c61b942122e0e5062` implementation/evidence/admin-final-polish-20260901/12-datasource-create-dialog.png **RESTRICTED-evidence image**
+- `49256348128e99021677816a71f8237e74cf7aa8` implementation/evidence/admin-final-polish-20260901/13-llm-providers-detail.png **RESTRICTED-evidence image**
+- `1f324fe92e8681903e6217f8ae099dc8728e975e` implementation/evidence/admin-final-polish-20260901/14-provider-add-dialog.png **RESTRICTED-evidence image**
+- `16023b4ed0517c6f7dacfdaca06b428591f99526` implementation/evidence/admin-final-polish-20260901/15-analytics-1280.png **RESTRICTED-evidence image**
+- `352a3e5232c0ef0ce5a3f497af33b0aa11d1a1ea` implementation/evidence/admin-final-polish-20260901/16-data-sources-1280.png **RESTRICTED-evidence image**
+- `5943afecaeb51281697340100a63b74eb898ab16` implementation/evidence/admin-final-polish-20260901/17-business-1280.png **RESTRICTED-evidence image**
+- `5384e2f3a7df11e818c55a3f2c4ad26e51259771` implementation/evidence/admin-final-polish-20260901/18-viewer-home.png **RESTRICTED-evidence image**
+- `80dbe409d31ea18e0451d4d3d7d6e3031bdeed49` implementation/evidence/admin-final-polish-20260901/19-viewer-data-sources.png **RESTRICTED-evidence image**
+- `512d2ff9aa46f3a6dcb94abaeac108c99d7fcbb7` implementation/evidence/admin-final-polish-20260901/20-viewer-llm-providers.png **RESTRICTED-evidence image**
+- `8b96f7e459ab05b483296f50eaf4c2251e835fbb` implementation/evidence/admin-final-polish-20260901/21-viewer-users.png **RESTRICTED-evidence image**
+- `9ed23eb7ab28f48a236d5ec1b9a2b01ecafed40e` implementation/evidence/admin-final-polish-20260901/22-viewer-conversations.png **RESTRICTED-evidence image**
+- `6a7544c4e76401012aaabeef13b7bce39d324721` implementation/evidence/admin-final-polish-20260901/23-viewer-answer-overrides.png **RESTRICTED-evidence image**
+- `03039650861090e5bb772b04d0792ffae70fb67a` implementation/evidence/admin-final-polish-20260901/24-login-error.png **RESTRICTED-evidence image**
+- `f66b82337d53574b429d06828a8e68fac8138843` implementation/evidence/admin-final-polish-20260901/overflow.txt
+- `1efb5a499afb9e8236e15519ac2f94d6da83c411` implementation/evidence/admin-final-polish-20260901/viewer-report.json **RESTRICTED-raw-json**
+- `2908c65959e834ff7899c02a35ccecfef83c354f` implementation/evidence/admin-final-polish-20260901/walkthrough-report.json **RESTRICTED-raw-json**
+- `ccf36ef10dcf200ae4323abccebc5497e21f257e` implementation/evidence/admin-final-polish-fix-20260901/acceptance-notes.json **RESTRICTED-raw-json**
+- `de5045ab0f8fdd75d12d0c6122731047e85ed47b` implementation/evidence/admin-final-polish-fix-20260901/b1-login-error.png **RESTRICTED-evidence image**
+- `801afffb002d69d10da8b16ecc4284b7192b0c65` implementation/evidence/admin-final-polish-fix-20260901/b2-business-label.png **RESTRICTED-evidence image**
+- `a41118127089bb04f4974708b0e9da4cd4c8ccbe` implementation/evidence/admin-final-polish-fix-20260901/b3-analytics-no-funnel.png **RESTRICTED-evidence image**
+- `1c632bfc6e8c3f7cb01e95b3d7981512c34d8af7` implementation/evidence/admin-final-polish-fix-20260901/b4-datasource-after-delete.png **RESTRICTED-evidence image**
+- `f237481132e3c0ff76c92ab145f3012894194dc6` implementation/evidence/admin-final-polish-fix-20260901/b5-viewer-datasources.png **RESTRICTED-evidence image**
+- `7f38ad1120a3885d626e971cbe0b42b1bc7260de` implementation/evidence/admin-final-polish-fix-20260901/b6-viewer-users-denied.png **RESTRICTED-evidence image**
+- `60e78d397ddbc1db5941437e07861024b5e221b6` implementation/evidence/technical-insights-20260901/evidence-01-high-anomaly-zero-failure.png **RESTRICTED-evidence image**
+- `f310dbeb455cb532836ccc2d5adb68217f0534d7` implementation/evidence/technical-insights-20260901/evidence-02-real-failures.png **RESTRICTED-evidence image**
+- `ff66450cbf3e428ad6e285a266896fe11422f50d` implementation/evidence/technical-insights-20260901/evidence-03-healthy.png **RESTRICTED-evidence image**
+- `345f11f71db12d7df8df00f3fd7334864cdcfe78` implementation/evidence/technical-insights-20260901/evidence-04-no-data.png **RESTRICTED-evidence image**
+- `3fec1aec7e91d26790fcb300706ebf309f453ab9` implementation/evidence/technical-insights-20260901/evidence-05-failure-deeplink.png **RESTRICTED-evidence image**
+- `85308184c538fe521ee7dc3519b02846e207f224` implementation/evidence/technical-insights-20260901/resp-02-real-failures.json **RESTRICTED-raw-json**
+- `cc6d159316249e1af99f4cb7212844f93511bf14` implementation/evidence/technical-insights-20260901/resp-05-has-failure.json **RESTRICTED-raw-json**
+- `a860d5cb64a2f32d55a015dda5c213fdd05237e4` implementation/evidence/technical-insights-20260901/resp-healthy.json **RESTRICTED-raw-json**
+- `8682e702a72f3a7611b6389c367e6226d9cc28ba` implementation/evidence/technical-insights-20260901/resp-high_anomaly_zero_failure.json **RESTRICTED-raw-json**
+- `f62eb581b8730bfd24de625132c56ba2100c8864` implementation/evidence/technical-insights-20260901/resp-no_data.json **RESTRICTED-raw-json**
+- `5ddb724fc4bc8a3839bd0e9f6533e3b490bd6adf` implementation/evidence/test-suite-perf-2026-09-03/askai_profile_runC.log
+- `f0112f0be5851fa0f21c098cd40c6214ee62ccf1` implementation/evidence/test-suite-perf-2026-09-03/askai_profile_runD.log
+- `aa0ec915b3f5351ca19573ddc15c3bde8bc60a36` implementation/evidence/test-suite-perf-2026-09-03/askai_runE_unit.log
+- `3cec4598ab5b06f4393421069a2e9030a8971ce5` implementation/evidence/test-suite-perf-2026-09-03/askai_runF_integration.log
+- `e71743e673d3ed76b2aec3347c7eb06fb8a331a4` implementation/evidence/test-suite-perf-2026-09-03/askai_runG_ci_subset.log
+- `f28534f86b67e6b8e9afe984a32cffe614c547f7` implementation/evidence/test-suite-perf-2026-09-03/profile_runA_evidence.txt
+- `6d1e0b71f223fd73001d9e7c1ee1ea9d59982479` implementation/evidence/website-coverage-20260901/web_coverage_evidence.json **RESTRICTED-raw-json**
+- `aa71ba20c4562fc74bb6afd049733d1896a080c1` implementation/p0-p1-integration-evidence-live.json **RESTRICTED-raw-json**
+- `b0bf0c959ac654503701480b7bd2552a29d9385a` implementation/p0-trust-boundary-evidence/hypothesis_experiment.py
+- `f7eeac831fd22f464a5edc75b7fb7e1087a9611c` implementation/p0-trust-boundary-evidence/p0_e2e_CASE-G001-retry.json **RESTRICTED-raw-json**
+- `2be7213ab715d88d50a31baa10b76dbb4f080250` implementation/p0-trust-boundary-evidence/p0_e2e_SEC-G001-retry.json **RESTRICTED-raw-json**
+- `0ade10936d76aef6aa6ce21d95a16f0045ef45ea` implementation/p0-trust-boundary-evidence/p0_e2e_evidence.A.json **RESTRICTED-raw-json**
+- `fa8d87078dfc70626b720f5af822f54ecaccf281` implementation/p0-trust-boundary-evidence/p0_e2e_evidence.B.json **RESTRICTED-raw-json**
+- `fcbfbda0d12ed225ee14a06b1acdb568f1f85bd2` implementation/p0-trust-boundary-evidence/p0_rework_evidence.json **RESTRICTED-raw-json**
+- `29271a092bd38115285761ade76e5f8ffb152e69` implementation/p0-trust-boundary-evidence/pytest_full_567passed.log
+- `879401821ffc678d1269c9a4e7b13816d493084a` implementation/p0-trust-boundary-evidence/pytest_full_brokenDSN.log
+- `ee4b448e7ad3cb4cc1c587394919f0769eb16aca` implementation/store-origin-fix-evidence-20260903/store-widget-answer-ne503.png **RESTRICTED-evidence image**
+- `8b4c5cd87009aeabd75765c2fbf6d84249bf2acb` implementation/v1-checkpoint-smoke-live.json **RESTRICTED-raw-json**
+- `fca5dd74a3b9c642aab53b5e7d4ff60e892e24e1` integration/WIDGET_INTEGRATION.md
+- `31cf2edd119e0a8579d7aedcd28eaa71362224ef` planner-reviewer-protocol.md
+- `bc82266086539a80d87bcc7f3ea18a72a6edc36c` product-roadmap.md
+- `05b0047ccfbdf2d6841ab7dd028e2c952d4f3814` product/PRODUCT_ROADMAP.md
+- `a72929eaf62d856c539010e1bf8ae6d5b19c11f7` product/PRODUCT_STATE.md
+- `67187876df7d0d1654e68ed90fd4fb97024e123d` product/PRODUCT_VISION.md
+- `1a207bae6159392c03af3af88c3168ca733f45d2` product/architecture/INTELLIGENT_ANSWER_ENGINE_TARGET_ARCHITECTURE.md
+- `53c9a1db46a29853a9b53c4857472f2f43a1fada` product/iterations/I-001-answer-intelligence-foundation.md
+- `01cf7aed066dfdf3ae196aed11b5c326a6d1afef` superpowers/handoff/2026-08-05-llm-model-config.md
+- `1abfe749565b4742faea87a096f4f35000313a45` superpowers/handoff/2026-08-17-tesla-t4-docker-recovery-plan.md
+- `e19288e8298ea10e0e07a92f80377318296c70e4` superpowers/handoff/2026-08-28-env-strategy-admin-channel.md
+- `f6c2d1ed897d0bb884df0fbb78c04a3772223a5d` superpowers/handoff/2026-08-30-sync-worktree-triage.md
+- `1493e1b1a97535a17ea7eb8d82919943269ba712` superpowers/plans/2026-07-28-ask-ai-phase1.md
+- `0db45899fcf6fef08c799e4537d32493bebc8e35` superpowers/plans/2026-07-30-phase2a-indexing-optimization.md
+- `0bbdf6d33dafc11f3925dd2487804d946b162a23` superpowers/plans/2026-07-30-phase2b-admin-panel.md
+- `27591792ccd10539ef9bcb9816bcc5e5a7c954ce` superpowers/plans/2026-07-30-phase3a-answer-quality.md
+- `19230cf6b720d5e638b90f4bb279c2fce1dde258` superpowers/plans/2026-07-30-phase3b-analytics.md
+- `7759e37053299fb57424240098c51eff8d9a0301` superpowers/plans/2026-07-31-codebase-indexing-core.md
+- `3c280e0865c34453a5dc1a147aa8cbda63c2b8b6` superpowers/plans/2026-08-03-dir-picker.md
+- `186f14e2a9a6559680b741c66975c53e6057d037` superpowers/plans/2026-08-03-gpu-parallel-indexing.md
+- `edb933272b558e0fbf61e688f0ccc07cc8e2a283` superpowers/plans/2026-08-03-local-git-incremental.md
+- `a98e47f6095ed10488f070f0a783523a914d85ca` superpowers/plans/2026-08-03-symbol-retrieval.md
+- `caab9fafbb395f3713c0c8d86a05989dd76b8f23` superpowers/plans/2026-08-04-github-source-unify.md
+- `d7865d3e6a1188d7a033af1e903b30e6bbfd3538` superpowers/plans/2026-08-04-intent-routing.md
+- `2496c141362e6cdfb049538526f70e2a936358de` superpowers/plans/2026-08-04-woocommerce-connector.md
+- `89d5744c3c9c991dacafeb61575f21860b08cd96` superpowers/plans/2026-08-05-chat-attachment-phase1a.md
+- `e86da8c9c221128d216d698af548beb2395d0366` superpowers/plans/2026-08-05-datasource-unify-finalize.md
+- `22a04771ae30bdebb39036e5cccc100ffd0e1ba3` superpowers/plans/2026-08-05-llm-model-config-redesign.md
+- `30cec2c8e9f33db600864cd1647f4f1b521ddf05` superpowers/plans/2026-08-10-conversation-observability.md
+- `cb9be04527cd4f0dedc5dee7f46eca2e7d1b956e` superpowers/plans/2026-08-11-admin-phase1-plan.md
+- `5b02b4dbcd11c79dc3cc52d9eb78aa883114cd4f` superpowers/plans/2026-08-11-admin-phase2-plan.md
+- `e4ad121f201a1c4759c7295dbff53e5b7c265ace` superpowers/plans/2026-08-26-sync-consistency.md
+- `a9ea90e96ee7eeedd53aa7eaa46ca96ae85212ad` superpowers/specs/2026-07-27-ask-ai-design.md
+- `0fcd4f0e9b1916e23e6556cc7a8749ea01bf697a` superpowers/specs/2026-07-31-codebase-analysis-design.md
+- `89dc0dde4d5fa333672b04ed73601d5c3669f14c` superpowers/specs/2026-08-03-symbol-retrieval-design.md
+- `2c631ebd015757054e3ffc7d21f2201b511fc1f1` superpowers/specs/2026-08-04-github-source-unify-brainstorm.md
+- `b5594f7008e7e3c42f95deebc127339d68ea7cba` superpowers/specs/2026-08-04-intent-routing-design.md
+- `15ae82a1513ebc44045fe12d9ce9a1320b8a27fc` superpowers/specs/2026-08-05-chat-attachment-analysis-design.md
+- `cf6947c46916298ba3df8c0307ca8bf308fac1eb` superpowers/specs/2026-08-05-llm-model-config-redesign.md
+- `d46cc514e2a1ea784ee2c09ce6d8ab1aa1ddde6c` superpowers/specs/2026-08-07-conversation-observability-design.md
+- `11748184ae4a6e2c2b6a442bf8d347506bdc59b9` superpowers/specs/2026-08-11-admin-design-alignment-design.md
+- `3c63af146077739508ea74c55ead2bfe5a828ae0` superpowers/specs/2026-08-26-sync-consistency-design.md
+
+### docs/preflight-20260902（tip `62ecedcebef81e741c2bb21b90aa82bfc7a2c5d3`，2 工件）
+
+- `b6056970fc6f85942664c76ad41de7a8b6ffd7a3` docs/implementation/CAMTHINK_V1_PRODUCTION_DEPLOYMENT_PREFLIGHT_2026-09-02.md
+- `bf42f3e5e29f1ec2843b5e61dcf0f5ed08440ab2` docs/implementation/CAMTHINK_V1_PRODUCTION_READ_ONLY_INSPECTION_2026-09-02.md
+
+### docs/v11-shared-discovery-20260904（tip `20ac091d9a6b5593a4ef4221c8966d68afa465e6`，1 工件）
+
+- `8d4e6b896c12a3b825e2121b75bbc9e399a37a6e` docs/implementation/CAMTHINK_V1_1_SOURCE_CENTER_SHARED_DISCOVERY_2026-09-04.md
+
+### docs/v162-iteration-contracts-20260912（tip `4823e1a004ba269b78747fd1933a0fbfa9d1fe3e`，5 工件）
+
+- `bbf2338a050901a5f600373f04defac84bd1b8bb` docs/engineering/tasks/v162-i50-data-source-workspace-v2-contract.md
+- `ab012a0f98cd3118944200b9397e973551545466` docs/engineering/tasks/v162-i51-technical-insights-v2-contract.md
+- `1f0d74de9eab692ce85e53cad229c7d7c1084d74` docs/engineering/tasks/v162-i7-system-runtime-observability-contract.md
+- `8c079e55bbe6b1f7752bea8a8a5f84b25287bab2` docs/engineering/tasks/v162-iteration-plan.md
+- `008b231f77ed90f917e4111f02ba5eabf376f88d` tests/project_automation/test_sprint_sync.py
+
+### docs/v163-design-baseline-20260912（tip `5593d6be1f90baf00178b7c54559e5bbe54b89c4`，9 工件）
+
+- `f6c8ea5f69701fe177c086730ec75b981f69dc0e` docs/engineering/tasks/v163-b1-data-source-operations-contract.md
+- `9c5dba214f9b3bfafa7ec8033b3a09bd17c19094` docs/engineering/tasks/v163-b2-technical-insights-contract.md
+- `73a0afee609c98536b32a585c6661018e97666f6` docs/engineering/tasks/v163-iteration-plan.md
+- `54ac50f1a45e36083438358f030ef75c38c5c3e6` docs/product/design/admin-knowledge-ops/DESIGN_BASELINE.md
+- `7e624dda19e3c566fe49ac0285c9715c4a9459cf` docs/product/design/admin-knowledge-ops/DESIGN_RECOVERY_REVIEW_V002.md
+- `98570509204d1d98213a9806827214747048f1ad` docs/product/design/admin-knowledge-ops/acceptance/DESIGN_CONFORMANCE_CHECKLIST.md
+- `e9ff043d984985e1f56acf24553c9a282c15b105` docs/product/design/admin-knowledge-ops/references/data-source-operations-original.png **RESTRICTED-evidence image**
+- `15af093eb78412e0f34d4e8bd59799244a59fc9d` docs/product/design/admin-knowledge-ops/references/technical-insights-answer-gaps-original.png **RESTRICTED-evidence image**
+- `008b231f77ed90f917e4111f02ba5eabf376f88d` tests/project_automation/test_sprint_sync.py
+
+### docs/v164-iteration-contracts-20260913（tip `7e8f7a34bc41f48040fc7575094c7e2e09a7c076`，6 工件）
+
+- `4ac08cb3cadf9ab9a269bb959584b9872d523d46` docs/engineering/tasks/v164-engineering-reality-audit.md
+- `96a37e8e38bfce29f3e1805c98916e2bd209b637` docs/engineering/tasks/v164-iteration-plan.md
+- `3078767117d202fa15a74dfa894a1492f028a0ea` docs/engineering/tasks/v164-track-a-lifecycle-retirement-contract.md
+- `82849ca1e8830a3ec10471454a6d90ebc8c3fb5c` docs/engineering/tasks/v164-track-b-evidence-authority-commercial-truth-contract.md
+- `f1c9d28aa486ebed97e8453fb50cdb594050a15a` docs/engineering/tasks/v164-track-c-citation-url-integrity-contract.md
+- `008b231f77ed90f917e4111f02ba5eabf376f88d` tests/project_automation/test_sprint_sync.py
+
+### exec/v163-correctness-closure（tip `c2bc1254cfb057a529c166dc3ace09862e3a513a`，1 工件）
+
+- `db593511a03847006de67432c6a55d3e1fc1f9d7` docs/engineering/tasks/V163-CORRECTNESS-PRODUCTION-CLOSURE.md
+
+### project-automation/sprint-authority-hardening-20260911（tip `cba6c2530da17e4c2e3900c52aa58259b0ce9481`，3 工件）
+
+- `9bfadaf89b824d6d5d785daf10c9f9857872e3b3` docs/engineering/tasks/project-automation-sprint-authority-hardening.md
+- `2790f463cb0937b5ed8919d59097f9c071ab014a` tests/project_automation/test_sprint_authority.py
+- `eb4a3f9c984918797bf59750c29fb65cec14bef8` tests/project_automation/test_sprint_sync.py
+
+### research/r001-knowledge-retrieval-architecture（tip `5ba5603d9c1c7cc279e1d9fe9cce5149871632f4`，6 工件）
+
+- `ffc41c1fa9bd3e1f6d549a8c26a2338241ae83c9` admin/src/pages/WidgetAppearance.tsx
+- `2f920b785ebd940314107d750dd6214d053eff6d` admin/tests/WidgetAppearance.test.tsx
+- `cac2cd956a230d74ee8fe11180aabb985d888d0d` docs/product/research/R-001-NEXT-GENERATION-KNOWLEDGE-RETRIEVAL-RESEARCH.md
+- `1aca50a66c43eca89d70daa8aca63ac13dd5219c` docs/product/research/R-001C-ASK-AI-CAPABILITY-GAP-ARCHITECTURE-DECISION-FRAMEWORK.md
+- `0d712384f7467c69e1c314847e25810553b4b394` docs/product/research/R-001D-STATIC-REPO-REALITY-CHECK.md
+- `0cd87b2c4c665cca6aeadfdd9c0f5d0dd02e7806` docs/product/research/R-002-KAPA-COMPETITIVE-RESEARCH.md
+
+### review/iux001-v130-production-acceptance-20260910（tip `28de53500b6c02a0208608812ea76884815df3e4`，13 工件）
+
+- `ffc41c1fa9bd3e1f6d549a8c26a2338241ae83c9` admin/src/pages/WidgetAppearance.tsx
+- `52811f2bc5f7f9e7c3e5e57a866af2382bb30909` admin/src/pages/WidgetExperience.tsx
+- `2f920b785ebd940314107d750dd6214d053eff6d` admin/tests/WidgetAppearance.test.tsx
+- `bb930bdb409a3cd593ce1c246bf221327b6d9442` docs/engineering/tasks/I-UX-001-WIDGET-EXPERIENCE-production-acceptance.md
+- `cea2c9f5c0653ebc203f262f7df6b3c674d9380c` docs/engineering/tasks/I-UX-001-WIDGET-EXPERIENCE-production-artifacts.md
+- `e10c68e408c64fb65a9a015d78bd234d263aca9b` docs/engineering/tasks/artifacts/I-UX-001-v1.3.0-production/observation-window-transcript.txt **RESTRICTED-transcript**
+- `f2ac4cd9ae12c8285ae86d8fab925fa2e37cf613` docs/engineering/tasks/artifacts/I-UX-001-v1.3.0-production/prod-admin-widget-experience.png **RESTRICTED-evidence image**
+- `8e21c9c955bc07e9e4e6fb9370a535db894fde05` docs/engineering/tasks/artifacts/I-UX-001-v1.3.0-production/prod-desktop-chat-answer.png **RESTRICTED-evidence image**
+- `9168c173d7506351bd239069f7ee21fd04abe1c0` docs/engineering/tasks/artifacts/I-UX-001-v1.3.0-production/prod-desktop-chat-request.png **RESTRICTED-evidence image**
+- `3f7aa2e7372b69c33c1c4f09e1b5a7b0365b9588` docs/engineering/tasks/artifacts/I-UX-001-v1.3.0-production/prod-desktop-ctx-mini.png **RESTRICTED-evidence image**
+- `036ea4cdb3eb0a18df58d2f57e151724f44f7049` docs/engineering/tasks/artifacts/I-UX-001-v1.3.0-production/prod-desktop-nofailclosed-ctx.png **RESTRICTED-evidence image**
+- `03c28ebc39513182412711f590dce3cba71512bf` docs/engineering/tasks/artifacts/I-UX-001-v1.3.0-production/prod-mobile-chat.png **RESTRICTED-evidence image**
+- `43a4effbc8e0ac349743498ec8a4ff16223f378f` docs/engineering/tasks/artifacts/I-UX-001-v1.3.0-production/prod-mobile-nudge.png **RESTRICTED-evidence image**
