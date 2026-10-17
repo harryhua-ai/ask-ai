@@ -7,11 +7,11 @@
   外溢文档 UUID 绝不入清理清单;
 - dry-run 绝无 Weaviate DELETE/PG 写入(只读代理拦截 + 账本构造零写路径);
 - 删除身份只能来自 ``chunk_uuids_for_version`` 确定性推导(P0-A);
-- ``objects_deleted``=尝试数≠实际成功:预检以在场/缺席探针区分;
+- ``objects_deleted``=运行时确认删除数;预检仍以在场/缺席探针独立核对;
 - #162 语义回归:普通墓碑在 tombstone_days=None 下一律不合格;
-- R2(GC apply 硬否决):现状 ``_delete_version_objects`` 忽略 delete_many
-  回执、sweep(apply=True) 在零/部分删除时仍提交元数据 —— 输出必须携带
-  HARD NO-GO 且生产 GC 本体不在本 Candidate 中改动;
+- GC apply 硬否决:历史修复前发现(#164, 2026-10-15)的删除回执与提交顺序
+  问题现已在运行时修复;当前测试验证回执计数和精确 UUID 缺席后才提交 PG。
+  现役 HARD NO-GO 只列仍开放的范围、live snapshot、User 授权与生产恢复门;
 - R2(820-only 范围门):合格退役代触及的目标外文档 UUID 绝不入清单,
   单列「需另行授权」并 fail-closed;
 - R2(allowlist sha256 强制):缺失/空/不匹配一律拒绝;
@@ -162,7 +162,7 @@ class TestConservation:
         assert G5 not in res.eligible_generation_ids
 
     def test_missing_derivable_distinguished_from_present(self):
-        # GCReport.objects_deleted=尝试数≠实际成功:缺席对象单列统计。
+        # 预检按只读库存区分缺席与在场对象,不混用运行时删除计数。
         inv = [x for x in base_inventory() if x[0] != _u(f"{SRC_A}#{G1}#{2}")]
         res = run_ledger(inventory=inv)
         assert len(res.present_uuids) == 5
@@ -491,12 +491,18 @@ class _FakeGCApplyCollection:
 
 
 class TestGCApplyHardNoGo:
-    """A 阻塞 1:现状 GC apply 的删除回执/元数据排序危险事实 + 输出硬否决。"""
+    """A 阻塞 1:现役开放门 + 恒真硬否决;历史修复不再冒充当前缺陷。"""
 
-    def test_reasons_nonempty_and_cite_receipt_and_ordering(self):
+    def test_reasons_only_report_current_open_gates(self):
         blob = "\n".join(HARD_NO_GO_REASONS)
         assert HARD_NO_GO_REASONS
-        assert "delete_many" in blob and "purged_at" in blob
+        assert "820-only" in blob and "manifest" in blob
+        assert "live snapshot" in blob and "重采" in blob
+        assert "User" in blob and "授权" in blob
+        assert "生产一致性" in blob and "恢复前置" in blob
+        assert "忽略 collection.data.delete_many 返回" not in blob
+        assert "仍按成功记账并继续提交 DB 元数据" not in blob
+        assert "「已验证的对象删除」之前提交" not in blob
 
     def test_delete_many_partial_failure_is_rejected_for_exact_uuids(self):
         # 失败回执必须 fail closed;删除身份和前置读回都只能覆盖请求 UUID。
