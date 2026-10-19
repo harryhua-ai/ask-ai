@@ -87,6 +87,10 @@ from backend.services.document_repair import (
 from backend.services.recovery_events import recovery_counts
 from backend.services.source_deletion import DeletionRequestError, request_deletion
 from backend.services.source_discovery import parse_discovery_rules
+from backend.services.source_identity_guard import (
+    COLLISION_ANCHOR,
+    find_orphan_identity_surfaces,
+)
 from backend.services.source_lifecycle import DELETE_FAILED
 from backend.services.upload_storage import UPLOADS_CORPUS_ROOT
 from backend.services.website_discovery import build_website_preview
@@ -582,6 +586,24 @@ async def create_data_source(
         existing = await session.execute(select(DataSource).where(DataSource.id == source_id))
         if existing.scalar_one_or_none():
             raise HTTPException(status_code=409, detail="数据源 ID 已存在")
+        # r3 发布安全门 G3(修复 1):注册期孤儿身份碰撞 fail-closed guard。
+        # 该 id 无活跃来源持有,但存在历史孤儿内容(documents/versions/chunks/
+        # generations/uploads 子树)→ 拒绝注册,要求先显式对账;绝不静默通过
+        # (#178/#179:重注册即重发孤儿内容 = 跨版本重暴露入口)。
+        # 只读 limit(1) 存在性探测,与插入同事务(单事务模式);正常全新 id
+        # 五个探测全部未命中,零影响。
+        collided_surfaces = await find_orphan_identity_surfaces(session, source_id)
+        if collided_surfaces:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{COLLISION_ANCHOR}: source_id={source_id} "
+                    f"surfaces={sorted(collided_surfaces)};拒绝注册。该 id 命中"
+                    "无活跃来源持有的历史孤儿内容,请先走显式对账(核对孤儿内容"
+                    "归属并经删除/对账流程清理或接管后)再注册;"
+                    "跨版本重注册会让历史内容重新挂到新活跃源身份下。"
+                ),
+            )
         ds = DataSource(**{**req.model_dump(exclude_unset=True), "id": source_id})
         session.add(ds)
         await session.commit()

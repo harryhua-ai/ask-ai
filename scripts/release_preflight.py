@@ -17,6 +17,11 @@ rollout)之前给出确定性升级兼容性判定:
   显式 defer 到部署原语既有门(AC3);
 - rollback 显式:``previous_compatible: false`` 的发布必须持有所声明的
   ``remediation_gate`` 才能通过(AC4)。
+- G2 只读隔离断言(显式启用 ``--verify-upload-isolation``;未启用零变化):
+  部署前对目标 DB / Weaviate 做只读断言 —— ``upload_mode=true`` 注册行必须
+  为 0(按当前门语义取严:0 注册才 PASS)、filesystem 类 Weaviate 对象必须
+  为 0;只读查询通道不可用 → 该子项 BLOCKED(不谎报 PASS);任一断言失败
+  → 非零退出 + 结构化原因。本检查不创建 remediation ACK、不改门值。
 
 退出码:0 = pass / pass_with_deferred;2 = fail-closed。
 本脚本全程零写副作用(只读文件/socket/有界子进程)。
@@ -24,18 +29,24 @@ rollout)之前给出确定性升级兼容性判定:
 用法:
     python3 scripts/release_preflight.py --manifest /path/compatibility.json \
         [--env-file /path/.env] [--env K=V ...] [--probe-timeout 7] \
-        [--remediation-ack GATE] [--pre-contract-release]
+        [--remediation-ack GATE] [--pre-contract-release] \
+        [--verify-upload-isolation [--isolation-pg-dsn DSN \
+         [--isolation-weaviate-url URL --isolation-weaviate-class NAME]]]
 """
 
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
+import os
+import re
 import socket
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 # 有界性上限(AC3):任何探针不得超过该墙钟;manifest 声明的超时同样受限。
 MAX_PROBE_TIMEOUT_S = 30
@@ -223,6 +234,261 @@ def _capability_probe(capability: str) -> tuple[list[str], Any]:
 
 
 # --------------------------------------------------------------------------- #
+# G2 只读隔离断言探针(显式启用;全程零 mutation)
+# --------------------------------------------------------------------------- #
+
+
+class IsolationChannelUnavailable(RuntimeError):
+    """只读查询通道不可用(工具缺失/参数缺失)→ 子项 BLOCKED,不谎报 PASS。"""
+
+
+# 封闭词表只读 SQL(SELECT count(*);无任何外部输入拼接面)
+_UPLOAD_MODE_COUNT_SQL = (
+    "SELECT count(*) FROM data_sources WHERE config->>'upload_mode' = 'true'"
+)
+# Weaviate class 名词表(同集合命名规则):杜绝 GraphQL 注入面
+_WEAVIATE_CLASS_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+
+
+def _http_connection_factory(scheme: str, host: str, port: int, timeout_s: int):
+    if scheme == "https":
+        return http.client.HTTPSConnection(host, port, timeout=timeout_s)
+    return http.client.HTTPConnection(host, port, timeout=timeout_s)
+
+
+def _psql_argv_env(dsn: str) -> tuple[list[str], dict[str, str]]:
+    """libpq DSN → (psql argv, env 增量)。口令只进 PGPASSWORD env,绝不进 argv。"""
+    raw = dsn.strip()
+    if "://" in raw:
+        scheme_part, _, tail = raw.partition("://")
+        raw = f"{scheme_part.split('+', 1)[0]}://{tail}"  # 剥离 +asyncpg 等 driver 段
+    parsed = urlsplit(raw)
+    if parsed.scheme not in ("postgresql", "postgres"):
+        raise RuntimeError("isolation pg dsn 必须是 postgresql:// 形式")
+    dbname = unquote(parsed.path).lstrip("/")
+    if not dbname:
+        raise RuntimeError("isolation pg dsn 缺 dbname")
+    argv = ["psql", "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1"]
+    if parsed.hostname:
+        argv += ["-h", parsed.hostname]
+    if parsed.port:
+        argv += ["-p", str(parsed.port)]
+    if parsed.username:
+        argv += ["-U", parsed.username]
+    argv += ["-d", dbname, "-c", _UPLOAD_MODE_COUNT_SQL]
+    env = {"PGPASSWORD": unquote(parsed.password)} if parsed.password else {}
+    return argv, env
+
+
+def probe_upload_mode_rows(pg_cfg: dict, timeout_s: int) -> int:
+    """目标 DB 中 ``upload_mode=true`` 注册行数(有界只读 psql 探针)。
+
+    Raises:
+        IsolationChannelUnavailable: psql 不可用(通道缺失 → BLOCKED)。
+        RuntimeError: DSN 非法/超时/非零退出/输出不可读(→ fail-closed)。
+    """
+    dsn = str(pg_cfg.get("dsn") or "").strip()
+    if not dsn:
+        raise IsolationChannelUnavailable("缺 --isolation-pg-dsn")
+    argv, pg_env = _psql_argv_env(dsn)
+    env = {**os.environ, **pg_env} if pg_env else None
+    try:
+        proc = subprocess.run(  # noqa: S603 - argv 由封闭词表构造,非用户拼接
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=max(1, timeout_s),
+            env=env,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise IsolationChannelUnavailable("psql 不可用(只读 DB 查询通道缺失)") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"psql 探针超时(有界 {timeout_s}s)") from exc
+    if proc.returncode != 0:
+        # stderr 可能含主机/用户名,一律不回显,只报结构化原因
+        raise RuntimeError(f"psql 探针失败(returncode={proc.returncode};输出不回显)")
+    lines = [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
+    if not lines:
+        raise RuntimeError("psql 探针无输出")
+    try:
+        return int(lines[-1])
+    except ValueError as exc:
+        raise RuntimeError("psql 探针输出不可读为计数") from exc
+
+
+def probe_filesystem_objects(wv_cfg: dict, timeout_s: int) -> int:
+    """filesystem 类 Weaviate 对象数(只读 GraphQL Aggregate 计数探针)。
+
+    Raises:
+        IsolationChannelUnavailable: URL/class 参数缺失(→ BLOCKED)。
+        RuntimeError: class 名词表外/HTTP 错误/响应不可读(→ fail-closed)。
+    """
+    url = str(wv_cfg.get("url") or "").strip()
+    class_name = str(wv_cfg.get("class") or "").strip()
+    if not url or not class_name:
+        raise IsolationChannelUnavailable(
+            "缺 --isolation-weaviate-url/--isolation-weaviate-class"
+        )
+    if not _WEAVIATE_CLASS_RE.match(class_name):
+        raise RuntimeError("isolation weaviate class 名在词表外(拒绝)")
+    parsed = urlsplit(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise RuntimeError("isolation weaviate url 非法(http/https + host 必需)")
+    default_port = 443 if parsed.scheme == "https" else 80
+    # Aggregate 只读计数:source_type 属性由 ingest 写入链维护
+    query = {
+        "query": (
+            f"{{Aggregate{{{class_name}(where:{{operator:Equal,"
+            f'path:["source_type"],valueString:"filesystem"}}){{meta{{count}}}}}}}}'
+        )
+    }
+    conn = _http_connection_factory(
+        parsed.scheme, parsed.hostname, parsed.port or default_port, max(1, timeout_s)
+    )
+    try:
+        conn.request(
+            "POST",
+            "/v1/graphql",
+            body=json.dumps(query),
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        body = resp.read()
+        if resp.status != 200:
+            raise RuntimeError(f"weaviate 探针 HTTP {resp.status}")
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("weaviate 探针响应非 JSON") from exc
+        if not isinstance(data, dict) or data.get("errors"):
+            raise RuntimeError("weaviate 探针 GraphQL errors 或响应形状非法")
+        groups = (
+            data.get("data", {}).get("Aggregate", {}).get(class_name)
+            if isinstance(data, dict)
+            else None
+        )
+        if groups == []:
+            return 0  # Aggregate 空组 = 零命中
+        try:
+            # 非法形状(dict/None/缺键)统一由 except 转结构化失败,不在
+            # isinstance 分支上抛(类型错误语义保留给调用方契约违反)
+            count = int(groups[0]["meta"]["count"])
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise RuntimeError("weaviate 探针响应形状不可读") from exc
+        if count < 0:
+            raise RuntimeError("weaviate 探针 count 非法(负数)")
+        return count
+    finally:
+        conn.close()
+
+
+def _upload_isolation_checks(isolation: dict, timeout_s: int) -> list[dict]:
+    """构造 isolation 检查项;BLOCKED 与 fail 均使整体非零退出(fail-closed)。"""
+    out: list[dict] = []
+
+    dsn = str(isolation.get("pg_dsn") or "").strip()
+    if not dsn:
+        out.append(
+            _check(
+                "isolation", "upload_mode_rows", "isolation_upload_mode_unprovable",
+                "blocked",
+                "只读 DB 查询通道不可用(缺 --isolation-pg-dsn):upload_mode 注册行"
+                "断言无法证明,BLOCKED(不谎报 PASS)",
+            )
+        )
+    else:
+        try:
+            rows = probe_upload_mode_rows({"dsn": dsn}, timeout_s)
+        except IsolationChannelUnavailable as exc:
+            out.append(
+                _check(
+                    "isolation", "upload_mode_rows", "isolation_upload_mode_unprovable",
+                    "blocked", f"只读 DB 查询通道不可用: {exc}(BLOCKED,不谎报 PASS)",
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - 探针失败 = 证据不成立,fail-closed
+            out.append(
+                _check(
+                    "isolation", "upload_mode_rows", "isolation_upload_mode_probe_failed",
+                    "fail",
+                    f"upload_mode 注册行断言探针失败({type(exc).__name__}),隔离证据"
+                    "不成立,fail-closed",
+                )
+            )
+        else:
+            if rows:
+                out.append(
+                    _check(
+                        "isolation", "upload_mode_rows",
+                        "isolation_upload_mode_rows_present", "fail",
+                        f"目标 DB 存在 {rows} 行 upload_mode=true 注册;按当前门语义"
+                        "取严:必须 0 注册才 PASS(r3 摄取空集元数据 fail-closed 依据)",
+                    )
+                )
+            else:
+                out.append(
+                    _check(
+                        "isolation", "upload_mode_rows", "isolation_upload_mode_clean",
+                        "pass", "upload_mode=true 注册行 = 0",
+                    )
+                )
+
+    wv_url = str(isolation.get("weaviate_url") or "").strip()
+    wv_class = str(isolation.get("weaviate_class") or "").strip()
+    if not wv_url or not wv_class:
+        out.append(
+            _check(
+                "isolation", "filesystem_objects", "isolation_filesystem_unprovable",
+                "blocked",
+                "只读向量查询通道不可用(缺 --isolation-weaviate-url/"
+                "--isolation-weaviate-class):filesystem 类对象断言无法证明,"
+                "BLOCKED(不谎报 PASS)",
+            )
+        )
+    else:
+        try:
+            objects = probe_filesystem_objects(
+                {"url": wv_url, "class": wv_class}, timeout_s
+            )
+        except IsolationChannelUnavailable as exc:
+            out.append(
+                _check(
+                    "isolation", "filesystem_objects", "isolation_filesystem_unprovable",
+                    "blocked", f"只读向量查询通道不可用: {exc}(BLOCKED,不谎报 PASS)",
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - 探针失败 = 证据不成立,fail-closed
+            out.append(
+                _check(
+                    "isolation", "filesystem_objects", "isolation_filesystem_probe_failed",
+                    "fail",
+                    f"filesystem 类对象断言探针失败({type(exc).__name__}),隔离证据"
+                    "不成立,fail-closed",
+                )
+            )
+        else:
+            if objects:
+                out.append(
+                    _check(
+                        "isolation", "filesystem_objects",
+                        "isolation_filesystem_objects_present", "fail",
+                        f"目标 Weaviate 存在 {objects} 个 filesystem 类对象;必须为 0"
+                        "(查询侧幽灵 DENY 版本无关,残留即跨版本重暴露面)",
+                    )
+                )
+            else:
+                out.append(
+                    _check(
+                        "isolation", "filesystem_objects",
+                        "isolation_filesystem_clean", "pass",
+                        "filesystem 类 Weaviate 对象 = 0",
+                    )
+                )
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # 主评估(全程只读)
 # --------------------------------------------------------------------------- #
 
@@ -234,6 +500,8 @@ def evaluate(
     probe_timeout_s: int = DEFAULT_PROBE_TIMEOUT_S,
     remediation_ack: str | None = None,
     pre_contract: bool = False,
+    verify_upload_isolation: bool = False,
+    isolation: dict | None = None,
 ) -> tuple[dict, int]:
     env = dict(env or {})
     checks: list[dict] = []
@@ -374,6 +642,10 @@ def evaluate(
                 )
             )
 
+    # ---- G2 只读隔离断言(显式启用;未启用零变化)----
+    if verify_upload_isolation:
+        checks.extend(_upload_isolation_checks(isolation or {}, subprocess_cap))
+
     deferred: list[dict] = []
     for entry in manifest["topology"]:
         if entry["requirement"] == "same_tag_all_services":
@@ -385,7 +657,12 @@ def evaluate(
                 }
             )
 
-    status = "fail" if any(c["status"] == "fail" for c in checks) else "pass"
+    # fail 与 blocked 一律非零退出:BLOCKED = 隔离证据不可证,绝不谎报 PASS
+    status = (
+        "fail"
+        if any(c["status"] in ("fail", "blocked") for c in checks)
+        else "pass"
+    )
     return (
         {
             "manifest": manifest_path,
@@ -438,6 +715,25 @@ def main(argv: list[str] | None = None) -> int:
         help="历史(前契约)镜像的有界兼容路径:缺 manifest ⇒ 显式 deferred 而非 fail",
     )
     parser.add_argument(
+        "--verify-upload-isolation", action="store_true",
+        help="G2 只读隔离断言(显式启用;未启用零变化):目标 DB upload_mode=true "
+        "注册行必须为 0 且 filesystem 类 Weaviate 对象必须为 0;只读查询通道"
+        "不可用 → BLOCKED(fail-closed,不谎报 PASS)",
+    )
+    parser.add_argument(
+        "--isolation-pg-dsn", default=None,
+        help="隔离断言目标 DB DSN(postgresql:// 形式;口令仅经 PGPASSWORD env "
+        "传递,绝不进入 argv/输出)",
+    )
+    parser.add_argument(
+        "--isolation-weaviate-url", default=None,
+        help="隔离断言目标 Weaviate http(s) URL(只读 GraphQL Aggregate 探针)",
+    )
+    parser.add_argument(
+        "--isolation-weaviate-class", default=None,
+        help="向量 collection class 名(词表 [A-Za-z][A-Za-z0-9_]*)",
+    )
+    parser.add_argument(
         "--json", action="store_true", dest="json_out",
         help="stdout 输出机器可读 JSON verdict(默认行为;旗标为显式自描述)",
     )
@@ -456,6 +752,16 @@ def main(argv: list[str] | None = None) -> int:
         probe_timeout_s=min(max(args.probe_timeout, 1), MAX_PROBE_TIMEOUT_S),
         remediation_ack=args.remediation_ack,
         pre_contract=args.pre_contract_release,
+        verify_upload_isolation=args.verify_upload_isolation,
+        isolation=(
+            {
+                "pg_dsn": args.isolation_pg_dsn,
+                "weaviate_url": args.isolation_weaviate_url,
+                "weaviate_class": args.isolation_weaviate_class,
+            }
+            if args.verify_upload_isolation
+            else None
+        ),
     )
     json.dump(verdict, sys.stdout, ensure_ascii=False, indent=1)
     sys.stdout.write("\n")
