@@ -32,10 +32,28 @@ rollout)之前给出确定性升级兼容性判定:
 - 凭据边界(R2-1):隔离断言的 DB DSN 含口令,**绝不接受命令行参数**
   (``--isolation-pg-dsn`` 已移除并显式拒绝 —— 进程 argv 对同机所有用户/
   ps 可见)。DSN 只经受控环境变量(``--isolation-pg-dsn-env <VAR_NAME>``,
-  缺省读 ``ISOLATION_PG_DSN``)或安全文件(``--isolation-pg-dsn-file``)
-  进入;argparse 只见变量名/路径,绝不见秘密本身。缺失/格式非法/连接失败
-  一律 fail-closed 非零退出;DSN 绝不进入日志/异常/JSON 输出;psql 口令仍
-  仅经 PGPASSWORD env 传递。
+  缺省读 ``ISOLATION_PG_DSN``)、安全文件(``--isolation-pg-dsn-file``)或
+  进程自身 env 组件装配(``--isolation-pg-dsn-parts``,生产 backend 容器内
+  路径:凭据经容器自身 env 继承)进入;argparse 只见变量名/路径/旗标,
+  绝不见秘密本身。缺失/格式非法/连接失败一律 fail-closed 非零退出;DSN
+  绝不进入日志/异常/JSON 输出;psql 口令仍仅经 PGPASSWORD env 传递。
+- 可信生产身份绑定(R3-1,独立信任锚):R2 的 current_database()==DSN
+  dbname 与 /v1/meta hostname==URL host:port 属**同源配置自洽检查**,不能
+  独立证明连的是权威生产实例(误配同名测试库/代理环境可制造假 PASS)。
+  R3 起隔离断言必须持带外钉扎的信任锚(``--isolation-trust-anchor-file``,
+  A 采集):PG 用 ``pg_control_system().system_identifier``(每集群 initdb
+  唯一;文件级复制恢复会保留生产 id —— 恢复副本=生产衍生数据,识别为
+  生产衍生是正确语义);Weaviate 用 /v1/schema 目标 collection 的
+  ``collectionId`` 稳定标识。锚文件缺失/缺字段/不可读/词表外 → fail-closed,
+  **绝不进入隔离断言**;实测值与钉扎值不一致 → fail-closed(同名库/同名
+  集合/别名代理一律拒);Weaviate 实例无强标识字段 → 该子项如实 BLOCKED
+  (不降低验证强度换 PASS)。锚值不视为机密,但被测配置绝不同时充当期望
+  身份。
+- psql 缺失容器内的 DB 只读通道(R3-2):冻结镜像 runtime 无
+  postgresql-client → psql 通道缺失时回退冻结镜像自带 psycopg2 的单会话
+  只读探针(与 psql 通道完全相同的三条 SELECT 与身份复核;连接/查询失败
+  详情一律不回显,只报异常类型)。两通道均不可用 → 子项 BLOCKED(不谎报
+  PASS)。
 
 退出码:0 = pass / pass_with_deferred;2 = fail-closed。
 本脚本全程零写副作用(只读文件/socket/有界子进程)。
@@ -45,8 +63,11 @@ rollout)之前给出确定性升级兼容性判定:
         [--env-file /path/.env] [--env K=V ...] [--probe-timeout 7] \
         [--remediation-ack GATE] [--pre-contract-release] \
         [--verify-upload-isolation \
-         [--isolation-pg-dsn-env VAR_NAME | --isolation-pg-dsn-file PATH] \
-         [--isolation-weaviate-url URL --isolation-weaviate-class NAME]]
+         [--isolation-pg-dsn-env VAR_NAME | --isolation-pg-dsn-file PATH | \
+          --isolation-pg-dsn-parts] \
+         [--isolation-weaviate-url URL | --isolation-weaviate-url-env VAR_NAME] \
+         [--isolation-weaviate-class NAME | --isolation-weaviate-class-env VAR_NAME] \
+         --isolation-trust-anchor-file PATH]]
 """
 
 from __future__ import annotations
@@ -61,7 +82,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 # 有界性上限(AC3):任何探针不得超过该墙钟;manifest 声明的超时同样受限。
 MAX_PROBE_TIMEOUT_S = 30
@@ -262,10 +283,15 @@ class IsolationTargetUnproven(IsolationChannelUnavailable):
     0 计数不构成隔离证据(不能证明测的是对的库/集合)。"""
 
 
+class IsolationIdentityUnprovable(IsolationChannelUnavailable):
+    """强身份标识不可得(R3-1:如 Weaviate 响应无 collectionId/uuid 字段)
+    → 该子项如实 BLOCKED:无法与信任锚比对,绝不降低验证强度换 PASS。"""
+
+
 class IsolationIdentityMismatch(RuntimeError):
-    """连接后身份复核失败(current_database()/meta hostname 与显式声明不一致,
-    或身份不可读)→ fail-closed。错误文本只含库名/host/port 类非秘密标识,
-    绝不含 DSN 口令,可安全进入结构化 reason。"""
+    """连接后身份复核失败(current_database()/meta hostname/信任锚钉扎值
+    与实测不一致,或身份不可读)→ fail-closed。错误文本只含库名/host/port
+    类非秘密标识,绝不含 DSN 口令,可安全进入结构化 reason。"""
 
 
 # 封闭词表只读 SQL(SELECT count(*);无任何外部输入拼接面)
@@ -274,6 +300,9 @@ _UPLOAD_MODE_COUNT_SQL = (
 )
 # R2-4①:连接后身份复核 —— current_database() 必须与 DSN 声明的 dbname 一致
 _CURRENT_DATABASE_SQL = "SELECT current_database()"
+# R3-1:独立信任锚实测值 —— 每集群 initdb 唯一的 system_identifier
+# (pg_control_system();文件级复制恢复保留生产 id = 恢复副本属生产衍生的正确语义)
+_PG_SYSTEM_ID_SQL = "SELECT system_identifier FROM pg_control_system()"
 # Weaviate class 名词表(同集合命名规则):杜绝 GraphQL 注入面
 _WEAVIATE_CLASS_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
@@ -284,8 +313,8 @@ def _http_connection_factory(scheme: str, host: str, port: int, timeout_s: int):
     return http.client.HTTPConnection(host, port, timeout=timeout_s)
 
 
-def _parse_pg_target(dsn: str) -> tuple[list[str], str, str | None]:
-    """libpq DSN → (psql 基础 argv, dbname, password)。口令只回传给 env 构造。"""
+def _pg_target_fields(dsn: str) -> dict:
+    """libpq DSN → {host, port, user, password, dbname}(口令只回传给 env/驱动)。"""
     raw = dsn.strip()
     if "://" in raw:
         scheme_part, _, tail = raw.partition("://")
@@ -296,15 +325,27 @@ def _parse_pg_target(dsn: str) -> tuple[list[str], str, str | None]:
     dbname = unquote(parsed.path).lstrip("/")
     if not dbname:
         raise RuntimeError("isolation pg dsn 缺 dbname")
+    return {
+        "host": parsed.hostname or "",
+        "port": parsed.port,  # None = 未声明(psql 走 libpq 缺省)
+        "user": unquote(parsed.username) if parsed.username else "",
+        "password": unquote(parsed.password) if parsed.password else "",
+        "dbname": dbname,
+    }
+
+
+def _parse_pg_target(dsn: str) -> tuple[list[str], str, str | None]:
+    """libpq DSN → (psql 基础 argv, dbname, password)。口令只回传给 env 构造。"""
+    f = _pg_target_fields(dsn)
     argv = ["psql", "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1"]
-    if parsed.hostname:
-        argv += ["-h", parsed.hostname]
-    if parsed.port:
-        argv += ["-p", str(parsed.port)]
-    if parsed.username:
-        argv += ["-U", parsed.username]
-    argv += ["-d", dbname]
-    return argv, dbname, (unquote(parsed.password) if parsed.password else None)
+    if f["host"]:
+        argv += ["-h", f["host"]]
+    if f["port"]:
+        argv += ["-p", str(f["port"])]
+    if f["user"]:
+        argv += ["-U", f["user"]]
+    argv += ["-d", f["dbname"]]
+    return argv, f["dbname"], (f["password"] or None)
 
 
 def _psql_argv_env(dsn: str) -> tuple[list[str], dict[str, str]]:
@@ -313,24 +354,25 @@ def _psql_argv_env(dsn: str) -> tuple[list[str], dict[str, str]]:
     return argv, {"PGPASSWORD": password} if password else {}
 
 
-def probe_upload_mode_rows(pg_cfg: dict, timeout_s: int) -> int:
-    """目标 DB 中 ``upload_mode=true`` 注册行数(有界只读 psql 探针)。
-
-    R2-4①:同一 psql 会话先 ``SELECT current_database()`` 再计数,身份与
-    DSN 声明不一致 → fail-closed(防错连空库/错库后的假 PASS)。
-
-    Raises:
-        IsolationChannelUnavailable: psql 不可用(通道缺失 → BLOCKED)。
-        RuntimeError: DSN 非法/超时/非零退出/身份不一致/输出不可读(→ fail-closed)。
-    """
-    dsn = str(pg_cfg.get("dsn") or "").strip()
-    if not dsn:
+def _import_psycopg2():
+    """psycopg2 导入统一入口(冻结镜像自带;宿主 stdlib-only 路径不触发)。
+    不可用 → IsolationChannelUnavailable(两通道均缺失 → 子项 BLOCKED)。"""
+    try:
+        import psycopg2  # noqa: PLC0415 - 容器内冻结镜像自带,按需导入
+    except ImportError as exc:
         raise IsolationChannelUnavailable(
-            "缺隔离 DB DSN(须经 --isolation-pg-dsn-env <VAR_NAME> 或"
-            " --isolation-pg-dsn-file <PATH> 提供;DSN 含口令,绝不进 argv)"
-        )
-    base_argv, declared_db, password = _parse_pg_target(dsn)
-    argv = base_argv + ["-c", _CURRENT_DATABASE_SQL, "-c", _UPLOAD_MODE_COUNT_SQL]
+            "psql 与 psycopg2 只读查询通道均不可用"
+        ) from exc
+    return psycopg2
+
+
+def _pg_probe_psql(dsn: str, timeout_s: int) -> tuple[str, str, int]:
+    """psql 只读探针:单会话顺序执行 current_database / system_identifier /
+    upload_mode 计数 → (dbname, system_id, count)。"""
+    base_argv, _declared_db, password = _parse_pg_target(dsn)
+    argv = base_argv + [
+        "-c", _CURRENT_DATABASE_SQL, "-c", _PG_SYSTEM_ID_SQL, "-c", _UPLOAD_MODE_COUNT_SQL,
+    ]
     env = {**os.environ, "PGPASSWORD": password} if password else None
     try:
         proc = subprocess.run(  # noqa: S603 - argv 由封闭词表构造,非用户拼接
@@ -349,36 +391,158 @@ def probe_upload_mode_rows(pg_cfg: dict, timeout_s: int) -> int:
         # stderr 可能含主机/用户名,一律不回显,只报结构化原因
         raise RuntimeError(f"psql 探针失败(returncode={proc.returncode};输出不回显)")
     lines = [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
-    if len(lines) < 2:
+    if len(lines) < 3:
         raise IsolationIdentityMismatch(
-            "psql 探针输出缺身份行/计数行(身份不可证)—— fail-closed"
+            "psql 探针输出缺身份行/system_identifier 行/计数行(身份不可证)—— fail-closed"
         )
-    actual_db = lines[0]
-    if actual_db != declared_db:
-        raise IsolationIdentityMismatch(
-            f"目标 DB 身份不一致:current_database()={actual_db!r} ≠ DSN 声明 "
-            f"{declared_db!r} —— 连接目标与显式声明不符,fail-closed"
-        )
+    return lines[0], lines[1], _count_or_fail(lines[2])
+
+
+def _pg_probe_driver(dsn: str, timeout_s: int) -> tuple[str, str, int]:
+    """psql 缺失容器内的只读通道(R3-2):冻结镜像自带 psycopg2,单会话
+    执行与 psql 通道**完全相同**的三条只读 SELECT。凭据只从受控通道的 DSN
+    进入本进程内存;连接/查询失败的详情(可能含 conninfo)绝不回显,只报
+    异常类型。会话显式 rollback 收尾(零 mutation 语义)。"""
+    psycopg2 = _import_psycopg2()
+    f = _pg_target_fields(dsn)
     try:
-        return int(lines[-1])
+        conn = psycopg2.connect(
+            host=f["host"] or None,
+            port=f["port"] or 5432,
+            user=f["user"] or None,
+            password=f["password"] or None,
+            dbname=f["dbname"],
+            connect_timeout=max(1, timeout_s),
+        )
+    except Exception as exc:  # noqa: BLE001 - 异常文本可能含 conninfo,绝不回显
+        raise RuntimeError(
+            f"psycopg2 只读探针连接失败({type(exc).__name__};详情不回显)"
+        ) from exc
+    try:
+        with conn.cursor() as cur:
+            cur.execute(_CURRENT_DATABASE_SQL)
+            row = cur.fetchone()
+            db = str(row[0]) if row and row[0] is not None else ""
+            cur.execute(_PG_SYSTEM_ID_SQL)
+            row = cur.fetchone()
+            sid = str(row[0]) if row and row[0] is not None else ""
+            cur.execute(_UPLOAD_MODE_COUNT_SQL)
+            row = cur.fetchone()
+            count = int(row[0]) if row and row[0] is not None else 0
+        conn.rollback()  # 只读会话显式回滚收尾(零 mutation 语义)
+    except Exception as exc:  # noqa: BLE001 - 异常文本可能含 conninfo,绝不回显
+        raise RuntimeError(
+            f"psycopg2 只读探针失败({type(exc).__name__};详情不回显)"
+        ) from exc
+    finally:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001 - 收尾路径,不掩盖原异常
+            pass
+    return db, sid, count
+
+
+def _count_or_fail(raw: str) -> int:
+    try:
+        return int(raw)
     except ValueError as exc:
         raise RuntimeError("psql 探针输出不可读为计数") from exc
 
 
+def probe_upload_mode_rows(pg_cfg: dict, timeout_s: int) -> int:
+    """目标 DB 中 ``upload_mode=true`` 注册行数(有界只读探针)。
+
+    R2-4①:同一会话先 ``SELECT current_database()`` 再计数,与 DSN 声明不一致
+    → fail-closed。R3-1:进一步查询 ``pg_control_system().system_identifier``
+    并与**带外钉扎的信任锚**精确比对 —— 锚值独立于被测 DSN/URL/自报
+    metadata,同名库/误配测试集群即使 dbname 自洽也一律拒;缺失期望锚值
+    → fail-closed(绝不执行计数断言)。psql 通道缺失 → 冻结镜像自带
+    psycopg2 只读通道(两通道均缺失 → BLOCKED)。
+
+    Raises:
+        IsolationChannelUnavailable: psql 与 psycopg2 通道均不可用(→ BLOCKED)。
+        IsolationIdentityMismatch: 缺期望锚值/身份不可读/身份不一致(→ fail-closed)。
+        RuntimeError: DSN 非法/超时/非零退出/输出不可读(→ fail-closed)。
+    """
+    dsn = str(pg_cfg.get("dsn") or "").strip()
+    if not dsn:
+        raise IsolationChannelUnavailable(
+            "缺隔离 DB DSN(须经 --isolation-pg-dsn-env <VAR_NAME>、"
+            " --isolation-pg-dsn-file <PATH> 或 --isolation-pg-dsn-parts 提供;"
+            "DSN 含口令,绝不进 argv)"
+        )
+    expected_sid = str(pg_cfg.get("expected_pg_system_id") or "").strip()
+    if not expected_sid:
+        raise IsolationIdentityMismatch(
+            "缺信任锚期望 pg system_identifier(--isolation-trust-anchor-file 缺失/"
+            "未接线):目标身份无法独立于被测 DSN 证明 —— 绝不执行计数断言,fail-closed"
+        )
+    try:
+        actual_db, actual_sid, rows = _pg_probe_psql(dsn, timeout_s)
+    except IsolationChannelUnavailable:
+        actual_db, actual_sid, rows = _pg_probe_driver(dsn, timeout_s)
+    if actual_db != _pg_target_fields(dsn)["dbname"]:
+        raise IsolationIdentityMismatch(
+            f"目标 DB 身份不一致:current_database()={actual_db!r} ≠ DSN 声明 "
+            f"{_pg_target_fields(dsn)['dbname']!r} —— 连接目标与显式声明不符,fail-closed"
+        )
+    if not re.fullmatch(r"[0-9]+", actual_sid or ""):
+        raise IsolationIdentityMismatch(
+            "pg_control_system() system_identifier 不可读(身份不可证)—— fail-closed"
+        )
+    if actual_sid != expected_sid:
+        raise IsolationIdentityMismatch(
+            f"目标 DB 身份不一致:pg_control_system() system_identifier={actual_sid}"
+            " ≠ 信任锚钉扎值 —— 所连非锚定生产实例(同名库/误配测试集群亦拒;"
+            "文件级恢复副本保留生产 id 属正确语义),fail-closed"
+        )
+    return rows
+
+
+def _schema_collection_identity(schema: Any, class_name: str) -> tuple[dict | None, str, list[str]]:
+    """/v1/schema 响应 → (目标 collection 对象, 强稳定标识, 可用字段名词表)。
+
+    封闭解析两种响应形状(无执行面):旧式 class 对象数组 / 对象化
+    ``{"collections": [...]}``(collection 携带 collectionId/uuid 稳定标识)。
+    只回传字段**名**词表,绝不回显字段值。
+    """
+    items: list = []
+    if isinstance(schema, list):
+        items = [i for i in schema if isinstance(i, dict)]
+    elif isinstance(schema, dict):
+        for key in ("collections", "objects", "classes"):
+            value = schema.get(key)
+            if isinstance(value, list):
+                items = [i for i in value if isinstance(i, dict)]
+                break
+    for item in items:
+        name = item.get("class") or item.get("name")
+        if isinstance(name, str) and name == class_name:
+            cid = item.get("collectionId") or item.get("uuid") or ""
+            return item, (str(cid).strip() if cid else ""), sorted(str(k) for k in item)
+    return None, "", []
+
+
 def probe_filesystem_objects(wv_cfg: dict, timeout_s: int) -> int:
-    """filesystem 类 Weaviate 对象数(只读探针:/v1/meta 身份绑定 + Aggregate 计数)。
+    """filesystem 类 Weaviate 对象数(只读探针)。
 
     R2-4②/③:先 GET ``/v1/meta`` 并将其 hostname 与显式期望(URL 的
-    host:port)精确绑定 —— 不一致即 fail-closed;GraphQL 单请求双聚合取
-    「集合总对象数」与「filesystem 类对象数」,总对象 = 0 →
-    ``IsolationTargetUnproven``(BLOCKED):空集合上的 0 计数不能证明测的
-    是对的库/集合,绝不假 PASS。
+    host:port)精确绑定;GraphQL 单请求双聚合取「集合总对象数」与
+    「filesystem 类对象数」,总对象 = 0 → ``IsolationTargetUnproven``(BLOCKED)。
+
+    R3-1:进一步 GET ``/v1/schema``,将目标 collection 的强稳定标识
+    (``collectionId``/``uuid``)与**带外钉扎的信任锚**精确比对 —— meta
+    hostname 属同源配置自洽,不独立证明权威实例;锚不一致 → fail-closed
+    (错误实例/同名集合/别名代理一律拒);实例无强标识字段 → 该子项如实
+    BLOCKED(不降低验证强度换 PASS);缺期望锚值 → fail-closed。
 
     Raises:
         IsolationChannelUnavailable: URL/class 参数缺失(→ BLOCKED)。
-        IsolationTargetUnproven: 集合总对象 = 0(BLOCKED,不构成隔离证据)。
-        RuntimeError: class 名词表外/meta 不可达/身份不一致/HTTP 错误/响应
-            不可读(→ fail-closed)。
+        IsolationIdentityUnprovable: collection 无强标识字段(BLOCKED)。
+        IsolationTargetUnproven: 集合不存在/总对象 = 0(BLOCKED,不构成隔离证据)。
+        IsolationIdentityMismatch: 缺期望锚值/锚不一致/身份不可读(→ fail-closed)。
+        RuntimeError: class 名词表外/meta 或 schema 不可达/身份不一致/HTTP
+            错误/响应不可读(→ fail-closed)。
     """
     url = str(wv_cfg.get("url") or "").strip()
     class_name = str(wv_cfg.get("class") or "").strip()
@@ -388,6 +552,13 @@ def probe_filesystem_objects(wv_cfg: dict, timeout_s: int) -> int:
         )
     if not _WEAVIATE_CLASS_RE.match(class_name):
         raise RuntimeError("isolation weaviate class 名在词表外(拒绝)")
+    expected_cid = str(wv_cfg.get("expected_collection_id") or "").strip()
+    if not expected_cid:
+        raise IsolationIdentityMismatch(
+            "缺信任锚期望 weaviate collectionId(--isolation-trust-anchor-file 缺失/"
+            "未接线):目标身份无法独立于被测 URL/自报 metadata 证明 —— 绝不执行"
+            "计数断言,fail-closed"
+        )
     parsed = urlsplit(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         raise RuntimeError("isolation weaviate url 非法(http/https + host 必需)")
@@ -421,6 +592,35 @@ def probe_filesystem_objects(wv_cfg: dict, timeout_s: int) -> int:
             raise IsolationIdentityMismatch(
                 "weaviate 身份不一致:/v1/meta hostname 与显式期望(URL host:"
                 f"{our_port})不匹配 —— 拒绝把证据记在未证实的目标上,fail-closed"
+            )
+
+        # ---- R3-1 独立信任锚:GET /v1/schema → collectionId ↔ 钉扎值 ----
+        conn.request("GET", "/v1/schema", body=None, headers={"Accept": "application/json"})
+        resp = conn.getresponse()
+        body = resp.read()
+        if resp.status != 200:
+            raise RuntimeError(f"weaviate /v1/schema 探针 HTTP {resp.status}")
+        try:
+            schema = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("weaviate /v1/schema 响应非 JSON") from exc
+        item, actual_cid, available_fields = _schema_collection_identity(schema, class_name)
+        if item is None:
+            raise IsolationTargetUnproven(
+                f"目标 collection(class={class_name})在 /v1/schema 不存在:所连实例"
+                "无此集合 —— 空集合/错实例上的 0 计数不构成隔离证据,BLOCKED"
+                "(不谎报 PASS)"
+            )
+        if not actual_cid:
+            raise IsolationIdentityUnprovable(
+                f"weaviate collection(class={class_name})无强稳定标识(响应字段词表:"
+                f" {available_fields})—— collectionId 缺失,无法与信任锚比对,该子项"
+                "BLOCKED(不降低验证强度换 PASS)"
+            )
+        if actual_cid.lower() != expected_cid.lower():
+            raise IsolationIdentityMismatch(
+                "weaviate 身份不一致:/v1/schema collectionId ≠ 信任锚钉扎值 —— "
+                "所连为错误实例/同名集合(别名代理环境亦拒),fail-closed"
             )
 
         # ---- R2-4③ 防空集合假 PASS:同一 GraphQL 请求双聚合(total + filesystem) ----
@@ -477,8 +677,26 @@ def probe_filesystem_objects(wv_cfg: dict, timeout_s: int) -> int:
 
 
 def _upload_isolation_checks(isolation: dict, timeout_s: int) -> list[dict]:
-    """构造 isolation 检查项;BLOCKED 与 fail 均使整体非零退出(fail-closed)。"""
+    """构造 isolation 检查项;BLOCKED 与 fail 均使整体非零退出(fail-closed)。
+
+    R3-1 信任锚门禁:锚不可用(缺失/不可读/非法)→ 只产出一条 fail 检查,
+    **绝不执行任何隔离探针**(身份失败时隔离结果绝不 PASS;T-ID-09/10)。
+    """
     out: list[dict] = []
+
+    anchor = isolation.get("trust_anchor")
+    anchor_err = str(isolation.get("trust_anchor_error") or "").strip()
+    if anchor_err or not isinstance(anchor, dict):
+        out.append(
+            _check(
+                "isolation", "trust_anchor", "isolation_trust_anchor_invalid",
+                "fail",
+                f"信任锚不可用({anchor_err or '缺失'})——目标身份无法独立于被测 "
+                "DSN/URL/自报 metadata 证明:绝不进入隔离断言(身份失败时隔离"
+                "结果绝不 PASS),fail-closed",
+            )
+        )
+        return out
 
     dsn = str(isolation.get("pg_dsn") or "").strip()
     if not dsn:
@@ -486,14 +704,17 @@ def _upload_isolation_checks(isolation: dict, timeout_s: int) -> list[dict]:
             _check(
                 "isolation", "upload_mode_rows", "isolation_upload_mode_unprovable",
                 "blocked",
-                "只读 DB 查询通道不可用(缺隔离 DB DSN:env 变量未设/文件不可读,"
-                "DSN 含口令绝不进 argv):upload_mode 注册行"
+                "只读 DB 查询通道不可用(缺隔离 DB DSN:env 变量未设/文件不可读/"
+                "容器 env 组件缺失,DSN 含口令绝不进 argv):upload_mode 注册行"
                 "断言无法证明,BLOCKED(不谎报 PASS)",
             )
         )
     else:
         try:
-            rows = probe_upload_mode_rows({"dsn": dsn}, timeout_s)
+            rows = probe_upload_mode_rows(
+                {"dsn": dsn, "expected_pg_system_id": anchor["pg_system_id"]},
+                timeout_s,
+            )
         except IsolationChannelUnavailable as exc:
             out.append(
                 _check(
@@ -551,7 +772,20 @@ def _upload_isolation_checks(isolation: dict, timeout_s: int) -> list[dict]:
     else:
         try:
             objects = probe_filesystem_objects(
-                {"url": wv_url, "class": wv_class}, timeout_s
+                {
+                    "url": wv_url,
+                    "class": wv_class,
+                    "expected_collection_id": anchor["weaviate_collection_id"],
+                },
+                timeout_s,
+            )
+        except IsolationIdentityUnprovable as exc:
+            out.append(
+                _check(
+                    "isolation", "filesystem_objects",
+                    "isolation_weaviate_identity_unprovable", "blocked",
+                    f"{exc}",
+                )
             )
         except IsolationChannelUnavailable as exc:
             out.append(
@@ -803,6 +1037,66 @@ def _parse_env_file(path: str) -> dict[str, str]:
 # 缺省受控环境变量名(--isolation-pg-dsn-env 未显式给出时)
 DEFAULT_ISOLATION_DSN_ENV_VAR = "ISOLATION_PG_DSN"
 
+# R3-1:带外钉扎信任锚 schema(封闭词表;锚值 = 非秘密的集群/集合唯一标识,
+# 由 A 带外采集;**绝不**以被测 DSN/URL/自报 metadata 兼任期望身份)
+_TRUST_ANCHOR_VERSION = 1
+_TRUST_ANCHOR_FIELDS = ("pg_system_id", "weaviate_collection_id")
+
+
+def _load_trust_anchor(path: str | None) -> tuple[dict | None, str | None]:
+    """加载带外钉扎的目标身份信任锚。
+
+    Returns:
+        (anchor, None) 或 (None, 结构化错误)。缺文件/不可读/非 JSON/缺字段/
+        词表外/版本不符一律拒绝(fail-closed);错误信息只含字段名类结构
+        信息,绝不回显文件内容;锚值本身为非秘密标识(pg 数字 id / UUID)。
+    """
+    if not path or not path.strip():
+        return None, "缺 --isolation-trust-anchor-file(身份锚必填)"
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None, "锚文件不可读"
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError:
+        return None, "锚文件非合法 JSON"
+    if not isinstance(raw, dict):
+        return None, "锚文件根必须是映射"
+    if raw.get("version") != _TRUST_ANCHOR_VERSION:
+        return None, f"锚 version 必须为 {_TRUST_ANCHOR_VERSION}(实际 {raw.get('version')!r})"
+    unknown = sorted(set(map(str, raw)) - {"version"} - set(_TRUST_ANCHOR_FIELDS))
+    if unknown:
+        return None, f"锚字段词表外: {unknown}"
+    pg = str(raw.get("pg_system_id") or "").strip()
+    if not pg:
+        return None, "锚缺字段: pg_system_id(fail-closed)"
+    if not re.fullmatch(r"[0-9]{1,20}", pg):
+        return None, "锚 pg_system_id 必须是十进制整数(pg_control_system().system_identifier)"
+    wv = str(raw.get("weaviate_collection_id") or "").strip()
+    if not wv:
+        return None, "锚缺字段: weaviate_collection_id(fail-closed)"
+    return {"pg_system_id": pg, "weaviate_collection_id": wv.lower()}, None
+
+
+def _dsn_from_pg_env_parts(env: dict[str, str]) -> str | None:
+    """R3-2:从进程自身 env 的 POSTGRES_* 组件装配 libpq DSN(生产 backend
+    容器内执行路径 —— 凭据经容器自身 env 继承,零新增传输)。装配只发生在
+    进程内存;任一必需组件缺失/为空 → None(由隔离检查转 BLOCKED,fail-closed,
+    绝不回退、绝不编造)。组件经 percent-encode 后拼入 URL,特殊字符安全。
+    """
+    host = (env.get("POSTGRES_HOST") or "").strip()
+    port = (env.get("POSTGRES_PORT") or "5432").strip()
+    dbname = (env.get("POSTGRES_DB") or "").strip()
+    user = (env.get("POSTGRES_USER") or "").strip()
+    password = env.get("POSTGRES_PASSWORD")
+    if not host or not dbname or not user or not password:
+        return None
+    return (
+        f"postgresql://{quote(user, safe='')}:{quote(password, safe='')}"
+        f"@{quote(host, safe='')}:{quote(port, safe='')}/{quote(dbname, safe='')}"
+    )
+
 
 def _resolve_isolation_pg_dsn(args: argparse.Namespace) -> str | None:
     """解析隔离断言 DB DSN;秘密只经 env 变量或安全文件进入,绝不来自 argv。
@@ -881,6 +1175,29 @@ def main(argv: list[str] | None = None) -> int:
         help="持有隔离断言目标 DB DSN 的安全文件路径(建议 0600;首行即 DSN)",
     )
     parser.add_argument(
+        "--isolation-pg-dsn-parts", action="store_true",
+        help="从进程自身 env 的 POSTGRES_HOST/POSTGRES_PORT/POSTGRES_DB/"
+        "POSTGRES_USER/POSTGRES_PASSWORD 组件在内存中装配 DSN(生产 backend "
+        "容器内执行路径:凭据经容器自身 env 继承,零新增传输;argparse 只见"
+        "旗标本身)。显式给出时为唯一 DSN 通道,不回退其他通道",
+    )
+    parser.add_argument(
+        "--isolation-weaviate-url-env", default=None, metavar="VAR_NAME",
+        help="持有隔离断言目标 Weaviate URL 的环境变量名(如容器自身 env 的 "
+        "WEAVIATE_URL;argparse 只收变量名)",
+    )
+    parser.add_argument(
+        "--isolation-weaviate-class-env", default=None, metavar="VAR_NAME",
+        help="持有向量 collection class 名的环境变量名(如 WEAVIATE_CLASS_NAME)",
+    )
+    parser.add_argument(
+        "--isolation-trust-anchor-file", default=None, metavar="PATH",
+        help="带外钉扎的目标身份信任锚 JSON(R3-1;A 采集;字段:version/"
+        "pg_system_id/weaviate_collection_id;独立于被测 DSN/URL)。"
+        "--verify-upload-isolation 下必填:缺失/不可读/缺字段/不匹配一律 "
+        "fail-closed,绝不进入隔离断言",
+    )
+    parser.add_argument(
         "--isolation-weaviate-url", default=None,
         help="隔离断言目标 Weaviate http(s) URL(只读 GraphQL Aggregate 探针)",
     )
@@ -901,6 +1218,26 @@ def main(argv: list[str] | None = None) -> int:
         key, _, value = pair.partition("=")
         env[key.strip()] = value
 
+    # R3-1:信任锚(--verify-upload-isolation 下必填;加载失败经
+    # trust_anchor_error 传入隔离门禁 → 单条 fail 检查,绝不执行探针)
+    anchor: dict | None = None
+    anchor_error: str | None = None
+    if args.verify_upload_isolation:
+        anchor, anchor_error = _load_trust_anchor(args.isolation_trust_anchor_file)
+
+    # DSN 通道(显式、无回退):--isolation-pg-dsn-parts = 容器 env 组件装配;
+    # 否则 file > env 变量。Weaviate URL/class:显式旗标 > env 变量名通道。
+    if args.isolation_pg_dsn_parts:
+        pg_dsn = _dsn_from_pg_env_parts(os.environ)
+    else:
+        pg_dsn = _resolve_isolation_pg_dsn(args)
+    wv_url = args.isolation_weaviate_url
+    if not wv_url and args.isolation_weaviate_url_env:
+        wv_url = os.environ.get(args.isolation_weaviate_url_env) or None
+    wv_class = args.isolation_weaviate_class
+    if not wv_class and args.isolation_weaviate_class_env:
+        wv_class = os.environ.get(args.isolation_weaviate_class_env) or None
+
     verdict, code = evaluate(
         args.manifest,
         env=env,
@@ -910,9 +1247,11 @@ def main(argv: list[str] | None = None) -> int:
         verify_upload_isolation=args.verify_upload_isolation,
         isolation=(
             {
-                "pg_dsn": _resolve_isolation_pg_dsn(args),
-                "weaviate_url": args.isolation_weaviate_url,
-                "weaviate_class": args.isolation_weaviate_class,
+                "pg_dsn": pg_dsn,
+                "weaviate_url": wv_url,
+                "weaviate_class": wv_class,
+                "trust_anchor": anchor,
+                "trust_anchor_error": anchor_error,
             }
             if args.verify_upload_isolation
             else None

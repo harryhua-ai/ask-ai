@@ -39,6 +39,21 @@ _EVALUATOR = _REPO_ROOT / "scripts" / "release_preflight.py"
 _FAKE_PW = "R2GRN-FAKEPW-DO-NOT-USE"
 _FAKE_DSN = f"postgresql://iso_user:{_FAKE_PW}@dbhost:6543/iso_db"
 
+# R3-1:隔离断言自 R3 起强制携带独立信任锚(本文件焦点是凭据边界,
+# 锚以"可用" fixture 形态最小接线;锚级负例见 trust_anchor 测试 T-ID-*)
+_ANCHOR_SID = "7100000000000000001"
+_ANCHOR_WV_CID = "01234567-89ab-cdef-0123-456789abcdef"
+
+
+def _write_anchor(tmp_path: Path) -> Path:
+    p = tmp_path / "trust-anchor.json"
+    p.write_text(
+        json.dumps({"version": 1, "pg_system_id": _ANCHOR_SID,
+                    "weaviate_collection_id": _ANCHOR_WV_CID}),
+        encoding="utf-8",
+    )
+    return p
+
 
 def _write_manifest(tmp_path: Path, *, slow_dependency: bool = False) -> Path:
     m = tmp_path / "compatibility.json"
@@ -90,6 +105,7 @@ def _psql_shim(tmp_path, monkeypatch):
         f'printf \'%s\\n\' "$@" > "{argv_file}"\n'
         f'printf \'%s\' "${{PGPASSWORD-}}" > "{pw_file}"\n'
         'printf \'%s\\n\' "iso_db"\n'
+        f'printf \'%s\\n\' "{_ANCHOR_SID}"\n'
         'echo "0"\n',
         encoding="utf-8",
     )
@@ -129,7 +145,12 @@ def test_missing_credentials_blocks_nonzero(tmp_path, monkeypatch):
     """env 未设 + 无旗标 → BLOCKED,整体非零退出(绝不静默、绝不回退)。"""
     monkeypatch.delenv("ISOLATION_PG_DSN", raising=False)
     m = _write_manifest(tmp_path)
-    verdict, code = rp.evaluate(str(m), verify_upload_isolation=True, isolation={"pg_dsn": None})
+    verdict, code = rp.evaluate(
+        str(m),
+        verify_upload_isolation=True,
+        isolation={"pg_dsn": None, "trust_anchor": {
+            "pg_system_id": _ANCHOR_SID, "weaviate_collection_id": _ANCHOR_WV_CID}},
+    )
     assert code == 2
     assert _iso_checks(verdict)[0]["status"] == "blocked"
 
@@ -146,6 +167,7 @@ def test_default_env_var_injection_positive_with_real_subprocess(
         [
             "--manifest", str(m),
             "--verify-upload-isolation",
+            "--isolation-trust-anchor-file", str(_write_anchor(tmp_path)),
             "--isolation-weaviate-url", "http://wvhost:8080",
             "--isolation-weaviate-class", "KnowledgeChunk",
         ]
@@ -177,6 +199,8 @@ def test_named_env_var_injection_positive(tmp_path, monkeypatch):
             "pg_dsn": os.environ["R2TEST_ISO_DSN"],
             "weaviate_url": "http://wvhost:8080",
             "weaviate_class": "KnowledgeChunk",
+            "trust_anchor": {
+                "pg_system_id": _ANCHOR_SID, "weaviate_collection_id": _ANCHOR_WV_CID},
         },
     )
     assert code == 0
@@ -196,6 +220,7 @@ def test_dsn_file_source_positive(tmp_path, monkeypatch, _psql_shim, capsys):
             "--manifest", str(m),
             "--verify-upload-isolation",
             "--isolation-pg-dsn-file", str(dsn_file),
+            "--isolation-trust-anchor-file", str(_write_anchor(tmp_path)),
             "--isolation-weaviate-url", "http://wvhost:8080",
             "--isolation-weaviate-class", "KnowledgeChunk",
         ]
@@ -216,6 +241,7 @@ def test_dsn_file_unreadable_blocks_fail_closed(tmp_path, capsys, monkeypatch):
             "--manifest", str(m),
             "--verify-upload-isolation",
             "--isolation-pg-dsn-file", str(tmp_path / "no-such.secret"),
+            "--isolation-trust-anchor-file", str(_write_anchor(tmp_path)),
             "--isolation-weaviate-url", "http://wvhost:8080",
             "--isolation-weaviate-class", "KnowledgeChunk",
         ]
@@ -236,6 +262,7 @@ def test_malformed_dsn_fails_closed_and_never_echoed(tmp_path, monkeypatch, caps
         [
             "--manifest", str(m),
             "--verify-upload-isolation",
+            "--isolation-trust-anchor-file", str(_write_anchor(tmp_path)),
             "--isolation-weaviate-url", "http://wvhost:8080",
             "--isolation-weaviate-class", "KnowledgeChunk",
         ]

@@ -47,6 +47,14 @@ _FULL_ISOLATION = {
     "weaviate_class": "KnowledgeChunk",
 }
 
+# R3-1:隔离断言自 R3 起强制携带独立信任锚(测试自造非秘密锚值;
+# 锚级负例与 T-ID-01..10 见 test_r3gate_preflight_trust_anchor.py)
+_R3_ANCHOR = {
+    "pg_system_id": "7100000000000000001",
+    "weaviate_collection_id": "01234567-89ab-cdef-0123-456789abcdef",
+}
+_FULL_ISOLATION_WITH_ANCHOR = {**_FULL_ISOLATION, "trust_anchor": dict(_R3_ANCHOR)}
+
 
 def _iso_checks(verdict: dict) -> list[dict]:
     return [c for c in verdict["checks"] if c["section"] == "isolation"]
@@ -72,9 +80,14 @@ def test_flag_disabled_zero_behavior_change(tmp_path, capsys):
 
 
 def test_t9_enabled_without_channels_blocks_fail_closed(tmp_path):
-    """启用但无任何只读查询通道 → 两子项 BLOCKED,整体非零退出(不谎报 PASS)。"""
+    """启用但无任何只读查询通道(锚可用)→ 两子项 BLOCKED,整体非零退出
+    (不谎报 PASS)。锚缺失路径另见 trust_anchor 测试 T-ID-07。"""
     m = _write_manifest(tmp_path)
-    verdict, code = evaluate(str(m), verify_upload_isolation=True, isolation={})
+    verdict, code = evaluate(
+        str(m),
+        verify_upload_isolation=True,
+        isolation={"trust_anchor": dict(_R3_ANCHOR)},
+    )
     assert code == 2
     assert verdict["status"] == "fail"
     iso = _iso_checks(verdict)
@@ -89,7 +102,7 @@ def test_t9_contaminated_evidence_fails_closed(tmp_path, monkeypatch):
     monkeypatch.setattr(rp, "probe_filesystem_objects", lambda cfg, timeout_s: 7)
     m = _write_manifest(tmp_path)
     verdict, code = evaluate(
-        str(m), verify_upload_isolation=True, isolation=dict(_FULL_ISOLATION)
+        str(m), verify_upload_isolation=True, isolation=dict(_FULL_ISOLATION_WITH_ANCHOR)
     )
     assert code == 2
     classes = {c["class"] for c in _iso_checks(verdict)}
@@ -105,7 +118,7 @@ def test_t9_clean_evidence_passes(tmp_path, monkeypatch):
     monkeypatch.setattr(rp, "probe_filesystem_objects", lambda cfg, timeout_s: 0)
     m = _write_manifest(tmp_path)
     verdict, code = evaluate(
-        str(m), verify_upload_isolation=True, isolation=dict(_FULL_ISOLATION)
+        str(m), verify_upload_isolation=True, isolation=dict(_FULL_ISOLATION_WITH_ANCHOR)
     )
     assert code == 0
     assert verdict["status"] == "pass"
@@ -127,7 +140,7 @@ def test_probe_unavailable_blocked_vs_probe_failed_fail(tmp_path, monkeypatch):
     monkeypatch.setattr(rp, "probe_upload_mode_rows", _raise_unavailable)
     monkeypatch.setattr(rp, "probe_filesystem_objects", _raise_unavailable)
     verdict, code = evaluate(
-        str(m), verify_upload_isolation=True, isolation=dict(_FULL_ISOLATION)
+        str(m), verify_upload_isolation=True, isolation=dict(_FULL_ISOLATION_WITH_ANCHOR)
     )
     assert code == 2
     assert all(c["status"] == "blocked" for c in _iso_checks(verdict))
@@ -138,7 +151,7 @@ def test_probe_unavailable_blocked_vs_probe_failed_fail(tmp_path, monkeypatch):
     monkeypatch.setattr(rp, "probe_upload_mode_rows", _raise_probe)
     monkeypatch.setattr(rp, "probe_filesystem_objects", _raise_probe)
     verdict2, code2 = evaluate(
-        str(m), verify_upload_isolation=True, isolation=dict(_FULL_ISOLATION)
+        str(m), verify_upload_isolation=True, isolation=dict(_FULL_ISOLATION_WITH_ANCHOR)
     )
     assert code2 == 2
     assert all(c["status"] == "fail" for c in _iso_checks(verdict2))
@@ -155,16 +168,25 @@ def test_probe_unavailable_blocked_vs_probe_failed_fail(tmp_path, monkeypatch):
 
 def test_psql_probe_readonly_and_password_never_in_argv(monkeypatch):
     """psql 探针:只读 SELECT;口令只进 PGPASSWORD env,绝不进 argv;
-    R2-4①:同一会话必须先执行 current_database() 身份复核。"""
+    R2-4①:同一会话必须先执行 current_database() 身份复核;
+    R3-1:同会话追加 system_identifier 锚实测查询(psql 输出 3 行)。"""
     captured: dict = {}
 
     def fake_run(argv, capture_output, text, timeout, env, check):
         captured["argv"] = argv
         captured["env"] = env
-        return SimpleNamespace(returncode=0, stdout="dbname\n0\n", stderr="")
+        return SimpleNamespace(
+            returncode=0, stdout="dbname\n7100000000000000001\n0\n", stderr=""
+        )
 
     monkeypatch.setattr(rp.subprocess, "run", fake_run)
-    rows = rp.probe_upload_mode_rows(dict(_FULL_ISOLATION, dsn=_FULL_ISOLATION["pg_dsn"]), 5)
+    rows = rp.probe_upload_mode_rows(
+        {
+            "dsn": _FULL_ISOLATION["pg_dsn"],
+            "expected_pg_system_id": "7100000000000000001",
+        },
+        5,
+    )
     assert rows == 0
     argv = captured["argv"]
     assert argv[0] == "psql"
@@ -173,18 +195,32 @@ def test_psql_probe_readonly_and_password_never_in_argv(monkeypatch):
     joined = " ".join(argv)
     assert "-c" in argv
     assert "SELECT current_database()" in joined, "R2-4①:必须执行身份复核查询"
+    assert "SELECT system_identifier FROM pg_control_system()" in joined, "R3-1:锚实测"
     assert "SELECT count(*) FROM data_sources" in joined
     assert "config->>'upload_mode' = 'true'" in joined
     assert "dbhost" in joined and "6543" in joined and "dbname" in joined
 
 
 def test_psql_probe_maps_missing_binary_to_channel_unavailable(monkeypatch):
+    """psql 与 psycopg2 只读通道**均**缺失 → IsolationChannelUnavailable(BLOCKED);
+    仅 psql 缺失时 R3-2 起回退冻结镜像自带 psycopg2 通道(见 trust_anchor 测试)。"""
     def fake_run(*args, **kwargs):
         raise FileNotFoundError("psql")
 
     monkeypatch.setattr(rp.subprocess, "run", fake_run)
+
+    def _no_driver():
+        raise rp.IsolationChannelUnavailable("psql 与 psycopg2 只读查询通道均不可用")
+
+    monkeypatch.setattr(rp, "_import_psycopg2", _no_driver)
     with pytest.raises(rp.IsolationChannelUnavailable):
-        rp.probe_upload_mode_rows({"dsn": _FULL_ISOLATION["pg_dsn"]}, 5)
+        rp.probe_upload_mode_rows(
+            {
+                "dsn": _FULL_ISOLATION["pg_dsn"],
+                "expected_pg_system_id": "7100000000000000001",
+            },
+            5,
+        )
 
 
 def test_psql_probe_rejects_dsn_without_dbname():
@@ -203,7 +239,8 @@ class _FakeHTTPResponse:
 
 def test_weaviate_probe_parses_aggregate_count(monkeypatch):
     """GraphQL Aggregate 只读探针:解析 meta.count;错误响应 fail-closed。
-    R2-4②:先 GET /v1/meta 做 hostname ↔ URL 绑定,再双聚合计数。"""
+    R2-4②:先 GET /v1/meta 做 hostname ↔ URL 绑定,再双聚合计数;
+    R3-1:中间追加 GET /v1/schema collectionId 锚比对。"""
     captured: dict = {}
 
     class FakeConn:
@@ -220,6 +257,16 @@ def test_weaviate_probe_parses_aggregate_count(monkeypatch):
             if method == "GET" and path == "/v1/meta":
                 return _FakeHTTPResponse(
                     200, json.dumps({"hostname": "http://wvhost:8080"}).encode()
+                )
+            if method == "GET" and path == "/v1/schema":
+                return _FakeHTTPResponse(
+                    200,
+                    json.dumps(
+                        {"collections": [
+                            {"class": "KnowledgeChunk",
+                             "collectionId": "01234567-89ab-cdef-0123-456789abcdef"}
+                        ]}
+                    ).encode(),
                 )
             return _FakeHTTPResponse(
                 200,
@@ -238,14 +285,25 @@ def test_weaviate_probe_parses_aggregate_count(monkeypatch):
         def close(self):
             pass
 
-    monkeypatch.setattr(rp.http.client.HTTPConnection, "__new__", lambda cls, *a, **k: object.__new__(cls))
+    # 只替换连接工厂(FakeConn 直替);不触碰 HTTPConnection.__new__ ——
+    # 对继承类属性 setattr 会在还原时残留 class-dict 条目,污染后续用真实
+    # http.client 的测试(R3 trust_anchor 套件实测踩中该残留)。
     monkeypatch.setattr(rp, "_http_connection_factory", lambda scheme, host, port, timeout: FakeConn(host, port, timeout))
     count = rp.probe_filesystem_objects(
-        {"url": "http://wvhost:8080", "class": "KnowledgeChunk"}, 5
+        {
+            "url": "http://wvhost:8080",
+            "class": "KnowledgeChunk",
+            "expected_collection_id": "01234567-89ab-cdef-0123-456789abcdef",
+        },
+        5,
     )
     assert count == 3
     assert ("GET", "/v1/meta") in captured["requests"], "R2-4②:必须先做身份绑定"
+    assert ("GET", "/v1/schema") in captured["requests"], "R3-1:必须做锚比对"
     assert ("POST", "/v1/graphql") in captured["requests"]
+    assert captured["requests"].index(("GET", "/v1/schema")) < captured["requests"].index(
+        ("POST", "/v1/graphql")
+    ), "锚比对必须先于聚合断言"
     assert 'source_type' in json.dumps(captured["bodies"][-1]), (
         "filesystem 过滤谓词必须保留在聚合查询中"
     )
@@ -256,7 +314,8 @@ def test_weaviate_probe_rejects_injection_class_name():
     """class 名词表校验:非 [A-Za-z][A-Za-z0-9_]* 一律拒绝(无 GraphQL 注入面)。"""
     with pytest.raises(RuntimeError):
         rp.probe_filesystem_objects(
-            {"url": "http://h:8080", "class": "K}){ignore"}, 5
+            {"url": "http://h:8080", "class": "K}){ignore",
+             "expected_collection_id": "x"}, 5
         )
 
 
@@ -278,7 +337,10 @@ def test_weaviate_probe_non_200_fails_closed(monkeypatch):
         rp, "_http_connection_factory", lambda scheme, host, port, timeout: FakeConn()
     )
     with pytest.raises(RuntimeError):
-        rp.probe_filesystem_objects({"url": "http://h:8080", "class": "K"}, 5)
+        rp.probe_filesystem_objects(
+            {"url": "http://h:8080", "class": "K",
+             "expected_collection_id": "01234567-89ab-cdef-0123-456789abcdef"}, 5
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -290,11 +352,16 @@ def test_main_cli_wiring_clean(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(rp, "probe_upload_mode_rows", lambda cfg, timeout_s: 0)
     monkeypatch.setattr(rp, "probe_filesystem_objects", lambda cfg, timeout_s: 0)
     monkeypatch.setenv("ISOLATION_PG_DSN", _FULL_ISOLATION["pg_dsn"])
+    anchor = tmp_path / "anchor.json"
+    anchor.write_text(
+        json.dumps({"version": 1, **_R3_ANCHOR}), encoding="utf-8"
+    )
     m = _write_manifest(tmp_path)
     code = main(
         [
             "--manifest", str(m),
             "--verify-upload-isolation",
+            "--isolation-trust-anchor-file", str(anchor),
             "--isolation-weaviate-url", _FULL_ISOLATION["weaviate_url"],
             "--isolation-weaviate-class", _FULL_ISOLATION["weaviate_class"],
         ]
@@ -305,9 +372,17 @@ def test_main_cli_wiring_clean(tmp_path, capsys, monkeypatch):
 
 
 def test_main_cli_wiring_blocked_exit_nonzero(tmp_path, capsys, monkeypatch):
+    """锚可用但通道缺失 → blocked;锚缺失 → 锚门禁 fail(见 T-ID-07)。"""
     monkeypatch.delenv("ISOLATION_PG_DSN", raising=False)
+    anchor = tmp_path / "anchor.json"
+    anchor.write_text(
+        json.dumps({"version": 1, **_R3_ANCHOR}), encoding="utf-8"
+    )
     m = _write_manifest(tmp_path)
-    code = main(["--manifest", str(m), "--verify-upload-isolation"])
+    code = main([
+        "--manifest", str(m), "--verify-upload-isolation",
+        "--isolation-trust-anchor-file", str(anchor),
+    ])
     assert code == 2
     out = json.loads(capsys.readouterr().out)
     assert all(c["status"] == "blocked" for c in _iso_checks(out))

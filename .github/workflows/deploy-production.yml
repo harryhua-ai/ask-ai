@@ -147,16 +147,40 @@ jobs:
       # engine);非零退出 ⇒ 在 DB migration(首个不可逆 mutation)之前中止,
       # 零生产变更。前契约镜像(镜像内无 evaluator)走有界兼容路径并显式留痕。
       #
-      # R2-4 本地候选接线(⚠️ 未 push/未生效;Environment secrets 归 A 配置):
-      #   - 强制启用 G2 只读隔离断言(--verify-upload-isolation);
+      # R2-4 候选接线(语义保留):强制启用 G2 只读隔离断言;隔离子项 PASS
+      # ≠ G2 门 PASS;G2 正式满足以本 workflow 在生产仓库强制生效并完成真实
+      # 部署验证为准。
+      #
+      # R3-1 可信生产身份绑定(2026-10-20):隔离断言强制携带**独立信任锚**
+      # (--isolation-trust-anchor-file):PG 用 pg_control_system().system_
+      # identifier(每集群 initdb 唯一,文件级复制恢复保留生产 id = 正确语义),
+      # Weaviate 用 /v1/schema 目标 collection 的 collectionId 稳定标识。
+      # R2 的 current_database()==DSN dbname 与 /v1/meta hostname==URL 自洽
+      # 检查保留但不再单独构成身份证据 —— 锚不匹配/缺失/不可读一律
+      # fail-closed,绝不进入隔离断言。
+      #
+      # R3-2 SSH 凭据生命周期(2026-10-20,**消除而非清理**):R2 候选曾把
+      # 隔离 DSN(PREFLIGHT_ISOLATION_PG_DSN secret)经 stdin 写入远端
+      # $HOME/.askai_preflight_iso_dsn —— SSH 中断/远程 trap 未装好/清理连接
+      # 失败时可残留含密文件。R3 起该路径整体移除:
+      #   - CI→SSH 只传**非秘密参数**:冻结 tag(已 ^vX.Y.Z(-rN)?$ 校验)+
+      #     A 带外钉扎的信任锚(base64 JSON,内容为非秘密的集群/集合唯一标识);
+      #   - 生产 backend 容器环境自身已含完整 DB DSN 组件与 Weaviate 目标
+      #     (POSTGRES_*/WEAVIATE_*,compose env_file+environment 注入):
+      #     evaluator/manifest/锚经既有 compose exec 通道送入**运行中 backend
+      #     容器**,评估器在容器内执行,凭据经容器自身 env 继承
+      #     (--isolation-pg-dsn-parts / --isolation-weaviate-*-env 只传变量名)
+      #     —— 零新增含密文件、零凭据过 SSH、零 CI 侧 DSN secret;
+      #   - 远端/容器临时工件(评估器/manifest/锚)均**非秘密**,单 SSH 会话
+      #     内 trap 确定性清除;连接中断残留亦为非秘密工件,且下次运行开始时
+      #     确定性清扫(最小有效期);
+      #   - 冻结镜像 evaluator、preflight 先于 migration 与 rollout、身份+
+      #     隔离同一强制链、remediation gate 与无 ACK 语义、gate 三值均不变;
       #   - A-owned 输入(未配置 ⇒ fail-closed 中止,不部署):
-      #       secret PREFLIGHT_ISOLATION_PG_DSN(隔离断言目标 DB DSN,含口令);
-      #       variable PREFLIGHT_WEAVIATE_URL / PREFLIGHT_WEAVIATE_CLASS;
-      #   - DSN 交付纪律:经 stdin 写入远端 0600 文件 + --isolation-pg-dsn-file
-      #     消费,绝不进任何 argv/日志(与 PROD_DEPLOY_SSH_KEY 同一纪律);
-      #   - 既有 remediation gate 与无 ACK 语义不变;本步骤仍先于迁移/rollout。
-      #   - 关键语义:隔离子项 PASS ≠ G2 门 PASS;G2 正式满足以本 workflow
-      #     在生产仓库强制生效并完成真实部署验证为准。
+      #       secret PREFLIGHT_TRUST_ANCHOR_B64 = trust-anchor JSON 的 base64
+      #       ({"version":1,"pg_system_id":"<pg_control_system 钉扎值>",
+      #         "weaviate_collection_id":"<collectionId 钉扎值>"};
+      #        值由 A 只读采集一次带外提供;本地实现绝不编造生产锚)。
       - name: Production compatibility preflight (fail-closed; pre-mutation)
         id: preflight
         env:
@@ -165,34 +189,30 @@ jobs:
           SSH_USER: ${{ vars.PROD_SSH_USER }}
           SSH_KNOWN_HOSTS_B64: ${{ vars.PROD_SSH_KNOWN_HOSTS_B64 }}
           DEPLOY_TAG: ${{ steps.identity.outputs.tag }}
-          ISOLATION_DSN: ${{ secrets.PREFLIGHT_ISOLATION_PG_DSN }}
-          ISOLATION_WV_URL: ${{ vars.PREFLIGHT_WEAVIATE_URL }}
-          ISOLATION_WV_CLASS: ${{ vars.PREFLIGHT_WEAVIATE_CLASS }}
+          TRUST_ANCHOR_B64: ${{ secrets.PREFLIGHT_TRUST_ANCHOR_B64 }}
         run: |
           set -euo pipefail
           KEY_FILE="$RUNNER_TEMP/prod_deploy_key"
           KH_FILE="$RUNNER_TEMP/prod_known_hosts"
           cleanup() { rm -f "$KEY_FILE" "$KH_FILE"; }
-          trap cleanup EXIT
-          for v in SSH_KEY SSH_HOST SSH_USER SSH_KNOWN_HOSTS_B64; do
+          trap cleanup EXIT INT TERM
+          for v in SSH_KEY SSH_HOST SSH_USER SSH_KNOWN_HOSTS_B64 TRUST_ANCHOR_B64 DEPLOY_TAG; do
             if [ -z "${!v}" ]; then
-              echo "❌ $v 未配置(production Environment secret / repository variables)" >&2
+              echo "❌ $v 未配置(production Environment secret / repository variables;" >&2
+              echo "   含 A-owned 信任锚 PREFLIGHT_TRUST_ANCHOR_B64):隔离断言无法证明 → 部署中止" >&2
               exit 2
             fi
           done
-          # R2-4:A-owned 隔离断言输入缺失 ⇒ fail-closed(候选门语义:未配置即不部署)
-          if [ -z "$ISOLATION_DSN" ]; then
-            echo "❌ PREFLIGHT_ISOLATION_PG_DSN 未配置(A-owned Environment secret):G2 只读" >&2
-            echo "   隔离断言无法证明 → 部署中止(fail-closed;绝不静默跳过隔离检查)" >&2
-            exit 2
-          fi
-          for v in ISOLATION_WV_URL ISOLATION_WV_CLASS; do
-            if [ -z "${!v}" ]; then
-              echo "❌ $v 未配置(A-owned repository variable):隔离断言不完整 → 部署中止" >&2
-              exit 2
-            fi
-            case "${!v}" in *"'"*) echo "❌ $v 含单引号(非法)" >&2; exit 2;; esac
-          done
+          # DEPLOY_TAG 形状纵深复核(身份步已 ^vX.Y.Z(-rN)?$ 校验;远端 env
+          # 前缀只接受已冻结 tag,绝不接受任意字符串)
+          case "$DEPLOY_TAG" in
+            v[0-9]*.[0-9]*.[0-9]*|v[0-9]*.[0-9]*.[0-9]*-r[0-9]*) ;;
+            *) echo "❌ DEPLOY_TAG 形状非法(拒绝进入远端命令)" >&2; exit 2;;
+          esac
+          # 信任锚必须为 base64 词表内单行(防远端 env 前缀注入;锚值本身非秘密)
+          case "$TRUST_ANCHOR_B64" in
+            *[!A-Za-z0-9+/=]*) echo "❌ TRUST_ANCHOR_B64 含 base64 词表外字符(非法)" >&2; exit 2;;
+          esac
           install -m 600 /dev/null "$KEY_FILE"
           printf '%s\n' "$SSH_KEY" > "$KEY_FILE"
           printf '%s' "$SSH_KNOWN_HOSTS_B64" | base64 -d > "$KH_FILE"
@@ -207,27 +227,39 @@ jobs:
               -o BatchMode=yes
               -o ConnectTimeout=15
               -o ServerAliveInterval=30)
-          ISO_DSN_FILE='$HOME/.askai_preflight_iso_dsn'
-          # 1) DSN 经 stdin 落远端 0600 文件(绝不进 argv/日志/命令串)
-          printf '%s' "$ISOLATION_DSN" | ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" \
-            'umask 077; cat > '"$ISO_DSN_FILE"'; chmod 600 '"$ISO_DSN_FILE"''
-          # 2) preflight(只读;脚本本体经 stdin 原样传递,与迁移同一无注入面模式)
-          RC=0
-          ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" \
-              "DEPLOY_TAG='$DEPLOY_TAG' ISOLATION_WV_URL='$ISOLATION_WV_URL' ISOLATION_WV_CLASS='$ISOLATION_WV_CLASS' bash -s" <<'REMOTE' || RC=$?
+          # 单 SSH 会话执行远端 preflight(脚本本体经 stdin 原样传递,与迁移
+          # 同一无注入面模式;凭据零传输 —— 见步骤断言注释)
+          remote_preflight() {
+            ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" \
+                "DEPLOY_TAG='$DEPLOY_TAG' TRUST_ANCHOR_B64='$TRUST_ANCHOR_B64' bash -s" <<'REMOTE'
           set -euo pipefail
           cd ~/ask-ai
-          exec 9>/tmp/askai-deploy.lock
+          exec 9>"${TMPDIR:-/tmp}/askai-deploy.lock"
           flock -w 0 9 || { echo "❌ 部署锁被占用(另一生产变更在执行)" >&2; exit 1; }
-          trap 'rm -f "$HOME/.askai_preflight_iso_dsn"' EXIT
-          # 只读探针模式:直接 docker pull/create/cp(不经 compose 载体 ——
-          # 该载体属迁移步骤专有,部署原语唯一性不变量不破)
+          export ASKAI_IMAGE_TAG="$DEPLOY_TAG"
           IMAGE="ghcr.io/harryhua-ai/ask-ai:$DEPLOY_TAG"
+          # R3-2 确定性清扫:连接中断可能残留的上一轮临时工件(均非秘密:
+          # 评估器/manifest = 冻结镜像工件,锚 = A 钉扎标识)—— 最小有效期
+          rm -f "${TMPDIR:-/tmp}"/askai-trust-anchor.* "${TMPDIR:-/tmp}"/askai-preflight.* \
+                "${TMPDIR:-/tmp}"/askai-compat.* "${TMPDIR:-/tmp}"/askai-release.* 2>/dev/null || true
+          ANCHOR_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-trust-anchor.XXXXXXXX")"
+          REL_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-release.XXXXXXXX")"
+          MAN_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-compat.XXXXXXXX")"
+          EVAL_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-preflight.XXXXXXXX")"
+          cleanup() { rm -f "$ANCHOR_TMP" "$REL_TMP" "$MAN_TMP" "$EVAL_TMP"; }
+          trap cleanup EXIT
+          # 1) 信任锚(base64;A 带外钉扎的非秘密标识)落远端 0600 临时文件
+          printf '%s' "$TRUST_ANCHOR_B64" | base64 -d > "$ANCHOR_TMP" || {
+              echo "❌ trust anchor base64 解码失败(fail-closed)" >&2; exit 1; }
+          chmod 600 "$ANCHOR_TMP"
+          if [ ! -s "$ANCHOR_TMP" ]; then
+              echo "❌ trust anchor 为空(fail-closed)" >&2; exit 1
+          fi
+          python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$ANCHOR_TMP" 2>/dev/null || {
+              echo "❌ trust anchor 非合法 JSON(fail-closed)" >&2; exit 1; }
+          # 2) 拉取冻结镜像;时代判定源 = 镜像内 RELEASE.json 旗标(blocker 3)
           docker pull "$IMAGE" >/dev/null
           CID=$(docker create "$IMAGE")
-          # 时代判定(blocker 3):镜像内不可变 RELEASE.json 的
-          # compatibility_contract 旗标,独立于门禁工件存在性
-          REL_TMP="$(mktemp /tmp/askai-release.XXXXXX.json)"
           docker cp "$CID:/app/RELEASE.json" "$REL_TMP" >/dev/null 2>&1 || {
               docker rm "$CID" >/dev/null 2>&1 || true
               echo "❌ 镜像内无 RELEASE.json:非版本化镜像,拒绝部署" >&2
@@ -235,43 +267,72 @@ jobs:
           }
           ERA="$(python3 -c "import json,sys;print('contract' if json.load(open(sys.argv[1])).get('compatibility_contract') else 'pre_contract')" "$REL_TMP")"
           rm -f "$REL_TMP"
-          MAN_TMP="$(mktemp /tmp/askai-compat.XXXXXX.json)"
-          EVAL_TMP="$(mktemp /tmp/askai-preflight.XXXXXX.py)"
           EVAL_OK=1
           docker cp "$CID:/app/scripts/release_preflight.py" "$EVAL_TMP" >/dev/null 2>&1 || EVAL_OK=0
           if [ "$ERA" = "contract" ]; then
             # 契约期:evaluator/manifest 必须真实打包(REVIEW_1 blocker 1/3)
             if [ "$EVAL_OK" != 1 ]; then
               docker rm "$CID" >/dev/null 2>&1 || true
-              rm -f "$MAN_TMP" "$EVAL_TMP"
               echo "❌ 契约期镜像缺失 scripts/release_preflight.py(打包违约)—— fail-closed" >&2
               exit 1
             fi
-            docker cp "$CID:/app/deploy/prod/compatibility.json" "$MAN_TMP" >/dev/null 2>&1 || true
+            if ! docker cp "$CID:/app/deploy/prod/compatibility.json" "$MAN_TMP" >/dev/null 2>&1; then
+              echo "⚠️ 镜像内未携带 deploy/prod/compatibility.json(评估器将对缺失 manifest fail-closed)" >&2
+            fi
             docker rm "$CID" >/dev/null
-            # R2-4:G2 只读隔离断言强制启用;DSN 经 0600 文件(绝不进 argv);
-            # 身份绑定 + 防空集合假 PASS;任一子项 fail/blocked ⇒ 非零退出,
-            # 在迁移/rollout 之前中止(零生产变更)。
-            python3 "$EVAL_TMP" --manifest "$MAN_TMP" --env-file "$HOME/ask-ai/.env" \
+            COMPOSE="docker compose -f deploy/prod/docker-compose.yml"
+            # R3-2:评估器/manifest/锚 经既有 compose exec 通道(stdin 管道)
+            # 送入运行中 backend 容器;评估器在容器内执行 —— DSN/Weaviate 目标
+            # 经容器自身 env(POSTGRES_*/WEAVIATE_*)继承,零新增含密文件、
+            # 零凭据过 SSH;config 检查亦直接读容器运行时 env(同源高保真)。
+            $COMPOSE exec -T backend rm -f /tmp/askai-preflight-evaluator.py \
+                /tmp/askai-preflight-manifest.json /tmp/askai-trust-anchor.json \
+                2>/dev/null || true
+            $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-preflight-evaluator.py' < "$EVAL_TMP"
+            $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-preflight-manifest.json' < "$MAN_TMP"
+            $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-trust-anchor.json' < "$ANCHOR_TMP"
+            CONTAINER_RC=0
+            $COMPOSE exec -T backend python3 /tmp/askai-preflight-evaluator.py \
+                --manifest /tmp/askai-preflight-manifest.json \
                 --verify-upload-isolation \
-                --isolation-pg-dsn-file "$HOME/.askai_preflight_iso_dsn" \
-                --isolation-weaviate-url "$ISOLATION_WV_URL" \
-                --isolation-weaviate-class "$ISOLATION_WV_CLASS"
-            rm -f "$MAN_TMP" "$EVAL_TMP"
-            echo "PREFLIGHT PASS:$DEPLOY_TAG(含 G2 只读隔离断言;先于迁移/rollout;零 mutation;"
-            echo "注意:隔离子项 PASS ≠ G2 门 PASS,G2 以正式集成验收为准)"
+                --isolation-pg-dsn-parts \
+                --isolation-trust-anchor-file /tmp/askai-trust-anchor.json \
+                --isolation-weaviate-url-env WEAVIATE_URL \
+                --isolation-weaviate-class-env WEAVIATE_CLASS_NAME || CONTAINER_RC=$?
+            # 容器侧临时工件确定性清除(残留亦非秘密,仍清)
+            $COMPOSE exec -T backend rm -f /tmp/askai-preflight-evaluator.py \
+                /tmp/askai-preflight-manifest.json /tmp/askai-trust-anchor.json || true
+            if [ "$CONTAINER_RC" -ne 0 ]; then
+              echo "❌ 生产兼容性 preflight(容器内;含 G2 只读隔离断言 + 独立信任锚)未通过" >&2
+              echo "   —— 部署中止(DB migration / rollout 之前,零生产变更)" >&2
+              exit "$CONTAINER_RC"
+            fi
+            echo "PREFLIGHT PASS:$DEPLOY_TAG(容器内评估;凭据零 SSH 传输;"
+            echo "G2 只读隔离断言含独立信任锚;先于迁移/rollout;零 mutation)"
+            echo "注意:隔离子项 PASS ≠ G2 门 PASS,G2 以正式集成验收为准"
           else
             docker rm "$CID" >/dev/null 2>&1 || true
-            rm -f "$MAN_TMP" "$EVAL_TMP"
             echo "PRE-CONTRACT RELEASE:$DEPLOY_TAG(镜像 RELEASE.json 无 compatibility_contract 旗标)——"
             echo "有界兼容路径(config/host/topology/dependencies/回退兼容 各类未证明,显式 deferred)"
           fi
           REMOTE
-          # 3) DSN 文件防御性清除(连接中断时 trap 可能未执行)
-          ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" \
-            'rm -f "$HOME/.askai_preflight_iso_dsn"' || true
+          }
+          # preflight 必须有界:看门狗到点杀 SSH → 非零退出(fail-closed),
+          # 绝不允许远端悬挂把部署流水线无限期挂起。(缺省 900s;仅 runner
+          # 自身 env 可覆盖用于演练/测试,Actions 部署路径无此变量 → 走缺省)
+          PREFLIGHT_TIMEOUT_S="${PREFLIGHT_TIMEOUT_S:-900}"
+          remote_preflight & SSH_PID=$!
+          (
+            sleep "$PREFLIGHT_TIMEOUT_S"
+            kill -TERM "$SSH_PID" 2>/dev/null || true
+          ) & WATCHDOG_PID=$!
+          RC=0
+          wait "$SSH_PID" || RC=$?
+          kill "$WATCHDOG_PID" 2>/dev/null || true
+          wait "$WATCHDOG_PID" 2>/dev/null || true
           if [ "$RC" -ne 0 ]; then
-            echo "❌ 兼容性 preflight(含 G2 只读隔离断言)未通过 —— 部署中止" \
+            echo "❌ 兼容性 preflight(含 G2 只读隔离断言与独立信任锚)未通过或有界超时" \
+                "(R3-2:CI→SSH 零凭据传输;远端零含密文件)—— 部署中止" \
                 "(DB migration / rollout 之前,零生产变更)" >&2
             exit "$RC"
           fi

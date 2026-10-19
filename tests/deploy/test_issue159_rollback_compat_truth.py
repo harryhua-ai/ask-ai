@@ -384,8 +384,13 @@ def test_production_workflow_offers_no_ack_channel_so_release_stays_blocked():
     text = WORKFLOW.read_text()
     assert "--remediation-ack" not in text, "workflow 正规路径不得引入 ack 通道"
     assert "remediation_ack" not in text, "workflow 不得新增 ack 输入(改变 #46 契约语义)"
-    # 契约期 evaluator 以裸调用执行(无任何 ACK 参数);失败即步骤失败
-    assert 'python3 "$EVAL_TMP" --manifest "$MAN_TMP" --env-file "$HOME/ask-ai/.env"' in text
+    # 契约期 evaluator 以裸调用执行(无任何 ACK 参数);失败即步骤失败。
+    # R3-2:调用形态改为运行中 backend 容器内执行(凭据经容器自身 env 继承),
+    # 语义不变 —— 裸调用、非零退出经 CONTAINER_RC 传播为步骤失败。
+    assert "python3 /tmp/askai-preflight-evaluator.py" in text
+    assert "CONTAINER_RC=0" in text
+    assert '|| CONTAINER_RC=$?' in text
+    assert 'exit "$CONTAINER_RC"' in text
 
 
 def test_update_sh_evaluator_failure_fails_closed_before_any_mutation():
