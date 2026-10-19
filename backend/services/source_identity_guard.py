@@ -23,10 +23,16 @@ Chunk 的复合路径身份、uploads 子树目录名)命中任何「无活跃�
 - 管理员确需复用 id 的显式出口 = 错误信息点名碰撞表面并指引显式对账;
   本模块不实现任何绕过。
 
-边界(如实):探测与插入同处注册单事务(#174 单事务模式);注册与删除
-worker 收敛的跨进程毫秒级竞态窗不在本轮最小修复内 —— 孤儿内容是长期
-持久态(#178/#179 实测 683 docs 级),远非瞬态,该窗口不构成本 guard 的
-威胁模型主路径。
+边界(如实):探测与插入同处注册单事务(#174 单事务模式)。READ COMMITTED
+下纯 check→insert 的并发同 id 竞态窗已由 R2-3 最小修复封闭:注册事务入口
+``pg_advisory_xact_lock(hashtextextended(:id,0))`` 串行化同 id 注册(后到者
+等待前者 commit 后被 existing-check 以 409 拒绝;R1 现码曾在并发双注册给出
+[201, 500],见 tests/api/admin/test_r3gate_registration_concurrency.py 的 RED
+实证)。「探测期间出现孤儿」的确定性复现离线不可构造:PG 侧孤儿只能由删除
+final 事务原子产生(账本行+配置行同事务移除,source_deletion),删除在途期
+配置行始终存在 → 注册被 existing-check 拦截;缓解纵深 = 注册后 PK + 咨询锁
+保护 id,后续删除/重注册再过 guard。Weaviate source_id-only 孤儿索引碰撞
+不在本 guard 探测面内(离线无 Weaviate)→ 如实 BLOCKED,见交接 closure。
 """
 
 from __future__ import annotations

@@ -154,13 +154,14 @@ def test_probe_unavailable_blocked_vs_probe_failed_fail(tmp_path, monkeypatch):
 
 
 def test_psql_probe_readonly_and_password_never_in_argv(monkeypatch):
-    """psql 探针:只读 SELECT count;口令只进 PGPASSWORD env,绝不进 argv。"""
+    """psql 探针:只读 SELECT;口令只进 PGPASSWORD env,绝不进 argv;
+    R2-4①:同一会话必须先执行 current_database() 身份复核。"""
     captured: dict = {}
 
     def fake_run(argv, capture_output, text, timeout, env, check):
         captured["argv"] = argv
         captured["env"] = env
-        return SimpleNamespace(returncode=0, stdout="0\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout="dbname\n0\n", stderr="")
 
     monkeypatch.setattr(rp.subprocess, "run", fake_run)
     rows = rp.probe_upload_mode_rows(dict(_FULL_ISOLATION, dsn=_FULL_ISOLATION["pg_dsn"]), 5)
@@ -171,6 +172,7 @@ def test_psql_probe_readonly_and_password_never_in_argv(monkeypatch):
     assert captured["env"]["PGPASSWORD"] == "secretpw"
     joined = " ".join(argv)
     assert "-c" in argv
+    assert "SELECT current_database()" in joined, "R2-4①:必须执行身份复核查询"
     assert "SELECT count(*) FROM data_sources" in joined
     assert "config->>'upload_mode' = 'true'" in joined
     assert "dbhost" in joined and "6543" in joined and "dbname" in joined
@@ -200,23 +202,36 @@ class _FakeHTTPResponse:
 
 
 def test_weaviate_probe_parses_aggregate_count(monkeypatch):
-    """GraphQL Aggregate 只读探针:解析 meta.count;错误响应 fail-closed。"""
+    """GraphQL Aggregate 只读探针:解析 meta.count;错误响应 fail-closed。
+    R2-4②:先 GET /v1/meta 做 hostname ↔ URL 绑定,再双聚合计数。"""
     captured: dict = {}
 
     class FakeConn:
         def __init__(self, host, port, timeout):
             captured["endpoint"] = (host, port, timeout)
 
-        def request(self, method, path, body, headers):
-            captured["method"] = method
-            captured["path"] = path
-            captured["body"] = json.loads(body)
+        def request(self, method, path, body=None, headers=None):
+            captured.setdefault("requests", []).append((method, path))
+            if body:
+                captured.setdefault("bodies", []).append(json.loads(body))
 
         def getresponse(self):
+            method, path = captured["requests"][-1]
+            if method == "GET" and path == "/v1/meta":
+                return _FakeHTTPResponse(
+                    200, json.dumps({"hostname": "http://wvhost:8080"}).encode()
+                )
             return _FakeHTTPResponse(
                 200,
                 json.dumps(
-                    {"data": {"Aggregate": {"KnowledgeChunk": [{"meta": {"count": 3}}]}}}
+                    {
+                        "data": {
+                            "Aggregate": {
+                                "KnowledgeChunk_TOTAL": [{"meta": {"count": 30}}],
+                                "KnowledgeChunk_FILESYSTEM": [{"meta": {"count": 3}}],
+                            }
+                        }
+                    }
                 ).encode(),
             )
 
@@ -229,9 +244,11 @@ def test_weaviate_probe_parses_aggregate_count(monkeypatch):
         {"url": "http://wvhost:8080", "class": "KnowledgeChunk"}, 5
     )
     assert count == 3
-    assert captured["method"] == "POST"
-    assert captured["path"] == "/v1/graphql"
-    assert 'source_type' in json.dumps(captured["body"])
+    assert ("GET", "/v1/meta") in captured["requests"], "R2-4②:必须先做身份绑定"
+    assert ("POST", "/v1/graphql") in captured["requests"]
+    assert 'source_type' in json.dumps(captured["bodies"][-1]), (
+        "filesystem 过滤谓词必须保留在聚合查询中"
+    )
     assert captured["endpoint"] == ("wvhost", 8080, 5)
 
 
@@ -272,12 +289,12 @@ def test_weaviate_probe_non_200_fails_closed(monkeypatch):
 def test_main_cli_wiring_clean(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(rp, "probe_upload_mode_rows", lambda cfg, timeout_s: 0)
     monkeypatch.setattr(rp, "probe_filesystem_objects", lambda cfg, timeout_s: 0)
+    monkeypatch.setenv("ISOLATION_PG_DSN", _FULL_ISOLATION["pg_dsn"])
     m = _write_manifest(tmp_path)
     code = main(
         [
             "--manifest", str(m),
             "--verify-upload-isolation",
-            "--isolation-pg-dsn", _FULL_ISOLATION["pg_dsn"],
             "--isolation-weaviate-url", _FULL_ISOLATION["weaviate_url"],
             "--isolation-weaviate-class", _FULL_ISOLATION["weaviate_class"],
         ]
@@ -287,7 +304,8 @@ def test_main_cli_wiring_clean(tmp_path, capsys, monkeypatch):
     assert {c["status"] for c in _iso_checks(out)} == {"pass"}
 
 
-def test_main_cli_wiring_blocked_exit_nonzero(tmp_path, capsys):
+def test_main_cli_wiring_blocked_exit_nonzero(tmp_path, capsys, monkeypatch):
+    monkeypatch.delenv("ISOLATION_PG_DSN", raising=False)
     m = _write_manifest(tmp_path)
     code = main(["--manifest", str(m), "--verify-upload-isolation"])
     assert code == 2

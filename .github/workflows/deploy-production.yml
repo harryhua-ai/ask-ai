@@ -146,6 +146,17 @@ jobs:
       # 无法重解释历史发布)。本步骤只调用、不裁决(update.sh 不变 policy
       # engine);非零退出 ⇒ 在 DB migration(首个不可逆 mutation)之前中止,
       # 零生产变更。前契约镜像(镜像内无 evaluator)走有界兼容路径并显式留痕。
+      #
+      # R2-4 本地候选接线(⚠️ 未 push/未生效;Environment secrets 归 A 配置):
+      #   - 强制启用 G2 只读隔离断言(--verify-upload-isolation);
+      #   - A-owned 输入(未配置 ⇒ fail-closed 中止,不部署):
+      #       secret PREFLIGHT_ISOLATION_PG_DSN(隔离断言目标 DB DSN,含口令);
+      #       variable PREFLIGHT_WEAVIATE_URL / PREFLIGHT_WEAVIATE_CLASS;
+      #   - DSN 交付纪律:经 stdin 写入远端 0600 文件 + --isolation-pg-dsn-file
+      #     消费,绝不进任何 argv/日志(与 PROD_DEPLOY_SSH_KEY 同一纪律);
+      #   - 既有 remediation gate 与无 ACK 语义不变;本步骤仍先于迁移/rollout。
+      #   - 关键语义:隔离子项 PASS ≠ G2 门 PASS;G2 正式满足以本 workflow
+      #     在生产仓库强制生效并完成真实部署验证为准。
       - name: Production compatibility preflight (fail-closed; pre-mutation)
         id: preflight
         env:
@@ -154,6 +165,9 @@ jobs:
           SSH_USER: ${{ vars.PROD_SSH_USER }}
           SSH_KNOWN_HOSTS_B64: ${{ vars.PROD_SSH_KNOWN_HOSTS_B64 }}
           DEPLOY_TAG: ${{ steps.identity.outputs.tag }}
+          ISOLATION_DSN: ${{ secrets.PREFLIGHT_ISOLATION_PG_DSN }}
+          ISOLATION_WV_URL: ${{ vars.PREFLIGHT_WEAVIATE_URL }}
+          ISOLATION_WV_CLASS: ${{ vars.PREFLIGHT_WEAVIATE_CLASS }}
         run: |
           set -euo pipefail
           KEY_FILE="$RUNNER_TEMP/prod_deploy_key"
@@ -166,6 +180,19 @@ jobs:
               exit 2
             fi
           done
+          # R2-4:A-owned 隔离断言输入缺失 ⇒ fail-closed(候选门语义:未配置即不部署)
+          if [ -z "$ISOLATION_DSN" ]; then
+            echo "❌ PREFLIGHT_ISOLATION_PG_DSN 未配置(A-owned Environment secret):G2 只读" >&2
+            echo "   隔离断言无法证明 → 部署中止(fail-closed;绝不静默跳过隔离检查)" >&2
+            exit 2
+          fi
+          for v in ISOLATION_WV_URL ISOLATION_WV_CLASS; do
+            if [ -z "${!v}" ]; then
+              echo "❌ $v 未配置(A-owned repository variable):隔离断言不完整 → 部署中止" >&2
+              exit 2
+            fi
+            case "${!v}" in *"'"*) echo "❌ $v 含单引号(非法)" >&2; exit 2;; esac
+          done
           install -m 600 /dev/null "$KEY_FILE"
           printf '%s\n' "$SSH_KEY" > "$KEY_FILE"
           printf '%s' "$SSH_KNOWN_HOSTS_B64" | base64 -d > "$KH_FILE"
@@ -174,20 +201,25 @@ jobs:
             echo "❌ known_hosts 钉扎缺失或与 PROD_SSH_HOST 不匹配(绝不关闭严格主机键校验)" >&2
             exit 2
           fi
-          # 脚本本体经 stdin 原样传递(与迁移步骤同一无注入面模式);主机侧
-          # flock 与迁移/rollout 互斥。评估全程只读(pull/create/cp/探针)。
-          ssh -i "$KEY_FILE" \
-              -o StrictHostKeyChecking=yes \
-              -o UserKnownHostsFile="$KH_FILE" \
-              -o BatchMode=yes \
-              -o ConnectTimeout=15 \
-              -o ServerAliveInterval=30 \
-              "${SSH_USER}@${SSH_HOST}" \
-              "DEPLOY_TAG='$DEPLOY_TAG' bash -s" <<'REMOTE'
+          SSH_OPTS=(-i "$KEY_FILE"
+              -o StrictHostKeyChecking=yes
+              -o UserKnownHostsFile="$KH_FILE"
+              -o BatchMode=yes
+              -o ConnectTimeout=15
+              -o ServerAliveInterval=30)
+          ISO_DSN_FILE='$HOME/.askai_preflight_iso_dsn'
+          # 1) DSN 经 stdin 落远端 0600 文件(绝不进 argv/日志/命令串)
+          printf '%s' "$ISOLATION_DSN" | ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" \
+            'umask 077; cat > '"$ISO_DSN_FILE"'; chmod 600 '"$ISO_DSN_FILE"''
+          # 2) preflight(只读;脚本本体经 stdin 原样传递,与迁移同一无注入面模式)
+          RC=0
+          ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" \
+              "DEPLOY_TAG='$DEPLOY_TAG' ISOLATION_WV_URL='$ISOLATION_WV_URL' ISOLATION_WV_CLASS='$ISOLATION_WV_CLASS' bash -s" <<'REMOTE' || RC=$?
           set -euo pipefail
           cd ~/ask-ai
           exec 9>/tmp/askai-deploy.lock
           flock -w 0 9 || { echo "❌ 部署锁被占用(另一生产变更在执行)" >&2; exit 1; }
+          trap 'rm -f "$HOME/.askai_preflight_iso_dsn"' EXIT
           # 只读探针模式:直接 docker pull/create/cp(不经 compose 载体 ——
           # 该载体属迁移步骤专有,部署原语唯一性不变量不破)
           IMAGE="ghcr.io/harryhua-ai/ask-ai:$DEPLOY_TAG"
@@ -217,9 +249,17 @@ jobs:
             fi
             docker cp "$CID:/app/deploy/prod/compatibility.json" "$MAN_TMP" >/dev/null 2>&1 || true
             docker rm "$CID" >/dev/null
-            python3 "$EVAL_TMP" --manifest "$MAN_TMP" --env-file "$HOME/ask-ai/.env"
+            # R2-4:G2 只读隔离断言强制启用;DSN 经 0600 文件(绝不进 argv);
+            # 身份绑定 + 防空集合假 PASS;任一子项 fail/blocked ⇒ 非零退出,
+            # 在迁移/rollout 之前中止(零生产变更)。
+            python3 "$EVAL_TMP" --manifest "$MAN_TMP" --env-file "$HOME/ask-ai/.env" \
+                --verify-upload-isolation \
+                --isolation-pg-dsn-file "$HOME/.askai_preflight_iso_dsn" \
+                --isolation-weaviate-url "$ISOLATION_WV_URL" \
+                --isolation-weaviate-class "$ISOLATION_WV_CLASS"
             rm -f "$MAN_TMP" "$EVAL_TMP"
-            echo "PREFLIGHT PASS:$DEPLOY_TAG(先于迁移/rollout;零 mutation)"
+            echo "PREFLIGHT PASS:$DEPLOY_TAG(含 G2 只读隔离断言;先于迁移/rollout;零 mutation;"
+            echo "注意:隔离子项 PASS ≠ G2 门 PASS,G2 以正式集成验收为准)"
           else
             docker rm "$CID" >/dev/null 2>&1 || true
             rm -f "$MAN_TMP" "$EVAL_TMP"
@@ -227,6 +267,14 @@ jobs:
             echo "有界兼容路径(config/host/topology/dependencies/回退兼容 各类未证明,显式 deferred)"
           fi
           REMOTE
+          # 3) DSN 文件防御性清除(连接中断时 trap 可能未执行)
+          ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" \
+            'rm -f "$HOME/.askai_preflight_iso_dsn"' || true
+          if [ "$RC" -ne 0 ]; then
+            echo "❌ 兼容性 preflight(含 G2 只读隔离断言)未通过 —— 部署中止" \
+                "(DB migration / rollout 之前,零生产变更)" >&2
+            exit "$RC"
+          fi
 
       # ---- 4. 数据库迁移(发布绑定;先于依赖新 schema 的应用 rollout;失败绝不 rollout) ----
       - name: Migrate database (release-bound; before dependent app rollout)

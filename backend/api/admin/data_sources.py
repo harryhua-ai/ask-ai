@@ -16,7 +16,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -583,6 +583,22 @@ async def create_data_source(
         # 上传知识不因缺省配置自动公开;显式 widget/api grant 才可访客检索。
         req.config.setdefault("channel_visibility", [])
     async with factory() as session:
+        # r3gate R2-3(最小修复):注册事务入口对同 id 串行化 —— READ
+        # COMMITTED 下每条语句独立快照,纯 check→insert 存在竞态窗(R2 并发
+        # 测试在 R1 现码实证:双注册 statuses=[201, 500],后到 INSERT 撞
+        # data_sources_pkey 抛未处理 IntegrityError)。事务级咨询锁
+        # (PG 原生 pg_advisory_xact_lock,非新锁服务)使后到者在锁上等待
+        # 前者 commit → 其 existing-check 见已提交行 → 干净 409;锁随事务
+        # 自动释放,异常路径同样释放(回滚零残留)。不同 id 各锁各键
+        # (hashtextextended 碰撞仅导致无害额外串行,均仍成功)。
+        # 边界(如实):本锁只串行化「注册 vs 注册」;与删除 worker 的交错由
+        # 删除流程自身不变量覆盖(final 事务原子移除账本行+配置行,删除在途
+        # 期间配置行存在 → 注册被 existing-check 拦截),见 guard 模块分析。
+        # PG 专有(生产与测试库均为 PostgreSQL;SQLite 等非 PG 后端不支持)。
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:sid, 0))"),
+            {"sid": source_id},
+        )
         existing = await session.execute(select(DataSource).where(DataSource.id == source_id))
         if existing.scalar_one_or_none():
             raise HTTPException(status_code=409, detail="数据源 ID 已存在")
