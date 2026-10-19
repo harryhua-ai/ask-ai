@@ -244,6 +244,41 @@ async def _claim_and_delete_one(
                     f"generation identity crosses source boundary for {source_id}"
                 )
 
+        # 反向归属(R2 阻塞①):他源版本不得引用本源 generation。正向检查
+        # 只证明「本源版本指向的 generation 全是本源的」,不证明「本源
+        # generation 未被他源版本引用」——后者缺失时,下方直接删除本源全部
+        # IndexGeneration 会抹掉他源版本的生成身份。双向都过才允许删
+        # generations;任一失败 fail-closed(DELETE_FAILED + 可发现锚点),
+        # purge 不得运行。
+        own_generation_ids = set(
+            (
+                await session.execute(
+                    select(IndexGeneration.id).where(
+                        IndexGeneration.source_id == source_id
+                    )
+                )
+            ).scalars()
+        )
+        if own_generation_ids:
+            foreign_rebound = (
+                await session.execute(
+                    select(DocumentVersion.id)
+                    .where(
+                        DocumentVersion.generation_id.in_(own_generation_ids),
+                        # ~startswith = 非本源前缀;NULL/本源前缀行不进入负例
+                        ~DocumentVersion.source_id.startswith(
+                            f"{source_id}/", autoescape=True
+                        ),
+                    )
+                    .limit(1)
+                )
+            ).first()
+            if foreign_rebound is not None:
+                raise RuntimeError(
+                    f"generation identity crosses source boundary for {source_id}: "
+                    "foreign versions still reference this source's generations"
+                )
+
     # Establish upload ownership and path safety before mutating any external
     # content.  Validation is repeated by the remover to close obvious TOCTOU
     # changes and deletion uses Python's fd-based symlink-safe implementation.
@@ -526,15 +561,23 @@ def purge_source_corpus_sync(
         2. 孤儿段:迭代器全扫 + 客户端前缀边界过滤,收集**实际存量对象
            UUID** 后逐个删除(读侧允许 TEXT 前缀判断,删侧只点名对象 UUID);
         3. 验证段:再次边界扫描,残留 > 0 则 raise——调用方转
-           DELETE_FAILED,配置与账本原样保留可重试(不假报成功)。
+           DELETE_FAILED,配置与账本原样保留可重试(不假报成功);
+        4. 读回段(R2 阻塞③,复用 #168 lifecycle_gc 的确定性 UUID 读回
+           模式):属性扫描看不见「UUID 在场但 source_id 元数据缺失/错误」
+           的实物残留,必须把第 1/2 段点名的每个 UUID 逐一读回确认零在场;
+           读回响应不可读/不一致/仍在场一律 raise。读回是读侧操作,
+           不改变删侧 UUID-only 边界。
 
     Returns:
-        ``{"ledger_docs": N, "orphans": M, "residue": 0}`` 供日志观察。
+        ``{"ledger_docs": N, "orphans": M, "residue": 0,
+        "readback_confirmed": K}`` 供日志观察。
 
     Raises:
-        RuntimeError: 验证段发现残留(删除未收敛)。
+        RuntimeError: 验证段发现残留,或读回段发现已点名 UUID 仍在场
+            (删除未收敛)。
     """
     from backend.pipeline.ingest import _deterministic_uuid
+    from backend.services.lifecycle_gc import _read_existing_uuids
 
     parsed = urlparse(weaviate_url)
     host = parsed.hostname or "localhost"
@@ -574,13 +617,31 @@ def purge_source_corpus_sync(
                 f"purge 后仍有 {residue} 个残留向量对象(source={prefix}),保留状态可重试"
             )
 
+        # 4) 读回段:已点名 UUID 逐一读回确认零在场(元数据盲区兜底)
+        named_uuids = list(dict.fromkeys(purge_uuids + stale_uuids))
+        surviving: list[str] = []
+        for start in range(0, len(named_uuids), 500):
+            batch = named_uuids[start : start + 500]
+            surviving.extend(sorted(_read_existing_uuids(collection, batch)))
+        if surviving:
+            raise RuntimeError(
+                f"purge 后 {len(surviving)} 个已点名 UUID 读回仍在场"
+                f"(source={prefix}),保留状态可重试"
+            )
+
         logger.info(
-            "语料清理完成: 账本 %d 篇(UUID 点删 %d), 孤儿 %d chunks, 残留 0",
+            "语料清理完成: 账本 %d 篇(UUID 点删 %d), 孤儿 %d chunks, 残留 0, 读回确认 %d",
             len(ledger),
             len(purge_uuids),
             len(stale_uuids),
+            len(named_uuids),
         )
-        return {"ledger_docs": len(ledger), "orphans": len(stale_uuids), "residue": 0}
+        return {
+            "ledger_docs": len(ledger),
+            "orphans": len(stale_uuids),
+            "residue": 0,
+            "readback_confirmed": len(named_uuids),
+        }
     finally:
         client.close()
 

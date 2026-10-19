@@ -649,3 +649,261 @@ async def test_upload_holds_source_lock_until_file_write_finishes(
         if not delete_task.done():
             await delete_task
         await _clear_source(source_id)
+
+
+# --------------------------------------------------------------------------- #
+# R2 阻塞①:IndexGeneration 双向归属校验(他源版本 → 本源 generation)
+# --------------------------------------------------------------------------- #
+
+
+async def test_foreign_version_referencing_own_generation_blocks_deletion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """他源版本引用本源 generation 时删除必须 fail-closed(反向归属校验)。
+
+    正向 guard(本源版本→他源 generation)已有;缺「他源版本→本源
+    generation」反向检查时,worker 直接删除本源全部 IndexGeneration 会
+    抹掉他源版本的生成身份。删除必须被阻断并留下可发现的 DELETE_FAILED
+    锚点,他源版本与 generation 原样保留。
+    """
+    source_id = f"i174-{uuid.uuid4().hex[:6]}"
+    other_id = f"i174-{uuid.uuid4().hex[:6]}"
+    upload_root = tmp_path / "data-sources"
+    source_dir = upload_root / source_id
+    source_dir.mkdir(parents=True)
+    (source_dir / "own.md").write_text("own body", encoding="utf-8")
+    await _clear_source(source_id)
+    await _clear_source(other_id)
+    await _seed_upload_source(source_id, upload_root)
+    factory = app.state.session_factory
+    async with factory() as session:
+        session.add(
+            DataSource(
+                id=other_id,
+                type="github",
+                product="issue174",
+                enabled=True,
+                config={"repo_url": f"https://example.com/{other_id}.git"},
+                sync_interval="24h",
+            )
+        )
+        own_generation = (
+            (
+                await session.execute(
+                    select(IndexGeneration).where(IndexGeneration.source_id == source_id)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        assert own_generation is not None
+        foreign_version = DocumentVersion(
+            id=uuid.uuid4(),
+            source_id=f"{other_id}/reused.md",
+            version_seq=1,
+            content_hash="e" * 64,
+            metadata_hash="f" * 64,
+            generation_id=own_generation.id,
+            generation_ordinal=own_generation.ordinal,
+            status="active",
+            title="foreign reuse",
+            url=f"github://{other_id}/reused.md",
+            chunk_count=1,
+        )
+        session.add(foreign_version)
+        await session.commit()
+
+    def _must_not_purge(*args, **kwargs) -> dict[str, int]:
+        raise AssertionError("purge must not run before identity guards pass")
+
+    monkeypatch.setattr(
+        "backend.services.source_deletion.UPLOADS_CORPUS_ROOT", upload_root, raising=False
+    )
+    monkeypatch.setattr(
+        "backend.services.source_deletion.purge_source_corpus_sync", _must_not_purge
+    )
+    try:
+        assert await _run_one(source_id) == [source_id]
+        counts = await _content_counts(source_id)
+        assert counts == {
+            "sources": 1,
+            "documents": 1,
+            "versions": 2,
+            "chunks": 3,
+            "generations": 2,
+        }
+        factory = app.state.session_factory
+        async with factory() as session:
+            ds = await session.get(DataSource, source_id)
+            assert ds is not None
+            assert ds.lifecycle_state == "delete_failed"
+            # 可发现锚点:错误明示 generation 身份跨源,而非笼统失败
+            assert "generation identity" in (ds.lifecycle_error or "")
+            foreign = await session.get(DocumentVersion, foreign_version.id)
+            assert foreign is not None
+            assert foreign.source_id == f"{other_id}/reused.md"
+            other = await session.get(DataSource, other_id)
+            assert other is not None
+            assert other.lifecycle_state is None  # 他源状态零影响
+        assert (source_dir / "own.md").read_text(encoding="utf-8") == "own body"
+    finally:
+        await _clear_source(source_id)
+        await _clear_source(other_id)
+
+
+# --------------------------------------------------------------------------- #
+# R2 阻塞②:PATCH 拒绝删除在途 + 同源行锁
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("state", "label"),
+    [
+        ("delete_requested", "删除已受理"),
+        ("deleting", "删除执行中"),
+        ("delete_failed", "删除失败未收敛"),
+    ],
+)
+async def test_patch_rejected_while_deletion_not_converged(
+    state: str, label: str
+) -> None:
+    """删除流程活跃/未收敛的源,PATCH 编辑必须 409 且零交错写。"""
+    from backend.api.admin import data_sources as api
+    from backend.api.admin.schemas import DataSourceUpdate
+
+    source_id = f"i174-{uuid.uuid4().hex[:6]}"
+    await _clear_source(source_id)
+    factory = app.state.session_factory
+    original_config = {"upload_mode": True, "include_dirs": ["keep"]}
+    async with factory() as session:
+        session.add(
+            DataSource(
+                id=source_id,
+                type="filesystem",
+                product="issue174",
+                enabled=True,
+                config=original_config,
+                sync_interval="24h",
+                lifecycle_state=state,
+            )
+        )
+        await session.commit()
+    try:
+        with pytest.raises(HTTPException) as caught:
+            await api.update_data_source(
+                source_id,
+                DataSourceUpdate(enabled=False, config={"upload_mode": False}),
+                None,
+                SimpleNamespace(app=app),
+            )
+        assert caught.value.status_code == 409, f"state={state}({label}) 必须拒绝 PATCH"
+        async with factory() as session:
+            ds = await session.get(DataSource, source_id)
+            assert ds is not None
+            assert ds.lifecycle_state == state, "PATCH 不得推进删除生命周期状态"
+            assert ds.config == original_config, "被拒 PATCH 不得产生任何交错写"
+            assert ds.enabled is True
+    finally:
+        await _clear_source(source_id)
+
+
+async def test_patch_still_allowed_for_active_source() -> None:
+    """对照:ACTIVE(含 NULL 生命周期)源的 PATCH 照常可用,门不得误伤。"""
+    from backend.api.admin import data_sources as api
+    from backend.api.admin.schemas import DataSourceUpdate
+
+    source_id = f"i174-{uuid.uuid4().hex[:6]}"
+    await _clear_source(source_id)
+    factory = app.state.session_factory
+    async with factory() as session:
+        session.add(
+            DataSource(
+                id=source_id,
+                type="filesystem",
+                product="issue174",
+                enabled=True,
+                config={"include_dirs": ["docs"]},
+                sync_interval="24h",
+            )
+        )
+        await session.commit()
+    try:
+        patched = await api.update_data_source(
+            source_id,
+            DataSourceUpdate(enabled=False),
+            None,
+            SimpleNamespace(app=app),
+        )
+        assert patched.enabled is False
+    finally:
+        await _clear_source(source_id)
+
+
+async def test_patch_holds_source_row_lock_against_delete_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PATCH 与 DELETE 受理在同源行上串行:PATCH 校验期间 DELETE 必须等待。
+
+    与 upload 的行锁语义对齐:PATCH 持行锁直到提交,删除受理的
+    with_for_update 校验在其后才读状态,编辑不会与删除交错。
+    """
+    from backend.api.admin import data_sources as api
+    from backend.api.admin.schemas import DataSourceUpdate
+    from backend.services.source_deletion import request_deletion
+    from backend.services.source_lifecycle import ACTIVE
+
+    source_id = f"i174-{uuid.uuid4().hex[:6]}"
+    await _clear_source(source_id)
+    factory = app.state.session_factory
+    async with factory() as session:
+        session.add(
+            DataSource(
+                id=source_id,
+                type="github",
+                product="issue174",
+                enabled=True,
+                config={"repo_url": f"https://example.com/{source_id}.git"},
+                sync_interval="24h",
+            )
+        )
+        await session.commit()
+
+    patch_entered = asyncio.Event()
+    release_patch = asyncio.Event()
+
+    async def _slow_validate(config: dict) -> None:
+        patch_entered.set()
+        await release_patch.wait()
+
+    monkeypatch.setattr(api, "_validate_github_branches", _slow_validate)
+    patch_task = asyncio.create_task(
+        api.update_data_source(
+            source_id,
+            DataSourceUpdate(enabled=False),
+            None,
+            SimpleNamespace(app=app),
+        )
+    )
+    await asyncio.wait_for(patch_entered.wait(), timeout=1)
+
+    async def _accept_delete():
+        async with factory() as session:
+            return await request_deletion(
+                session, source_id, allowed_from=frozenset({ACTIVE})
+            )
+
+    delete_task = asyncio.create_task(_accept_delete())
+    await asyncio.sleep(0.05)
+    try:
+        assert not delete_task.done(), "DELETE bypassed the PATCH source-row lock"
+        release_patch.set()
+        patched = await asyncio.wait_for(patch_task, timeout=2)
+        assert patched.enabled is False
+        accepted = await asyncio.wait_for(delete_task, timeout=2)
+        assert accepted.accepted is True
+    finally:
+        release_patch.set()
+        for task in (patch_task, delete_task):
+            if not task.done():
+                await task
+        await _clear_source(source_id)

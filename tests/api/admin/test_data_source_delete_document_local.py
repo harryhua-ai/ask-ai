@@ -25,9 +25,17 @@ _SIBLINGS = ("src-a-sibling", "src-a-xxx", "src-ab")
 
 
 class _FakeItem:
-    def __init__(self, obj_uuid: str, sid: str):
+    def __init__(
+        self,
+        obj_uuid: str,
+        sid: str | None = None,
+        properties: dict | None = None,
+    ):
         self.uuid = obj_uuid
-        self.properties = {"source_id": sid}
+        self.properties = properties if properties is not None else {"source_id": sid}
+
+
+_UUID_RE = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 
 
 class _FakeData:
@@ -43,9 +51,7 @@ class _FakeData:
         # 并让测试能断言「过滤器只夹带本源 UUID」。
         assert where is not None
         self.delete_many_filters.append(where)
-        requested = re.findall(
-            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", str(where)
-        )
+        requested = re.findall(_UUID_RE, str(where))
         matched = sum(1 for u in requested if u in self.objects)
         for u in requested:
             self.objects.pop(u, None)
@@ -59,11 +65,21 @@ class _FakeData:
 def _fake_client(objects: dict[str, _FakeItem]):
     collection = MagicMock()
     collection.data = _FakeData(objects)
+    collection.readback_filters: list = []
 
     def iterator(return_properties=None):
         return iter(list(collection.data.objects.values()))
 
     collection.iterator.side_effect = iterator
+
+    def fetch_objects(filters=None, limit=None):
+        # 模拟 #168 读回原语:按过滤器携带的 UUID 返回实物存活对象
+        collection.readback_filters.append(filters)
+        requested = re.findall(_UUID_RE, str(filters))
+        found = [objects[u] for u in requested if u in objects]
+        return SimpleNamespace(objects=found)
+
+    collection.query = SimpleNamespace(fetch_objects=fetch_objects)
     client = MagicMock()
     client.collections.get.return_value = collection
     client.close = lambda: None
@@ -173,6 +189,86 @@ def test_no_text_property_filter_primitive_in_delete_path():
         "like(",
     ):
         assert banned not in src, f"删除路径出现禁止原语: {banned}"
+
+
+# --------------------------------------------------------------------------- #
+# R2 阻塞③:确定性 UUID 读回(属性扫描的盲区必须由读回关闭)
+# --------------------------------------------------------------------------- #
+
+
+def test_purge_readback_confirms_every_named_uuid_absent():
+    """成功 purge 必须按确定性 UUID 逐一读回确认零在场(账本 + 孤儿全覆盖)。"""
+    from backend.services import source_deletion as sd
+
+    ledger, objects, sibling_uuids, orphan_u = _build_objects()
+    client, collection = _fake_client(objects)
+
+    with patch.object(sd.weaviate, "connect_to_local", lambda host, port, **k: client):
+        stats = sd.purge_source_corpus_sync("http://localhost:8080", "Document", _PREFIX_A, ledger)
+
+    own_uuids = {_deterministic_uuid(sid, i) for sid, cc in ledger for i in range(cc)}
+    requested: set[str] = set()
+    for f in collection.readback_filters:
+        requested |= set(re.findall(_UUID_RE, str(f)))
+    # 每个被点名删除的 UUID 都必须被读回;读回请求不得夹带兄弟源 UUID
+    assert own_uuids <= requested, f"账本 UUID 未全部读回: {own_uuids - requested}"
+    assert orphan_u in requested, "孤儿段点删的 UUID 未读回"
+    assert requested.isdisjoint(set(sibling_uuids)), "读回请求夹带兄弟源 UUID"
+    assert stats["residue"] == 0
+    assert stats["readback_confirmed"] == len(own_uuids) + 1
+
+
+@pytest.mark.parametrize(
+    "survivor_properties",
+    [{"source_id": "unrelated/doc"}, {"other": "x"}],
+    ids=["wrong-source_id", "missing-source_id"],
+)
+def test_purge_fails_when_named_uuid_survives_with_wrong_metadata(survivor_properties):
+    """UUID 在场但 source_id 元数据缺失/错误:属性扫描看不见,读回必须抓住。
+
+    负例前提:说谎后端(delete_many 回执全成功但实物未消失)+ 残留扫描
+    盲区(元数据不匹配前缀)→ 旧实现会假报成功;读回段必须 fail-closed。
+    """
+    from backend.services import source_deletion as sd
+
+    ledger = [(_PREFIX_A + "/doc1", 1)]
+    survivor_u = _deterministic_uuid(_PREFIX_A + "/doc1", 0)
+    objects = {survivor_u: _FakeItem(survivor_u, properties=survivor_properties)}
+    client, collection = _fake_client(objects)
+
+    def _lying_delete_many(where=None):
+        # 回执声称全部成功,但实物不消失(元数据错误场景的极端化)
+        collection.data.delete_many_filters.append(where)
+        return SimpleNamespace(failed=0, matches=1, successful=1)
+
+    collection.data.delete_many = _lying_delete_many
+    with (
+        patch.object(sd.weaviate, "connect_to_local", lambda host, port, **k: client),
+        pytest.raises(RuntimeError, match="读回"),
+    ):
+        sd.purge_source_corpus_sync("http://localhost:8080", "Document", _PREFIX_A, ledger)
+    assert survivor_u in objects, "负例前提被破坏:实物应仍在场"
+
+
+def test_purge_fails_closed_on_unreadable_readback_response():
+    """读回响应结构不可读(objects 非列表)必须失败关闭,不得视为零在场。"""
+    from backend.services import source_deletion as sd
+
+    ledger = [(_PREFIX_A + "/doc1", 1)]
+    objects = {
+        _deterministic_uuid(_PREFIX_A + "/doc1", 0): _FakeItem(
+            _deterministic_uuid(_PREFIX_A + "/doc1", 0), _PREFIX_A + "/doc1"
+        )
+    }
+    client, collection = _fake_client(objects)
+    collection.query = SimpleNamespace(
+        fetch_objects=lambda filters=None, limit=None: SimpleNamespace(objects=None)
+    )
+    with (
+        patch.object(sd.weaviate, "connect_to_local", lambda host, port, **k: client),
+        pytest.raises((TypeError, RuntimeError), match="unreadable"),
+    ):
+        sd.purge_source_corpus_sync("http://localhost:8080", "Document", _PREFIX_A, ledger)
 
 
 @pytest.mark.integration

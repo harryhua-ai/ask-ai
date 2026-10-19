@@ -366,6 +366,20 @@ def test_purge_prefix_boundary_safe(monkeypatch):
     class _FakeCollection:
         data = _FakeData()
 
+        def __init__(self) -> None:
+            from types import SimpleNamespace
+
+            def fetch_objects(filters=None, limit=None):
+                # #168 读回原语:按过滤器携带的 UUID 返回实物存活对象
+                requested = _re.findall(
+                    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                    str(filters),
+                )
+                found = [OBJECTS[u] for u in requested if u in OBJECTS]
+                return SimpleNamespace(objects=found)
+
+            self.query = SimpleNamespace(fetch_objects=fetch_objects)
+
         def iterator(self, return_properties=None):
             return iter(list(OBJECTS.values()))
 

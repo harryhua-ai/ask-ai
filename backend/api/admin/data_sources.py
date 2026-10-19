@@ -597,10 +597,22 @@ async def update_data_source(
     values = req.model_dump(exclude_none=True)
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
-        result = await session.execute(select(DataSource).where(DataSource.id == source_id))
+        # 同源行锁(R2 阻塞②,与 upload/删除 worker 同一串行化语义):锁持有
+        # 到校验+提交为止,编辑不会与删除 worker 的配置快照、上传文件处置交错。
+        result = await session.execute(
+            select(DataSource).where(DataSource.id == source_id).with_for_update()
+        )
         ds = result.scalar_one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="数据源不存在")
+        if not source_lifecycle.is_sync_eligible(ds.lifecycle_state):
+            # deny-by-default:delete_requested/deleting/delete_failed(删除
+            # 流程活跃或未收敛)及任何未来未知状态一律拒绝编辑;被拒请求
+            # 回滚零写入,等删除收敛或先恢复/重试删除状态再编辑。
+            raise HTTPException(
+                status_code=409,
+                detail="数据源删除在途或未收敛,禁止编辑;请等待删除完成或先重试/恢复删除状态",
+            )
         for key, value in values.items():
             setattr(ds, key, value)
         if ds.type == "github":
