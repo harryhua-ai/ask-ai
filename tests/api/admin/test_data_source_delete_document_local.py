@@ -11,6 +11,7 @@
 
 import re
 import uuid as uuid_mod
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -42,10 +43,13 @@ class _FakeData:
         # 并让测试能断言「过滤器只夹带本源 UUID」。
         assert where is not None
         self.delete_many_filters.append(where)
-        for u in re.findall(
+        requested = re.findall(
             r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", str(where)
-        ):
+        )
+        matched = sum(1 for u in requested if u in self.objects)
+        for u in requested:
             self.objects.pop(u, None)
+        return SimpleNamespace(failed=0, matches=matched, successful=matched)
 
     def delete_by_id(self, obj_uuid: str):
         self.by_id_delete_calls.append(obj_uuid)
@@ -128,9 +132,31 @@ def test_purge_verifies_residue_zero_and_raises_on_leftover():
     collection.iterator.side_effect = lambda return_properties=None: iter(
         [_FakeItem("x", _PREFIX_A + "/doc1")]
     )
-    with patch.object(sd.weaviate, "connect_to_local", lambda host, port, **k: client):
-        with pytest.raises(RuntimeError, match="残留"):
-            sd.purge_source_corpus_sync("http://localhost:8080", "Document", _PREFIX_A, ledger)
+    with (
+        patch.object(sd.weaviate, "connect_to_local", lambda host, port, **k: client),
+        pytest.raises(RuntimeError, match="残留"),
+    ):
+        sd.purge_source_corpus_sync("http://localhost:8080", "Document", _PREFIX_A, ledger)
+
+
+def test_purge_rejects_partial_delete_many_receipt_even_when_scan_is_empty():
+    """A partial/failed batch receipt is not success, even if later iteration is empty."""
+    from backend.services import source_deletion as sd
+
+    ledger, objects, _sibling_uuids, _orphan_u = _build_objects()
+    client, collection = _fake_client(objects)
+    original_delete_many = collection.data.delete_many
+
+    def _partial_receipt(where=None):
+        original_delete_many(where)
+        return SimpleNamespace(failed=1, matches=5, successful=4)
+
+    collection.data.delete_many = _partial_receipt
+    with (
+        patch.object(sd.weaviate, "connect_to_local", lambda host, port, **k: client),
+        pytest.raises(RuntimeError, match="failed|receipt"),
+    ):
+        sd.purge_source_corpus_sync("http://localhost:8080", "Document", _PREFIX_A, ledger)
 
 
 def test_no_text_property_filter_primitive_in_delete_path():
