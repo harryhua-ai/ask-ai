@@ -34,6 +34,17 @@ async def lc_seed():
             DataSource.__table__.delete().where(DataSource.id.like("e18-%"))
         )
         await session.execute(Document.__table__.delete().where(Document.source_id.like("e18-%")))
+        # 崩溃残留自愈:上一次运行若在 _close_request 前被中断,teardown 不会
+        # 执行,共享测试库会残留本模块经 API 受理的 e18-% 交接请求
+        # (triggered_by='manual',teardown 的 'e18' 清理覆盖不到),导致
+        # scalar_one 断言失败。种子阶段先清本模块自己的 e18-% 行(与其他
+        # e18-% 种子清理同一纪律:绝不动其他模块的行)。
+        await session.execute(
+            SyncRequest.__table__.delete().where(SyncRequest.source_id.like("e18-%"))
+        )
+        await session.execute(
+            SyncRun.__table__.delete().where(SyncRun.source_id.like("e18-%"))
+        )
         await session.commit()
 
     user_id = uuid.uuid4()

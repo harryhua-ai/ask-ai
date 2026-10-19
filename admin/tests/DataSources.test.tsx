@@ -124,6 +124,29 @@ describe("DataSources", () => {
     expect(screen.getByText("暂无数据源")).toBeInTheDocument();
   });
 
+  it("#174 deletion UI says 202 is acceptance and names verified content cleanup", () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderWithSources([
+      {
+        id: "upload-owned-source",
+        type: "filesystem",
+        product: "Upload corpus",
+        enabled: true,
+        config: { upload_mode: true },
+        sync_interval: "24h",
+        created_at: "2026-10-19T00:00:00Z",
+        updated_at: "2026-10-19T00:00:00Z",
+      },
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("提交只代表受理"));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("向量、各代内容账本"));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("产品自有上传文件"));
+    confirm.mockRestore();
+  });
+
   it("opens create form when clicking new button", () => {
     const qc = new QueryClient();
     render(

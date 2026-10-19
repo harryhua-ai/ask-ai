@@ -349,10 +349,15 @@ def test_purge_prefix_boundary_safe(monkeypatch):
         def delete_many(self, where):
             # 模拟真实删除:从过滤对象中解析 UUID(repr 含值),逐个移除
             delete_many_filters.append(where)
-            for u in _re.findall(
+            requested = _re.findall(
                 r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", str(where)
-            ):
+            )
+            matched = sum(1 for u in requested if u in OBJECTS)
+            for u in requested:
                 OBJECTS.pop(u, None)
+            from types import SimpleNamespace
+
+            return SimpleNamespace(failed=0, matches=matched, successful=matched)
 
         def delete_by_id(self, uuid):
             deleted_by_id.append(str(uuid))
@@ -360,6 +365,20 @@ def test_purge_prefix_boundary_safe(monkeypatch):
 
     class _FakeCollection:
         data = _FakeData()
+
+        def __init__(self) -> None:
+            from types import SimpleNamespace
+
+            def fetch_objects(filters=None, limit=None):
+                # #168 读回原语:按过滤器携带的 UUID 返回实物存活对象
+                requested = _re.findall(
+                    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                    str(filters),
+                )
+                found = [OBJECTS[u] for u in requested if u in OBJECTS]
+                return SimpleNamespace(objects=found)
+
+            self.query = SimpleNamespace(fetch_objects=fetch_objects)
 
         def iterator(self, return_properties=None):
             return iter(list(OBJECTS.values()))

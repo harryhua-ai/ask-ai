@@ -88,6 +88,7 @@ from backend.services.recovery_events import recovery_counts
 from backend.services.source_deletion import DeletionRequestError, request_deletion
 from backend.services.source_discovery import parse_discovery_rules
 from backend.services.source_lifecycle import DELETE_FAILED
+from backend.services.upload_storage import UPLOADS_CORPUS_ROOT
 from backend.services.website_discovery import build_website_preview
 
 router = APIRouter(prefix="/data-sources", tags=["数据源管理"])
@@ -137,14 +138,6 @@ async def _load_source_discovery_rules(
     return []
 
 
-# Issue #100 AC1:上传数据源权威子树(仓库相对形态;镜像 CWD=/app,对应
-# 容器路径 /app/data/uploads/data-sources)。prod compose 以共享命名卷挂载
-# /app/data/uploads,使 backend(写)与 sync-executor/sync-cron/sync(读)
-# 面对同一份持久字节 —— 上传权威单一、持久、执行面可见。写侧(config
-# root_path 记录)与读侧(connector 枚举)一律由此常量派生,禁止字面漂移。
-UPLOADS_CORPUS_ROOT = Path("data/uploads/data-sources")
-
-
 def _upload_root(source_id: str) -> Path:
     """上传语料落盘根目录(相对仓库根,与 filesystem connector 同 CWD 语义)。"""
     return UPLOADS_CORPUS_ROOT / source_id
@@ -185,34 +178,48 @@ async def upload_source_files(
     """
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
-        result = await session.execute(select(DataSource).where(DataSource.id == source_id))
+        # Serialize upload writes with DELETE acceptance on the same source row.
+        # The lock is held through the filesystem writes: upload-first finishes
+        # before DELETE_REQUESTED, while delete-first makes this request fail.
+        result = await session.execute(
+            select(DataSource).where(DataSource.id == source_id).with_for_update()
+        )
         ds = result.scalar_one_or_none()
-    if ds is None:
-        raise HTTPException(status_code=404, detail="数据源不存在")
-    if ds.type != "filesystem":
-        raise HTTPException(status_code=400, detail="仅 filesystem 数据源支持上传")
-    if len(files) != len(paths):
-        raise HTTPException(status_code=400, detail="files 与 paths 数量不一致")
-    whitelist = {
-        t.strip().lower() for t in (ds.config or {}).get("file_types", []) or [] if str(t).strip()
-    }
-    base = _upload_root(source_id)
-    saved = 0
-    for uf, rel in zip(files, paths):
-        rel_norm = str(rel).replace("\\", "/")
-        if (uf.size or 0) > MAX_UPLOAD_FILE_BYTES:
-            raise HTTPException(status_code=400, detail=f"文件超过 20MB 上限: {uf.filename}")
-        ext = PurePosixPath(rel_norm).suffix.lower()
-        if whitelist and ext not in whitelist:
-            raise HTTPException(status_code=400, detail=f"文件类型不在白名单: {rel_norm}")
-        target = _safe_upload_path(base, rel_norm)
-        content = await uf.read()
-        if len(content) > MAX_UPLOAD_FILE_BYTES:
-            raise HTTPException(status_code=400, detail=f"文件超过 20MB 上限: {uf.filename}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
-        saved += 1
-    return {"saved": saved, "root": str(UPLOADS_CORPUS_ROOT / source_id)}
+        if ds is None:
+            raise HTTPException(status_code=404, detail="数据源不存在")
+        if ds.type != "filesystem":
+            raise HTTPException(status_code=400, detail="仅 filesystem 数据源支持上传")
+        if not source_lifecycle.is_sync_eligible(ds.lifecycle_state):
+            raise HTTPException(status_code=409, detail="数据源正在删除或删除失败,禁止继续上传")
+        if len(files) != len(paths):
+            raise HTTPException(status_code=400, detail="files 与 paths 数量不一致")
+        whitelist = {
+            t.strip().lower()
+            for t in (ds.config or {}).get("file_types", []) or []
+            if str(t).strip()
+        }
+        base = _upload_root(source_id)
+        saved = 0
+        for uf, rel in zip(files, paths):
+            rel_norm = str(rel).replace("\\", "/")
+            if (uf.size or 0) > MAX_UPLOAD_FILE_BYTES:
+                raise HTTPException(
+                    status_code=400, detail=f"文件超过 20MB 上限: {uf.filename}"
+                )
+            ext = PurePosixPath(rel_norm).suffix.lower()
+            if whitelist and ext not in whitelist:
+                raise HTTPException(status_code=400, detail=f"文件类型不在白名单: {rel_norm}")
+            target = _safe_upload_path(base, rel_norm)
+            content = await uf.read()
+            if len(content) > MAX_UPLOAD_FILE_BYTES:
+                raise HTTPException(
+                    status_code=400, detail=f"文件超过 20MB 上限: {uf.filename}"
+                )
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+            saved += 1
+        await session.commit()
+        return {"saved": saved, "root": str(UPLOADS_CORPUS_ROOT / source_id)}
 
 
 # 系统目录/构建产物:预览子目录时一律过滤,避免噪音与深层爆炸。
@@ -590,10 +597,22 @@ async def update_data_source(
     values = req.model_dump(exclude_none=True)
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
-        result = await session.execute(select(DataSource).where(DataSource.id == source_id))
+        # 同源行锁(R2 阻塞②,与 upload/删除 worker 同一串行化语义):锁持有
+        # 到校验+提交为止,编辑不会与删除 worker 的配置快照、上传文件处置交错。
+        result = await session.execute(
+            select(DataSource).where(DataSource.id == source_id).with_for_update()
+        )
         ds = result.scalar_one_or_none()
         if ds is None:
             raise HTTPException(status_code=404, detail="数据源不存在")
+        if not source_lifecycle.is_sync_eligible(ds.lifecycle_state):
+            # deny-by-default:delete_requested/deleting/delete_failed(删除
+            # 流程活跃或未收敛)及任何未来未知状态一律拒绝编辑;被拒请求
+            # 回滚零写入,等删除收敛或先恢复/重试删除状态再编辑。
+            raise HTTPException(
+                status_code=409,
+                detail="数据源删除在途或未收敛,禁止编辑;请等待删除完成或先重试/恢复删除状态",
+            )
         for key, value in values.items():
             setattr(ds, key, value)
         if ds.type == "github":

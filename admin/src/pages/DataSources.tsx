@@ -224,13 +224,13 @@ export default function DataSources() {
   const handleDelete = async (id: string) => {
     if (
       !window.confirm(
-        `确定删除数据源 ${id} 吗?\n删除受理后将在后台清理向量语料,期间该源暂停同步;完成后此行自动消失。`,
+        `确定删除数据源 ${id} 吗?\n提交只代表受理。后台将验证并清理该源的向量、各代内容账本；上传模式还会清理产品自有上传文件。全部完成后此行才会消失，失败可在此重试。`,
       )
     )
       return;
     try {
       await deleteDs.mutateAsync(id);
-      toast.success(`删除已受理:${id}(后台清理中,完成后自动从列表移除)`);
+      toast.success(`删除已受理:${id}(202 仅代表受理，后台验证清理完成后才会移除)`);
     } catch (err) {
       toast.error(`删除受理失败:${err instanceof Error ? err.message : "未知错误"}`);
     }
@@ -417,12 +417,12 @@ export default function DataSources() {
                         </Badge>
                         {/* #18 删除生命周期:状态持久化在行上,刷新后仍可见 */}
                         {ds.lifecycle_state === "delete_requested" && (
-                          <Badge variant="warning" title="删除已受理,等待后台清理">
+                          <Badge variant="warning" title="202 仅代表删除已受理，等待后台验证并清理全部源内容">
                             待删除
                           </Badge>
                         )}
                         {ds.lifecycle_state === "deleting" && (
-                          <Badge variant="warning" title="正在清理向量语料,完成后自动移除">
+                          <Badge variant="warning" title="正在清理并验证向量、内容账本和适用的产品自有上传文件；全部完成后自动移除">
                             删除中…
                           </Badge>
                         )}

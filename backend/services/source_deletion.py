@@ -35,17 +35,30 @@ from urllib.parse import urlparse
 
 import weaviate
 from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from weaviate.classes.query import Filter
 
-from backend.db.models import DataSource, Document, SyncRequest, SyncRun
+from backend.db.models import (
+    DataSource,
+    Document,
+    DocumentVersion,
+    DocumentVersionChunk,
+    IndexGeneration,
+    SyncRequest,
+    SyncRun,
+)
 from backend.services import source_lifecycle
 from backend.services.source_lifecycle import (
     DELETE_FAILED,
     DELETE_REQUESTED,
     DELETING,
     IN_FLIGHT_STATES,
+)
+from backend.services.upload_storage import (
+    UPLOADS_CORPUS_ROOT,
+    remove_owned_upload_tree,
+    validate_owned_upload_tree,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,6 +69,11 @@ SWEEP_INTERVAL_SECONDS = 30.0
 # sync_requests 视为"在途"的状态(与 services/sync_requests._ACTIVE_STATES 同义,
 # 独立定义避免依赖私有常量)。
 _IN_FLIGHT_REQUEST_STATES = ("pending", "running")
+
+
+async def _commit_final_deletion(session: AsyncSession) -> None:
+    """Commit seam for the final all-or-nothing PG content transaction."""
+    await session.commit()
 
 
 class DeletionRequestError(Exception):
@@ -184,6 +202,11 @@ async def _claim_and_delete_one(
         await session.commit()
         if result.rowcount != 1:
             return False
+        ds = (
+            await session.execute(select(DataSource).where(DataSource.id == source_id))
+        ).scalar_one()
+        source_type = ds.type
+        source_config = dict(ds.config or {})
         ledger = (
             await session.execute(
                 select(Document.source_id, Document.chunk_count).where(
@@ -193,6 +216,78 @@ async def _claim_and_delete_one(
                 )
             )
         ).all()
+
+        version_generation_ids = set(
+            (
+                await session.execute(
+                    select(DocumentVersion.generation_id).where(
+                        DocumentVersion.source_id.startswith(
+                            f"{source_id}/", autoescape=True
+                        )
+                    )
+                )
+            ).scalars()
+        )
+        if version_generation_ids:
+            mismatched_generation = (
+                await session.execute(
+                    select(IndexGeneration.id)
+                    .where(
+                        IndexGeneration.id.in_(version_generation_ids),
+                        IndexGeneration.source_id != source_id,
+                    )
+                    .limit(1)
+                )
+            ).first()
+            if mismatched_generation is not None:
+                raise RuntimeError(
+                    f"generation identity crosses source boundary for {source_id}"
+                )
+
+        # 反向归属(R2 阻塞①):他源版本不得引用本源 generation。正向检查
+        # 只证明「本源版本指向的 generation 全是本源的」,不证明「本源
+        # generation 未被他源版本引用」——后者缺失时,下方直接删除本源全部
+        # IndexGeneration 会抹掉他源版本的生成身份。双向都过才允许删
+        # generations;任一失败 fail-closed(DELETE_FAILED + 可发现锚点),
+        # purge 不得运行。
+        own_generation_ids = set(
+            (
+                await session.execute(
+                    select(IndexGeneration.id).where(
+                        IndexGeneration.source_id == source_id
+                    )
+                )
+            ).scalars()
+        )
+        if own_generation_ids:
+            foreign_rebound = (
+                await session.execute(
+                    select(DocumentVersion.id)
+                    .where(
+                        DocumentVersion.generation_id.in_(own_generation_ids),
+                        # ~startswith = 非本源前缀;NULL/本源前缀行不进入负例
+                        ~DocumentVersion.source_id.startswith(
+                            f"{source_id}/", autoescape=True
+                        ),
+                    )
+                    .limit(1)
+                )
+            ).first()
+            if foreign_rebound is not None:
+                raise RuntimeError(
+                    f"generation identity crosses source boundary for {source_id}: "
+                    "foreign versions still reference this source's generations"
+                )
+
+    # Establish upload ownership and path safety before mutating any external
+    # content.  Validation is repeated by the remover to close obvious TOCTOU
+    # changes and deletion uses Python's fd-based symlink-safe implementation.
+    validate_owned_upload_tree(
+        source_id,
+        source_type,
+        source_config,
+        uploads_root=UPLOADS_CORPUS_ROOT,
+    )
 
     # 同步 weaviate 客户端必须进线程池:大语料 purge 耗时,阻塞事件循环
     # 会复刻 2026-09-02 生产 504 事故模式。
@@ -204,19 +299,119 @@ async def _claim_and_delete_one(
         [(sid, int(cc or 0)) for sid, cc in ledger],
     )
 
+    await run_in_threadpool(
+        remove_owned_upload_tree,
+        source_id,
+        source_type,
+        source_config,
+        uploads_root=UPLOADS_CORPUS_ROOT,
+    )
+
     async with factory() as session:
         ds = (
-            await session.execute(select(DataSource).where(DataSource.id == source_id))
+            await session.execute(
+                select(DataSource)
+                .where(
+                    DataSource.id == source_id,
+                    DataSource.lifecycle_state == DELETING,
+                )
+                .with_for_update()
+            )
         ).scalar_one_or_none()
-        if ds is not None:
-            await session.delete(ds)
+        if ds is None:
+            raise RuntimeError(f"deletion anchor changed before finalization: {source_id}")
+
+        version_ids = list(
+            (
+                await session.execute(
+                    select(DocumentVersion.id).where(
+                        DocumentVersion.source_id.startswith(
+                            f"{source_id}/", autoescape=True
+                        )
+                    )
+                )
+            ).scalars()
+        )
+        if version_ids:
+            await session.execute(
+                delete(DocumentVersionChunk).where(
+                    DocumentVersionChunk.version_id.in_(version_ids)
+                )
+            )
+        await session.execute(
+            delete(DocumentVersion).where(
+                DocumentVersion.source_id.startswith(f"{source_id}/", autoescape=True)
+            )
+        )
         await session.execute(
             delete(Document).where(
                 Document.source_id.startswith(f"{source_id}/", autoescape=True)
             )
         )
-        await session.commit()
-    logger.warning("数据源 %s 删除完成(配置行+账本行已移除,无 tombstone)", source_id)
+        await session.execute(
+            delete(IndexGeneration).where(IndexGeneration.source_id == source_id)
+        )
+
+        residual_counts = {
+            "documents": int(
+                (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(Document)
+                        .where(
+                            Document.source_id.startswith(
+                                f"{source_id}/", autoescape=True
+                            )
+                        )
+                    )
+                ).scalar_one()
+            ),
+            "versions": int(
+                (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(DocumentVersion)
+                        .where(
+                            DocumentVersion.source_id.startswith(
+                                f"{source_id}/", autoescape=True
+                            )
+                        )
+                    )
+                ).scalar_one()
+            ),
+            "chunks": int(
+                (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(DocumentVersionChunk)
+                        .where(
+                            DocumentVersionChunk.version_id.in_(version_ids)
+                            if version_ids
+                            else False
+                        )
+                    )
+                ).scalar_one()
+            ),
+            "generations": int(
+                (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(IndexGeneration)
+                        .where(IndexGeneration.source_id == source_id)
+                    )
+                ).scalar_one()
+            ),
+        }
+        if any(residual_counts.values()):
+            raise RuntimeError(
+                f"PostgreSQL source content remains after deletion: {residual_counts}"
+            )
+        await session.delete(ds)
+        await _commit_final_deletion(session)
+    logger.warning(
+        "数据源 %s 删除完成(向量+上传子树+全代内容账本+配置行已验证移除,无 tombstone)",
+        source_id,
+    )
     return True
 
 
@@ -366,15 +561,23 @@ def purge_source_corpus_sync(
         2. 孤儿段:迭代器全扫 + 客户端前缀边界过滤,收集**实际存量对象
            UUID** 后逐个删除(读侧允许 TEXT 前缀判断,删侧只点名对象 UUID);
         3. 验证段:再次边界扫描,残留 > 0 则 raise——调用方转
-           DELETE_FAILED,配置与账本原样保留可重试(不假报成功)。
+           DELETE_FAILED,配置与账本原样保留可重试(不假报成功);
+        4. 读回段(R2 阻塞③,复用 #168 lifecycle_gc 的确定性 UUID 读回
+           模式):属性扫描看不见「UUID 在场但 source_id 元数据缺失/错误」
+           的实物残留,必须把第 1/2 段点名的每个 UUID 逐一读回确认零在场;
+           读回响应不可读/不一致/仍在场一律 raise。读回是读侧操作,
+           不改变删侧 UUID-only 边界。
 
     Returns:
-        ``{"ledger_docs": N, "orphans": M, "residue": 0}`` 供日志观察。
+        ``{"ledger_docs": N, "orphans": M, "residue": 0,
+        "readback_confirmed": K}`` 供日志观察。
 
     Raises:
-        RuntimeError: 验证段发现残留(删除未收敛)。
+        RuntimeError: 验证段发现残留,或读回段发现已点名 UUID 仍在场
+            (删除未收敛)。
     """
     from backend.pipeline.ingest import _deterministic_uuid
+    from backend.services.lifecycle_gc import _read_existing_uuids
 
     parsed = urlparse(weaviate_url)
     host = parsed.hostname or "localhost"
@@ -388,9 +591,11 @@ def purge_source_corpus_sync(
         for sid, cc in ledger:
             purge_uuids.extend(_deterministic_uuid(sid, i) for i in range(int(cc or 0)))
         for start in range(0, len(purge_uuids), 500):
-            collection.data.delete_many(
-                where=Filter.by_id().contains_any(purge_uuids[start : start + 500])
+            batch = purge_uuids[start : start + 500]
+            receipt = collection.data.delete_many(
+                where=Filter.by_id().contains_any(batch)
             )
+            _validate_delete_many_receipt(receipt, len(batch))
 
         # 2) 孤儿段:实际存量扫描 → 对象 UUID 点删
         stale_uuids: list[str] = []
@@ -412,12 +617,50 @@ def purge_source_corpus_sync(
                 f"purge 后仍有 {residue} 个残留向量对象(source={prefix}),保留状态可重试"
             )
 
+        # 4) 读回段:已点名 UUID 逐一读回确认零在场(元数据盲区兜底)
+        named_uuids = list(dict.fromkeys(purge_uuids + stale_uuids))
+        surviving: list[str] = []
+        for start in range(0, len(named_uuids), 500):
+            batch = named_uuids[start : start + 500]
+            surviving.extend(sorted(_read_existing_uuids(collection, batch)))
+        if surviving:
+            raise RuntimeError(
+                f"purge 后 {len(surviving)} 个已点名 UUID 读回仍在场"
+                f"(source={prefix}),保留状态可重试"
+            )
+
         logger.info(
-            "语料清理完成: 账本 %d 篇(UUID 点删 %d), 孤儿 %d chunks, 残留 0",
+            "语料清理完成: 账本 %d 篇(UUID 点删 %d), 孤儿 %d chunks, 残留 0, 读回确认 %d",
             len(ledger),
             len(purge_uuids),
             len(stale_uuids),
+            len(named_uuids),
         )
-        return {"ledger_docs": len(ledger), "orphans": len(stale_uuids), "residue": 0}
+        return {
+            "ledger_docs": len(ledger),
+            "orphans": len(stale_uuids),
+            "residue": 0,
+            "readback_confirmed": len(named_uuids),
+        }
     finally:
         client.close()
+
+
+def _validate_delete_many_receipt(receipt: object, requested_count: int) -> None:
+    """Reject missing, unreadable, failed, or internally inconsistent receipts."""
+    if receipt is None:
+        raise RuntimeError("Weaviate delete_many returned no receipt")
+    counts = {
+        name: getattr(receipt, name, None)
+        for name in ("failed", "matches", "successful")
+    }
+    if any(type(value) is not int or value < 0 for value in counts.values()):
+        raise RuntimeError("Weaviate delete_many returned an unreadable receipt")
+    if counts["failed"]:
+        raise RuntimeError(
+            f"Weaviate delete_many reported {counts['failed']} failed objects"
+        )
+    if counts["matches"] > requested_count or counts["successful"] > requested_count:
+        raise RuntimeError("Weaviate delete_many receipt exceeded the requested UUID range")
+    if counts["matches"] != counts["successful"] + counts["failed"]:
+        raise RuntimeError("Weaviate delete_many receipt counts are inconsistent")
