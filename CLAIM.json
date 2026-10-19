@@ -12,7 +12,34 @@
  "heartbeat_at": "2026-10-19T04:34:26Z",
  "supersedes": null,
  "contract_digest": "d5a8bb3f14d3f292e44f24e1573a8c24848caf08fb38444bd9c34794361769c2",
- "candidate": null,
+ "candidate": {
+  "branch": "agent/174/124f2bc8",
+  "sha": "c99b108d26bf774baf40122a4ab4becdde7261ad",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "admin/src/pages/DataSources.tsx": "ALLOWED",
+    "admin/tests/DataSources.test.tsx": "ALLOWED",
+    "backend/api/admin/data_sources.py": "ALLOWED",
+    "backend/services/source_deletion.py": "ALLOWED",
+    "backend/services/upload_storage.py": "ALLOWED",
+    "docs/operations/source-deletion-orphan-remediation.md": "ALLOWED",
+    "tests/api/admin/test_data_source_delete.py": "ALLOWED",
+    "tests/api/admin/test_data_source_delete_complete.py": "ALLOWED",
+    "tests/api/admin/test_data_source_delete_document_local.py": "ALLOWED",
+    "tests/api/admin/test_data_source_deletion_lifecycle.py": "ALLOWED",
+    "tests/services/test_upload_storage.py": "ALLOWED"
+   },
+   "violations": [],
+   "main_attributed_paths": [],
+   "counts": {
+    "ALLOWED": 11,
+    "FORBIDDEN": 0,
+    "MAIN_ATTRIBUTED": 0
+   }
+  },
+  "preserved_at": "2026-10-19T04:35:27Z"
+ },
  "runtime": {
   "digest": "a884f1a0dec1a695560e07eef3beee0b5b1bc20b6e376649c0bda17a7d9380d2",
   "release": "v1.1.6",
