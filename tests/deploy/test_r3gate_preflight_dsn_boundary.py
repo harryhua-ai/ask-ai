@@ -55,17 +55,26 @@ def _write_anchor(tmp_path: Path) -> Path:
     return p
 
 
-def _write_manifest(tmp_path: Path, *, slow_dependency: bool = False) -> Path:
+def _write_manifest(
+    tmp_path: Path,
+    *,
+    slow_dependency: bool = False,
+    stall_host_port: tuple[str, int] | None = None,
+) -> Path:
     m = tmp_path / "compatibility.json"
     deps = []
     if slow_dependency:
-        # 有界黑洞探针:保证被测进程在 ps 检查窗口内存活(≤ probe-timeout)
+        # 有界依赖探针:保证被测进程在 argv 观察窗口内存活(≤ probe-timeout)。
+        # #183:原为外部黑洞地址 10.255.255.1:9 —— macOS 路由黑洞挂满超时,
+        # Linux CI 立即 EHOSTUNREACH → 进程秒退,窗口失效。现用本地
+        # accept-队列占满监听(见测试内注释),确定性驻留,零外部网络依赖。
+        host, port = stall_host_port or ("127.0.0.1", 9)
         deps = [
             {
                 "name": "bounded_blackhole",
                 "probe": "tcp_connect",
-                "host": "10.255.255.1",
-                "port": 9,
+                "host": host,
+                "port": port,
                 "timeout_s": 3,
             }
         ]
@@ -281,12 +290,75 @@ def test_malformed_dsn_fails_closed_and_never_echoed(tmp_path, monkeypatch, caps
 # --------------------------------------------------------------------------- #
 
 
+def _observe_live_argv(pid: int) -> tuple[bool, str]:
+    """可靠观察运行中进程的 argv(#183:ps 采样在 Linux 不可靠)。
+
+    - Linux:直读 ``/proc/<pid>/cmdline``(内核权威、逐字节完整,无
+      列宽/终端宽度语义,且以 ``/proc/<pid>/stat`` 状态字段排除僵尸 ——
+      procps 对僵尸仅报 ``[comm] <defunct>``,曾被误当"已观察到运行")。
+    - 其余平台(macOS,无 /proc/<pid>/cmdline):退回 ``ps -o stat=,command=``,
+      同样以状态列排除僵尸。
+
+    Returns:
+        (是否为**存活且取得 argv** 的进程, argv 文本)
+    """
+    proc_dir = Path(f"/proc/{pid}")
+    if proc_dir.is_dir():
+        try:
+            stat_text = (proc_dir / "stat").read_text(encoding="utf-8")
+            # stat 的第 2 字段(comm)可含空格/括号:从最后一个 ')' 之后取状态
+            state = stat_text.rpartition(")")[2].strip()[0:1]
+            raw = (proc_dir / "cmdline").read_bytes()
+            argv_text = raw.replace(b"\x00", b" ").decode("utf-8", "replace").strip()
+            if state == "Z" or not argv_text:
+                return False, argv_text
+            return True, argv_text
+        except OSError:
+            return False, ""
+    ps = subprocess.run(  # noqa: S603 - 固定词表 argv
+        ["ps", "-o", "stat=,command=", "-p", str(pid)],
+        capture_output=True, text=True,
+    )
+    if ps.returncode != 0:
+        return False, ""
+    line = ps.stdout.strip()
+    if not line:
+        return False, ""
+    state, _, command = line.partition(" ")
+    if state.startswith("Z") or "<defunct>" in command:
+        return False, command  # 僵尸 = 死亡观察,绝不记作"运行中"
+    return True, command.strip()
+
+
 def test_running_process_argv_never_contains_secret(tmp_path):
-    """子进程启动 preflight(有界黑洞探针保证存活窗口),运行中 ps 读取其
-    argv:秘密(env 注入)绝不出现;argv 只含 env 变量机制,不含任何 DSN。"""
+    """子进程启动 preflight(本地确定性存活窗口),运行中直读其 argv:
+    秘密(env 注入)绝不出现;argv 只含 env 变量机制,不含任何 DSN。
+
+    #183 根因与修法:原实现存活窗口依赖 manifest 依赖探针 connect
+    10.255.255.1:9(3s 黑洞)—— macOS 上路由黑洞挂满 3s,Linux CI 上
+    立即 EHOSTUNREACH → 子进程秒退(缺锚时隔离门禁不执行任何探针,
+    进程生命 ≈ 启动即止);且 procps 对僵尸进程报非空 "[comm] <defunct>"
+    被当作"已观察到运行" → 快照里永远没有旗标。修复:窗口改为本地
+    确定性机制(listen(1) + 占满 accept 队列的 primer 连接 → 被测探针
+    SYN 被内核丢弃、按指数退避重传直至 3s 探针超时,不依赖外部网络
+    差异);观察改为 /proc/<pid>/cmdline 权威直读(Linux)并以状态字段
+    排除僵尸(macOS 退回 ps 同样排除)。"秘密不进 argv"断言不变。
+    """
     import socket
 
-    m = _write_manifest(tmp_path, slow_dependency=True)
+    # ---- 本地确定性存活窗口:占满 accept 队列的监听套接字 ----
+    # backlog=1 且从不 accept;primer 先完成三次握手占满队列,被测进程的
+    # dependency tcp_connect SYN 因 accept 队列溢出被内核静默丢弃(Linux/
+    # macOS 缺省行为),connect() 以 1s/2s 指数退避重传,直至探针超时 3s
+    # —— 被测进程驻留窗口确定性 ≥3s,全本地、零外部网络依赖。
+    stall = socket.socket()
+    stall.bind(("127.0.0.1", 0))
+    stall.listen(1)
+    _stall_port = stall.getsockname()[1]
+    primer = socket.create_connection(("127.0.0.1", _stall_port), timeout=3)
+
+    m = _write_manifest(tmp_path, slow_dependency=True, stall_host_port=(
+        "127.0.0.1", _stall_port))
     out_file = tmp_path / "sub_out.json"
     err_file = tmp_path / "sub_err.txt"
     env = {
@@ -296,46 +368,50 @@ def test_running_process_argv_never_contains_secret(tmp_path):
     }
     out_handle = open(out_file, "w")  # noqa: SIM115 - 测试生命周期内持有
     err_handle = open(err_file, "w")
-    proc = subprocess.Popen(  # noqa: S603 - 固定词表 argv,非外部输入拼接
-        [
-            sys.executable,
-            str(_EVALUATOR),
-            "--manifest", str(m),
-            "--verify-upload-isolation",
-            "--isolation-pg-dsn-env", "ISOLATION_PG_DSN",
-            "--isolation-weaviate-url", "http://wvhost:1",
-            "--isolation-weaviate-class", "KnowledgeChunk",
-            "--probe-timeout", "3",
-        ],
-        stdout=out_handle,
-        stderr=err_handle,
-        env=env,
-        cwd=str(_REPO_ROOT),
-    )
-    observed_running = False
-    ps_snapshots: list[str] = []
-    deadline = time.monotonic() + 8
-    while time.monotonic() < deadline and proc.poll() is None:
-        ps = subprocess.run(  # noqa: S603
-            ["ps", "-o", "command=", "-p", str(proc.pid)],
-            capture_output=True, text=True,
+    try:
+        proc = subprocess.Popen(  # noqa: S603 - 固定词表 argv,非外部输入拼接
+            [
+                sys.executable,
+                str(_EVALUATOR),
+                "--manifest", str(m),
+                "--verify-upload-isolation",
+                "--isolation-pg-dsn-env", "ISOLATION_PG_DSN",
+                "--isolation-weaviate-url", "http://wvhost:1",
+                "--isolation-weaviate-class", "KnowledgeChunk",
+                "--probe-timeout", "3",
+            ],
+            stdout=out_handle,
+            stderr=err_handle,
+            env=env,
+            cwd=str(_REPO_ROOT),
         )
-        if ps.returncode == 0 and ps.stdout.strip():
-            observed_running = True
-            ps_snapshots.append(ps.stdout)
-            assert _FAKE_PW not in ps.stdout, (
-                f"RED 孪生回归失败:口令出现在运行中进程 argv:\n{ps.stdout}"
-            )
-        else:
-            time.sleep(0.05)
-    rc = proc.wait(timeout=10)
-    out_handle.close()
-    err_handle.close()
-    assert observed_running, "未能观察到运行中进程(ps 检查窗口失效,测试自身失效)"
-    assert any("--isolation-pg-dsn-env" in s for s in ps_snapshots), (
-        "ps 快照应见 env 变量机制旗标(证明观察的是真实被测进程)"
+        observed_running = False
+        argv_snapshots: list[str] = []
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline and proc.poll() is None:
+            running, argv_text = _observe_live_argv(proc.pid)
+            if running:
+                observed_running = True
+                argv_snapshots.append(argv_text)
+                assert _FAKE_PW not in argv_text, (
+                    f"RED 孪生回归失败:口令出现在运行中进程 argv:\n{argv_text}"
+                )
+            time.sleep(0.01)
+        rc = proc.wait(timeout=10)
+    finally:
+        out_handle.close()
+        err_handle.close()
+        primer.close()
+        stall.close()
+    assert observed_running, (
+        "未能观察到存活进程的 argv(观察窗口失效,测试自身失效);"
+        f"快照={argv_snapshots!r}"
+    )
+    assert any("--isolation-pg-dsn-env" in s for s in argv_snapshots), (
+        "argv 快照应见 env 变量机制旗标(证明观察的是真实被测进程);"
+        f"快照={argv_snapshots!r}"
     )
     out_text = out_file.read_text(encoding="utf-8")
     err_text = err_file.read_text(encoding="utf-8")
     assert _FAKE_PW not in out_text and _FAKE_PW not in err_text
-    assert rc != 0, "无 psql/无 Weaviate 通道 → 必须 fail-closed 非零退出"
+    assert rc != 0, "依赖不可达(探针超时)/无隔离通道 → 必须 fail-closed 非零退出"
