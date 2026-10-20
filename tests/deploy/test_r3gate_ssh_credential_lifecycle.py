@@ -141,6 +141,16 @@ class Sandbox:
             '      if [ "${args[$i]}" = "exec" ]; then exec_idx=$i; fi\n'
             '      if [ "$exec_idx" -ge 0 ] && [ "${args[$i]}" = "backend" ]; then svc_idx=$i; break; fi\n'
             "    done\n"
+            '    # T-SEC-03 确定性中断注入(#183):原实现"锚落盘后 sleep 0.2s 再\n'
+            '    # SIGKILL"是时序竞速 —— Linux CI 上远端脚本可在 0.2s 内跑完并\n'
+            '    # 执行 EXIT trap 清场 → 残留为空,注入失真。现由本 shim 在首个\n'
+            '    # 容器 exec(严格晚于全部非密临时件 mktemp/锚写入/工件提取)处\n'
+            '    # SIGKILL 远端脚本($PPID):SIGKILL 不可捕获 → EXIT trap 绝不\n'
+            '    # 执行,残留可确定性观察;本进程立即自终,不悬挂步骤。\n'
+            '    if [ -n "${TSL_INTERRUPT_HOLD:-}" ] && [ "$svc_idx" -ge 0 ]; then\n'
+            '      kill -9 "$PPID" 2>/dev/null\n'
+            "      exit 9\n"
+            "    fi\n"
             '    if [ "$svc_idx" -lt 0 ]; then echo "fake compose: no backend exec" >&2; exit 1; fi\n'
             '    cmd=("${args[@]:$((svc_idx + 1))}")\n'
             '    case "${cmd[0]}" in\n'
@@ -198,17 +208,19 @@ class Sandbox:
             '    export TMPDIR="$TSL_REMOTE_TMP"\n'
             '    export PATH="$TSL_FAKEBIN:$PATH"\n'
             '    if [ "${TSL_SSH_MODE}" = "interrupt" ]; then\n'
-            '      bash "$TSL_SANDBOX/remote_script_captured.sh" & pid=$!\n'
-            '      # 连接中断语义:远端脚本推进到锚临时件落盘后即被 SIGKILL(trap 未及执行)\n'
-            "      i=0\n"
-            '      while [ "$i" -lt 200 ]; do\n'
-            '        ls "$TSL_REMOTE_TMP"/askai-trust-anchor.* >/dev/null 2>&1 && break\n'
-            "        sleep 0.05; i=$((i + 1))\n"
-            "      done\n"
-            '      sleep 0.2\n'
+            '      # 连接中断语义:fake docker shim 在首个容器 exec(全部非密\n'
+            '      # 临时件已落盘、清扫窗口已过)处以 SIGKILL 终止远端脚本\n'
+            '      # ($PPID,trap 未及执行)—— 确定性注入点,替代原 0.2s 时序\n'
+            '      # 竞速(#183)。本循环仅为有界兜底(脚本提前失败/未达注入点\n'
+            '      # 时仍中断并返回 255 = 连接中断语义)。\n'
+            '      TSL_INTERRUPT_HOLD=1 bash "$TSL_SANDBOX/remote_script_captured.sh" & pid=$!\n'
+            '      i=0\n'
+            '      while [ "$i" -lt 200 ] && kill -0 "$pid" 2>/dev/null; do\n'
+            '        sleep 0.05; i=$((i + 1))\n'
+            '      done\n'
             '      kill -9 "$pid" 2>/dev/null\n'
             '      wait "$pid" 2>/dev/null\n'
-            "      exit 255\n"
+            '      exit 255\n'
             "    fi\n"
             '    bash "$TSL_SANDBOX/remote_script_captured.sh"\n'
             "    exit $?\n"

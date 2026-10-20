@@ -672,25 +672,36 @@ class ControlPlaneSandbox:
             "exit $?\n",
             encoding="utf-8",
         )
-        # R5:macOS 沙箱专用 stat shim —— 以 BusyBox `stat -c '%n|%s|%Y'`
-        # 语义模拟 BSD stat(仅扫描脚本所用格式)。真实目标环境 BusyBox
-        # 原生支持 -c(已在 r4-weaviate-128 真实容器实测);本 shim 仅让
-        # 沙箱内对扫描脚本的**真实执行路径**可在 macOS 运行。
+        # R5:跨平台 stat shim(按方言自适应,真实执行系统 stat,非 stub)。
+        # 扫描脚本以 BusyBox `stat -c '%n|%s|%Y'` 语义调用;Linux GNU
+        # coreutils 原生支持 -c → 直通;macOS BSD stat 无 -c → 转译为等价
+        # BSD `-f '%N|%z|%m'`(#183:原 macOS-only 转译在 Ubuntu CI 触发
+        # "cannot read file system information" ×15)。方言以运行时探测
+        # 判定(GNU stat 独有 --version)。真实目标环境 BusyBox 原生支持
+        # -c(已在 r4-weaviate-128 真实容器实测)不经本 shim。
         (self.bin / "stat").write_text(
             "#!/bin/bash\n"
-            "if [ \"$1\" = \"-c\" ] && [ \"$2\" = \"%n|%s|%Y\" ]; then\n"
-            "    shift 2\n"
-            "    exec /usr/bin/stat -f '%N|%z|%m' \"$@\"\n"
+            "if [ \"$1\" = \"-c\" ]; then\n"
+            "    if /usr/bin/stat --version >/dev/null 2>&1; then\n"
+            "        exec /usr/bin/stat \"$@\"\n"
+            "    fi\n"
+            "    if [ \"$2\" = \"%n|%s|%Y\" ]; then\n"
+            "        shift 2\n"
+            "        exec /usr/bin/stat -f '%N|%z|%m' \"$@\"\n"
+            "    fi\n"
             "fi\n"
             "exec /usr/bin/stat \"$@\"\n",
             encoding="utf-8",
         )
-        # R5:macOS 沙箱专用 sha256sum shim —— macOS 无 sha256sum,以
-        # `shasum -a 256` 透传(输出 `<64hex>  <文件名>` 格式与 BusyBox/
-        # coreutils 一致)。真实目标环境 BusyBox 原生 sha256sum(已在
-        # r4-weaviate-128 真实容器实测);本 shim 仅服务沙箱真实执行路径。
+        # R5:跨平台 sha256sum shim(真实执行,非 stub)。Linux coreutils
+        # 原生 sha256sum → 直通;macOS 无 sha256sum → `shasum -a 256`
+        # 透传(输出 `<64hex>  <文件名>` 与 BusyBox/coreutils 一致)。
+        # (#183:原 shim 硬编码 macOS shasum,Ubuntu 下为潜在失败面。)
         (self.bin / "sha256sum").write_text(
-            "#!/bin/bash\nexec /usr/bin/shasum -a 256 \"$@\"\n",
+            "#!/bin/bash\n"
+            "if [ -x /usr/bin/sha256sum ]; then exec /usr/bin/sha256sum \"$@\"; fi\n"
+            "if [ -x /bin/sha256sum ]; then exec /bin/sha256sum \"$@\"; fi\n"
+            "exec /usr/bin/shasum -a 256 \"$@\"\n",
             encoding="utf-8",
         )
         for shim in ("flock", "docker", "ssh", "stat", "sha256sum"):
@@ -766,7 +777,7 @@ class ControlPlaneSandbox:
     def _seeded_volume_hash(self) -> str:
         """R5:用 workflow 内嵌扫描脚本对沙箱卷实测元数据哈希(控制面 PASS
         前提 = 钉扎值 == 真实扫描输出;脚本漂移在此即刻暴露)。PATH 前置
-        沙箱 fakebin(macOS stat shim,模拟 BusyBox `-c` 语义)。"""
+        沙箱 fakebin(跨平台 stat/sha256sum shim,模拟 BusyBox `-c` 语义)。"""
         script_text = _volscan_embedded_script()
         env = dict(os.environ)
         env["PATH"] = f"{self.bin}:{os.environ.get('PATH', '')}"
