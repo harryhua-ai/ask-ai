@@ -12,7 +12,26 @@
  "heartbeat_at": "2026-10-20T09:39:43Z",
  "supersedes": null,
  "contract_digest": "63fb1f538e7e62a5264c72f0c80518d49aaf22c3e9685e434a9a485e70e42db6",
- "candidate": null,
+ "candidate": {
+  "branch": "agent/183/b57af962",
+  "sha": "549c0ede8667ffdb8f9711a9a1a9fb1512a208cc",
+  "scope": {
+   "pass": true,
+   "paths": {
+    "tests/deploy/test_r3gate_preflight_dsn_boundary.py": "ALLOWED",
+    "tests/deploy/test_r3gate_ssh_credential_lifecycle.py": "ALLOWED",
+    "tests/deploy/test_r4gate_weaviate_identity_anchor.py": "ALLOWED"
+   },
+   "violations": [],
+   "main_attributed_paths": [],
+   "counts": {
+    "ALLOWED": 3,
+    "FORBIDDEN": 0,
+    "MAIN_ATTRIBUTED": 0
+   }
+  },
+  "preserved_at": "2026-10-20T09:43:11Z"
+ },
  "runtime": {
   "digest": "a884f1a0dec1a695560e07eef3beee0b5b1bc20b6e376649c0bda17a7d9380d2",
   "release": "v1.1.6",
