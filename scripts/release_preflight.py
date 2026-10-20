@@ -93,6 +93,9 @@ rollout)之前给出确定性升级兼容性判定:
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
+import hmac
 import http.client
 import json
 import os
@@ -100,7 +103,7 @@ import re
 import socket
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit
@@ -988,7 +991,12 @@ def evaluate(
     remediation_ack: str | None = None,
     remediation_evidence: dict | None = None,
     remediation_evidence_error: str | None = None,
+    remediation_artifact_digest: str | None = None,
+    remediation_artifact_error: str | None = None,
+    approval_key: bytes | None = None,
+    approval_key_error: str | None = None,
     release_tag: str | None = None,
+    release_sha: str | None = None,
     pre_contract: bool = False,
     verify_upload_isolation: bool = False,
     isolation: dict | None = None,
@@ -1116,54 +1124,100 @@ def evaluate(
     else:
         gate = str(rollback["remediation_gate"]).strip()
         evidence = remediation_evidence if isinstance(remediation_evidence, dict) else None
-        if (
-            evidence is not None
-            and not (remediation_evidence_error or "").strip()
-            and evidence.get("gate") == gate
-            and evidence.get("target_tag") == (release_tag or "").strip()
-        ):
-            checks.append(
-                _check(
-                    "rollback", "previous_compatible", "rollback_ok", "pass",
-                    f"整改证据合法绑定: gate={gate} "
-                    f"target_tag={evidence.get('target_tag')} "
-                    f"evidence_digest={evidence.get('evidence_digest')} "
-                    f"evidence_ref={evidence.get('evidence_ref')} "
-                    f"recorded_at={evidence.get('recorded_at')} "
-                    f"recorded_by={evidence.get('recorded_by')}"
-                    "(A #138 P3:可回读、绑定目标发行与证据身份的唯一合法放行面;"
-                    "不因字符串 ACK 放行)",
-                )
-            )
-        else:
-            if (remediation_evidence_error or "").strip():
-                reason = (
-                    f"整改证据不可用({remediation_evidence_error})—— fail-closed"
-                )
-            elif evidence is not None and evidence.get("gate") != gate:
-                reason = (
-                    "整改证据绑定失败: 证据 gate="
-                    f"{evidence.get('gate')!r} ≠ manifest 声明 {gate!r}(fail-closed)"
-                )
-            elif evidence is not None:
-                reason = (
-                    "整改证据绑定失败: 证据 target_tag="
-                    f"{evidence.get('target_tag')!r} ≠ 本次部署 release-tag="
-                    f"{(release_tag or '')!r}(跨版本证据不可移作他用,fail-closed)"
-                )
-            elif (remediation_ack or "").strip() == gate:
+        # 放行 = 全链验证(逐环给出结构化 actionable 拒绝;任一环失败即
+        # fail-closed,绝不部分放行):
+        #   记录形状 → 工件真实性(SHA256 对实际文件) → 审批密钥可用 →
+        #   HMAC 审批真伪 → gate/target_tag/release_sha 三重绑定 → 有效期。
+        bind_ok = False
+        reason = ""
+        if (remediation_evidence_error or "").strip():
+            reason = f"整改证据不可用({remediation_evidence_error})—— fail-closed"
+        elif evidence is None:
+            if (remediation_ack or "").strip() == gate:
                 reason = (
                     "字符串 --remediation-ack 与声明 gate 匹配,但字符串 ACK 不构成"
                     "整改证明(A #138 P3:不能凭命令行传入相同字符串获得合法放行)"
-                    "—— 必须提供绑定目标发行与证据身份的整改证据工件"
-                    "(--remediation-evidence-file + --release-tag)"
+                    "—— 必须提供【真实不可变证据工件 + 受信审批】"
+                    "(--remediation-evidence-file + --remediation-evidence-artifact"
+                    " + --release-tag + --release-sha)"
                 )
             else:
                 reason = (
                     "该发布声明与先前版本不兼容:普通 previous-tag 回滚不适用,"
-                    "必须提供绑定目标发行与证据身份的整改证据工件"
-                    "(--remediation-evidence-file + --release-tag,声明的 "
-                    f"remediation gate: {gate})"
+                    "必须提供【真实不可变证据工件 + 受信审批】的整改证据记录"
+                    "(--remediation-evidence-file + --remediation-evidence-artifact"
+                    f" + --release-tag + --release-sha,声明的 remediation gate: {gate})"
+                )
+        elif (remediation_artifact_error or "").strip():
+            reason = (
+                f"整改证据工件不可信({remediation_artifact_error})"
+                "—— 记录声明不等于工件本身,fail-closed"
+            )
+        elif (approval_key_error or "").strip():
+            reason = f"整改审批不可验证({approval_key_error})—— fail-closed"
+        else:
+            want = _approval_hmac_hex(approval_key or b"", evidence)
+            if not hmac.compare_digest(
+                want, str(evidence["approval"]["hmac_sha256"])
+            ):
+                reason = (
+                    "整改审批无效(HMAC 校验失败:记录未经受信审批密钥签发或"
+                    "任一绑定字段被篡改)—— 自填 recorded_by/伪造审批不构成"
+                    "整改证明,fail-closed"
+                )
+            elif evidence.get("gate") != gate:
+                reason = (
+                    "整改证据绑定失败: 证据 gate="
+                    f"{evidence.get('gate')!r} ≠ manifest 声明 {gate!r}(fail-closed)"
+                )
+            elif evidence.get("target_tag") != (release_tag or "").strip():
+                reason = (
+                    "整改证据绑定失败: 证据 target_tag="
+                    f"{evidence.get('target_tag')!r} ≠ 本次部署 release-tag="
+                    f"{(release_tag or '')!r}(跨发行证据不可移作他用,fail-closed)"
+                )
+            elif evidence.get("release_sha") != (release_sha or "").strip().lower():
+                reason = (
+                    "整改证据绑定失败: 证据 release_sha="
+                    f"{evidence.get('release_sha')!r} ≠ 本次部署 release-sha="
+                    f"{(release_sha or '')!r}(跨 SHA/镜像身份证据不可挪用,"
+                    "fail-closed)"
+                )
+            else:
+                na, na_err = _parse_iso_datetime(evidence["not_after"], "not_after")
+                if na_err or na is None:
+                    reason = f"整改证据不可用({na_err})—— fail-closed"
+                elif datetime.now(timezone.utc) > na:
+                    reason = (
+                        f"整改审批已过期(not_after={evidence['not_after']})"
+                        "—— 过期证据不放行,fail-closed"
+                    )
+                else:
+                    bind_ok = True
+                    reason = (
+                        f"整改证据全链验证通过: gate={gate} "
+                        f"target_tag={evidence.get('target_tag')} "
+                        f"release_sha={evidence.get('release_sha')} "
+                        f"evidence_digest={evidence.get('evidence_digest')}(工件"
+                        "SHA256 实测一致) "
+                        f"evidence_ref={evidence.get('evidence_ref')} "
+                        f"approved_by={evidence['approval']['approved_by']} "
+                        f"approved_at={evidence['approval']['approved_at']} "
+                        f"not_after={evidence.get('not_after')}"
+                        "(A #138 P3:真实工件 + 受信审批 + 发行/SHA/镜像身份"
+                        "三重绑定;不因字符串 ACK 或自述记录放行)"
+                    )
+        if bind_ok:
+            checks.append(
+                _check(
+                    "rollback", "previous_compatible", "rollback_ok", "pass", reason,
+                )
+            )
+        else:
+            if not reason:
+                reason = (
+                    "该发布声明与先前版本不兼容:普通 previous-tag 回滚不适用,"
+                    f"必须提供真实证据工件与受信审批(gate: {gate})"
                 )
             checks.append(
                 _check(
@@ -1241,21 +1295,44 @@ _TRUST_ANCHOR_V2_FIELDS = (
 # 其它任何与 URL 不一致的实际 DNS 名一律身份不匹配)
 _BIND_SHAPE_META_HOSTS = {"::", "0.0.0.0", "*", ""}
 
-# ---- G3 整改证据记录(A #138 P3:字符串 ACK 不构成整改证明)----
-# 唯一合法放行面 = 绑定目标发行与证据身份的证据工件;词表封闭,形状全校验,
-# fail-closed。记录本身非秘密(gate 令牌/发布 tag/64hex 摘要/出处引用)。
-_REMEDIATION_EVIDENCE_VERSIONS = (1,)
-_REMEDIATION_EVIDENCE_V1_FIELDS = (
+# ---- G3 整改证据消费(R6v2;A #138 P3 + 阻塞 1 修复)----
+# 唯一合法放行面 = 【真实不可变证据工件 + 受信审批】双因子,缺一 fail-closed:
+#   1) 工件真实性:对 --remediation-evidence-artifact 指向的实际文件计算
+#      SHA256,与记录声明 evidence_digest 精确一致(引用不存在/摘要伪造 ⇒
+#      拒绝;记录本身不是证据);
+#   2) 审批可信:approval.hmac_sha256 = HMAC-SHA256(受信审批密钥, 规范化
+#      绑定载荷)。密钥仅 A 可写(生产宿主 .env PREFLIGHT_REMEDIATION_
+#      APPROVAL_KEY,经既有 env_file/容器 env 通道进入评估器,零新增含密
+#      传输/文件);自填 recorded_by/未经密钥签发的 approval 一律拒绝;
+#   3) 身份绑定:gate == manifest 声明 ∧ target_tag == --release-tag ∧
+#      release_sha == --release-sha(工作流身份步/镜像内 RELEASE.json
+#      git_sha)——同一证据不可挪用于其他发行/SHA/镜像;
+#   4) 有效期:not_after 过期 ⇒ fail-closed;
+#   5) 真实 G3 恢复演练未完成 ⇒ 无记录/无工件/无审批 ⇒ BLOCKED(现状不变)。
+# 测试使用明确定义的测试信任根(测试自造密钥),绝不宣称生产已整改。
+_REMEDIATION_EVIDENCE_VERSIONS = (2,)
+_REMEDIATION_EVIDENCE_V2_FIELDS = (
     "gate",
     "target_tag",
+    "release_sha",
     "evidence_digest",
     "evidence_ref",
     "recorded_at",
     "recorded_by",
+    "not_after",
+    "approval",
 )
+_REMEDIATION_APPROVAL_FIELDS = ("approved_by", "approved_at", "hmac_sha256")
 _RELEASE_TAG_PATTERN = r"v[0-9]+\.[0-9]+\.[0-9]+(-r[0-9]+)?"
 _REMEDIATION_GATE_TOKEN_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"
 _EVIDENCE_DIGEST_PATTERN = r"[0-9a-f]{64}"
+_RELEASE_SHA_PATTERN = r"[0-9a-f]{40}"
+# HMAC 规范化载荷上下文(域分离,防跨用途重用)
+_APPROVAL_HMAC_CONTEXT = "askai-remediation-approval-v2"
+_MIN_APPROVAL_KEY_BYTES = 32
+_DEFAULT_APPROVAL_KEY_ENV = "PREFLIGHT_REMEDIATION_APPROVAL_KEY"
+# 证据工件传输上界(base64 通道;超过即拒绝,不无限读入)
+_MAX_EVIDENCE_ARTIFACT_BYTES = 65536
 
 
 def _load_trust_anchor(path: str | None) -> tuple[dict | None, str | None]:
@@ -1325,21 +1402,30 @@ def _load_trust_anchor(path: str | None) -> tuple[dict | None, str | None]:
     }, None
 
 
+def _parse_iso_datetime(value: str, field: str) -> tuple[datetime | None, str | None]:
+    """解析必须带时区的 ISO-8601 时间( naive 时间拒绝,防跨时区歧义)。"""
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None, f"证据字段形状非法: {field}(须为带时区 ISO-8601)"
+    if parsed.tzinfo is None:
+        return None, f"证据字段形状非法: {field}(必须带时区偏移)"
+    return parsed, None
+
+
 def _load_remediation_evidence(
-    path: str | None, release_tag: str | None
+    path: str | None, release_tag: str | None, release_sha: str | None
 ) -> tuple[dict | None, str | None]:
-    """加载绑定目标发行与证据身份的整改证据记录(A #138 P3 合法放行面)。
+    """加载整改证据记录(R6v2;形状校验 —— 真实性与审批由 rollback 门验证)。
 
     Returns:
         (record, None) 或 (None, 结构化错误)。缺文件/不可读/非 JSON/根非映射/
-        版本不符/词表外字段/缺字段/形状非法/缺 --release-tag 绑定键一律拒绝
-        (fail-closed);错误信息只含字段名类结构信息,绝不回显文件内容;
-        记录本身为非秘密(gate 令牌/发布 tag/64hex 摘要/出处引用)。
-        gate 与 manifest 声明、target_tag 与 release_tag 的**值绑定**由
-        rollback 门比对(加载器只做形状校验,与信任锚同构)。
+        版本不符/词表外字段/缺字段/形状非法/缺 --release-tag 或 --release-sha
+        绑定键/换行类控制字符(防 HMAC 载荷歧义)一律拒绝(fail-closed);
+        错误信息只含字段名类结构信息,绝不回显文件内容;记录本身非秘密。
     """
     if not path or not path.strip():
-        return None, "缺 --remediation-evidence-file(整改证据工件必填)"
+        return None, "缺 --remediation-evidence-file(整改证据记录必填)"
     if not release_tag or not release_tag.strip():
         return (
             None,
@@ -1348,6 +1434,11 @@ def _load_remediation_evidence(
     release_tag = release_tag.strip()
     if not re.fullmatch(_RELEASE_TAG_PATTERN, release_tag):
         return None, "--release-tag 形状非法(须为 vX.Y.Z(-rN) 不可变 tag)"
+    if not release_sha or not release_sha.strip():
+        return None, "缺 --release-sha(整改证据必须绑定本次部署不可变 SHA)"
+    release_sha = release_sha.strip().lower()
+    if not re.fullmatch(_RELEASE_SHA_PATTERN, release_sha):
+        return None, "--release-sha 形状非法(须为 40 位小写 hex)"
     try:
         text = Path(path).read_text(encoding="utf-8")
     except OSError:
@@ -1364,39 +1455,180 @@ def _load_remediation_evidence(
             f"(实际 {raw.get('version')!r})"
         )
     unknown = sorted(
-        set(map(str, raw)) - {"version"} - set(_REMEDIATION_EVIDENCE_V1_FIELDS)
+        set(map(str, raw)) - {"version"} - set(_REMEDIATION_EVIDENCE_V2_FIELDS)
     )
     if unknown:
         return None, f"证据字段词表外: {unknown}"
-    gate = str(raw.get("gate") or "").strip()
-    if not re.fullmatch(_REMEDIATION_GATE_TOKEN_PATTERN, gate):
-        return None, "证据缺字段/形状非法: gate(有界自描述令牌)"
-    target_tag = str(raw.get("target_tag") or "").strip()
-    if not re.fullmatch(_RELEASE_TAG_PATTERN, target_tag):
-        return None, "证据缺字段/形状非法: target_tag(须为 vX.Y.Z(-rN))"
-    digest = str(raw.get("evidence_digest") or "").strip().lower()
-    if not re.fullmatch(_EVIDENCE_DIGEST_PATTERN, digest):
-        return None, "证据缺字段/形状非法: evidence_digest(64 位小写 hex)"
-    ref = str(raw.get("evidence_ref") or "").strip()
-    if not ref or len(ref) > 512:
-        return None, "证据缺字段/形状非法: evidence_ref(非空,≤512 字符)"
-    recorded_at = str(raw.get("recorded_at") or "").strip()
+    approval = raw.get("approval")
+    if not isinstance(approval, dict):
+        return None, "证据缺字段: approval(未经审批的记录不构成整改证明)"
+    unknown_ap = sorted(set(map(str, approval)) - set(_REMEDIATION_APPROVAL_FIELDS))
+    if unknown_ap:
+        return None, f"证据 approval 字段词表外: {unknown_ap}"
+
+    def _token(field: str, pattern: str | None = None, *, max_len: int = 0) -> str:
+        v = str(raw.get(field) or "").strip()
+        if not v:
+            raise ValueError(f"证据缺字段/形状非法: {field}")
+        if ("\n" in v) or ("\r" in v):
+            raise ValueError(f"证据字段形状非法: {field}(含换行类控制字符)")
+        if pattern and not re.fullmatch(pattern, v):
+            raise ValueError(f"证据字段形状非法: {field}")
+        if max_len and len(v) > max_len:
+            raise ValueError(f"证据字段形状非法: {field}(≤{max_len} 字符)")
+        return v
+
     try:
-        datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
-    except ValueError:
-        return None, "证据缺字段/形状非法: recorded_at(ISO-8601)"
-    recorded_by = str(raw.get("recorded_by") or "").strip()
-    if not recorded_by or len(recorded_by) > 256:
-        return None, "证据缺字段/形状非法: recorded_by(非空,≤256 字符)"
+        gate = _token("gate", _REMEDIATION_GATE_TOKEN_PATTERN)
+        target_tag = _token("target_tag", _RELEASE_TAG_PATTERN)
+        release_sha_r = _token("release_sha", _RELEASE_SHA_PATTERN)
+        digest = _token("evidence_digest", _EVIDENCE_DIGEST_PATTERN).lower()
+        ref = _token("evidence_ref", max_len=512)
+        recorded_at = _token("recorded_at", max_len=64)
+        recorded_by = _token("recorded_by", max_len=256)
+        not_after = _token("not_after", max_len=64)
+        approved_by = str(approval.get("approved_by") or "").strip()
+        if not approved_by or len(approved_by) > 256 or ("\n" in approved_by):
+            raise ValueError("证据字段形状非法: approval.approved_by")
+        approved_at = str(approval.get("approved_at") or "").strip()
+        if not approved_at or len(approved_at) > 64 or ("\n" in approved_at):
+            raise ValueError("证据字段形状非法: approval.approved_at")
+        hmac_hex = str(approval.get("hmac_sha256") or "").strip().lower()
+        if not re.fullmatch(_EVIDENCE_DIGEST_PATTERN, hmac_hex):
+            raise ValueError(
+                "证据字段形状非法: approval.hmac_sha256(64 位小写 hex;"
+                "未经受信审批密钥签发的记录不构成整改证明)"
+            )
+    except ValueError as exc:
+        return None, str(exc)
+
+    for field, value in (
+        ("recorded_at", recorded_at),
+        ("approval.approved_at", approved_at),
+        ("not_after", not_after),
+    ):
+        _, err = _parse_iso_datetime(value, field)
+        if err:
+            return None, err
+
     return {
-        "version": 1,
+        "version": 2,
         "gate": gate,
         "target_tag": target_tag,
+        "release_sha": release_sha_r,
         "evidence_digest": digest,
         "evidence_ref": ref,
         "recorded_at": recorded_at,
         "recorded_by": recorded_by,
+        "not_after": not_after,
+        "approval": {
+            "approved_by": approved_by,
+            "approved_at": approved_at,
+            "hmac_sha256": hmac_hex,
+        },
     }, None
+
+
+def _approval_hmac_payload(record: dict) -> bytes:
+    """审批 HMAC 规范化载荷:全部绑定字段的定长次序拼接(域分离上下文打头;
+    各字段已经加载器拒绝换行类控制字符 ⇒ 拼接无歧义)。"""
+    core = "\n".join(
+        [
+            _APPROVAL_HMAC_CONTEXT,
+            record["gate"],
+            record["target_tag"],
+            record["release_sha"],
+            record["evidence_digest"],
+            record["evidence_ref"],
+            record["recorded_at"],
+            record["recorded_by"],
+            record["not_after"],
+            record["approval"]["approved_by"],
+            record["approval"]["approved_at"],
+        ]
+    )
+    return core.encode("utf-8")
+
+
+def _approval_hmac_hex(key: bytes, record: dict) -> str:
+    return hmac.new(key, _approval_hmac_payload(record), hashlib.sha256).hexdigest()
+
+
+def _load_approval_key(path: str | None) -> tuple[bytes | None, str | None]:
+    """加载受信审批密钥(仅 A 可写;首行 base64;解码后 ≥32 字节)。
+
+    密钥材料绝不入 argv、绝不出现在任何错误/日志输出;文件路径词表与
+    隔离 DSN 文件同纪律。任何失败 ⇒ (None, 结构化错误) ⇒ rollback 门
+    fail-closed(无受信密钥 ⇒ 审批无法验证 ⇒ 绝不放行)。
+    """
+    if not path or not path.strip():
+        return (
+            None,
+            "缺 --remediation-approval-key-file(整改审批无法验证,fail-closed)",
+        )
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None, "审批密钥文件不可读"
+    raw = (lines[0] if lines else "").strip()
+    if not raw:
+        return None, "审批密钥文件为空"
+    try:
+        key = base64.b64decode(raw, validate=True)
+    except Exception:  # noqa: BLE001 - 二进制库异常统一转为结构化拒绝
+        return None, "审批密钥 base64 非法"
+    if len(key) < _MIN_APPROVAL_KEY_BYTES:
+        return None, f"审批密钥强度不足(解码后 <{_MIN_APPROVAL_KEY_BYTES} 字节)"
+    return key, None
+
+
+def _resolve_approval_key(
+    args: argparse.Namespace, env: dict[str, str]
+) -> tuple[bytes | None, str | None]:
+    """审批密钥解析:显式文件 > env 变量名通道(env 字典含 --env-file 装配,
+    再查进程 os.environ)。密钥只经文件/环境变量进入,绝不来自 argv。"""
+    if args.remediation_approval_key_file:
+        return _load_approval_key(args.remediation_approval_key_file)
+    var_name = (args.remediation_approval_key_env or _DEFAULT_APPROVAL_KEY_ENV).strip()
+    if var_name:
+        value = env.get(var_name) or os.environ.get(var_name)
+        if value:
+            lines = value.strip().splitlines()
+            return _load_approval_key_from_text(lines[0] if lines else "")
+    return (
+        None,
+        f"审批密钥不可用(缺 --remediation-approval-key-file 且 env {var_name} "
+        "未设):整改审批无法验证,fail-closed",
+    )
+
+
+def _load_approval_key_from_text(raw_b64: str) -> tuple[bytes | None, str | None]:
+    raw = (raw_b64 or "").strip()
+    if not raw:
+        return None, "审批密钥为空"
+    try:
+        key = base64.b64decode(raw, validate=True)
+    except Exception:  # noqa: BLE001
+        return None, "审批密钥 base64 非法"
+    if len(key) < _MIN_APPROVAL_KEY_BYTES:
+        return None, f"审批密钥强度不足(解码后 <{_MIN_APPROVAL_KEY_BYTES} 字节)"
+    return key, None
+
+
+def _hash_evidence_artifact(path: str) -> tuple[str | None, str | None]:
+    """对实际证据工件计算 SHA256(有界读取;超限/缺失/不可读 ⇒ 拒绝)。"""
+    target = Path(path)
+    try:
+        size = target.stat().st_size
+    except OSError:
+        return None, "整改证据工件不可访问(引用的工件不存在或不可读)"
+    if size > _MAX_EVIDENCE_ARTIFACT_BYTES:
+        return None, f"整改证据工件超过有界上界(>{_MAX_EVIDENCE_ARTIFACT_BYTES} 字节)"
+    try:
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    except OSError:
+        return None, "整改证据工件不可读"
+    return digest, None
 
 
 def _dsn_from_pg_env_parts(env: dict[str, str]) -> str | None:
@@ -1464,6 +1696,26 @@ def main(argv: list[str] | None = None) -> int:
         "--release-tag", default=None, metavar="TAG",
         help="本次部署目标不可变 tag(如 v1.6.4-r3);整改证据绑定的目标发行,"
         "提供 --remediation-evidence-file 时必填",
+    )
+    parser.add_argument(
+        "--release-sha", default=None, metavar="SHA",
+        help="本次部署不可变 40 位 hex(工作流身份步仓库权威解析 / update.sh "
+        "取镜像内 RELEASE.json git_sha);整改证据绑定的镜像身份",
+    )
+    parser.add_argument(
+        "--remediation-evidence-artifact", default=None, metavar="PATH",
+        help="整改证据工件(真实不可变文件;对其计算 SHA256 并与记录声明"
+        "evidence_digest 精确比对)—— 记录自述摘要不是证据,必须实测工件",
+    )
+    parser.add_argument(
+        "--remediation-approval-key-file", default=None, metavar="PATH",
+        help="受信审批密钥文件(首行 base64;解码后 ≥32 字节;仅 A 可写)。"
+        "密钥绝不入 argv/日志",
+    )
+    parser.add_argument(
+        "--remediation-approval-key-env", default=None, metavar="NAME",
+        help="审批密钥 env 变量名通道(默认 PREFLIGHT_REMEDIATION_APPROVAL_KEY;"
+        "先查 --env-file/--env 装配的 env 字典,再查进程 os.environ)",
     )
     parser.add_argument(
         "--remediation-evidence-file", default=None, metavar="PATH",
@@ -1565,10 +1817,37 @@ def main(argv: list[str] | None = None) -> int:
     # 既有 fail-closed 语义)。
     evidence: dict | None = None
     evidence_error: str | None = None
+    artifact_digest: str | None = None
+    artifact_error: str | None = None
+    approval_key: bytes | None = None
+    approval_key_error: str | None = None
     if args.remediation_evidence_file:
         evidence, evidence_error = _load_remediation_evidence(
-            args.remediation_evidence_file, args.release_tag
+            args.remediation_evidence_file, args.release_tag, args.release_sha
         )
+        if evidence is not None:
+            # 工件真实性:必须对实际不可变文件实测 SHA256 并与声明一致;
+            # 引用不存在/摘要伪造在此拒绝(记录自述不是证据)。
+            if args.remediation_evidence_artifact:
+                artifact_digest, artifact_error = _hash_evidence_artifact(
+                    args.remediation_evidence_artifact
+                )
+                if (
+                    artifact_digest is not None
+                    and artifact_digest != evidence["evidence_digest"]
+                ):
+                    artifact_error = (
+                        "实际工件 SHA256 与记录声明 evidence_digest 不一致"
+                        "(fail-closed)"
+                    )
+                    artifact_digest = None
+            else:
+                artifact_error = (
+                    "缺 --remediation-evidence-artifact(必须对实际不可变证据"
+                    "工件计算 SHA256;记录自述摘要不是证据)"
+                )
+        # 审批密钥(仅 A 可写;文件 > env 变量通道;绝不入 argv/日志)
+        approval_key, approval_key_error = _resolve_approval_key(args, env)
 
     # DSN 通道(显式、无回退):--isolation-pg-dsn-parts = 容器 env 组件装配;
     # 否则 file > env 变量。Weaviate URL/class:显式旗标 > env 变量名通道。
@@ -1590,7 +1869,12 @@ def main(argv: list[str] | None = None) -> int:
         remediation_ack=args.remediation_ack,
         remediation_evidence=evidence,
         remediation_evidence_error=evidence_error,
+        remediation_artifact_digest=artifact_digest,
+        remediation_artifact_error=artifact_error,
+        approval_key=approval_key,
+        approval_key_error=approval_key_error,
         release_tag=args.release_tag,
+        release_sha=args.release_sha,
         pre_contract=args.pre_contract_release,
         verify_upload_isolation=args.verify_upload_isolation,
         isolation=(

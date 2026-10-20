@@ -295,30 +295,71 @@ def test_preflight_string_ack_alone_no_longer_releases(monkeypatch, capsys, tmp_
     assert not any(c["class"] == "rollback_ok" for c in out["checks"])
 
 
-def _write_remediation_evidence(path: Path, **overrides) -> Path:
+def _trust_root(tmp_path: Path):
+    """测试信任根:自造 HMAC 密钥 + 真实工件 + 已签发 v2 记录(绝不宣称
+    生产整改;与 test_r6gate_remediation_evidence 同构)。"""
+    import base64
+    import hashlib
+    import hmac as _hmac
+    import os
+
+    from scripts.release_preflight import _approval_hmac_hex
+
+    key = os.urandom(48)
+    artifact = tmp_path / "bundle.bin"
+    artifact.write_bytes(b"recovery-drill-evidence (test trust root)\n")
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
     record = {
-        "version": 1,
+        "version": 2,
         "gate": GATE,
         "target_tag": "v9.9.9",
-        "evidence_digest": "c" * 64,
+        "release_sha": "a" * 40,
+        "evidence_digest": digest,
         "evidence_ref": "recovery-drill/2026-10-20/bundle-sha",
-        "recorded_at": "2026-10-20T12:00:00Z",
+        "recorded_at": "2026-10-20T12:00:00+00:00",
         "recorded_by": "role-a",
+        "not_after": "2099-01-01T00:00:00+00:00",
+        "approval": {
+            "approved_by": "role-a",
+            "approved_at": "2026-10-20T12:00:00+00:00",
+            "hmac_sha256": "0" * 64,
+        },
     }
-    record.update(overrides)
+    record.update(
+        {
+            "gate": GATE,
+            **{k: v for k, v in [
+                ("target_tag", record["target_tag"]),
+            ]},
+        }
+    )
+    record["approval"]["hmac_sha256"] = _approval_hmac_hex(key, record)
+    path = tmp_path / "evidence.json"
     path.write_text(json.dumps(record), encoding="utf-8")
-    return path
+    key_path = tmp_path / "key.b64"
+    key_path.write_text(base64.b64encode(key).decode() + "\n", encoding="utf-8")
+    return {
+        "record": path,
+        "artifact": artifact,
+        "key": key_path,
+        "tag": "v9.9.9",
+        "sha": "a" * 40,
+        "digest": digest,
+    }
 
 
 def test_preflight_accepts_bound_remediation_evidence(monkeypatch, capsys, tmp_path):
-    """AC2(P3 合法放行面):证据工件 gate/target_tag 与 manifest 声明及本次
-    部署 --release-tag 精确绑定 ⇒ 通过;可回读身份字段(gate/tag/摘要)全部
-    入 check reason。证据工件存在不改变 previous_compatible=false 声明。"""
-    ev = _write_remediation_evidence(tmp_path / "evidence.json")
+    """AC2(P3 合法放行面,R6v2):真实工件(SHA256 实测一致)+ 受信审批
+    + gate/tag/sha 三重绑定 ⇒ 通过;可回读身份字段全部入 check reason。
+    证据存在不改变 previous_compatible=false 声明。"""
+    tr = _trust_root(tmp_path)
     code = _run_preflight_cli(
         monkeypatch,
-        "--remediation-evidence-file", str(ev),
-        "--release-tag", "v9.9.9",
+        "--remediation-evidence-file", str(tr["record"]),
+        "--remediation-evidence-artifact", str(tr["artifact"]),
+        "--remediation-approval-key-file", str(tr["key"]),
+        "--release-tag", tr["tag"],
+        "--release-sha", tr["sha"],
     )
     assert code == 0
     out = json.loads(capsys.readouterr().out)
@@ -326,7 +367,7 @@ def test_preflight_accepts_bound_remediation_evidence(monkeypatch, capsys, tmp_p
     ok = [c for c in out["checks"] if c["class"] == "rollback_ok"]
     assert ok, out
     reason = ok[0]["reason"]
-    assert GATE in reason and "v9.9.9" in reason and "c" * 64 in reason
+    assert GATE in reason and tr["tag"] in reason and tr["digest"] in reason
     assert not any(
         c["class"] == "rollback_remediation_gate_required" for c in out["checks"]
     )
@@ -335,16 +376,19 @@ def test_preflight_accepts_bound_remediation_evidence(monkeypatch, capsys, tmp_p
 def test_preflight_rejects_cross_release_evidence_binding(monkeypatch, capsys, tmp_path):
     """AC2(P3 绑定语义):证据 target_tag ≠ 本次部署 tag ⇒ 跨版本证据不可
     移作他用,fail-closed。"""
-    ev = _write_remediation_evidence(tmp_path / "evidence.json", target_tag="v9.9.8")
+    tr = _trust_root(tmp_path)
     code = _run_preflight_cli(
         monkeypatch,
-        "--remediation-evidence-file", str(ev),
-        "--release-tag", "v9.9.9",
+        "--remediation-evidence-file", str(tr["record"]),
+        "--remediation-evidence-artifact", str(tr["artifact"]),
+        "--remediation-approval-key-file", str(tr["key"]),
+        "--release-tag", "v9.9.8",
+        "--release-sha", tr["sha"],
     )
     assert code == 2
     out = json.loads(capsys.readouterr().out)
     chk = [c for c in out["checks"] if c["class"] == "rollback_remediation_gate_required"]
-    assert chk and "v9.9.8" in chk[0]["reason"] and "v9.9.9" in chk[0]["reason"]
+    assert chk and "v9.9.8" in chk[0]["reason"] and tr["tag"] in chk[0]["reason"]
 
 
 def test_preflight_rejects_wrong_and_stale_acks(monkeypatch, capsys):

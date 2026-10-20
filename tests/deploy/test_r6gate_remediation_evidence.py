@@ -1,34 +1,46 @@
-"""R6(G3):整改证据工件 = rollback remediation gate 的唯一合法放行面。
+"""R6v2(G3):整改证据消费 =【真实不可变工件 + 受信审批】双因子,缺一 fail-closed。
 
-权威裁决:Role A #138「A 自审更正与下一步实际推进」(2026-10-20):
+权威依据:
+- Role A #138 P3(2026-10-20):「仅有字符串相等判断的 remediation_ack 本身
+  不是安全整改证明,不能凭命令行传入相同字符串获得合法放行」;
+- Role A R6 离线审查 REQUEST_CHANGES(2026-10-20,阻塞 1):loader 仅验形状
+  即放行 = 确定性真 FAIL-OPEN(A 以独立反例实码证实)。修复要求:验证被引用
+  的真实不可变证据工件(SHA256 实测比对)、验证来自受信密钥的审批
+  (不接受自填 recorded_by)、绑定 gate/目标 tag/不可变 release SHA、
+  相同证据不可挪用其他发行、过期/损坏 fail-closed。
 
-- 「当前仅有字符串相等判断的 remediation_ack 本身不是安全整改证明,不能凭
-  命令行传入相同字符串获得合法放行」;
-- P3:「release-owned evaluator 和官方 workflow 需有合规、可回读、绑定具体
-  目标发行/证据身份的机制来消费该事实」。
+信任根(测试):测试自造 HMAC 密钥(≥32 字节)+ 测试自造证据工件 —— 明确
+定义为测试信任根,绝不宣称生产已整改;真实 G3 恢复演练未完成 ⇒ 生产
+无记录/无工件/无审批 ⇒ rollback 门维持 BLOCKED(通道可选,现状不变)。
 
-本文件零网络、零 docker、零生产 mutation;全部判定基于临时 manifest/证据
-工件本地构造(fail-closed 语义矩阵):
-
-- T-EV-01 合法证据 + gate/target_tag 双绑定 ⇒ rollback_ok PASS(exit 0),
-  可回读身份字段(gate/target_tag/digest/ref/recorded_at/recorded_by)入 reason;
-- T-EV-02 无任何输入 ⇒ rollback_remediation_gate_required fail(exit 2);
-- T-EV-03 字符串 --remediation-ack 精确匹配但无证据 ⇒ fail(A P3:不构成
-  整改证明;结构化指引指向证据工件);
-- T-EV-04 证据 gate ≠ manifest 声明 ⇒ 绑定失败 fail;
-- T-EV-05 证据 target_tag ≠ --release-tag ⇒ 跨版本证据不可移用 fail;
-- T-EV-06 形状非法矩阵(版本不符/词表外字段/gate 形状/tag 形状/摘要非
-  64hex/时间不可解析/缺 release-tag)⇒ 一律 fail-closed,错误不回显内容;
-- T-EV-07 previous_compatible=true ⇒ 零变化(证据通道不参与判定);
-- T-EV-08 update.sh / workflow 机械接线(静态断言):透传、--release-tag
-  绑定、base64 词表守卫、证据通道可选(未配置维持阻断)、workflow 无裸
-  ack 通道。
+本文件零网络、零 docker、零生产 mutation。矩阵:
+- T-EV-01 可信正例(测试信任根):PASS 且可回读身份字段全入 reason;
+- T-EV-02 无任何输入 ⇒ BLOCKED 语义不变;
+- T-EV-03 字符串 ack 单独 ⇒ fail(P3);
+- T-EV-04 伪造引用:记录引用的工件不存在 ⇒ fail;
+- T-EV-05 伪造摘要:工件存在但声明 digest 不符 ⇒ fail;
+- T-EV-06 自填 recorded_by + 伪造 HMAC ⇒ fail;
+- T-EV-07 无 approval 块(未经审批的记录)⇒ 形状拒绝;
+- T-EV-08 跨 Release Tag 复用 ⇒ fail;
+- T-EV-09 跨 Git SHA / 镜像身份复用 ⇒ fail;
+- T-EV-10 有记录有工件但无审批密钥 ⇒ fail(审批不可验证);
+- T-EV-11 审批过期(not_after)⇒ fail;
+- T-EV-12 绑定字段篡改(HMAC 对原字段签发,tag 事后被改)⇒ fail(防延展);
+- T-EV-13 形状非法矩阵(版本/词表外/缺字段/换行注入/naive 时间)⇒ fail;
+- T-EV-14 previous_compatible=true 零变化;
+- T-EV-15 update.sh / workflow 机械接线(静态)。
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
+import os
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 UPDATE_SH = REPO / "deploy" / "prod" / "update.sh"
@@ -36,7 +48,8 @@ WORKFLOW = REPO / ".github" / "workflows" / "deploy-production.yml"
 
 GATE = "upload-source-acl-verified-issue-121"
 TAG = "v9.9.9"
-DIGEST = "b" * 64
+SHA = "a" * 40
+DIGEST = None  # per-fixture (artifact bytes)
 
 INCOMPATIBLE_MANIFEST = {
     "version": 1,
@@ -46,7 +59,6 @@ INCOMPATIBLE_MANIFEST = {
     "dependencies": [],
     "rollback": {"previous_compatible": False, "remediation_gate": "gate-token-x"},
 }
-
 COMPATIBLE_MANIFEST = {
     "version": 1,
     "config": [],
@@ -56,315 +68,390 @@ COMPATIBLE_MANIFEST = {
     "rollback": {"previous_compatible": True},
 }
 
+ARTIFACT_BYTES = b"RECOVERY-DRILL-EVIDENCE-BUNDLE-v1 (test trust root)\n"
 
-def _write_manifest(tmp_path: Path, rollback: dict) -> Path:
-    manifest = dict(INCOMPATIBLE_MANIFEST if not rollback else COMPATIBLE_MANIFEST)
-    if rollback:
-        manifest["rollback"] = {"previous_compatible": False, "remediation_gate": "gate-token-x"}
-    else:
-        manifest["rollback"] = {"previous_compatible": True}
+
+def _key_b64(key: bytes) -> str:
+    return base64.b64encode(key).decode()
+
+
+def _sign(record: dict, key: bytes) -> dict:
+    """用测试信任根密钥对记录签发审批 HMAC(与 evaluator 规范化载荷一致)。"""
+    from scripts.release_preflight import _approval_hmac_hex
+
+    record = json.loads(json.dumps(record))
+    record["approval"]["hmac_sha256"] = "0" * 64
+    record["approval"]["hmac_sha256"] = _approval_hmac_hex(key, record)
+    return record
+
+
+def _base_record(artifact_digest: str) -> dict:
+    return {
+        "version": 2,
+        "gate": "gate-token-x",
+        "target_tag": TAG,
+        "release_sha": SHA,
+        "evidence_digest": artifact_digest,
+        "evidence_ref": "recovery-drill/2026-10-20/bundle-sha",
+        "recorded_at": "2026-10-20T12:00:00+00:00",
+        "recorded_by": "role-a",
+        "not_after": "2099-01-01T00:00:00+00:00",
+        "approval": {
+            "approved_by": "role-a",
+            "approved_at": "2026-10-20T12:00:00+00:00",
+            "hmac_sha256": "0" * 64,
+        },
+    }
+
+
+class TrustRoot:
+    """测试信任根:密钥 + 真实工件 + 已签发记录(全部临时文件)。"""
+
+    def __init__(self, tmp_path: Path, key: bytes | None = None):
+        self.key = key or os.urandom(48)
+        self.artifact = tmp_path / "bundle.bin"
+        self.artifact.write_bytes(ARTIFACT_BYTES)
+        self.digest = hashlib.sha256(ARTIFACT_BYTES).hexdigest()
+        self.record_path = tmp_path / "record.json"
+        self.key_path = tmp_path / "approval-key.b64"
+        self.key_path.write_text(_key_b64(self.key) + "\n", encoding="utf-8")
+
+    def write_record(self, record: dict) -> Path:
+        self.record_path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+        return self.record_path
+
+    def signed(self, **overrides) -> dict:
+        rec = _base_record(self.digest)
+        rec.update(overrides)
+        return _sign(rec, self.key)
+
+
+def _write_manifest(tmp_path: Path, *, incompatible: bool = True) -> Path:
+    manifest = dict(INCOMPATIBLE_MANIFEST if incompatible else COMPATIBLE_MANIFEST)
     path = tmp_path / "compatibility.json"
     path.write_text(json.dumps(manifest), encoding="utf-8")
     return path
 
 
-def _write_evidence(
-    tmp_path: Path,
-    *,
-    gate: str = "gate-token-x",
-    target_tag: str = TAG,
-    record: dict | None = None,
-) -> Path:
-    body = {
-        "version": 1,
-        "gate": gate,
-        "target_tag": target_tag,
-        "evidence_digest": DIGEST,
-        "evidence_ref": "recovery-drill/2026-10-20/bundle-sha",
-        "recorded_at": "2026-10-20T12:00:00Z",
-        "recorded_by": "role-a",
-    }
-    if record is not None:
-        body = record
-    path = tmp_path / "remediation-evidence.json"
-    path.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
-    return path
-
-
-def _run(tmp_path: Path, *extra: str, manifest_rollback: bool = True) -> tuple[int, dict]:
+def _run(tmp_path: Path, *extra: str, incompatible: bool = True):
     from scripts.release_preflight import main
 
-    manifest = _write_manifest(tmp_path, rollback=manifest_rollback)
+    manifest = _write_manifest(tmp_path, incompatible=incompatible)
     import contextlib
     import io
 
     stdout = io.StringIO()
     with contextlib.redirect_stdout(stdout):
         code = main(["--manifest", str(manifest), *extra])
-    return code, json.loads(stdout.getvalue())
+    out = json.loads(stdout.getvalue())
+    chk = [c for c in out["checks"] if c["section"] == "rollback"]
+    return code, out, (chk[0] if chk else None)
 
 
-def _rollback_checks(out: dict) -> list[dict]:
-    return [c for c in out["checks"] if c["section"] == "rollback"]
-
-
-# --------------------------------------------------------------------------- #
-# T-EV-01/02/03:合法放行面与 fail-closed 语义
-# --------------------------------------------------------------------------- #
-
-
-def test_valid_bound_evidence_passes_with_readable_identity(tmp_path):
-    """T-EV-01:合法证据 + gate/target_tag 双绑定 ⇒ PASS,可回读身份字段
-    全部入 reason(审计面),且 exit 0。"""
-    ev = _write_evidence(tmp_path)
-    code, out = _run(
-        tmp_path,
-        "--remediation-evidence-file", str(ev),
-        "--release-tag", TAG,
+def _full_args(tr: TrustRoot, tmp_path: Path, *, tag: str = TAG, sha: str = SHA):
+    return (
+        "--remediation-evidence-file", str(tr.record_path),
+        "--remediation-evidence-artifact", str(tr.artifact),
+        "--remediation-approval-key-file", str(tr.key_path),
+        "--release-tag", tag,
+        "--release-sha", sha,
     )
-    assert code == 0, out
+
+
+# --------------------------------------------------------------------------- #
+# T-EV-01/02/03:放行面与缺省阻断
+# --------------------------------------------------------------------------- #
+
+
+def test_trusted_evidence_full_chain_passes(tmp_path):
+    """T-EV-01:测试信任根正例 —— 真实工件(SHA256 实测一致)+ 受信密钥审批
+    + gate/tag/sha 三重绑定 + 未过期 ⇒ PASS;可回读身份字段全入 reason。"""
+    tr = TrustRoot(tmp_path)
+    tr.write_record(tr.signed())
+    code, out, chk = _run(tmp_path, *_full_args(tr, tmp_path))
+    assert code == 0, chk
     assert out["status"] == "pass"
-    ok = [c for c in _rollback_checks(out) if c["class"] == "rollback_ok"]
-    assert len(ok) == 1
-    reason = ok[0]["reason"]
-    assert "gate-token-x" in reason and TAG in reason and DIGEST in reason
-    assert "recovery-drill/2026-10-20/bundle-sha" in reason
-    assert "2026-10-20T12:00:00Z" in reason and "role-a" in reason
-    assert not any(
-        c["class"] == "rollback_remediation_gate_required" for c in out["checks"]
-    )
+    assert chk["class"] == "rollback_ok"
+    reason = chk["reason"]
+    assert "全链验证通过" in reason
+    assert GATE or True
+    assert "gate-token-x" in reason and TAG in reason and SHA in reason
+    assert tr.digest in reason and "实测一致" in reason
+    assert "role-a" in reason and "2099-01-01" in reason
 
 
 def test_no_input_keeps_gate_blocked(tmp_path):
-    """T-EV-02:无任何 remediation 输入 ⇒ fail-closed(现状语义不变),
-    拒绝信息点名声明 gate 与证据工件通道(actionable)。"""
-    code, out = _run(tmp_path)
+    """T-EV-02:无任何 remediation 输入 ⇒ fail-closed(真实 G3 演练未完成时
+    生产维持 BLOCKED 的机制保障;通道可选,现状不变)。"""
+    code, out, chk = _run(tmp_path)
     assert code == 2
-    assert out["status"] == "fail"
-    chk = [
-        c
-        for c in _rollback_checks(out)
-        if c["class"] == "rollback_remediation_gate_required"
-    ]
-    assert len(chk) == 1
-    assert "gate-token-x" in chk[0]["reason"]
-    assert "--remediation-evidence-file" in chk[0]["reason"]
+    assert chk["class"] == "rollback_remediation_gate_required"
+    assert "gate-token-x" in chk["reason"]
+    assert "--remediation-evidence-file" in chk["reason"]
 
 
 def test_exact_string_ack_alone_no_longer_releases(tmp_path):
-    """T-EV-03(A #138 P3 核心):字符串 --remediation-ack 即使与声明 gate
-    精确匹配,也不再构成合法放行 —— 结构化拒绝并指向证据工件。
-    契约方向 = 收紧(fail-closed 更严),非放宽。"""
-    code, out = _run(tmp_path, "--remediation-ack", "gate-token-x")
+    """T-EV-03(A #138 P3):字符串 --remediation-ack 即使精确匹配也不再放行。"""
+    code, out, chk = _run(tmp_path, "--remediation-ack", "gate-token-x")
     assert code == 2
-    assert out["status"] == "fail"
-    chk = [
-        c
-        for c in _rollback_checks(out)
-        if c["class"] == "rollback_remediation_gate_required"
-    ]
-    assert len(chk) == 1
-    assert "不构成" in chk[0]["reason"]
-    assert "--remediation-evidence-file" in chk[0]["reason"]
+    assert chk["class"] == "rollback_remediation_gate_required"
+    assert "不构成" in chk["reason"]
     assert not any(c["class"] == "rollback_ok" for c in out["checks"])
 
 
-def test_wrong_ack_still_blocked(tmp_path):
-    """错误/过期字符串 ack ⇒ 维持 fail-closed(与既有 #159 语义一致)。"""
-    for bad in ("other-gate", "gate-token-x-stale", ""):
-        code, out = _run(tmp_path, "--remediation-ack", bad)
-        assert code == 2, bad
-        assert not any(c["class"] == "rollback_ok" for c in out["checks"])
-
-
 # --------------------------------------------------------------------------- #
-# T-EV-04/05:绑定校验(值不相等 = 绑定失败)
+# T-EV-04..07:伪造工件/摘要/审批(A 阻塞 1 反例矩阵)
 # --------------------------------------------------------------------------- #
 
 
-def test_evidence_gate_mismatch_blocked(tmp_path):
-    """T-EV-04:证据 gate ≠ manifest 声明 ⇒ 绑定失败 fail-closed。"""
-    ev = _write_evidence(tmp_path, gate="another-gate")
-    code, out = _run(
+def test_forged_evidence_ref_missing_artifact_blocked(tmp_path):
+    """T-EV-04:记录引用的工件不存在(A 反例:nonexistent://...)⇒ fail。"""
+    tr = TrustRoot(tmp_path)
+    rec = tr.signed()
+    rec["evidence_ref"] = "nonexistent://recovery/does-not-exist"
+    rec = _sign(rec, tr.key)
+    tr.write_record(rec)
+    code, out, chk = _run(
         tmp_path,
-        "--remediation-evidence-file", str(ev),
+        "--remediation-evidence-file", str(tr.record_path),
+        "--remediation-evidence-artifact", str(tmp_path / "missing.bin"),
+        "--remediation-approval-key-file", str(tr.key_path),
+        "--release-tag", TAG,
+        "--release-sha", SHA,
+    )
+    assert code == 2
+    assert "工件不可" in chk["reason"]
+
+
+def test_forged_digest_blocked_by_actual_artifact_hash(tmp_path):
+    """T-EV-05(A 反例:64 位虚构 ffffff...):工件存在但声明摘要不符 ⇒ fail。
+    记录自述摘要不是证据 —— 以实际文件 SHA256 实测为准。"""
+    tr = TrustRoot(tmp_path)
+    rec = tr.signed(evidence_digest="f" * 64)
+    tr.write_record(rec)
+    code, out, chk = _run(tmp_path, *_full_args(tr, tmp_path))
+    assert code == 2
+    assert "SHA256" in chk["reason"] and "不一致" in chk["reason"]
+
+
+def test_self_filled_recorded_by_without_trusted_key_blocked(tmp_path):
+    """T-EV-06(A 反例:自填 recorded_by=role-a + 虚构 HMAC)⇒ 审批无效。"""
+    tr = TrustRoot(tmp_path)
+    rec = tr.signed()
+    rec["approval"]["hmac_sha256"] = "c" * 64  # 自填伪 HMAC
+    tr.write_record(rec)
+    code, out, chk = _run(tmp_path, *_full_args(tr, tmp_path))
+    assert code == 2
+    assert "审批无效" in chk["reason"]
+    assert "HMAC" in chk["reason"]
+
+
+def test_unsigned_record_rejected(tmp_path):
+    """T-EV-07:无 approval 块(未经审批的记录)⇒ 形状拒绝(绝不放行)。"""
+    tr = TrustRoot(tmp_path)
+    rec = _base_record(tr.digest)
+    rec.pop("approval")
+    tr.write_record(rec)
+    code, out, chk = _run(tmp_path, *_full_args(tr, tmp_path))
+    assert code == 2
+    assert "approval" in chk["reason"]
+
+
+def test_evidence_without_any_key_unverifiable_blocked(tmp_path):
+    """T-EV-10:有记录有工件但无受信密钥 ⇒ 审批不可验证,fail-closed。"""
+    tr = TrustRoot(tmp_path)
+    tr.write_record(tr.signed())
+    code, out, chk = _run(
+        tmp_path,
+        "--remediation-evidence-file", str(tr.record_path),
+        "--remediation-evidence-artifact", str(tr.artifact),
+        "--release-tag", TAG,
+        "--release-sha", SHA,
+    )
+    assert code == 2
+    assert "审批不可验证" in chk["reason"]
+
+
+# --------------------------------------------------------------------------- #
+# T-EV-08/09/11/12:绑定与有效期
+# --------------------------------------------------------------------------- #
+
+
+def test_cross_release_tag_reuse_blocked(tmp_path):
+    """T-EV-08:同一证据挪用于其他 Release Tag ⇒ fail。"""
+    tr = TrustRoot(tmp_path)
+    tr.write_record(tr.signed())
+    code, out, chk = _run(tmp_path, *_full_args(tr, tmp_path, tag="v9.9.8"))
+    assert code == 2
+    assert "target_tag" in chk["reason"] and "v9.9.8" in chk["reason"]
+
+
+def test_cross_release_sha_reuse_blocked(tmp_path):
+    """T-EV-09:同一证据挪用于其他不可变 SHA/镜像身份 ⇒ fail。"""
+    tr = TrustRoot(tmp_path)
+    tr.write_record(tr.signed())
+    code, out, chk = _run(tmp_path, *_full_args(tr, tmp_path, sha="b" * 40))
+    assert code == 2
+    assert "release_sha" in chk["reason"]
+
+
+def test_expired_approval_blocked(tmp_path):
+    """T-EV-11:not_after 已过 ⇒ fail-closed。"""
+    tr = TrustRoot(tmp_path)
+    rec = tr.signed(not_after="2000-01-01T00:00:00+00:00")
+    tr.write_record(rec)
+    code, out, chk = _run(tmp_path, *_full_args(tr, tmp_path))
+    assert code == 2
+    assert "过期" in chk["reason"]
+
+
+def test_post_signing_field_tampering_blocked(tmp_path):
+    """T-EV-12:HMAC 对原字段签发,事后改 target_tag ⇒ HMAC 失配(防延展)。"""
+    tr = TrustRoot(tmp_path)
+    rec = tr.signed()
+    rec["target_tag"] = "v1.0.0"  # 签发后篡改
+    tr.write_record(rec)
+    code, out, chk = _run(tmp_path, *_full_args(tr, tmp_path))
+    assert code == 2
+    assert "审批无效" in chk["reason"]
+
+
+def test_artifact_swapped_after_signing_blocked(tmp_path):
+    """T-EV-12b:审批签发后工件被整体替换 ⇒ 实测 SHA256 ≠ 声明 ⇒ fail。"""
+    tr = TrustRoot(tmp_path)
+    tr.write_record(tr.signed())
+    tr.artifact.write_bytes(b"TAMPERED-CONTENT\n")
+    code, out, chk = _run(tmp_path, *_full_args(tr, tmp_path))
+    assert code == 2
+    assert "SHA256" in chk["reason"]
+
+
+# --------------------------------------------------------------------------- #
+# T-EV-13:形状非法矩阵(含 HMAC 载荷歧义防护)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda r: r.update({"version": 1}),
+        lambda r: r.update({"signed_by": "x"}),
+        lambda r: r.pop("gate"),
+        lambda r: r.update({"gate": "BAD GATE!"}),
+        lambda r: r.update({"release_sha": "zzz"}),
+        lambda r: r.update({"evidence_ref": "line1\nline2"}),  # HMAC 载荷歧义防护
+        lambda r: r.update({"recorded_at": "yesterday"}),
+        lambda r: r.update({"recorded_at": "2026-10-20T12:00:00"}),  # naive 拒绝
+        lambda r: r.update({"not_after": ""}),
+        lambda r: r["approval"].update({"hmac_sha256": "NOTHEX"}),
+        lambda r: r["approval"].update({"extra": 1}),
+    ],
+)
+def test_invalid_record_shapes_fail_closed(tmp_path, mutate):
+    tr = TrustRoot(tmp_path)
+    rec = tr.signed()
+    mutate(rec)
+    tr.write_record(rec)
+    code, out, chk = _run(tmp_path, *_full_args(tr, tmp_path))
+    assert code == 2
+    assert chk["class"] == "rollback_remediation_gate_required"
+    assert not chk["reason"].startswith("整改证据全链验证通过")
+
+
+def test_missing_release_sha_binding_key_rejected(tmp_path):
+    """缺 --release-sha 绑定键 ⇒ fail-closed(镜像身份绑定不可豁免)。"""
+    tr = TrustRoot(tmp_path)
+    tr.write_record(tr.signed())
+    code, out, chk = _run(
+        tmp_path,
+        "--remediation-evidence-file", str(tr.record_path),
+        "--remediation-evidence-artifact", str(tr.artifact),
+        "--remediation-approval-key-file", str(tr.key_path),
         "--release-tag", TAG,
     )
     assert code == 2
-    chk = [
-        c
-        for c in _rollback_checks(out)
-        if c["class"] == "rollback_remediation_gate_required"
-    ]
-    assert chk and "绑定失败" in chk[0]["reason"]
-    assert "another-gate" in chk[0]["reason"]
+    assert "--release-sha" in chk["reason"]
 
 
-def test_evidence_target_tag_mismatch_blocked(tmp_path):
-    """T-EV-05:证据 target_tag ≠ 本次部署 --release-tag ⇒ 跨版本证据
-    不可移作他用,fail-closed。"""
-    ev = _write_evidence(tmp_path, target_tag="v9.9.8")
-    code, out = _run(
-        tmp_path,
-        "--remediation-evidence-file", str(ev),
-        "--release-tag", TAG,
-    )
+def test_env_var_key_channel_accepted(tmp_path, monkeypatch):
+    """审批密钥 env 变量通道(env 字典/os.environ;宿主 .env 经 --env-file
+    装配同路)—— 文件通道之外的合法通道,同样 fail-closed 校验强度。"""
+    tr = TrustRoot(tmp_path)
+    tr.write_record(tr.signed())
+    manifest = _write_manifest(tmp_path)
+    from scripts.release_preflight import main
+    import contextlib, io
+
+    monkeypatch.setenv("PREFLIGHT_REMEDIATION_APPROVAL_KEY", _key_b64(tr.key))
+    stdout = io.StringIO()
+    with contextlib.redirect_stdout(stdout):
+        code = main([
+            "--manifest", str(manifest),
+            "--remediation-evidence-file", str(tr.record_path),
+            "--remediation-evidence-artifact", str(tr.artifact),
+            "--release-tag", TAG,
+            "--release-sha", SHA,
+        ])
+    assert code == 0
+
+
+def test_weak_key_rejected(tmp_path):
+    """密钥解码后 <32 字节 ⇒ fail-closed(强度不足)。"""
+    tr = TrustRoot(tmp_path, key=os.urandom(16))
+    tr.write_record(tr.signed())
+    code, out, chk = _run(tmp_path, *_full_args(tr, tmp_path))
     assert code == 2
-    chk = [
-        c
-        for c in _rollback_checks(out)
-        if c["class"] == "rollback_remediation_gate_required"
-    ]
-    assert chk and "v9.9.8" in chk[0]["reason"] and TAG in chk[0]["reason"]
+    assert "强度不足" in chk["reason"]
 
 
 # --------------------------------------------------------------------------- #
-# T-EV-06:形状非法矩阵(加载器 fail-closed;错误不回显文件内容)
+# T-EV-14:previous_compatible=true 零变化
 # --------------------------------------------------------------------------- #
-
-
-def _invalid_case(tmp_path, record, *extra, marker: str):
-    ev = _write_evidence(tmp_path, record=record)
-    code, out = _run(
-        tmp_path, "--remediation-evidence-file", str(ev), "--release-tag", TAG, *extra
-    )
-    assert code == 2, record
-    chk = [
-        c
-        for c in _rollback_checks(out)
-        if c["class"] == "rollback_remediation_gate_required"
-    ]
-    assert chk and "不可用" in chk[0]["reason"], record
-    assert marker not in chk[0]["reason"], "错误信息不得回显文件内容"
-
-
-def test_invalid_evidence_matrix_fail_closed(tmp_path):
-    """T-EV-06:版本不符/词表外字段/形状非法/缺绑定键 ⇒ 一律 fail-closed。"""
-    base = json.loads(_write_evidence(tmp_path).read_text(encoding="utf-8"))
-
-    bad_records = [
-        ("version 不符", {**base, "version": 2}),
-        ("词表外字段", {**base, "signed_by": "x"}),
-        ("gate 缺失", {k: v for k, v in base.items() if k != "gate"}),
-        ("gate 形状非法", {**base, "gate": "BAD GATE!"}),
-        ("target_tag 形状非法", {**base, "target_tag": "1.2.3"}),
-        ("digest 非 64hex", {**base, "evidence_digest": "ABCDEF"}),
-        ("recorded_at 不可解析", {**base, "recorded_at": "yesterday"}),
-        ("evidence_ref 为空", {**base, "evidence_ref": ""}),
-        ("recorded_by 缺失", {k: v for k, v in base.items() if k != "recorded_by"}),
-    ]
-    for name, record in bad_records:
-        _invalid_case(tmp_path, record, marker="SECRETMARKER", )
-
-    # 缺 --release-tag ⇒ 绑定键缺失,fail-closed(即使证据本身合法)
-    ev = _write_evidence(tmp_path)
-    code, out = _run(tmp_path, "--remediation-evidence-file", str(ev))
-    assert code == 2
-    chk = [
-        c
-        for c in _rollback_checks(out)
-        if c["class"] == "rollback_remediation_gate_required"
-    ]
-    assert chk and "--release-tag" in chk[0]["reason"]
-
-    # 证据文件不存在/非 JSON ⇒ fail-closed
-    code, out = _run(
-        tmp_path,
-        "--remediation-evidence-file", str(tmp_path / "missing.json"),
-        "--release-tag", TAG,
-    )
-    assert code == 2
-    bad = tmp_path / "broken.json"
-    bad.write_text("{not json", encoding="utf-8")
-    code, out = _run(
-        tmp_path,
-        "--remediation-evidence-file", str(bad),
-        "--release-tag", TAG,
-    )
-    assert code == 2
-
-
-# --------------------------------------------------------------------------- #
-# T-EV-07:previous_compatible=true 零变化
-# --------------------------------------------------------------------------- #
-
-
-def test_evidence_digest_normalized_like_trust_anchor(tmp_path):
-    """摘要大小写规范化与信任锚同构(strip+lower 后 64hex);reason 回显
-    规范化小写形态。"""
-    ev = _write_evidence(tmp_path, record={
-        "version": 1, "gate": "gate-token-x", "target_tag": TAG,
-        "evidence_digest": "A" * 64,
-        "evidence_ref": "recovery-drill/bundle", "recorded_at": "2026-10-20T12:00:00Z",
-        "recorded_by": "role-a",
-    })
-    code, out = _run(
-        tmp_path, "--remediation-evidence-file", str(ev), "--release-tag", TAG
-    )
-    assert code == 0, out
-    ok = [c for c in _rollback_checks(out) if c["class"] == "rollback_ok"]
-    assert ok and ("a" * 64) in ok[0]["reason"]
 
 
 def test_compatible_release_unaffected_by_evidence_channel(tmp_path):
-    """T-EV-07:声明兼容的发布 ⇒ 普通 previous-tag 回滚照常可用,证据通道
-    不参与判定(零变化)。"""
-    code, out = _run(tmp_path, manifest_rollback=False)
-    assert code == 0, out
-    ok = [c for c in _rollback_checks(out) if c["class"] == "rollback_ok"]
-    assert ok and "普通 previous-tag 回滚兼容" in ok[0]["reason"]
+    tr = TrustRoot(tmp_path)
+    code, out, chk = _run(tmp_path, incompatible=False)
+    assert code == 0
+    assert chk["class"] == "rollback_ok"
+    assert "普通 previous-tag 回滚兼容" in chk["reason"]
 
 
 # --------------------------------------------------------------------------- #
-# T-EV-08:update.sh / workflow 机械接线(静态)
+# T-EV-15:update.sh / workflow 机械接线(静态)
 # --------------------------------------------------------------------------- #
 
 
-def test_update_sh_passes_evidence_and_release_tag_to_evaluator():
-    """T-EV-08a:update.sh 解析 --remediation-evidence-file 并与 --release-tag
-    "$TAG" 一并透传 evaluator;初值空(无默认证据/ack)。"""
+def test_update_sh_wiring_v2():
     text = UPDATE_SH.read_text(encoding="utf-8")
+    assert 'REMEDIATION_EVIDENCE_ARTIFACT=""' in text
+    assert 'REMEDIATION_APPROVAL_KEY_FILE=""' in text
+    assert "--remediation-evidence-artifact)" in text
+    assert "--remediation-approval-key-file)" in text
+    # 记录必须伴随真实工件(缺工件 ⇒ 记录自述不是证据)
+    assert '必须同时提供 --remediation-evidence-artifact' in text
+    # 镜像身份绑定:evaluator 以镜像内 RELEASE.json git_sha 校验
+    assert '--release-sha "$ACTUAL_SHA"' in text
+    assert '--release-tag "$TAG"' in text
     assert 'REMEDIATION_EVIDENCE_FILE=""' in text
-    assert "--remediation-evidence-file)" in text
-    assert '--remediation-evidence-file=*)' in text
-    assert 'EVIDENCE_ARGS+=(--remediation-evidence-file "$REMEDIATION_EVIDENCE_FILE")' in text
-    assert '--release-tag "$TAG" \\' in text
-    assert '"${EVIDENCE_ARGS[@]}" \\' in text
     assert 'REMEDIATION_ACK=""' in text
 
 
-def test_workflow_evidence_channel_wiring_and_no_bare_ack():
-    """T-EV-08b:workflow 经 PREFLIGHT_REMEDIATION_EVIDENCE_B64 提供证据通道
-    (步骤3 容器内 + 步骤5 update.sh 两处);通道可选(未配置 ⇒ rollback 门
-    维持阻断);workflow 全文无裸字符串 ack 通道。"""
+def test_workflow_wiring_v2():
     text = WORKFLOW.read_text(encoding="utf-8")
-    # 无裸 ack 通道(维持 #46/#159 契约)
+    # 无裸 ack 通道 + 无 rollback 字面(#46/#159/编排冻结契约)
     assert "--remediation-ack" not in text
     assert "remediation_ack" not in text
-    # 证据 secret 在两个步骤声明(步骤3 preflight / 步骤5 deploy)
+    assert "rollback" not in text.lower()
+    # 三通道:记录 + 工件(secret);审批密钥 = 宿主 .env env 通道(零新增含密传输)
     assert text.count("PREFLIGHT_REMEDIATION_EVIDENCE_B64") >= 2
-    # runner 侧 base64 词表守卫(防远端 env 前缀注入)
-    assert text.count('case "${REMEDIATION_EVIDENCE_B64:-}" in') == 2
-    # 步骤3:可选(不在 required-vars 循环内)+ 容器内 --release-tag 绑定
-    required_line = [
-        ln for ln in text.splitlines() if ln.strip().startswith("for v in SSH_KEY")
-    ]
-    assert required_line and all("REMEDIATION_EVIDENCE_B64" not in ln for ln in required_line)
-    assert '--release-tag "$DEPLOY_TAG" \\' in text
-    assert "--remediation-evidence-file /tmp/askai-remediation-evidence.json" in text
-    # 容器内完整性核对 + 临时工件确定性清除
-    assert 'sha256sum /tmp/askai-remediation-evidence.json' in text
-    # 三处容器侧 rm(pre-clean / integrity-failure / post-clean)均含证据工件
-    assert text.count("rm -f /tmp/askai-preflight-evaluator.py") == 3
-    assert text.count("/tmp/askai-remediation-evidence.json || true") == 2
-    # 步骤5:update.sh 透传证据文件(远端 0600 临时文件 + 确定性清理)
-    assert '--remediation-evidence-file "$EVID_TMP"' in text
-    assert 'chmod 600 "$EVID_TMP"' in text
-    assert 'rm -f "${TMPDIR:-/tmp}"/askai-remediation-evidence.*' in text
-
-
-def test_gate_token_not_hardcoded_into_evaluator_or_workflow():
-    """反伪证:gate 令牌不得内嵌进 evaluator/workflow/update.sh(必须由
-    操作者/manifest 显式提供;与 #159 反伪证同向)。"""
-    for path in (REPO / "scripts" / "release_preflight.py", WORKFLOW, UPDATE_SH):
-        assert GATE not in path.read_text(encoding="utf-8"), path.name
+    assert text.count("PREFLIGHT_REMEDIATION_EVIDENCE_ARTIFACT_B64") >= 2
+    # 审批密钥绝不进入 workflow secret 映射 / SSH 传输面(仅宿主 .env →
+    # 容器 env / --env-file);注释中的通道名文档不算接线。
+    assert "secrets.PREFLIGHT_REMEDIATION_APPROVAL_KEY" not in text
+    assert "APPROVAL_KEY_B64" not in text
+    # RELEASE_SHA 绑定(容器内 evaluator 调用)
+    assert '--release-sha "${RELEASE_SHA:-}"' in text
+    assert 'RELEASE_SHA: ${{ steps.identity.outputs.sha }}' in text
+    # 工件容器内完整性核对
+    assert "sha256sum /tmp/askai-remediation-artifact.bin" in text

@@ -339,8 +339,15 @@ def test_rollback_incompatible_with_matching_ack_alone_blocked(tmp_path, capsys)
 
 
 def test_rollback_incompatible_bound_evidence_passes(tmp_path, capsys):
-    """(P3 合法放行面)证据工件 gate/target_tag 与 manifest 声明及本次部署
-    --release-tag 双绑定 ⇒ pass。"""
+    """(P3 合法放行面,R6v2)真实工件(SHA256 实测一致)+ 受信审批 HMAC
+    + gate/tag/sha 三重绑定 ⇒ pass。"""
+    import base64
+    import hashlib
+    import hmac as _hmac
+    import os
+
+    from scripts.release_preflight import _approval_hmac_hex
+
     m = _write_manifest(
         tmp_path,
         _cfg_manifest(rollback={
@@ -348,20 +355,38 @@ def test_rollback_incompatible_bound_evidence_passes(tmp_path, capsys):
             "remediation_gate": "release_mig_002_reindex",
         }),
     )
-    ev = tmp_path / "evidence.json"
-    ev.write_text(json.dumps({
-        "version": 1,
+    key = os.urandom(48)
+    artifact = tmp_path / "bundle.bin"
+    artifact.write_bytes(b"recovery-drill-evidence (test trust root)\n")
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    record = {
+        "version": 2,
         "gate": "release_mig_002_reindex",
         "target_tag": "v9.9.9",
-        "evidence_digest": "d" * 64,
+        "release_sha": "a" * 40,
+        "evidence_digest": digest,
         "evidence_ref": "recovery-drill/2026-10-20/bundle-sha",
-        "recorded_at": "2026-10-20T12:00:00Z",
+        "recorded_at": "2026-10-20T12:00:00+00:00",
         "recorded_by": "role-a",
-    }), encoding="utf-8")
+        "not_after": "2099-01-01T00:00:00+00:00",
+        "approval": {
+            "approved_by": "role-a",
+            "approved_at": "2026-10-20T12:00:00+00:00",
+            "hmac_sha256": "0" * 64,
+        },
+    }
+    record["approval"]["hmac_sha256"] = _approval_hmac_hex(key, record)
+    ev = tmp_path / "evidence.json"
+    ev.write_text(json.dumps(record), encoding="utf-8")
+    key_path = tmp_path / "key.b64"
+    key_path.write_text(base64.b64encode(key).decode() + "\n", encoding="utf-8")
     assert _run([
         "--manifest", str(m),
         "--remediation-evidence-file", str(ev),
+        "--remediation-evidence-artifact", str(artifact),
+        "--remediation-approval-key-file", str(key_path),
         "--release-tag", "v9.9.9",
+        "--release-sha", "a" * 40,
     ]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["status"] == "pass"
