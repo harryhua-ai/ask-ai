@@ -43,12 +43,32 @@ rollout)之前给出确定性升级兼容性判定:
   R3 起隔离断言必须持带外钉扎的信任锚(``--isolation-trust-anchor-file``,
   A 采集):PG 用 ``pg_control_system().system_identifier``(每集群 initdb
   唯一;文件级复制恢复会保留生产 id —— 恢复副本=生产衍生数据,识别为
-  生产衍生是正确语义);Weaviate 用 /v1/schema 目标 collection 的
-  ``collectionId`` 稳定标识。锚文件缺失/缺字段/不可读/词表外 → fail-closed,
+  生产衍生是正确语义)。锚文件缺失/缺字段/不可读/词表外 → fail-closed,
   **绝不进入隔离断言**;实测值与钉扎值不一致 → fail-closed(同名库/同名
-  集合/别名代理一律拒);Weaviate 实例无强标识字段 → 该子项如实 BLOCKED
-  (不降低验证强度换 PASS)。锚值不视为机密,但被测配置绝不同时充当期望
+  集合/别名代理一律拒)。锚值不视为机密,但被测配置绝不同时充当期望
   身份。
+- Weaviate 身份锚双模式(R4-1,真实 1.28.0 实测修正):R3 假定
+  /v1/schema class 对象携带 ``collectionId``/``uuid`` 强稳定标识 —— 生产
+  固定镜像 ``cr.weaviate.io/semitechnologies/weaviate:1.28.0`` 的官方
+  OpenAPI ``definitions.Class`` 与**真实实例实测**均无这些字段(2026-10-20
+  本地同版实例三个只读端点实测;R3 绿色测试里的 collectionId 是 fake
+  构造数据)。R4 起锚分两版,A 按目标版本钉扎其一:
+  * v1(新版本 Weaviate,响应含 collectionId):数据面直接与钉扎
+    collectionId 精确比对(R3 语义原样保留;meta hostname↔URL 绑定保持
+    严格);
+  * v2(1.28.0):API 层无强唯一标识 → **控制面+数据面组合锚**。
+    控制面(deploy workflow SSH 步骤,已被主机密钥钉扎)只读核验运行中
+    weaviate 容器:镜像 config digest、数据卷挂载、CLUSTER_HOSTNAME env、
+    数据卷目录**元数据清单哈希**(文件名/大小/mtime 排序后 sha256,不读
+    客户内容),与锚钉扎值任一不匹配 → 在容器 preflight 之前中止;
+    数据面(本脚本,容器内)把 URL 可达实例与控制面钉扎值绑定:
+    GET /v1/nodes 单节点 ``name`` 必须等于钉扎 ``weaviate_cluster_hostname``
+    (1.28.0 实测 = CLUSTER_HOSTNAME env 自报;meta.hostname 实测为绑定
+    地址自述 ``http://[::]:8080``,与客户端 URL 分属命名空间,不作 v2
+    身份判据,仅保留形状 sanity)。集合存在 + 总对象 > 0 + filesystem
+    对象 = 0 断言保持不变。两层任一不匹配 → fail-closed。
+    **诚实边界**:数据卷内容在钉扎后被整体原样替换且元数据清单恰好一致
+    的场景不可排除(v2 组合锚 PARTIAL 残余风险,如实保留)。
 - psql 缺失容器内的 DB 只读通道(R3-2):冻结镜像 runtime 无
   postgresql-client → psql 通道缺失时回退冻结镜像自带 psycopg2 的单会话
   只读探针(与 psql 通道完全相同的三条 SELECT 与身份复核;连接/查询失败
@@ -398,11 +418,47 @@ def _pg_probe_psql(dsn: str, timeout_s: int) -> tuple[str, str, int]:
     return lines[0], lines[1], _count_or_fail(lines[2])
 
 
+def _strict_probe_count(value: Any) -> int:
+    """R4-2:驱动通道 COUNT 结果严格采用 —— 仅当取得合法非负整数才可作计数。
+
+    None(空行)/NULL/布尔/浮点/字符串/bytes 等任何其它类型、负数、非整数值
+    一律 RuntimeError(fail-closed:BLOCKED/FAIL),**绝不默认零、绝不吞噬**。
+    psycopg2 对 ``SELECT count(*)`` 返回 int;``numeric`` 以 Decimal 返回
+    (仅接受可无损整转的值)。
+    """
+    from decimal import Decimal  # noqa: PLC0415 - 局部导入,失败面最小
+
+    if value is None:
+        raise RuntimeError(
+            "psycopg2 只读探针计数不可证明(NULL/空行)—— 绝不解释为 0,fail-closed"
+        )
+    if isinstance(value, bool) or not isinstance(value, (int, Decimal)):
+        raise RuntimeError(
+            f"psycopg2 只读探针计数类型非法({type(value).__name__})—— fail-closed"
+        )
+    if isinstance(value, Decimal):
+        if value != value.to_integral_value():
+            raise RuntimeError(
+                "psycopg2 只读探针计数非整数值 —— fail-closed"
+            )
+        number = int(value)
+    else:
+        number = int(value)
+    if number < 0:
+        raise RuntimeError("psycopg2 只读探针计数为负数 —— fail-closed")
+    return number
+
+
 def _pg_probe_driver(dsn: str, timeout_s: int) -> tuple[str, str, int]:
     """psql 缺失容器内的只读通道(R3-2):冻结镜像自带 psycopg2,单会话
     执行与 psql 通道**完全相同**的三条只读 SELECT。凭据只从受控通道的 DSN
     进入本进程内存;连接/查询失败的详情(可能含 conninfo)绝不回显,只报
-    异常类型。会话显式 rollback 收尾(零 mutation 语义)。"""
+    异常类型。会话显式 rollback 收尾(零 mutation 语义)。
+
+    R4-2:COUNT 结果经 ``_strict_probe_count`` 严格采用 —— fetchone() 返回
+    None 行/NULL/非法类型/负数/转换失败/查询异常/断连一律 fail-closed,
+    绝不再把不可证明的计数解释为 0(旧 fail-open 已消除)。
+    """
     psycopg2 = _import_psycopg2()
     f = _pg_target_fields(dsn)
     try:
@@ -428,7 +484,7 @@ def _pg_probe_driver(dsn: str, timeout_s: int) -> tuple[str, str, int]:
             sid = str(row[0]) if row and row[0] is not None else ""
             cur.execute(_UPLOAD_MODE_COUNT_SQL)
             row = cur.fetchone()
-            count = int(row[0]) if row and row[0] is not None else 0
+            count = _strict_probe_count(row[0] if row is not None else None)
         conn.rollback()  # 只读会话显式回滚收尾(零 mutation 语义)
     except Exception as exc:  # noqa: BLE001 - 异常文本可能含 conninfo,绝不回显
         raise RuntimeError(
@@ -524,25 +580,37 @@ def _schema_collection_identity(schema: Any, class_name: str) -> tuple[dict | No
 
 
 def probe_filesystem_objects(wv_cfg: dict, timeout_s: int) -> int:
-    """filesystem 类 Weaviate 对象数(只读探针)。
+    """filesystem 类 Weaviate 对象数(只读探针;R4-1 双身份模式)。
 
-    R2-4②/③:先 GET ``/v1/meta`` 并将其 hostname 与显式期望(URL 的
-    host:port)精确绑定;GraphQL 单请求双聚合取「集合总对象数」与
-    「filesystem 类对象数」,总对象 = 0 → ``IsolationTargetUnproven``(BLOCKED)。
+    R2-4②/③:先 GET ``/v1/meta``(形状 sanity);GraphQL 单请求双聚合取
+    「集合总对象数」与「filesystem 类对象数」,总对象 = 0 →
+    ``IsolationTargetUnproven``(BLOCKED)。
 
-    R3-1:进一步 GET ``/v1/schema``,将目标 collection 的强稳定标识
-    (``collectionId``/``uuid``)与**带外钉扎的信任锚**精确比对 —— meta
-    hostname 属同源配置自洽,不独立证明权威实例;锚不一致 → fail-closed
-    (错误实例/同名集合/别名代理一律拒);实例无强标识字段 → 该子项如实
-    BLOCKED(不降低验证强度换 PASS);缺期望锚值 → fail-closed。
+    R3-1(v1 锚模式,新版本 Weaviate):GET /v1/schema,目标 collection 的
+    ``collectionId``/``uuid`` 与**带外钉扎的信任锚**精确比对;meta hostname
+    与显式期望(URL host:port)严格绑定;无强标识字段 → 该子项如实
+    BLOCKED(不降低验证强度换 PASS)。
+
+    R4-1(v2 锚模式,Weaviate 1.28.0):真实 1.28.0 的 /v1/schema class
+    对象无 collectionId/uuid(官方 spec definitions.Class 与同版实例实测
+    一致),/v1/meta.hostname 为绑定地址自述(http://[::]:8080),均非身份
+    判据。身份改由**组合锚**承担:数据面把 URL 可达实例绑定到控制面钉扎
+    值 —— GET /v1/nodes 必须恰为单节点且其 ``name`` 精确等于钉扎的
+    ``weaviate_cluster_hostname``(1.28.0 实测 = CLUSTER_HOSTNAME 自报;
+    钉扎值与镜像 digest/数据卷核验由 deploy workflow 控制面在 preflight
+    之前强制执行,两层任一不匹配 → fail-closed)。meta.hostname 若与 URL
+    自洽亦接受;绑定地址形态(::、0.0.0.0、*、空)放行给 nodes 绑定;
+    **其它任何实际 DNS 名与 URL 不一致 → IsolationIdentityMismatch**
+    (别名代理自报名在此拒)。集合存在 + 总对象 > 0 断言不变。
 
     Raises:
         IsolationChannelUnavailable: URL/class 参数缺失(→ BLOCKED)。
-        IsolationIdentityUnprovable: collection 无强标识字段(BLOCKED)。
+        IsolationIdentityUnprovable: v1 锚下 collection 无强标识字段 /
+            v2 下 nodes 响应不可证(→ BLOCKED)。
         IsolationTargetUnproven: 集合不存在/总对象 = 0(BLOCKED,不构成隔离证据)。
         IsolationIdentityMismatch: 缺期望锚值/锚不一致/身份不可读(→ fail-closed)。
-        RuntimeError: class 名词表外/meta 或 schema 不可达/身份不一致/HTTP
-            错误/响应不可读(→ fail-closed)。
+        RuntimeError: class 名词表外/meta/nodes/schema 不可达/HTTP 错误/
+            响应不可读(→ fail-closed)。
     """
     url = str(wv_cfg.get("url") or "").strip()
     class_name = str(wv_cfg.get("class") or "").strip()
@@ -553,12 +621,14 @@ def probe_filesystem_objects(wv_cfg: dict, timeout_s: int) -> int:
     if not _WEAVIATE_CLASS_RE.match(class_name):
         raise RuntimeError("isolation weaviate class 名在词表外(拒绝)")
     expected_cid = str(wv_cfg.get("expected_collection_id") or "").strip()
-    if not expected_cid:
+    expected_host = str(wv_cfg.get("expected_cluster_hostname") or "").strip()
+    if bool(expected_cid) == bool(expected_host):
         raise IsolationIdentityMismatch(
-            "缺信任锚期望 weaviate collectionId(--isolation-trust-anchor-file 缺失/"
-            "未接线):目标身份无法独立于被测 URL/自报 metadata 证明 —— 绝不执行"
-            "计数断言,fail-closed"
+            "缺信任锚期望身份(锚未接线/模式含混:collectionId 与 "
+            "cluster_hostname 必须二选一)—— 目标身份无法独立于被测 URL/"
+            "自报 metadata 证明,绝不执行计数断言,fail-closed"
         )
+    v2_mode = bool(expected_host)
     parsed = urlsplit(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         raise RuntimeError("isolation weaviate url 非法(http/https + host 必需)")
@@ -567,7 +637,7 @@ def probe_filesystem_objects(wv_cfg: dict, timeout_s: int) -> int:
         parsed.scheme, parsed.hostname, parsed.port or default_port, max(1, timeout_s)
     )
     try:
-        # ---- R2-4② 身份绑定:GET /v1/meta ↔ 显式期望(URL host:port) ----
+        # ---- R2-4② meta 形状 sanity(+v1 模式身份绑定)----
         conn.request("GET", "/v1/meta", body=None, headers={"Accept": "application/json"})
         resp = conn.getresponse()
         body = resp.read()
@@ -588,13 +658,68 @@ def probe_filesystem_objects(wv_cfg: dict, timeout_s: int) -> int:
             443 if meta_parsed.scheme == "https" else 80
         )
         our_port = parsed.port or default_port
-        if (meta_host, meta_port) != (parsed.hostname.lower(), our_port):
+        if v2_mode:
+            # R4-1 v2:meta.hostname 是绑定地址自述,不作身份判据(模块头)。
+            # 自洽 → 同样接受;绑定地址形态 → 放行给 /v1/nodes 绑定;
+            # 其它实际 DNS 名 ≠ URL → 拒(别名代理自报名)。
+            if (meta_host, meta_port) != (parsed.hostname.lower(), our_port) and (
+                meta_host not in _BIND_SHAPE_META_HOSTS
+            ):
+                raise IsolationIdentityMismatch(
+                    "weaviate 身份不一致:/v1/meta hostname 自报实际 DNS 名与显式"
+                    f"期望(URL host:{our_port})不匹配 —— 拒绝把证据记在未证实"
+                    "的目标上,fail-closed"
+                )
+        elif (meta_host, meta_port) != (parsed.hostname.lower(), our_port):
             raise IsolationIdentityMismatch(
                 "weaviate 身份不一致:/v1/meta hostname 与显式期望(URL host:"
                 f"{our_port})不匹配 —— 拒绝把证据记在未证实的目标上,fail-closed"
             )
 
-        # ---- R3-1 独立信任锚:GET /v1/schema → collectionId ↔ 钉扎值 ----
+        if v2_mode:
+            # ---- R4-1 v2 数据面身份绑定:GET /v1/nodes ↔ 钉扎 CLUSTER_HOSTNAME ----
+            conn.request(
+                "GET", "/v1/nodes", body=None, headers={"Accept": "application/json"}
+            )
+            resp = conn.getresponse()
+            body = resp.read()
+            if resp.status != 200:
+                raise RuntimeError(f"weaviate /v1/nodes 探针 HTTP {resp.status}")
+            try:
+                nodes_doc = json.loads(body)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("weaviate /v1/nodes 响应非 JSON") from exc
+            nodes = (
+                nodes_doc.get("nodes")
+                if isinstance(nodes_doc, dict)
+                else None
+            )
+            if not isinstance(nodes, list) or not nodes or not all(
+                isinstance(n, dict) for n in nodes
+            ):
+                raise IsolationIdentityUnprovable(
+                    "weaviate /v1/nodes 响应不可证(缺 nodes 列表)—— 控制面"
+                    "钉扎 CLUSTER_HOSTNAME 无法与数据面绑定,该子项 BLOCKED"
+                )
+            if len(nodes) != 1:
+                raise IsolationIdentityUnprovable(
+                    f"weaviate /v1/nodes 返回 {len(nodes)} 节点:多节点拓扑的"
+                    "单值身份未定义 —— 该子项 BLOCKED(不降低验证强度换 PASS)"
+                )
+            node_name = str(nodes[0].get("name") or "").strip()
+            if not node_name:
+                raise IsolationIdentityUnprovable(
+                    "weaviate /v1/nodes 节点缺 name —— 控制面钉扎 "
+                    "CLUSTER_HOSTNAME 无法与数据面绑定,BLOCKED"
+                )
+            if node_name != expected_host:
+                raise IsolationIdentityMismatch(
+                    "weaviate 身份不一致:/v1/nodes name ≠ 信任锚钉扎 "
+                    "CLUSTER_HOSTNAME —— 所连非控制面核验的实例(别名代理/"
+                    "重装实例亦拒),fail-closed"
+                )
+
+        # ---- R3-1(v1)/ R4-1(v2 存在性)GET /v1/schema ----
         conn.request("GET", "/v1/schema", body=None, headers={"Accept": "application/json"})
         resp = conn.getresponse()
         body = resp.read()
@@ -611,17 +736,19 @@ def probe_filesystem_objects(wv_cfg: dict, timeout_s: int) -> int:
                 "无此集合 —— 空集合/错实例上的 0 计数不构成隔离证据,BLOCKED"
                 "(不谎报 PASS)"
             )
-        if not actual_cid:
-            raise IsolationIdentityUnprovable(
-                f"weaviate collection(class={class_name})无强稳定标识(响应字段词表:"
-                f" {available_fields})—— collectionId 缺失,无法与信任锚比对,该子项"
-                "BLOCKED(不降低验证强度换 PASS)"
-            )
-        if actual_cid.lower() != expected_cid.lower():
-            raise IsolationIdentityMismatch(
-                "weaviate 身份不一致:/v1/schema collectionId ≠ 信任锚钉扎值 —— "
-                "所连为错误实例/同名集合(别名代理环境亦拒),fail-closed"
-            )
+        if not v2_mode:
+            # v1:collectionId 强标识与锚精确比对(R3 语义原样)
+            if not actual_cid:
+                raise IsolationIdentityUnprovable(
+                    f"weaviate collection(class={class_name})无强稳定标识(响应字段词表:"
+                    f" {available_fields})—— collectionId 缺失,无法与信任锚比对,该子项"
+                    "BLOCKED(不降低验证强度换 PASS)"
+                )
+            if actual_cid.lower() != expected_cid.lower():
+                raise IsolationIdentityMismatch(
+                    "weaviate 身份不一致:/v1/schema collectionId ≠ 信任锚钉扎值 —— "
+                    "所连为错误实例/同名集合(别名代理环境亦拒),fail-closed"
+                )
 
         # ---- R2-4③ 防空集合假 PASS:同一 GraphQL 请求双聚合(total + filesystem) ----
         alias_total = f"{class_name}_TOTAL"
@@ -771,12 +898,15 @@ def _upload_isolation_checks(isolation: dict, timeout_s: int) -> list[dict]:
         )
     else:
         try:
+            # R4-1:按锚版本传期望身份 —— v1=collectionId(数据面单层),
+            # v2=cluster_hostname(控制面+数据面组合锚的数据面绑定值)。
+            wv_expect = (
+                {"expected_cluster_hostname": anchor["weaviate_cluster_hostname"]}
+                if "weaviate_cluster_hostname" in anchor
+                else {"expected_collection_id": anchor["weaviate_collection_id"]}
+            )
             objects = probe_filesystem_objects(
-                {
-                    "url": wv_url,
-                    "class": wv_class,
-                    "expected_collection_id": anchor["weaviate_collection_id"],
-                },
+                {"url": wv_url, "class": wv_class, **wv_expect},
                 timeout_s,
             )
         except IsolationIdentityUnprovable as exc:
@@ -1039,17 +1169,30 @@ DEFAULT_ISOLATION_DSN_ENV_VAR = "ISOLATION_PG_DSN"
 
 # R3-1:带外钉扎信任锚 schema(封闭词表;锚值 = 非秘密的集群/集合唯一标识,
 # 由 A 带外采集;**绝不**以被测 DSN/URL/自报 metadata 兼任期望身份)
-_TRUST_ANCHOR_VERSION = 1
-_TRUST_ANCHOR_FIELDS = ("pg_system_id", "weaviate_collection_id")
+# R4-1:锚分两版 —— v1 = collectionId 数据面单层(新版本 Weaviate);
+#       v2 = 1.28.0 控制面+数据面组合锚(API 无强唯一标识,见模块头)。
+_TRUST_ANCHOR_VERSIONS = (1, 2)
+_TRUST_ANCHOR_V1_FIELDS = ("pg_system_id", "weaviate_collection_id")
+_TRUST_ANCHOR_V2_FIELDS = (
+    "pg_system_id",
+    "weaviate_cluster_hostname",
+    "weaviate_image_digest",
+    "weaviate_volume_name",
+    "weaviate_volume_manifest_sha256",
+)
+# v2 数据面允许的 /v1/meta.hostname 绑定地址形态(1.28.0 实测自述值;
+# 其它任何与 URL 不一致的实际 DNS 名一律身份不匹配)
+_BIND_SHAPE_META_HOSTS = {"::", "0.0.0.0", "*", ""}
 
 
 def _load_trust_anchor(path: str | None) -> tuple[dict | None, str | None]:
-    """加载带外钉扎的目标身份信任锚。
+    """加载带外钉扎的目标身份信任锚(R4-1 双版本,v1/v2 词表封闭)。
 
     Returns:
         (anchor, None) 或 (None, 结构化错误)。缺文件/不可读/非 JSON/缺字段/
-        词表外/版本不符一律拒绝(fail-closed);错误信息只含字段名类结构
-        信息,绝不回显文件内容;锚值本身为非秘密标识(pg 数字 id / UUID)。
+        词表外/版本不符/形状非法一律拒绝(fail-closed);错误信息只含字段名
+        类结构信息,绝不回显文件内容;锚值本身为非秘密标识(pg 数字 id /
+        UUID / CLUSTER_HOSTNAME / 镜像 digest / 卷名 / 清单哈希)。
     """
     if not path or not path.strip():
         return None, "缺 --isolation-trust-anchor-file(身份锚必填)"
@@ -1063,9 +1206,14 @@ def _load_trust_anchor(path: str | None) -> tuple[dict | None, str | None]:
         return None, "锚文件非合法 JSON"
     if not isinstance(raw, dict):
         return None, "锚文件根必须是映射"
-    if raw.get("version") != _TRUST_ANCHOR_VERSION:
-        return None, f"锚 version 必须为 {_TRUST_ANCHOR_VERSION}(实际 {raw.get('version')!r})"
-    unknown = sorted(set(map(str, raw)) - {"version"} - set(_TRUST_ANCHOR_FIELDS))
+    if raw.get("version") not in _TRUST_ANCHOR_VERSIONS:
+        return None, (
+            f"锚 version 必须为 {'/'.join(map(str, _TRUST_ANCHOR_VERSIONS))}"
+            f"(实际 {raw.get('version')!r})"
+        )
+    version = int(raw["version"])
+    fields = _TRUST_ANCHOR_V1_FIELDS if version == 1 else _TRUST_ANCHOR_V2_FIELDS
+    unknown = sorted(set(map(str, raw)) - {"version"} - set(fields))
     if unknown:
         return None, f"锚字段词表外: {unknown}"
     pg = str(raw.get("pg_system_id") or "").strip()
@@ -1073,10 +1221,35 @@ def _load_trust_anchor(path: str | None) -> tuple[dict | None, str | None]:
         return None, "锚缺字段: pg_system_id(fail-closed)"
     if not re.fullmatch(r"[0-9]{1,20}", pg):
         return None, "锚 pg_system_id 必须是十进制整数(pg_control_system().system_identifier)"
-    wv = str(raw.get("weaviate_collection_id") or "").strip()
-    if not wv:
-        return None, "锚缺字段: weaviate_collection_id(fail-closed)"
-    return {"pg_system_id": pg, "weaviate_collection_id": wv.lower()}, None
+    if version == 1:
+        wv = str(raw.get("weaviate_collection_id") or "").strip()
+        if not wv:
+            return None, "锚缺字段: weaviate_collection_id(fail-closed)"
+        return {"pg_system_id": pg, "weaviate_collection_id": wv.lower()}, None
+    # ---- v2:控制面+数据面组合锚(1.28.0;各字段形状封闭校验)----
+    host = str(raw.get("weaviate_cluster_hostname") or "").strip()
+    if not host:
+        return None, "锚缺字段: weaviate_cluster_hostname(fail-closed)"
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,253}", host):
+        return None, "锚 weaviate_cluster_hostname 形状非法"
+    digest = str(raw.get("weaviate_image_digest") or "").strip().lower()
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        return None, "锚 weaviate_image_digest 必须是 sha256:<64hex>(docker .Image)"
+    vol = str(raw.get("weaviate_volume_name") or "").strip()
+    if not vol:
+        return None, "锚缺字段: weaviate_volume_name(fail-closed)"
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,253}", vol):
+        return None, "锚 weaviate_volume_name 形状非法"
+    manifest = str(raw.get("weaviate_volume_manifest_sha256") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", manifest):
+        return None, "锚 weaviate_volume_manifest_sha256 必须是 64 位小写 hex"
+    return {
+        "pg_system_id": pg,
+        "weaviate_cluster_hostname": host,
+        "weaviate_image_digest": digest,
+        "weaviate_volume_name": vol,
+        "weaviate_volume_manifest_sha256": manifest,
+    }, None
 
 
 def _dsn_from_pg_env_parts(env: dict[str, str]) -> str | None:
@@ -1192,10 +1365,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--isolation-trust-anchor-file", default=None, metavar="PATH",
-        help="带外钉扎的目标身份信任锚 JSON(R3-1;A 采集;字段:version/"
-        "pg_system_id/weaviate_collection_id;独立于被测 DSN/URL)。"
-        "--verify-upload-isolation 下必填:缺失/不可读/缺字段/不匹配一律 "
-        "fail-closed,绝不进入隔离断言",
+        help="带外钉扎的目标身份信任锚 JSON(A 采集;独立于被测 DSN/URL)。"
+        "v1={version:1,pg_system_id,weaviate_collection_id}(新版 Weaviate);"
+        "v2={version:2,pg_system_id,weaviate_cluster_hostname,"
+        "weaviate_image_digest,weaviate_volume_name,"
+        "weaviate_volume_manifest_sha256}(1.28.0 控制面+数据面组合锚,"
+        "控制面核验由 deploy workflow 强制)。--verify-upload-isolation 下必填:"
+        "缺失/不可读/缺字段/形状非法/不匹配一律 fail-closed,绝不进入隔离断言",
     )
     parser.add_argument(
         "--isolation-weaviate-url", default=None,

@@ -128,6 +128,12 @@ class Sandbox:
             '          > "$dest" ;;\n'
             "      *) exit 1 ;;\n"
             "    esac ;;\n"
+            "  inspect)\n"
+            '    fmt="${args[@]:2}"\n'
+            '    case "$fmt" in\n'
+            "      *.Image*) echo \"sha256:fakeimage0000000000000000000000000000000000000000000000000000000000\" ;;\n"
+            '      *) echo "fake docker inspect: unknown fmt" >&2; exit 1 ;;\n'
+            "    esac ;;\n"
             "  compose)\n"
             '    # 形如: compose -f <file> exec -T backend <cmd...>\n'
             "    exec_idx=-1; svc_idx=-1\n"
@@ -139,11 +145,25 @@ class Sandbox:
             '    cmd=("${args[@]:$((svc_idx + 1))}")\n'
             '    case "${cmd[0]}" in\n'
             "      sh)\n"
-            '        # sh -c \'cat > /tmp/xxx\' —— stdin 写入容器根模拟文件\n'
-            '        target="${cmd[2]#cat > }"\n'
-            '        mkdir -p "$TSL_CONTAINER_ROOT$(dirname "$target")"\n'
-            '        cat > "$TSL_CONTAINER_ROOT$target"\n'
-            "        ;;\n"
+            '        # sh -c 两种形态(R4-3①起):cat > /tmp/xxx(stdin 写入容器根)\n'
+            '        # /sha256sum <path>(容器内工件哈希 —— 对容器根内真实文件求值)\n'
+            '        case "${cmd[2]}" in\n'
+            '          "cat > "*)\n'
+            '            target="${cmd[2]#cat > }"\n'
+            '            mkdir -p "$TSL_CONTAINER_ROOT$(dirname "$target")"\n'
+            '            cat > "$TSL_CONTAINER_ROOT$target"\n'
+            '            ;;\n'
+            '          sha256sum*)\n'
+            '            raw="${cmd[2]#sha256sum }"\n'
+            '            f="${raw%% *}"\n'
+            '            if [ -f "$TSL_CONTAINER_ROOT$f" ]; then\n'
+            '              if command -v sha256sum >/dev/null 2>&1; then sha256sum "$TSL_CONTAINER_ROOT$f"; else shasum -a 256 "$TSL_CONTAINER_ROOT$f"; fi | sed "s#$TSL_CONTAINER_ROOT##"\n'
+            '            else\n'
+            '              exit 1\n'
+            '            fi ;;\n'
+            '          *)\n'
+            '            echo "fake compose sh: unexpected: ${cmd[2]}" >&2; exit 1 ;;\n'
+            '        esac ;;\n'
             "      rm)\n"
             '        shift_args=("${cmd[@]:2}")  # rm -f p1 p2 ...\n'
             '        for p in "${shift_args[@]}"; do\n'
