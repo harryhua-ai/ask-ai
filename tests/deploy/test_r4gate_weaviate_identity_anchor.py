@@ -40,6 +40,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -57,6 +58,8 @@ from scripts.release_preflight import evaluate, main
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO / ".github" / "workflows" / "deploy-production.yml"
 EVALUATOR_SRC = REPO / "scripts" / "release_preflight.py"
+# R5:卷元数据清单哈希扫描规范脚本(workflow 内嵌副本必须与其逐字节一致)
+SCAN_SRC = REPO / "scripts" / "weaviate_volume_manifest_scan.sh"
 
 _FAKE_PW = "R4GRN-FAKEPW-WVANCHOR"
 _DSN = f"postgresql://iso_user:{_FAKE_PW}@dbhost:6543/iso_db"
@@ -506,6 +509,20 @@ def _preflight_run_text() -> str:
     return [s for s in steps if s.get("id") == "preflight"][0]["run"]
 
 
+_VOLSCAN_RE = re.compile(r"<<'VOLSCAN_SH'\n(.*?)\nVOLSCAN_SH\n", re.DOTALL)
+
+
+def _volscan_embedded_script() -> str:
+    """R5:提取 workflow preflight 步骤内嵌的卷扫描脚本;与仓库规范脚本
+    scripts/weaviate_volume_manifest_scan.sh 逐字节一致(漂移即失败)。"""
+    m = _VOLSCAN_RE.search(_preflight_run_text())
+    assert m, "workflow preflight 未找到内嵌 VOLSCAN_SH 扫描脚本"
+    embedded = m.group(1) + "\n"
+    assert embedded == SCAN_SRC.read_text(encoding="utf-8"), \
+        "workflow 内嵌卷扫描脚本与 scripts/weaviate_volume_manifest_scan.sh 漂移"
+    return embedded
+
+
 class ControlPlaneSandbox:
     """fake ssh + fake docker(compose)沙箱:机械执行 workflow preflight 步骤。"""
 
@@ -520,6 +537,12 @@ class ControlPlaneSandbox:
         for d in (self.runner, self.remote_home / "ask-ai" / "deploy" / "prod",
                   self.remote_tmp, self.container / "tmp", self.bin, self.logs):
             d.mkdir(parents=True, exist_ok=True)
+        # R5:沙箱 weaviate 数据卷种子文件 —— 卷清单扫描在沙箱内真实执行
+        # (内容为固定测试字面量;元数据哈希由 step_env 用内嵌脚本实测)
+        wv_vol = self.container / "var" / "lib" / "weaviate"
+        (wv_vol / "shard-0").mkdir(parents=True, exist_ok=True)
+        (wv_vol / "singleton.index").write_bytes(b"R5 volscan fixture A\n")
+        (wv_vol / "shard-0" / "segment-0001.doc").write_bytes(b"R5 volscan fixture B\n")
         self.ssh_argv = self.logs / "ssh_argv.log"
         self.docker_argv = self.logs / "docker_argv.log"
         self.eval_argv = self.logs / "eval_argv.log"
@@ -557,7 +580,23 @@ class ControlPlaneSandbox:
             "    esac ;;\n"
             "  exec)\n"
             '    printf \'%s\\n\' "$*" >> "$TSL_DOCKER_ARGV_LOG"\n'
-            '    echo "$TSL_CP_MAN  -" ;;\n'
+            "    # R5:卷扫描脚本经 stdin 到达;在沙箱卷目录真实执行(真实 sh 语义)\n"
+            '    vs="$(mktemp "${TMPDIR:-/tmp}/r5volscan.XXXXXXX")"\n'
+            '    cat > "$vs"\n'
+            '    if [ -n "${TSL_VOLSCAN_EVIDENCE_TAMPER:-}" ]; then\n'
+            '      printf \'%s\\n\' "$TSL_VOLSCAN_EVIDENCE_TAMPER"\n'
+            '      rm -f "$vs"\n'
+            "      exit 0\n"
+            "    fi\n"
+            '    if [ "${TSL_VOLSCAN_EXEC_FAIL:-}" = "1" ]; then\n'
+            '      rm -f "$vs"\n'
+            '      echo "fake docker exec: injected scan failure" >&2\n'
+            "      exit 7\n"
+            "    fi\n"
+            '    sh "$vs" "${TSL_VOLSCAN_ROOT:-$TSL_CONTAINER_ROOT/var/lib/weaviate}"\n'
+            "    rc=$?\n"
+            '    rm -f "$vs"\n'
+            "    exit $rc ;;\n"
             "  compose)\n"
             '    if [ "${TSL_PS_EMPTY:-}" = "1" ]; then exit 0; fi\n'
             '    sub=""\n'
@@ -627,10 +666,46 @@ class ControlPlaneSandbox:
             "exit $?\n",
             encoding="utf-8",
         )
-        for shim in ("flock", "docker", "ssh"):
+        # R5:macOS 沙箱专用 stat shim —— 以 BusyBox `stat -c '%n|%s|%Y'`
+        # 语义模拟 BSD stat(仅扫描脚本所用格式)。真实目标环境 BusyBox
+        # 原生支持 -c(已在 r4-weaviate-128 真实容器实测);本 shim 仅让
+        # 沙箱内对扫描脚本的**真实执行路径**可在 macOS 运行。
+        (self.bin / "stat").write_text(
+            "#!/bin/bash\n"
+            "if [ \"$1\" = \"-c\" ] && [ \"$2\" = \"%n|%s|%Y\" ]; then\n"
+            "    shift 2\n"
+            "    exec /usr/bin/stat -f '%N|%z|%m' \"$@\"\n"
+            "fi\n"
+            "exec /usr/bin/stat \"$@\"\n",
+            encoding="utf-8",
+        )
+        # R5:macOS 沙箱专用 sha256sum shim —— macOS 无 sha256sum,以
+        # `shasum -a 256` 透传(输出 `<64hex>  <文件名>` 格式与 BusyBox/
+        # coreutils 一致)。真实目标环境 BusyBox 原生 sha256sum(已在
+        # r4-weaviate-128 真实容器实测);本 shim 仅服务沙箱真实执行路径。
+        (self.bin / "sha256sum").write_text(
+            "#!/bin/bash\nexec /usr/bin/shasum -a 256 \"$@\"\n",
+            encoding="utf-8",
+        )
+        for shim in ("flock", "docker", "ssh", "stat", "sha256sum"):
             (self.bin / shim).chmod(0o755)
 
-    def step_env(self, *, anchor_json: str = _ANCHOR_V2_JSON, **overrides) -> dict:
+    def step_env(self, *, anchor_json: str | None = None, **overrides) -> dict:
+        # R5:TSL_CP_MAN 缺省 = 用 workflow 内嵌真实扫描脚本对沙箱卷实测
+        # (非硬编码);缺省 v2 锚的 manifest 钉扎值同步 = 该实测哈希
+        # (控制面 PASS 前提 = 钉扎值 == 真实扫描输出,任何一侧漂移即暴露);
+        # 测试可显式覆盖 anchor_json / TSL_CP_MAN(如 T-WV-12 不匹配注入)
+        if "TSL_CP_MAN" not in overrides:
+            overrides["TSL_CP_MAN"] = self._seeded_volume_hash()
+        if anchor_json is None:
+            anchor_json = json.dumps({
+                "version": 2,
+                "pg_system_id": "7300000000000000003",
+                "weaviate_cluster_hostname": _CP_HOST,
+                "weaviate_image_digest": _CP_IMG,
+                "weaviate_volume_name": _CP_VOL,
+                "weaviate_volume_manifest_sha256": overrides["TSL_CP_MAN"],
+            })
         env = {
             "PATH": f"{self.bin}:/usr/bin:/bin",
             "HOME": str(self.base / "runner-home"),
@@ -681,6 +756,23 @@ class ControlPlaneSandbox:
             if self.eval_argv.exists()
             else ""
         )
+
+    def _seeded_volume_hash(self) -> str:
+        """R5:用 workflow 内嵌扫描脚本对沙箱卷实测元数据哈希(控制面 PASS
+        前提 = 钉扎值 == 真实扫描输出;脚本漂移在此即刻暴露)。PATH 前置
+        沙箱 fakebin(macOS stat shim,模拟 BusyBox `-c` 语义)。"""
+        script_text = _volscan_embedded_script()
+        env = dict(os.environ)
+        env["PATH"] = f"{self.bin}:{os.environ.get('PATH', '')}"
+        r = subprocess.run(
+            ["/bin/sh", "-s", str(self.container / "var" / "lib" / "weaviate")],
+            input=script_text, capture_output=True, text=True, timeout=60,
+            env=env, check=False,
+        )
+        assert r.returncode == 0, f"沙箱卷自扫描失败: {r.stderr}"
+        m = re.search(r"MANIFEST_SHA256=([0-9a-f]{64}) FILES=([1-9][0-9]*)", r.stdout)
+        assert m, f"沙箱卷自扫描输出形状异常: {r.stdout!r}"
+        return m.group(1)
 
 
 @pytest.fixture
@@ -788,3 +880,46 @@ def test_twv16_cli_full_chain_v2_anchor_verdict_pass(tmp_path, fake_wv128, monke
     assert code == 0
     argv = (tmp_path / "psql_shim_argv.txt").read_text(encoding="utf-8")
     assert _FAKE_PW not in argv and "postgresql://" not in argv
+
+
+# --------------------------------------------------------------------------- #
+# 控制面 R5 窄修(卷清单哈希假 PASS 防护):T-WV-17..19(沙箱故障注入)
+# --------------------------------------------------------------------------- #
+
+
+def test_twv17_control_plane_scan_exec_failure_aborts(cp_sandbox):
+    """R5 T-WV-17:卷扫描执行失败(注入 rc=7)→ fail-closed 中止;
+    evaluator 绝不执行,无 PASS 输出(旧管道会把失败吞成空清单哈希)。"""
+    rc, out, err = cp_sandbox.run_step(
+        cp_sandbox.step_env(TSL_VOLSCAN_EXEC_FAIL="1"))
+    assert rc != 0
+    assert "数据卷元数据扫描失败" in err
+    assert "控制面锚不匹配" in err, "扫描失败不得与『哈希不匹配』混同(原因可见)"
+    assert cp_sandbox.eval_argv_text() == "", "evaluator 绝不执行"
+    assert "PREFLIGHT PASS" not in out
+
+
+def test_twv18_control_plane_scan_missing_evidence_line_aborts(cp_sandbox):
+    """R5 T-WV-18:扫描输出缺合法证据行(旧管道形态:裸哈希、无
+    VOLSCAN_OK/FILES≥1 标记)→ 不采信,fail-closed 中止。"""
+    tampered = f"{_CP_MAN}  -"  # 旧 `sha256sum | cut -d" " -f1` 的输出形状
+    rc, out, err = cp_sandbox.run_step(
+        cp_sandbox.step_env(TSL_VOLSCAN_EVIDENCE_TAMPER=tampered))
+    assert rc != 0
+    assert "无合法证据行" in err
+    assert cp_sandbox.eval_argv_text() == ""
+    assert "PREFLIGHT PASS" not in out
+
+
+def test_twv19_control_plane_scan_empty_volume_fails_closed(cp_sandbox):
+    """R5 T-WV-19:扫描目标空目录(脚本内清单 -s 校验)→ 扫描 rc=3 且无
+    哈希 → 步骤 fail-closed;空清单哈希 e3b0c442… 绝不出现在任何输出。"""
+    empty = cp_sandbox.base / "empty-vol"
+    empty.mkdir(exist_ok=True)
+    rc, out, err = cp_sandbox.run_step(
+        cp_sandbox.step_env(TSL_VOLSCAN_ROOT=str(empty)))
+    assert rc != 0
+    assert "数据卷元数据扫描失败" in err
+    assert "e3b0c442" not in out and "e3b0c442" not in err, \
+        "空清单哈希绝不出现(假 PASS 防护的本质)"
+    assert cp_sandbox.eval_argv_text() == ""
