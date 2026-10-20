@@ -12,7 +12,43 @@
  "heartbeat_at": "2026-10-20T06:37:39Z",
  "supersedes": null,
  "contract_digest": "9b0eb8e1e33963a9005dc2bd6d08c805015b8927c1f4e91760f7c1b3d4a85879",
- "candidate": null,
+ "candidate": {
+  "branch": "agent/181/1ef09cbd",
+  "sha": "823b025c8781bb675a791e7e7e7391508ecc0c64",
+  "scope": {
+   "pass": true,
+   "paths": {
+    ".github/workflows/deploy-production.yml": "ALLOWED",
+    "backend/api/admin/data_sources.py": "ALLOWED",
+    "backend/services/source_identity_guard.py": "ALLOWED",
+    "scripts/release_preflight.py": "ALLOWED",
+    "scripts/weaviate_volume_manifest_scan.sh": "ALLOWED",
+    "tests/api/admin/test_r3gate_orphan_identity_guard.py": "ALLOWED",
+    "tests/api/admin/test_r3gate_registration_concurrency.py": "ALLOWED",
+    "tests/deploy/test_issue159_rollback_compat_truth.py": "ALLOWED",
+    "tests/deploy/test_r3gate_preflight_dsn_boundary.py": "ALLOWED",
+    "tests/deploy/test_r3gate_preflight_identity_binding.py": "ALLOWED",
+    "tests/deploy/test_r3gate_preflight_isolation.py": "ALLOWED",
+    "tests/deploy/test_r3gate_preflight_trust_anchor.py": "ALLOWED",
+    "tests/deploy/test_r3gate_same_tag_topology.py": "ALLOWED",
+    "tests/deploy/test_r3gate_ssh_credential_lifecycle.py": "ALLOWED",
+    "tests/deploy/test_r4gate_pg_probe_driver_failclosed.py": "ALLOWED",
+    "tests/deploy/test_r4gate_r2_runtime_compat.py": "ALLOWED",
+    "tests/deploy/test_r4gate_weaviate_identity_anchor.py": "ALLOWED",
+    "tests/deploy/test_r5gate_volume_manifest_scan.py": "ALLOWED",
+    "tests/scripts/test_deploy_orchestration.py": "ALLOWED",
+    "tests/scripts/test_r3gate_contaminated_chunks_migration.py": "ALLOWED"
+   },
+   "violations": [],
+   "main_attributed_paths": [],
+   "counts": {
+    "ALLOWED": 20,
+    "FORBIDDEN": 0,
+    "MAIN_ATTRIBUTED": 0
+   }
+  },
+  "preserved_at": "2026-10-20T06:38:50Z"
+ },
  "runtime": {
   "digest": "a884f1a0dec1a695560e07eef3beee0b5b1bc20b6e376649c0bda17a7d9380d2",
   "release": "v1.1.6",
