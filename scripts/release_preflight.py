@@ -993,8 +993,8 @@ def evaluate(
     remediation_evidence_error: str | None = None,
     remediation_artifact_digest: str | None = None,
     remediation_artifact_error: str | None = None,
-    approval_key: bytes | None = None,
-    approval_key_error: str | None = None,
+    approval_public_key: dict | None = None,
+    approval_public_key_error: str | None = None,
     release_tag: str | None = None,
     release_sha: str | None = None,
     pre_contract: bool = False,
@@ -1126,8 +1126,12 @@ def evaluate(
         evidence = remediation_evidence if isinstance(remediation_evidence, dict) else None
         # 放行 = 全链验证(逐环给出结构化 actionable 拒绝;任一环失败即
         # fail-closed,绝不部分放行):
-        #   记录形状 → 工件真实性(SHA256 对实际文件) → 审批密钥可用 →
-        #   HMAC 审批真伪 → gate/target_tag/release_sha 三重绑定 → 有效期。
+        #   记录形状 → 工件真实性(SHA256 对实际文件) → 验证公钥可用 →
+        #   RSA-2048 签名审批真伪 → gate/target_tag/release_sha 三重绑定 →
+        #   有效期。签名验证 = 纯 stdlib RSASSA-PKCS1-v1_5(SHA-256):
+        #   公钥只能验签、无法签发 ⇒ 应用容器 env 权限不构成签发能力
+        #   (A R6v2 审查阻塞 1:对称 HMAC 密钥经 compose env_file 扩散 =
+        #   自授权面,已整体移除)。
         bind_ok = False
         reason = ""
         if (remediation_evidence_error or "").strip():
@@ -1153,17 +1157,19 @@ def evaluate(
                 f"整改证据工件不可信({remediation_artifact_error})"
                 "—— 记录声明不等于工件本身,fail-closed"
             )
-        elif (approval_key_error or "").strip():
-            reason = f"整改审批不可验证({approval_key_error})—— fail-closed"
+        elif (approval_public_key_error or "").strip():
+            reason = f"整改审批不可验证({approval_public_key_error})—— fail-closed"
         else:
-            want = _approval_hmac_hex(approval_key or b"", evidence)
-            if not hmac.compare_digest(
-                want, str(evidence["approval"]["hmac_sha256"])
+            if not _approval_signature_valid(
+                approval_public_key,
+                str(evidence["approval"]["signature"]),
+                _approval_signature_payload(evidence),
             ):
                 reason = (
-                    "整改审批无效(HMAC 校验失败:记录未经受信审批密钥签发或"
+                    "整改审批无效(RSA-2048 签名校验失败:记录未经审批私钥签发或"
                     "任一绑定字段被篡改)—— 自填 recorded_by/伪造审批不构成"
-                    "整改证明,fail-closed"
+                    "整改证明;验证公钥无法签发 ⇒ 容器 env 权限不构成签发能力,"
+                    "fail-closed"
                 )
             elif evidence.get("gate") != gate:
                 reason = (
@@ -1197,15 +1203,19 @@ def evaluate(
                     reason = (
                         f"整改证据全链验证通过: gate={gate} "
                         f"target_tag={evidence.get('target_tag')} "
-                        f"release_sha={evidence.get('release_sha')} "
+                        f"release_sha={evidence.get('release_sha')}"
+                        "(诚实边界: release_sha 绑定的是镜像内 RELEASE.json "
+                        "git_sha 断言,非 OCI image 内容摘要) "
                         f"evidence_digest={evidence.get('evidence_digest')}(工件"
                         "SHA256 实测一致) "
-                        f"evidence_ref={evidence.get('evidence_ref')} "
+                        f"evidence_ref={evidence.get('evidence_ref')}(自述引用:"
+                        "仅证明工件与批准记录一致,不证明演练真实发生/审核方"
+                        "实际批准 —— 后者属 A 受信审计) "
                         f"approved_by={evidence['approval']['approved_by']} "
                         f"approved_at={evidence['approval']['approved_at']} "
                         f"not_after={evidence.get('not_after')}"
-                        "(A #138 P3:真实工件 + 受信审批 + 发行/SHA/镜像身份"
-                        "三重绑定;不因字符串 ACK 或自述记录放行)"
+                        "(A #138 P3:真实工件 + 非对称签名审批 + 发行/SHA/镜像"
+                        "身份三重绑定;不因字符串 ACK 或自述记录放行)"
                     )
         if bind_ok:
             checks.append(
@@ -1295,23 +1305,32 @@ _TRUST_ANCHOR_V2_FIELDS = (
 # 其它任何与 URL 不一致的实际 DNS 名一律身份不匹配)
 _BIND_SHAPE_META_HOSTS = {"::", "0.0.0.0", "*", ""}
 
-# ---- G3 整改证据消费(R6v2;A #138 P3 + 阻塞 1 修复)----
-# 唯一合法放行面 = 【真实不可变证据工件 + 受信审批】双因子,缺一 fail-closed:
+# ---- G3 整改证据消费(R6v3;A #138 P3 + R6v2 审查阻塞 1 修复)----
+# 唯一合法放行面 = 【真实不可变证据工件 + 非对称签名审批】双因子,缺一
+# fail-closed:
 #   1) 工件真实性:对 --remediation-evidence-artifact 指向的实际文件计算
 #      SHA256,与记录声明 evidence_digest 精确一致(引用不存在/摘要伪造 ⇒
 #      拒绝;记录本身不是证据);
-#   2) 审批可信:approval.hmac_sha256 = HMAC-SHA256(受信审批密钥, 规范化
-#      绑定载荷)。密钥仅 A 可写(生产宿主 .env PREFLIGHT_REMEDIATION_
-#      APPROVAL_KEY,经既有 env_file/容器 env 通道进入评估器,零新增含密
-#      传输/文件);自填 recorded_by/未经密钥签发的 approval 一律拒绝;
+#   2) 审批可信:approval.signature = RSASSA-PKCS1-v1_5(SHA-256) 签名,
+#      **纯 stdlib 验证**(pow(s,e,n) + 精确 EM 比较)。R6v2 的对称 HMAC
+#      密钥同时是验证与签发秘密,经 compose env_file 注入 backend/sync/
+#      sync-executor/sync-cron 全部 workload ⇒ 任何能读容器 env 的执行面
+#      可自授权(A R6v2 审查阻塞 1)—— 该通道已整体删除,绝不再引入。
+#      改为:审批私钥仅存 A 离线受控路径(scripts/sign_remediation_
+#      approval.py 签发);评估器只持验证公钥,经可信钉扎通道(与信任锚
+#      同款:workflow secret → SSH stdin → 远端 0600 临时件 → 容器文件,
+#      **绝不**走 compose env_file/容器 env)进入。公钥无法签发 ⇒ 应用
+#      容器 env 权限不构成签发能力;
 #   3) 身份绑定:gate == manifest 声明 ∧ target_tag == --release-tag ∧
 #      release_sha == --release-sha(工作流身份步/镜像内 RELEASE.json
-#      git_sha)——同一证据不可挪用于其他发行/SHA/镜像;
+#      git_sha;诚实边界:git_sha 断言,非 OCI image 内容摘要)——同一
+#      证据不可挪用于其他发行/SHA/镜像;
 #   4) 有效期:not_after 过期 ⇒ fail-closed;
 #   5) 真实 G3 恢复演练未完成 ⇒ 无记录/无工件/无审批 ⇒ BLOCKED(现状不变)。
-# 测试使用明确定义的测试信任根(测试自造密钥),绝不宣称生产已整改。
-_REMEDIATION_EVIDENCE_VERSIONS = (2,)
-_REMEDIATION_EVIDENCE_V2_FIELDS = (
+# 测试使用明确定义的测试信任根(测试自造 RSA 密钥对,注明 test-only),
+# 绝不宣称生产已整改。
+_REMEDIATION_EVIDENCE_VERSIONS = (3,)
+_REMEDIATION_EVIDENCE_V3_FIELDS = (
     "gate",
     "target_tag",
     "release_sha",
@@ -1322,15 +1341,23 @@ _REMEDIATION_EVIDENCE_V2_FIELDS = (
     "not_after",
     "approval",
 )
-_REMEDIATION_APPROVAL_FIELDS = ("approved_by", "approved_at", "hmac_sha256")
+_REMEDIATION_APPROVAL_FIELDS = ("approved_by", "approved_at", "signature")
 _RELEASE_TAG_PATTERN = r"v[0-9]+\.[0-9]+\.[0-9]+(-r[0-9]+)?"
 _REMEDIATION_GATE_TOKEN_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"
 _EVIDENCE_DIGEST_PATTERN = r"[0-9a-f]{64}"
 _RELEASE_SHA_PATTERN = r"[0-9a-f]{40}"
-# HMAC 规范化载荷上下文(域分离,防跨用途重用)
-_APPROVAL_HMAC_CONTEXT = "askai-remediation-approval-v2"
-_MIN_APPROVAL_KEY_BYTES = 32
-_DEFAULT_APPROVAL_KEY_ENV = "PREFLIGHT_REMEDIATION_APPROVAL_KEY"
+# 签名规范化载荷上下文(域分离,防跨用途/跨版本重用;v3 起为非对称签名)
+_APPROVAL_SIGNATURE_CONTEXT = "askai-remediation-approval-v3"
+# RSA-2048 钉扎(模数恰 2048 位;拒绝其它强度)
+_APPROVAL_RSA_MODULUS_BITS = 2048
+_APPROVAL_RSA_N_HEX_LEN = _APPROVAL_RSA_MODULUS_BITS // 4
+_APPROVAL_SIGNATURE_HEX_LEN = _APPROVAL_RSA_MODULUS_BITS // 4
+_APPROVAL_RSA_MAX_E_BITS = 17  # 覆盖 65537 等常用小奇指数
+# RSASSA-PKCS1-v1_5 + SHA-256 的 DigestInfo 前缀(DER;固定 19 字节):
+#   SEQUENCE(AlgorithmIdentifier(sha256 OID + NULL), OCTET STRING)
+_RSA_SHA256_DIGEST_INFO_PREFIX = bytes.fromhex(
+    "3031300d060960864801650304020105000420"
+)
 # 证据工件传输上界(base64 通道;超过即拒绝,不无限读入)
 _MAX_EVIDENCE_ARTIFACT_BYTES = 65536
 
@@ -1416,12 +1443,12 @@ def _parse_iso_datetime(value: str, field: str) -> tuple[datetime | None, str | 
 def _load_remediation_evidence(
     path: str | None, release_tag: str | None, release_sha: str | None
 ) -> tuple[dict | None, str | None]:
-    """加载整改证据记录(R6v2;形状校验 —— 真实性与审批由 rollback 门验证)。
+    """加载整改证据记录(R6v3;形状校验 —— 真实性与审批由 rollback 门验证)。
 
     Returns:
         (record, None) 或 (None, 结构化错误)。缺文件/不可读/非 JSON/根非映射/
         版本不符/词表外字段/缺字段/形状非法/缺 --release-tag 或 --release-sha
-        绑定键/换行类控制字符(防 HMAC 载荷歧义)一律拒绝(fail-closed);
+        绑定键/换行类控制字符(防签名载荷歧义)一律拒绝(fail-closed);
         错误信息只含字段名类结构信息,绝不回显文件内容;记录本身非秘密。
     """
     if not path or not path.strip():
@@ -1455,7 +1482,7 @@ def _load_remediation_evidence(
             f"(实际 {raw.get('version')!r})"
         )
     unknown = sorted(
-        set(map(str, raw)) - {"version"} - set(_REMEDIATION_EVIDENCE_V2_FIELDS)
+        set(map(str, raw)) - {"version"} - set(_REMEDIATION_EVIDENCE_V3_FIELDS)
     )
     if unknown:
         return None, f"证据字段词表外: {unknown}"
@@ -1493,11 +1520,12 @@ def _load_remediation_evidence(
         approved_at = str(approval.get("approved_at") or "").strip()
         if not approved_at or len(approved_at) > 64 or ("\n" in approved_at):
             raise ValueError("证据字段形状非法: approval.approved_at")
-        hmac_hex = str(approval.get("hmac_sha256") or "").strip().lower()
-        if not re.fullmatch(_EVIDENCE_DIGEST_PATTERN, hmac_hex):
+        signature_hex = str(approval.get("signature") or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{%d}" % _APPROVAL_SIGNATURE_HEX_LEN, signature_hex):
             raise ValueError(
-                "证据字段形状非法: approval.hmac_sha256(64 位小写 hex;"
-                "未经受信审批密钥签发的记录不构成整改证明)"
+                "证据字段形状非法: approval.signature(%d 位小写 hex,对应 "
+                "RSA-2048 签名;未经审批私钥签发的记录不构成整改证明)"
+                % _APPROVAL_SIGNATURE_HEX_LEN
             )
     except ValueError as exc:
         return None, str(exc)
@@ -1512,7 +1540,7 @@ def _load_remediation_evidence(
             return None, err
 
     return {
-        "version": 2,
+        "version": 3,
         "gate": gate,
         "target_tag": target_tag,
         "release_sha": release_sha_r,
@@ -1524,17 +1552,18 @@ def _load_remediation_evidence(
         "approval": {
             "approved_by": approved_by,
             "approved_at": approved_at,
-            "hmac_sha256": hmac_hex,
+            "signature": signature_hex,
         },
     }, None
 
 
-def _approval_hmac_payload(record: dict) -> bytes:
-    """审批 HMAC 规范化载荷:全部绑定字段的定长次序拼接(域分离上下文打头;
-    各字段已经加载器拒绝换行类控制字符 ⇒ 拼接无歧义)。"""
+def _approval_signature_payload(record: dict) -> bytes:
+    """审批签名规范化载荷:全部绑定字段的定长次序拼接(域分离上下文打头;
+    各字段已经加载器拒绝换行类控制字符 ⇒ 拼接无歧义)。v3 起该载荷由
+    审批私钥(RSA-2048,仅 A 离线受控路径持有)签发,验证侧只需公钥。"""
     core = "\n".join(
         [
-            _APPROVAL_HMAC_CONTEXT,
+            _APPROVAL_SIGNATURE_CONTEXT,
             record["gate"],
             record["target_tag"],
             record["release_sha"],
@@ -1550,69 +1579,90 @@ def _approval_hmac_payload(record: dict) -> bytes:
     return core.encode("utf-8")
 
 
-def _approval_hmac_hex(key: bytes, record: dict) -> str:
-    return hmac.new(key, _approval_hmac_payload(record), hashlib.sha256).hexdigest()
+def _load_approval_public_key(path: str | None) -> tuple[dict | None, str | None]:
+    """加载受信验证公钥(钉扎通道:workflow secret → SSH stdin → 0600 文件;
+    **绝不**经 compose env_file/容器 env —— 公钥为非秘密材料,但通道纪律与
+    信任锚一致,杜绝任何审批材料混入应用 env 扩散面)。
 
-
-def _load_approval_key(path: str | None) -> tuple[bytes | None, str | None]:
-    """加载受信审批密钥(仅 A 可写;首行 base64;解码后 ≥32 字节)。
-
-    密钥材料绝不入 argv、绝不出现在任何错误/日志输出;文件路径词表与
-    隔离 DSN 文件同纪律。任何失败 ⇒ (None, 结构化错误) ⇒ rollback 门
-    fail-closed(无受信密钥 ⇒ 审批无法验证 ⇒ 绝不放行)。
+    文件形状(JSON,词表封闭):{"kty":"rsa","n_hex":"<512 hex>","e_hex":"010001"}
+    模数钉扎恰 2048 位、指数必须为奇数且 ≥3(拒绝空/偶/超界)。任何形状
+    违规 ⇒ (None, 结构化错误) ⇒ rollback 门 fail-closed(无受信公钥 ⇒
+    审批无法验证 ⇒ 绝不放行)。
     """
     if not path or not path.strip():
         return (
             None,
-            "缺 --remediation-approval-key-file(整改审批无法验证,fail-closed)",
+            "缺 --remediation-approval-public-key-file(整改审批无法验证,"
+            "fail-closed)",
         )
     try:
-        lines = Path(path).read_text(encoding="utf-8").splitlines()
+        text = Path(path).read_text(encoding="utf-8")
     except OSError:
-        return None, "审批密钥文件不可读"
-    raw = (lines[0] if lines else "").strip()
-    if not raw:
-        return None, "审批密钥文件为空"
+        return None, "审批公钥文件不可读"
     try:
-        key = base64.b64decode(raw, validate=True)
-    except Exception:  # noqa: BLE001 - 二进制库异常统一转为结构化拒绝
-        return None, "审批密钥 base64 非法"
-    if len(key) < _MIN_APPROVAL_KEY_BYTES:
-        return None, f"审批密钥强度不足(解码后 <{_MIN_APPROVAL_KEY_BYTES} 字节)"
-    return key, None
+        raw = json.loads(text)
+    except json.JSONDecodeError:
+        return None, "审批公钥文件非合法 JSON"
+    if not isinstance(raw, dict):
+        return None, "审批公钥根必须是映射"
+    if sorted(map(str, raw)) != ["e_hex", "kty", "n_hex"]:
+        return None, f"审批公钥字段词表外/缺失: {sorted(map(str, raw))}"
+    if raw.get("kty") != "rsa":
+        return None, "审批公钥 kty 必须为 \"rsa\""
+    n_hex = str(raw.get("n_hex") or "").strip().lower()
+    e_hex = str(raw.get("e_hex") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{%d}" % _APPROVAL_RSA_N_HEX_LEN, n_hex):
+        return None, (
+            "审批公钥 n_hex 形状非法(须为 %d 位小写 hex = RSA-%d 模数)"
+            % (_APPROVAL_RSA_N_HEX_LEN, _APPROVAL_RSA_MODULUS_BITS)
+        )
+    if not re.fullmatch(r"[0-9a-f]{1,%d}" % _APPROVAL_RSA_MAX_E_BITS, e_hex):
+        return None, "审批公钥 e_hex 形状非法(小写 hex,过界)"
+    n = int(n_hex, 16)
+    e = int(e_hex, 16)
+    if n.bit_length() != _APPROVAL_RSA_MODULUS_BITS:
+        return None, (
+            f"审批公钥模数必须是恰 {_APPROVAL_RSA_MODULUS_BITS} 位(RSA-2048 钉扎;"
+            f"实际 {n.bit_length()} 位)"
+        )
+    if e < 3 or e % 2 == 0:
+        return None, "审批公钥指数非法(须为奇数且 ≥3)"
+    return {"n": n, "e": e}, None
 
 
-def _resolve_approval_key(
-    args: argparse.Namespace, env: dict[str, str]
-) -> tuple[bytes | None, str | None]:
-    """审批密钥解析:显式文件 > env 变量名通道(env 字典含 --env-file 装配,
-    再查进程 os.environ)。密钥只经文件/环境变量进入,绝不来自 argv。"""
-    if args.remediation_approval_key_file:
-        return _load_approval_key(args.remediation_approval_key_file)
-    var_name = (args.remediation_approval_key_env or _DEFAULT_APPROVAL_KEY_ENV).strip()
-    if var_name:
-        value = env.get(var_name) or os.environ.get(var_name)
-        if value:
-            lines = value.strip().splitlines()
-            return _load_approval_key_from_text(lines[0] if lines else "")
-    return (
-        None,
-        f"审批密钥不可用(缺 --remediation-approval-key-file 且 env {var_name} "
-        "未设):整改审批无法验证,fail-closed",
-    )
-
-
-def _load_approval_key_from_text(raw_b64: str) -> tuple[bytes | None, str | None]:
-    raw = (raw_b64 or "").strip()
-    if not raw:
-        return None, "审批密钥为空"
+def _approval_signature_valid(
+    public_key: dict | None, signature_hex: str, payload: bytes
+) -> bool:
+    """纯 stdlib RSASSA-PKCS1-v1_5(SHA-256)验证:
+    pow(s,e,n) 还原编码 EM,与精确构造的
+    ``0x00 0x01 || FF..FF || 0x00 || DigestInfo(SHA-256) || H(payload)``
+    常量时间比较(DigestInfo 前缀 3031300d060960864801650304020105000420)。
+    签名形状已在记录加载器钉扎为 %d 位小写 hex;任何形状/数值/编码偏差
+    ⇒ False(fail-closed,绝不异常逃逸)。""" % _APPROVAL_SIGNATURE_HEX_LEN
+    if not isinstance(public_key, dict):
+        return False
+    k = _APPROVAL_RSA_MODULUS_BITS // 8
+    if len(signature_hex) != _APPROVAL_SIGNATURE_HEX_LEN:
+        return False
     try:
-        key = base64.b64decode(raw, validate=True)
-    except Exception:  # noqa: BLE001
-        return None, "审批密钥 base64 非法"
-    if len(key) < _MIN_APPROVAL_KEY_BYTES:
-        return None, f"审批密钥强度不足(解码后 <{_MIN_APPROVAL_KEY_BYTES} 字节)"
-    return key, None
+        signature = bytes.fromhex(signature_hex)
+    except ValueError:
+        return False
+    if len(signature) != k:
+        return False
+    s = int.from_bytes(signature, "big")
+    n = int(public_key["n"])
+    e = int(public_key["e"])
+    if not (0 <= s < n):
+        return False
+    em = pow(s, e, n).to_bytes(k, "big")
+    digest_info = _RSA_SHA256_DIGEST_INFO_PREFIX + hashlib.sha256(payload).digest()
+    t_len = len(digest_info)
+    ps_len = k - 3 - t_len
+    if ps_len < 8:
+        return False
+    expected_em = b"\x00\x01" + b"\xff" * ps_len + b"\x00" + digest_info
+    return hmac.compare_digest(em, expected_em)
 
 
 def _hash_evidence_artifact(path: str) -> tuple[str | None, str | None]:
@@ -1708,20 +1758,19 @@ def main(argv: list[str] | None = None) -> int:
         "evidence_digest 精确比对)—— 记录自述摘要不是证据,必须实测工件",
     )
     parser.add_argument(
-        "--remediation-approval-key-file", default=None, metavar="PATH",
-        help="受信审批密钥文件(首行 base64;解码后 ≥32 字节;仅 A 可写)。"
-        "密钥绝不入 argv/日志",
-    )
-    parser.add_argument(
-        "--remediation-approval-key-env", default=None, metavar="NAME",
-        help="审批密钥 env 变量名通道(默认 PREFLIGHT_REMEDIATION_APPROVAL_KEY;"
-        "先查 --env-file/--env 装配的 env 字典,再查进程 os.environ)",
+        "--remediation-approval-public-key-file", default=None, metavar="PATH",
+        help="受信审批**验证公钥**文件(JSON {\"kty\":\"rsa\",\"n_hex\":<512hex>,"
+        "\"e_hex\":\"010001\"};非秘密,但经与信任锚同款钉扎通道送达:"
+        "workflow secret → SSH stdin → 0600 文件,绝不走 compose env_file/"
+        "容器 env)。公钥只能验签、无法签发 ⇒ 应用容器 env 权限不构成签发能力;"
+        "提供 --remediation-evidence-file 时必填,缺失/形状非法 fail-closed",
     )
     parser.add_argument(
         "--remediation-evidence-file", default=None, metavar="PATH",
         help="整改证据工件 JSON(A #138 P3 唯一合法放行面):"
-        "{version:1,gate,target_tag,evidence_digest,evidence_ref,recorded_at,"
-        "recorded_by};gate 须与 manifest 声明精确一致、target_tag 须与 "
+        "{version:3,gate,target_tag,release_sha,evidence_digest,evidence_ref,"
+        "recorded_at,recorded_by,not_after,approval{approved_by,approved_at,"
+        "signature}};gate 须与 manifest 声明精确一致、target_tag 须与 "
         "--release-tag 精确一致;词表外/形状非法/绑定不一致一律 fail-closed",
     )
     parser.add_argument(
@@ -1819,8 +1868,18 @@ def main(argv: list[str] | None = None) -> int:
     evidence_error: str | None = None
     artifact_digest: str | None = None
     artifact_error: str | None = None
-    approval_key: bytes | None = None
-    approval_key_error: str | None = None
+    approval_public_key: dict | None = None
+    approval_public_key_error: str | None = None
+    if args.remediation_approval_public_key_file:
+        approval_public_key, approval_public_key_error = _load_approval_public_key(
+            args.remediation_approval_public_key_file
+        )
+    elif args.remediation_evidence_file:
+        # 提供证据但缺钉扎公钥 ⇒ 结构化拒绝(审批无法验证,fail-closed)
+        approval_public_key_error = (
+            "缺 --remediation-approval-public-key-file(整改审批无法验证,"
+            "fail-closed;公钥经可信钉扎通道送达,绝不走容器 env)"
+        )
     if args.remediation_evidence_file:
         evidence, evidence_error = _load_remediation_evidence(
             args.remediation_evidence_file, args.release_tag, args.release_sha
@@ -1846,8 +1905,6 @@ def main(argv: list[str] | None = None) -> int:
                     "缺 --remediation-evidence-artifact(必须对实际不可变证据"
                     "工件计算 SHA256;记录自述摘要不是证据)"
                 )
-        # 审批密钥(仅 A 可写;文件 > env 变量通道;绝不入 argv/日志)
-        approval_key, approval_key_error = _resolve_approval_key(args, env)
 
     # DSN 通道(显式、无回退):--isolation-pg-dsn-parts = 容器 env 组件装配;
     # 否则 file > env 变量。Weaviate URL/class:显式旗标 > env 变量名通道。
@@ -1871,8 +1928,8 @@ def main(argv: list[str] | None = None) -> int:
         remediation_evidence_error=evidence_error,
         remediation_artifact_digest=artifact_digest,
         remediation_artifact_error=artifact_error,
-        approval_key=approval_key,
-        approval_key_error=approval_key_error,
+        approval_public_key=approval_public_key,
+        approval_public_key_error=approval_public_key_error,
         release_tag=args.release_tag,
         release_sha=args.release_sha,
         pre_contract=args.pre_contract_release,

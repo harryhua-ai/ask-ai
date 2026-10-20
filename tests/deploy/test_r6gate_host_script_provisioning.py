@@ -1,32 +1,39 @@
-"""R6v2(G3 阻塞 2):宿主 update.sh 受信分发与 mutation 前能力钉扎。
+"""R6v3(G3 阻塞 2/3):宿主 update.sh 受信分发、锁内自验与零 rollout 中止。
 
-权威依据:Role A R6 离线审查 REQUEST_CHANGES(2026-10-20,阻塞 2):
-生产宿主 ~/ask-ai 非 git 仓库,update.sh 不随主干/镜像自动升级;R6 只改了
-源码树副本;workflow 顺序 preflight(3) → migrate(4) → 宿主 update.sh(5),
-旧宿主脚本若到步骤5 才因未知参数失败,已过 migration 边界。修复 = 新增
-provision_host_script 步骤(3.6,先于迁移):受信工件 = 冻结发行树
-$RELEASE_SHA 内的 deploy/prod/update.sh(git 权威解析),经 SSH stdin 以
-base64 安全分发 → 同目录 0600 临时件 → 宿主侧 SHA256 核对(传输中断/截断
-⇒ 拒绝)→ 能力断言(--remediation-evidence-file 支持)→ bash -n → 同目录
-原子 rename 安装(无半更新窗口)→ 安装后哈希复核;步骤5 执行前再复验宿主
-哈希(防 provision 后漂移)。任何失败 ⇒ 迁移之前中止。
+权威依据:
+- Role A R6 离线审查(2026-10-20,阻塞 2):宿主 ~/ask-ai 非 git 仓库,
+  update.sh 不随主干/镜像自动升级 ⇒ provision_host_script 步骤(先于迁移)
+  受信分发与能力钉扎;
+- Role A R6v2 实体 ZIP 审查 REQUEST_CHANGES(2026-10-20,阻塞 3):provision
+  的 flock 只在其 SSH 会话持有;步骤5 在进入自身 flock 前做哈希复核 ⇒
+  复核与执行间有竞争窗,不能宣称"所有脚本不匹配都在任何 mutation 前中止"。
+  修复(R6v3):workflow deploy 步删除锁外预复核与外层 flock 包装;update.sh
+  新增 ``--pinned-update-sh-sha256``,在【自身 flock 持有区间内】(内部锁
+  获取 [1.1/6] 后、任何 mutation 之前,[1.2/6])自验自身文件 sha256 ==
+  钉扎值,不匹配 ⇒ 零 rollout fail-closed ——「校验 + 执行」在同一锁持有
+  区间内原子完成。
+- 诚实语义(不夸大,写入 update.sh 头注):DB migration 由冻结镜像一次性
+  容器执行、【不依赖宿主 update.sh】⇒ 迁移与部署之间的宿主脚本漂移只会
+  导致 rollout 被 [1.2/6] fail-closed 拒绝(migration 本身不受宿主脚本
+  影响);手动 break-glass 未传 --pinned-update-sh-sha256 时不做哈希自验,
+  由 evaluator 证据门独立兜底。
 
 本沙箱走真实执行路径:从 deploy-production.yml 机械提取 provision_host_script
 与 deploy 两步的真实 run 文本执行(fake ssh / fake docker / fake curl /
-fake nvidia-smi / fake flock);preflight 与 migrate 以保形桩替代 —— 真实
-preflight 行为由 test_r3gate_*(T-SEC/T-WV/T-RT)沙箱覆盖,本文件证明:
-步骤真实顺序、provision 全部故障注入在迁移前 fail-closed、迁移零调用、
-部署阶段消费钉扎脚本与整改证据。
+fake flock);preflight 与 migrate 以保形桩替代 —— 真实 preflight 行为由
+T-SEC/T-WV/T-RT 沙箱覆盖,整改证据全链验证由
+test_r6gate_remediation_evidence 覆盖;本文件证明:步骤真实顺序、provision
+全部故障注入在迁移前 fail-closed、迁移零调用、锁内自验失败零 rollout、
+部署阶段消费钉扎脚本与整改证据(R6v3 非对称签名 + 钉扎公钥)。
 
-红线:全部离线确定性;密钥/工件为测试自造信任根;不连生产、不 push、
-不改门值;测试信任根绝不宣称生产已整改。
+红线:全部离线确定性;密钥/工件为测试自造信任根(RSA-2048 test-only 常量);
+不连生产、不 push、不改门值;测试信任根绝不宣称生产已整改。
 """
 
 from __future__ import annotations
 
 import base64
 import hashlib
-import hmac
 import json
 import os
 import shutil
@@ -40,6 +47,17 @@ REPO = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO / ".github" / "workflows" / "deploy-production.yml"
 EVALUATOR_SRC = REPO / "scripts" / "release_preflight.py"
 UPDATE_SH_SRC = REPO / "deploy" / "prod" / "update.sh"
+
+import sys  # noqa: E402
+
+_here = str(Path(__file__).resolve().parent)
+if _here not in sys.path:
+    sys.path.insert(0, _here)
+
+from remediation_v3_trust_root import (  # noqa: E402
+    ATTACKER_RSA_PRIVATE_KEY_PEM_FULL,
+    RsaTrustRoot,
+)
 
 TAG = "v1.0.0"
 GATE = "gate-token-x"
@@ -102,7 +120,6 @@ class Sandbox:
 
     # ------------------------------------------------------------------ shims
     def _write_shims(self) -> None:
-        self._shim_paths: list[Path] = []
         # fake flock:fd 形态(flock -w 0 9)⇒ exit 0;文件+命令形态
         # (flock -w 0 FILE CMD...)⇒ 执行命令(update.sh 原语必须真跑)
         (self.bin / "flock").write_text(
@@ -159,7 +176,13 @@ class Sandbox:
             # 传输中断注入 2:受信工件 base64 尾部被截(常见网络截断形态)⇒
             # 远端 base64 解码失败/内容截断 ⇒ 宿主侧哈希核对拒绝
             'if [ -n "${TSL_PROVISION_B64_OVERRIDE:-}" ]; then\n'
-            '  remote_cmd="$(printf "%s" "$remote_cmd" | sed "s|TRUSTED_UPDATE_SH_B64=\'[^\']*\'|TRUSTED_UPDATE_SH_B64=\'${TSL_PROVISION_B64_OVERRIDE}\'|")"\n'
+            '  remote_cmd="$(printf "%s" "$remote_cmd" | sed "s|TRUSTED_UPDATE_SH_B64=\'[^\']*\'|TRUSTED_UPDATE_SH_B64=\'${TSL_PROVISION_B64_OVERRIDE}\'|" )"\n'
+            "fi\n"
+            # 锁内自验失败注入(deploy 步专用:仅当远端命令含 R6v3
+            # pinned 旗标时才把 PROVISION_SHA256 替换为污染值)⇒
+            # update.sh [1.2/6] 自验不匹配 ⇒ 零 rollout
+            'if [ -n "${TSL_DEPLOY_SHA_OVERRIDE:-}" ] && printf "%s" "$script" | grep -qF -- \'pinned-update-sh-sha256 "$PROVISION_SHA256"\'; then\n'
+            '  remote_cmd="$(printf "%s" "$remote_cmd" | sed "s|PROVISION_SHA256=\'[^\']*\'|PROVISION_SHA256=\'${TSL_DEPLOY_SHA_OVERRIDE}\'|" )"\n'
             "fi\n"
             'if [ -n "${TSL_SSH_FAIL:-}" ]; then echo "fake ssh: connection lost" >&2; exit 255; fi\n'
             f'cd "{self.askai}"\n'
@@ -265,7 +288,7 @@ class Sandbox:
         preflight_fail: bool = False,
         evidence: dict | None = None,
         artifact: bytes | None = None,
-        approval_key_b64: str | None = None,
+        pubkey_b64: str | None = None,
         compat_incompatible: bool = True,
     ) -> dict:
         """按 workflow 真实顺序执行 preflight → provision → migrate → deploy。"""
@@ -273,7 +296,8 @@ class Sandbox:
         env["TSL_COMPAT_INCOMPATIBLE"] = "1" if compat_incompatible else "0"
         if preflight_fail:
             env["TSL_PREFLIGHT_FAIL"] = "1"
-        # 记录 + 工件经 secret 通道(env);审批密钥经宿主 .env(生产同路)
+        # 记录/工件/验证公钥均经 secret 通道(env;非秘密材料);R6v3 起无任何
+        # 审批**私钥**通道(旧宿主 .env HMAC 通道已删除)
         env["REMEDIATION_EVIDENCE_B64"] = (
             base64.b64encode(json.dumps(evidence).encode()).decode()
             if evidence is not None
@@ -282,14 +306,8 @@ class Sandbox:
         env["REMEDIATION_ARTIFACT_B64"] = (
             base64.b64encode(artifact or b"").decode() if artifact is not None else ""
         )
-        if approval_key_b64:
-            env_path = self.askai / ".env"
-            env_path.write_text(
-                env_path.read_text(encoding="utf-8")
-                + f"PREFLIGHT_REMEDIATION_APPROVAL_KEY={approval_key_b64}\n",
-                encoding="utf-8",
-            )
-        # 旧宿主脚本种子(历史版本:不含 R6v2 能力)
+        env["REMEDIATION_PUBKEY_B64"] = pubkey_b64 or ""
+        # 旧宿主脚本种子(历史版本:不含 R6v3 能力)
         old_script = "#!/bin/bash\necho old-host-update-sh\n"
         (self.prod / "update.sh").write_text(old_script, encoding="utf-8")
         os.chmod(self.prod / "update.sh", 0o750)
@@ -297,9 +315,6 @@ class Sandbox:
 
         results = {}
         for step_id in ("preflight", "provision_host_script", "migrate", "deploy"):
-            if step_id == "deploy" and evidence is not None:
-                # 部署步的 secret 通道在 env 中已设;保持
-                pass
             proc = self.run_step(step_id, env)
             results[step_id] = proc
             if proc.returncode != 0:
@@ -335,33 +350,40 @@ class Sandbox:
             else ""
         )
 
+    def remote_out_from(self, offset: int) -> str:
+        if not self.remote_out.exists():
+            return ""
+        return self.remote_out.read_bytes()[offset:].decode("utf-8", errors="replace")
+
+    def remote_out_offset(self) -> int:
+        return (
+            self.remote_out.stat().st_size if self.remote_out.exists() else 0
+        )
+
 
 # --------------------------------------------------------------------------- #
-# 测试信任根(记录 + 工件;密钥经宿主 .env 通道 —— 生产同路)
+# 测试信任根(R6v3:RSA-2048 测试密钥对;经生产签发工具同路签发;
+# 公钥经 secret 通道 env 形态传递 —— 生产同路,零宿主 .env 私钥通道)
 # --------------------------------------------------------------------------- #
-def _make_evidence(key: bytes) -> tuple[dict, bytes]:
-    from scripts.release_preflight import _approval_hmac_hex
+def _make_evidence(
+    tag: str = TAG, sha: str = FAKE_SHA, gate: str = GATE
+) -> tuple[dict, bytes, str]:
+    import tempfile
 
-    artifact = b"recovery-drill-evidence-bundle (test trust root)\n"
-    digest = hashlib.sha256(artifact).hexdigest()
-    record = {
-        "version": 2,
-        "gate": GATE,
-        "target_tag": TAG,
-        "release_sha": FAKE_SHA,  # update.sh 以镜像内 RELEASE.json git_sha 绑定
-        "evidence_digest": digest,
-        "evidence_ref": "recovery-drill/test/bundle",
-        "recorded_at": "2026-10-20T12:00:00+00:00",
-        "recorded_by": "role-a",
-        "not_after": "2099-01-01T00:00:00+00:00",
-        "approval": {
-            "approved_by": "role-a",
-            "approved_at": "2026-10-20T12:00:00+00:00",
-            "hmac_sha256": "0" * 64,
-        },
-    }
-    record["approval"]["hmac_sha256"] = _approval_hmac_hex(key, record)
-    return record, artifact
+    tr = RsaTrustRoot(Path(tempfile.mkdtemp(prefix="tsl-tr-")))
+    rec = tr.signed(gate=gate, target_tag=tag, release_sha=sha)
+    pubkey_b64 = tr.pubkey_b64()
+    return rec, tr.artifact.read_bytes(), pubkey_b64
+
+
+def _attacker_trust_root() -> RsaTrustRoot:
+    import tempfile
+
+    return RsaTrustRoot(
+        Path(tempfile.mkdtemp(prefix="tsl-atk-")),
+        pem=ATTACKER_RSA_PRIVATE_KEY_PEM_FULL,
+        label="attacker",
+    )
 
 
 @pytest.fixture
@@ -375,49 +397,54 @@ def sandbox(tmp_path):
 
 
 def test_p01_old_host_script_provisioned_and_full_path_succeeds(sandbox):
-    """P-01:旧宿主脚本(无 R6v2 能力)→ provision 原子替换为受信工件 →
-    迁移恰 1 次 → 部署消费钉扎脚本 + 整改证据全链通过。"""
-    key = os.urandom(48)
-    record, artifact = _make_evidence(key)
+    """P-01:旧宿主脚本(无 R6v3 能力)→ provision 原子替换为受信工件 →
+    迁移恰 1 次 → 部署消费钉扎脚本(锁内自验通过)+ R6v3 整改证据全链
+    (RSA 签名 + 钉扎公钥)真实放行。"""
+    record, artifact, pubkey_b64 = _make_evidence()
     res = sandbox.run_pipeline(
-        evidence=record,
-        artifact=artifact,
-        approval_key_b64=base64.b64encode(key).decode(),
+        evidence=record, artifact=artifact, pubkey_b64=pubkey_b64
     )
     assert res["preflight"].returncode == 0
     assert res["provision_host_script"].returncode == 0, res["provision_host_script"].stderr
+    assert res["migrate"].returncode == 0
     assert res["deploy"].returncode == 0, res["deploy"].stderr + res["deploy"].stdout
     # 宿主脚本 = 受信工件(内容级钉扎;旧脚本已被原子替换)
     assert sandbox.host_script_hash() == sandbox.trusted_hash()
     assert sandbox.host_script_text() == UPDATE_SH_SRC.read_text(encoding="utf-8")
-    # 迁移恰一次;真实 update.sh 完整执行(部署横幅)+ 不兼容门在证据
-    # 全链有效下真实放行(行为级证明:证据双通道被消费)
+    # 迁移恰一次;真实 update.sh 完整执行(部署横幅;锁内自验通过;不兼容门
+    # 在证据全链有效下真实放行 —— 行为级证明:记录/工件/公钥三通道被消费)
     assert sandbox.migrate_count() == 1
     out = sandbox.remote_out.read_text(encoding="utf-8")
     assert "=== ask-ai 部署:" in out, out[-500:]
     assert "兼容性 preflight 通过" in out, out[-800:]
+    assert "宿主脚本身份自验通过" in out, out[-800:]
     assert "backend 健康" in out
-    assert sandbox.remote_out.read_text(encoding="utf-8").count("HOST SCRIPT PROVISIONED") == 1
+    assert out.count("HOST SCRIPT PROVISIONED") == 1
+
 
 def test_p01b_stale_host_script_without_provision_fails(sandbox):
-    """P-01b 负例对照:跳过 provision 的陈旧宿主脚本不接受 R6v2 参数 ⇒
-    部署在 update.sh 入口 fail-closed(能力缺口的真实后果)。"""
-    key = os.urandom(48)
-    record, artifact = _make_evidence(key)
+    """P-01b 负例对照:跳过 provision 的陈旧宿主脚本(真实旧版形态:严格
+    参数词表、无 R6v3 能力)不接受 ``--pinned-update-sh-sha256`` 等新参数
+    ⇒ 部署入口 fail-closed(能力缺口的真实后果;诚实边界:deploy 步在
+    R6v3 不再做锁外哈希复核,陈旧任意脚本的哈希防线 = workflow 恒定先行的
+    provision 步 + 脚本自身锁内自验,本用例钉住的是词表防线)。"""
+    record, artifact, pubkey_b64 = _make_evidence()
     env = sandbox.base_env()
     env["TSL_COMPAT_INCOMPATIBLE"] = "1"
     env["REMEDIATION_EVIDENCE_B64"] = base64.b64encode(json.dumps(record).encode()).decode()
     env["REMEDIATION_ARTIFACT_B64"] = base64.b64encode(artifact).decode()
-    env_path = sandbox.askai / ".env"
-    env_path.write_text(
-        env_path.read_text(encoding="utf-8")
-        + f"PREFLIGHT_REMEDIATION_APPROVAL_KEY={base64.b64encode(key).decode()}\n",
-        encoding="utf-8",
+    env["REMEDIATION_PUBKEY_B64"] = pubkey_b64
+    stale = (
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'for a in "$@"; do case "$a" in --*) echo "❌ 未知选项: $a" >&2; exit 2 ;; esac; done\n'
+        'echo stale-host-update-sh\n'
     )
-    (sandbox.prod / "update.sh").write_text("#!/bin/bash\necho old\n")
+    (sandbox.prod / "update.sh").write_text(stale)
     os.chmod(sandbox.prod / "update.sh", 0o750)
     r_dep = sandbox.run_step("deploy", env)
     assert r_dep.returncode != 0, "陈旧宿主脚本必须因未知参数失败(fail-closed)"
+    assert "未知选项" in sandbox.remote_out.read_text(encoding="utf-8")
 
 
 def test_p02_transfer_truncation_aborts_before_migration(sandbox):
@@ -436,7 +463,7 @@ def test_p02_transfer_truncation_aborts_before_migration(sandbox):
 
 def test_p02b_truncated_artifact_hash_mismatch_rejected(sandbox):
     """P-02b:受信工件 base64 尾部截断(网络截断形态)⇒ 宿主侧 SHA256 核对
-    拒绝安装,旧脚本原状(直接执行 provision 远端脚本文本验证该分支)。"""
+    拒绝安装,旧脚本原状。"""
     env = sandbox.base_env()
     good_b64 = base64.b64encode(
         subprocess.run(
@@ -517,54 +544,92 @@ def test_p04_preflight_failure_zero_migration(sandbox):
     assert sandbox.migrate_count() == 0
 
 
-def test_p05_host_gate_rejects_invalid_evidence(sandbox):
-    """P-05:宿主脚本正确但整改证据无效(自填 HMAC)⇒ update.sh 内
-    evaluator fail-closed,部署拒绝(宿主侧回退门真实拦截)。"""
-    key = os.urandom(48)
-    record, artifact = _make_evidence(key)
-    record["approval"]["hmac_sha256"] = "c" * 64  # 自填伪 HMAC
+def test_p05_host_gate_rejects_attacker_signed_evidence(sandbox):
+    """P-05:宿主脚本正确但整改证据由攻击者自造密钥签发 ⇒ update.sh 内
+    evaluator(RSA 验签)fail-closed,部署拒绝(宿主侧回退门真实拦截)。"""
+    atk = _attacker_trust_root()
+    record = atk.signed(gate=GATE, target_tag=TAG, release_sha=FAKE_SHA)
     res = sandbox.run_pipeline(
         evidence=record,
-        artifact=artifact,
-        approval_key_b64=base64.b64encode(key).decode(),
+        artifact=atk.artifact.read_bytes(),
+        pubkey_b64=_make_evidence()[2],  # 钉扎的是受信公钥,非攻击者公钥
     )
-    assert res["deploy"].returncode != 0, "无效证据必须被宿主侧 evaluator 拒绝"
+    assert res["deploy"].returncode != 0, "攻击者签名的证据必须被宿主侧 evaluator 拒绝"
     out = sandbox.remote_out.read_text(encoding="utf-8")
     assert "审批无效" in out or "兼容性 preflight 未通过" in out
 
 
-def test_p06_post_provision_drift_detected_before_deploy(sandbox):
-    """P-06:provision 之后、部署之前宿主脚本被篡改 ⇒ 步骤5 前置复验拒绝。"""
-    key = os.urandom(48)
-    record, artifact = _make_evidence(key)
+def test_p05b_evidence_without_pubkey_blocked(sandbox):
+    """P-05b:提供证据但公钥通道缺省 ⇒ evaluator 结构化拒绝(fail-closed;
+    绝不回退任何 env 通道 —— R6v2 的 env 通道已删除)。"""
+    record, artifact, _ = _make_evidence()
+    res = sandbox.run_pipeline(evidence=record, artifact=artifact, pubkey_b64="")
+    assert res["deploy"].returncode != 0
+    out = sandbox.remote_out.read_text(encoding="utf-8")
+    assert "审批不可验证" in out or "兼容性 preflight 未通过" in out
+
+
+def test_p06_post_provision_drift_detected_by_locked_selfverify(sandbox):
+    """P-06(R6v3 阻塞 3):provision 之后、部署之前宿主脚本被篡改 ⇒
+    update.sh【锁内自验】([1.2/6],任何 rollout mutation 前)拒绝,
+    零 rollout。诚实边界演示:迁移已在独立步骤完成(冻结镜像执行,不依赖
+    宿主脚本),宿主漂移只阻断 rollout。"""
+    record, artifact, pubkey_b64 = _make_evidence()
     env = sandbox.base_env()
     env["TSL_COMPAT_INCOMPATIBLE"] = "1"
     env["REMEDIATION_EVIDENCE_B64"] = base64.b64encode(json.dumps(record).encode()).decode()
     env["REMEDIATION_ARTIFACT_B64"] = base64.b64encode(artifact).decode()
-    env_path = sandbox.askai / ".env"
-    env_path.write_text(
-        env_path.read_text(encoding="utf-8")
-        + f"PREFLIGHT_REMEDIATION_APPROVAL_KEY={base64.b64encode(key).decode()}\n",
-        encoding="utf-8",
-    )
+    env["REMEDIATION_PUBKEY_B64"] = pubkey_b64
     (sandbox.prod / "update.sh").write_text("#!/bin/bash\necho old\n")
     os.chmod(sandbox.prod / "update.sh", 0o750)
     r_prov = sandbox.run_step("provision_host_script", env)
     assert r_prov.returncode == 0
-    # provision 与 deploy 之间的漂移注入(模拟 provisioning 后被篡改)
+    r_mig = sandbox.run_step("migrate", env)
+    assert r_mig.returncode == 0
+    # provision/migrate 与 deploy 之间的漂移注入(模拟安装后被篡改)
     with open(sandbox.prod / "update.sh", "a", encoding="utf-8") as fh:
         fh.write("\n# TAMPERED\n")
+    offset = sandbox.remote_out_offset()
     r_dep = sandbox.run_step("deploy", env)
     assert r_dep.returncode != 0
-    assert "受信工件不一致" in sandbox.remote_out.read_text(encoding="utf-8")
+    tail = sandbox.remote_out_from(offset)
+    assert "锁内自验失败" in tail
+    assert "零 rollout" in tail
+    # 诚实语义:迁移已发生(不受宿主脚本影响);rollout 被 fail-closed 拒绝
+    assert sandbox.migrate_count() == 1
+    assert "拉取镜像" not in tail, "自验失败 ⇒ 零 rollout([2/6] 不得执行)"
+    assert "backend 健康" not in tail
+    assert "部署完成" not in tail
 
 
-# --------------------------------------------------------------------------- #
-# 静态接线:真实 workflow 步骤序 + provision/deploy 关键机制
-# --------------------------------------------------------------------------- #
+def test_p10_pinned_hash_pollution_zero_rollout(sandbox):
+    """P-10(R6v3 新增故障注入):锁内自验的钉扎值被污染 ⇒ update.sh 在
+    [1.2/6] 中止且零 rollout(update.sh 无 rollout 执行痕迹/无健康检查)。"""
+    record, artifact, pubkey_b64 = _make_evidence()
+    env = sandbox.base_env()
+    env["TSL_COMPAT_INCOMPATIBLE"] = "1"
+    env["REMEDIATION_EVIDENCE_B64"] = base64.b64encode(json.dumps(record).encode()).decode()
+    env["REMEDIATION_ARTIFACT_B64"] = base64.b64encode(artifact).decode()
+    env["REMEDIATION_PUBKEY_B64"] = pubkey_b64
+    env["TSL_DEPLOY_SHA_OVERRIDE"] = "e" * 64  # 钉扎值污染(注入)
+    (sandbox.prod / "update.sh").write_text("#!/bin/bash\necho old\n")
+    os.chmod(sandbox.prod / "update.sh", 0o750)
+    r_prov = sandbox.run_step("provision_host_script", env)
+    assert r_prov.returncode == 0, "provision 用真实 git 权威哈希,不受注入影响"
+    offset = sandbox.remote_out_offset()
+    r_dep = sandbox.run_step("deploy", env)
+    assert r_dep.returncode != 0
+    tail = sandbox.remote_out_from(offset)
+    assert "锁内自验失败" in tail, tail[-600:]
+    # 零 rollout:任何 mutation 之前中止(无 pull/up/health 痕迹)
+    assert "拉取镜像" not in tail
+    assert "更新 backend" not in tail
+    assert "backend 健康" not in tail
+    assert "部署完成" not in tail
+    assert sandbox.migrate_count() == 0, "本用例只跑 provision+deploy,迁移未发生"
 
 
-def test_p07_workflow_step_order_provision_before_migrate():
+def test_p11_workflow_step_order_provision_before_migrate():
     """真实 workflow 步骤序:preflight → provision_host_script → migrate →
     deploy(宿主脚本身份/能力验证严格先于任何 mutation)。"""
     ids = _step_ids()
@@ -573,27 +638,66 @@ def test_p07_workflow_step_order_provision_before_migrate():
     assert ids.index("migrate") < ids.index("deploy")
 
 
-def test_p08_provision_step_mechanics():
+def test_p12_provision_step_mechanics():
     """provision 步骤机制面:git 权威解析 + 工作区完整性对照 + 宿主哈希核对
-    + 能力断言 + 语法校验 + 同目录原子 rename + 安装后复核 + 宿主锁。"""
+    + 能力断言(证据 + R6v3 锁内自验) + 语法校验 + 同目录原子 rename +
+    安装后复核 + 宿主锁。"""
     text = _step_text("provision_host_script")
     assert 'git show "$RELEASE_SHA:deploy/prod/update.sh"' in text
     assert "TRUSTED_HASH" in text and "WORKTREE_HASH" in text
     assert "脏树/篡改" in text
     assert ".update-sh.provision." in text, "必须使用目标同目录临时件(原子 rename 前提)"
     assert "grep -q -- '--remediation-evidence-file'" in text, "能力断言必须独立于哈希"
+    assert "grep -q -- '--pinned-update-sh-sha256'" in text, "R6v3 锁内自验能力必须断言"
     assert "bash -n" in text
     assert 'mv -f "$TMP_INST" "$TARGET"' in text
     assert "安装后哈希不匹配" in text
     assert "askai-deploy.lock" in text, "必须持有与部署同一把宿主锁"
 
 
-def test_p09_deploy_step_reverify_and_evidence_channels():
-    """deploy 步骤:执行前复验宿主哈希 + 证据记录/工件双通道 + 审批密钥
-    不经 SSH 传输(经宿主 .env)。"""
+def test_p13_deploy_step_ownership_in_update_sh_and_evidence_channels():
+    """deploy 步:锁外预复核已删(逻辑移入 update.sh 锁内)、外层 flock 已
+    删;钉扎哈希经 env 前缀传入;证据/工件/公钥三通道 + 零审批私钥映射。"""
     text = _step_text("deploy")
-    assert "PROVISION_SHA256" in text and "受信工件不一致" in text
+    assert "--pinned-update-sh-sha256" in text
+    assert "PROVISION_SHA256" in text
+    # 锁外预复核必须删除(R6v2 的 HOST_SH_HASH 复核块)
+    assert "受信工件不一致" not in text
+    assert "HOST_SH_HASH" not in text
+    # 外层 flock 包装必须删除(锁所有权移入 update.sh [1.1/6])
+    assert "flock -w 0 /tmp/askai-deploy.lock" not in text
+    assert "flock -w 0 " not in text
+    # 三通道 + 公钥容器/宿主 0600 临时件纪律
     assert "--remediation-evidence-file" in text
     assert "--remediation-evidence-artifact" in text
+    assert "--remediation-approval-public-key-file" in text
+    assert "REMEDIATION_PUBKEY_B64" in text
+    # 零审批私钥材料(动态构造避免本文件残留被删字面)
+    channel = "secrets." + "PREFLIGHT_REMEDIATION_" + "APPROVAL_KEY"
+    assert channel not in text
     assert "APPROVAL_KEY_B64" not in text
-    assert "secrets.PREFLIGHT_REMEDIATION_APPROVAL_KEY" not in text
+    # 公钥钉扎通道纪律:SSH stdin → 0600 临时件
+    assert "askai-approval-pubkey" in text
+
+
+def test_p14_update_sh_locked_selfverify_mechanics():
+    """update.sh 机制面:内部 flock([1.1/6])→ 锁内自验([1.2/6])→
+    诚实语义头注(migration 不依赖宿主脚本 / break-glass 边界)。"""
+    text = UPDATE_SH_SRC.read_text(encoding="utf-8")
+    assert 'PINNED_UPDATE_SH_SHA256=""' in text
+    assert "--pinned-update-sh-sha256" in text
+    assert 'exec 9>"${TMPDIR:-/tmp}/askai-deploy.lock"' in text
+    assert 'flock -w 0 9' in text
+    assert "[1.1/6]" in text and "[1.2/6]" in text
+    # 自验在锁获取之后、任何 mutation([2/6] pull)之前
+    lock_idx = text.rindex("[1.1/6]")
+    verify_idx = text.rindex("[1.2/6]")
+    pull_idx = text.rindex("[2/6] 拉取镜像")
+    assert lock_idx < verify_idx < pull_idx
+    # 钉扎值形状校验 + 实测 sha256 比对 + 零 rollout 文案
+    assert 'python3 -c \'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())\' "$0"' in text
+    assert "锁内自验失败" in text and "零 rollout" in text
+    # 诚实边界头注(migration 由冻结镜像执行;break-glass 未钉扎时由
+    # evaluator 证据门独立兜底)
+    assert "不依赖本宿主脚本" in text
+    assert "evaluator" in text and "证据门" in text

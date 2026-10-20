@@ -9,18 +9,39 @@
 #   - 回滚兼容性由【目标发布】冻结镜像内的 compatibility manifest 声明权威裁定;
 #   - 目标发布声明 previous_compatible: true ⇒ 普通 previous-tag 回滚照常可用;
 #   - 目标发布声明 previous_compatible: false ⇒ 普通 previous-tag 回滚不再适用,
-#     必须提供【真实不可变证据工件 + 受信审批】(A #138 P3 + R6v2):
+#     必须提供【真实不可变证据工件 + 非对称签名审批】(A #138 P3 + R6v3):
 #       ./deploy/prod/update.sh <tag> --remediation-evidence-file <record.json> \
-#           --remediation-evidence-artifact <artifact.bin>
-#         (可选 --remediation-approval-key-file;缺省读 .env 的
-#          PREFLIGHT_REMEDIATION_APPROVAL_KEY)
+#           --remediation-evidence-artifact <artifact.bin> \
+#           --remediation-approval-public-key-file <pubkey.json>
 #     evaluator fail-closed 全链验证:实际工件 SHA256 == 记录声明摘要;
-#     审批 HMAC(仅 A 可写的受信密钥签发,自填 recorded_by 不构成审批);
+#     审批 = RSASSA-PKCS1-v1_5(SHA-256) 签名(纯 stdlib 验签):私钥仅在
+#     A 离线受控路径(scripts/sign_remediation_approval.py 签发),验证公钥
+#     为非秘密材料、经可信钉扎通道(与信任锚同款:workflow secret → SSH
+#     stdin → 0600 临时文件)送达,绝不走 compose env_file/容器 env ——
+#     R6v2 的对称 HMAC 密钥 env 通道已整体删除(公钥无法签发 ⇒ 应用容器
+#     env 权限不构成签发能力);
 #     gate == manifest 声明 ∧ target_tag == 本 tag ∧ release_sha == 镜像内
-#     RELEASE.json git_sha(镜像身份绑定);not_after 未过期。任一环失败
-#     ⇒ 任何 mutation 之前 fail-closed。--remediation-ack 仅保留 CLI 兼容,
-#     单独使用不再构成合法放行);
+#     RELEASE.json git_sha(诚实边界:release_sha 是 git_sha 断言,非 OCI
+#     image 内容摘要);not_after 未过期。任一环失败 ⇒ 任何 rollout mutation
+#     之前 fail-closed。--remediation-ack 仅保留 CLI 兼容,单独使用不再构成
+#     合法放行);
 #   - 本脚本不自行判定回退安全性,也不自动回滚 —— 只执行目标发布的冻结声明。
+#
+# 宿主脚本身份自验(R6v3,A R6v2 审查阻塞 3 修复;--pinned-update-sh-sha256):
+#   - 工作流恒传 --pinned-update-sh-sha256 <64hex>(= 受信工件哈希,git 冻结
+#     发行树权威解析);本脚本在【自身 flock 持有区间内】(内部锁获取后、
+#     任何 mutation 之前,步骤 [1.2/6])对自身文件计算 sha256 并与钉扎值
+#     精确比对,不一致 ⇒ fail-closed(零 rollout)——「校验 + 执行」在同一
+#     锁持有区间内原子完成,消除 R6v2「锁外预复核与执行之间的竞争窗」;
+#   - 诚实边界(不夸大):DB migration 由【冻结镜像一次性容器】执行
+#     (workflow 步骤 4),【不依赖本宿主脚本】⇒ 迁移与本脚本之间的宿主
+#     脚本漂移只会导致 rollout 在 [1.2/6] 被 fail-closed 拒绝(migration
+#     本身不受宿主脚本影响);所有「宿主脚本不匹配 ⇒ 拒绝」发生在任何
+#     rollout mutation 之前,但不宣称阻止 migration;
+#   - 手动 break-glass 旁路:本脚本在提供 --pinned-update-sh-sha256 时同样
+#     强制自验(工作流恒传);未提供该旗标时不做哈希自验,由 evaluator
+#     证据门(工件 SHA256 + 签名审批 + 身份绑定)独立兜底 —— 该边界如实
+#     写明,本脚本不宣称未钉扎路径具备哈希自验能力。
 #
 # 契约(#10 冻结):
 #   - 缺少 tag 参数 → 失败(禁止隐式升级);
@@ -74,7 +95,8 @@ TAG=""
 REMEDIATION_ACK=""
 REMEDIATION_EVIDENCE_FILE=""
 REMEDIATION_EVIDENCE_ARTIFACT=""
-REMEDIATION_APPROVAL_KEY_FILE=""
+REMEDIATION_APPROVAL_PUBLIC_KEY_FILE=""
+PINNED_UPDATE_SH_SHA256=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --remediation-ack)
@@ -92,11 +114,16 @@ while [ $# -gt 0 ]; do
             REMEDIATION_EVIDENCE_ARTIFACT="$2"; shift 2 ;;
         --remediation-evidence-artifact=*)
             REMEDIATION_EVIDENCE_ARTIFACT="${1#*=}"; shift ;;
-        --remediation-approval-key-file)
-            [ -n "${2:-}" ] || { echo "❌ --remediation-approval-key-file 需要审批密钥文件路径" >&2; exit 2; }
-            REMEDIATION_APPROVAL_KEY_FILE="$2"; shift 2 ;;
-        --remediation-approval-key-file=*)
-            REMEDIATION_APPROVAL_KEY_FILE="${1#*=}"; shift ;;
+        --remediation-approval-public-key-file)
+            [ -n "${2:-}" ] || { echo "❌ --remediation-approval-public-key-file 需要验证公钥文件路径" >&2; exit 2; }
+            REMEDIATION_APPROVAL_PUBLIC_KEY_FILE="$2"; shift 2 ;;
+        --remediation-approval-public-key-file=*)
+            REMEDIATION_APPROVAL_PUBLIC_KEY_FILE="${1#*=}"; shift ;;
+        --pinned-update-sh-sha256)
+            [ -n "${2:-}" ] || { echo "❌ --pinned-update-sh-sha256 需要 64 位 hex 钉扎值" >&2; exit 2; }
+            PINNED_UPDATE_SH_SHA256="$2"; shift 2 ;;
+        --pinned-update-sh-sha256=*)
+            PINNED_UPDATE_SH_SHA256="${1#*=}"; shift ;;
         --*)
             echo "❌ 未知选项: $1" >&2; exit 2 ;;
         *)
@@ -126,6 +153,40 @@ BACKEND_PORT="${BACKEND_PORT:-18000}"
 EXPECTED_VERSION="${TAG#v}"   # RELEASE.json 内为无前缀 SemVer
 
 echo "=== ask-ai 部署:$IMAGE:$TAG(期望 version=$EXPECTED_VERSION)==="
+
+# ---------- [1.1/6] 宿主部署锁(R6v3 阻塞 3:锁所有权移入本脚本) ----------
+# 本脚本自身获取与 provision/migrate 同一把宿主锁(非阻塞;与并发部署/
+# 更新互斥)—— 锁从任何 mutation 之前一直持有到脚本退出,自验与执行
+# 由此处于同一锁持有区间(替代 R6v2 由 workflow 外层 flock 包装的形态)。
+exec 9>"${TMPDIR:-/tmp}/askai-deploy.lock"
+flock -w 0 9 || { echo "❌ 部署锁被占用(另一生产变更在执行),拒绝部署" >&2; exit 1; }
+
+# ---------- [1.2/6] 宿主脚本身份自验(R6v3 阻塞 3;锁内、任何 mutation 前) ----------
+# 工作流恒传 --pinned-update-sh-sha256(= 受信工件哈希,git 冻结发行树权威
+# 解析)。在自身 flock 持有区间内对自身文件实测 sha256 并精确比对;不一致
+# ⇒ 零 rollout fail-closed(自分发后漂移/篡改在执行前被拒)。
+# 诚实边界:未提供钉扎值时不做哈希自验(手动 break-glass 旁路),由
+# evaluator 证据门独立兜底 —— 见头注。
+if [ -n "$PINNED_UPDATE_SH_SHA256" ]; then
+    case "$PINNED_UPDATE_SH_SHA256" in
+        *[!0-9a-f]*|"")
+            echo "❌ --pinned-update-sh-sha256 形状非法(须为 64 位小写 hex)—— 任何 mutation 之前 fail-closed" >&2
+            exit 1 ;;
+    esac
+    if [ "${#PINNED_UPDATE_SH_SHA256}" -ne 64 ]; then
+        echo "❌ --pinned-update-sh-sha256 形状非法(须为 64 位小写 hex)—— 任何 mutation 之前 fail-closed" >&2
+        exit 1
+    fi
+    SELF_SH_HASH="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$0")"
+    if [ "$SELF_SH_HASH" != "$PINNED_UPDATE_SH_SHA256" ]; then
+        echo "❌ update.sh 锁内自验失败:自身文件 sha256 与 --pinned-update-sh-sha256 钉扎值不一致" >&2
+        echo "   (宿主脚本与受信工件不一致:自分发后漂移/篡改;got=$SELF_SH_HASH want=$PINNED_UPDATE_SH_SHA256)" >&2
+        echo "   —— 零 rollout:任何 mutation 之前 fail-closed(R6v3 阻塞 3:校验+执行同锁区间原子完成)" >&2
+        exit 1
+    fi
+    echo "  ✅ 宿主脚本身份自验通过(锁内;sha256=$SELF_SH_HASH;先于任何 mutation)"
+fi
+
 
 # ---------- post-deploy 回退指引(#46 REVIEW_2;AC4 条件化) ----------
 # post-deploy operator guidance 必须遵循【本次已部署发布】冻结声明的 rollback
@@ -231,8 +292,10 @@ if [ "$PREFLIGHT_ERA" = "contract" ]; then
             echo "❌ 提供 --remediation-evidence-file 时必须同时提供 --remediation-evidence-artifact(记录自述不是证据,必须实测工件)" >&2
             rm -f "$PREFLIGHT_MAN" "$PREFLIGHT_EVAL"; exit 1; }
         EVIDENCE_ARGS+=(--remediation-evidence-artifact "$REMEDIATION_EVIDENCE_ARTIFACT")
-        if [ -n "$REMEDIATION_APPROVAL_KEY_FILE" ]; then
-            EVIDENCE_ARGS+=(--remediation-approval-key-file "$REMEDIATION_APPROVAL_KEY_FILE")
+        # 验证公钥(非秘密;经可信钉扎通道送达的 0600 文件)—— 缺失由
+        # evaluator fail-closed(审批无法验证,绝不放行)
+        if [ -n "$REMEDIATION_APPROVAL_PUBLIC_KEY_FILE" ]; then
+            EVIDENCE_ARGS+=(--remediation-approval-public-key-file "$REMEDIATION_APPROVAL_PUBLIC_KEY_FILE")
         fi
     fi
     python3 "$PREFLIGHT_EVAL" \

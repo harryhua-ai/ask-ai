@@ -339,14 +339,15 @@ def test_rollback_incompatible_with_matching_ack_alone_blocked(tmp_path, capsys)
 
 
 def test_rollback_incompatible_bound_evidence_passes(tmp_path, capsys):
-    """(P3 合法放行面,R6v2)真实工件(SHA256 实测一致)+ 受信审批 HMAC
-    + gate/tag/sha 三重绑定 ⇒ pass。"""
-    import base64
-    import hashlib
-    import hmac as _hmac
-    import os
+    """(P3 合法放行面,R6v3)真实工件(SHA256 实测一致)+ RSA-2048 签名
+    审批(经生产签发工具同路签发;验证公钥钉扎文件)+ gate/tag/sha 三重
+    绑定 ⇒ pass。"""
+    import sys
 
-    from scripts.release_preflight import _approval_hmac_hex
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    from remediation_v3_trust_root import RsaTrustRoot
 
     m = _write_manifest(
         tmp_path,
@@ -355,36 +356,15 @@ def test_rollback_incompatible_bound_evidence_passes(tmp_path, capsys):
             "remediation_gate": "release_mig_002_reindex",
         }),
     )
-    key = os.urandom(48)
-    artifact = tmp_path / "bundle.bin"
-    artifact.write_bytes(b"recovery-drill-evidence (test trust root)\n")
-    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
-    record = {
-        "version": 2,
-        "gate": "release_mig_002_reindex",
-        "target_tag": "v9.9.9",
-        "release_sha": "a" * 40,
-        "evidence_digest": digest,
-        "evidence_ref": "recovery-drill/2026-10-20/bundle-sha",
-        "recorded_at": "2026-10-20T12:00:00+00:00",
-        "recorded_by": "role-a",
-        "not_after": "2099-01-01T00:00:00+00:00",
-        "approval": {
-            "approved_by": "role-a",
-            "approved_at": "2026-10-20T12:00:00+00:00",
-            "hmac_sha256": "0" * 64,
-        },
-    }
-    record["approval"]["hmac_sha256"] = _approval_hmac_hex(key, record)
+    tr = RsaTrustRoot(tmp_path / "trust-root")
+    record = tr.signed(gate="release_mig_002_reindex")
     ev = tmp_path / "evidence.json"
     ev.write_text(json.dumps(record), encoding="utf-8")
-    key_path = tmp_path / "key.b64"
-    key_path.write_text(base64.b64encode(key).decode() + "\n", encoding="utf-8")
     assert _run([
         "--manifest", str(m),
         "--remediation-evidence-file", str(ev),
-        "--remediation-evidence-artifact", str(artifact),
-        "--remediation-approval-key-file", str(key_path),
+        "--remediation-evidence-artifact", str(tr.artifact),
+        "--remediation-approval-public-key-file", str(tr.pubkey_path),
         "--release-tag", "v9.9.9",
         "--release-sha", "a" * 40,
     ]) == 0

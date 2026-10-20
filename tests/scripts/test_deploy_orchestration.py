@@ -130,7 +130,15 @@ class TestWorkflowContract:
         assert "deploy/prod/update.sh" in deploy["run"]
         for forbidden in ("docker compose", "docker pull", "docker build", "ghcr.io/harryhua-ai/ask-ai:"):
             assert forbidden not in deploy["run"], forbidden
-        assert "flock -w 0 /tmp/askai-deploy.lock" in deploy["run"]
+        # R6v3(阻塞 3):宿主锁所有权移入 update.sh 自身(内部 flock,[1.1/6]);
+        # deploy 步不再外层 flock 包装、不再做锁外预复核,改传
+        # --pinned-update-sh-sha256 由脚本在锁持有区间内自验(校验+执行同锁
+        # 区间原子完成)。锁互斥语义不弱化:同一把宿主锁仍贯穿
+        # preflight/provision/migrate/update.sh 全部执行面。
+        assert "flock -w 0 /tmp/askai-deploy.lock" not in deploy["run"]
+        assert "--pinned-update-sh-sha256" in deploy["run"]
+        assert "PROVISION_SHA256" in deploy["run"]
+        assert "flock -w 0" in text  # preflight/provision/migrate/宿主锁仍强制
         assert "docker build" not in text  # 全 workflow 禁止构建
         migrate = [s for s in workflow["jobs"]["deploy"]["steps"] if s.get("id") == "migrate"][0]
         assert "docker compose" in migrate["run"]  # 迁移执行载体(例外,见上)

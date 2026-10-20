@@ -25,9 +25,10 @@ chunk 回滚证据时宣告 ``rollback.previous_compatible=true``:
   合法放行(「仅有字符串相等判断的 remediation_ack 不是安全整改证明,不能
   凭命令行传入相同字符串获得合法放行」)——唯一合法放行面 = 绑定目标发行
   与证据身份的整改证据工件(``update.sh --remediation-evidence-file`` +
-  ``--release-tag``;workflow 经 ``PREFLIGHT_REMEDIATION_EVIDENCE_B64``
-  消费同一机制),且证据工件存在不代替 #121 实际生产验证与 A 对证据本身
-  的 GO 判断;
+  ``--release-tag`` + ``--remediation-approval-public-key-file``;workflow
+  经 ``PREFLIGHT_REMEDIATION_EVIDENCE_B64`` 消费同一机制;R6v3 起审批 =
+  RSA-2048 非对称签名,验证公钥经钉扎通道送达),且证据工件存在不代替
+  #121 实际生产验证与 A 对证据本身的 GO 判断;
 - AC3:两版 known-upload missing/[]/[widget]/[api] 授权差异、release
   manifest 判定、update.sh 回滚文案与渠道负例,全部只读/本地模拟;
   不扩大任何来源授权、不改默认隔离。
@@ -296,55 +297,27 @@ def test_preflight_string_ack_alone_no_longer_releases(monkeypatch, capsys, tmp_
 
 
 def _trust_root(tmp_path: Path):
-    """测试信任根:自造 HMAC 密钥 + 真实工件 + 已签发 v2 记录(绝不宣称
-    生产整改;与 test_r6gate_remediation_evidence 同构)。"""
-    import base64
-    import hashlib
-    import hmac as _hmac
-    import os
+    """测试信任根(R6v3):预生成 test-only RSA-2048 密钥对 + 真实工件 +
+    经生产签发工具同路签发的 v3 记录(绝不宣称生产整改;与
+    test_r6gate_remediation_evidence 同构,共享 remediation_v3_trust_root)。"""
+    import sys
 
-    from scripts.release_preflight import _approval_hmac_hex
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    from remediation_v3_trust_root import RsaTrustRoot
 
-    key = os.urandom(48)
-    artifact = tmp_path / "bundle.bin"
-    artifact.write_bytes(b"recovery-drill-evidence (test trust root)\n")
-    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
-    record = {
-        "version": 2,
-        "gate": GATE,
-        "target_tag": "v9.9.9",
-        "release_sha": "a" * 40,
-        "evidence_digest": digest,
-        "evidence_ref": "recovery-drill/2026-10-20/bundle-sha",
-        "recorded_at": "2026-10-20T12:00:00+00:00",
-        "recorded_by": "role-a",
-        "not_after": "2099-01-01T00:00:00+00:00",
-        "approval": {
-            "approved_by": "role-a",
-            "approved_at": "2026-10-20T12:00:00+00:00",
-            "hmac_sha256": "0" * 64,
-        },
-    }
-    record.update(
-        {
-            "gate": GATE,
-            **{k: v for k, v in [
-                ("target_tag", record["target_tag"]),
-            ]},
-        }
-    )
-    record["approval"]["hmac_sha256"] = _approval_hmac_hex(key, record)
+    tr = RsaTrustRoot(tmp_path / "trust-root")
+    record = tr.signed(gate=GATE)
     path = tmp_path / "evidence.json"
     path.write_text(json.dumps(record), encoding="utf-8")
-    key_path = tmp_path / "key.b64"
-    key_path.write_text(base64.b64encode(key).decode() + "\n", encoding="utf-8")
     return {
         "record": path,
-        "artifact": artifact,
-        "key": key_path,
+        "artifact": tr.artifact,
+        "pubkey": tr.pubkey_path,
         "tag": "v9.9.9",
         "sha": "a" * 40,
-        "digest": digest,
+        "digest": tr.digest,
     }
 
 
@@ -357,7 +330,7 @@ def test_preflight_accepts_bound_remediation_evidence(monkeypatch, capsys, tmp_p
         monkeypatch,
         "--remediation-evidence-file", str(tr["record"]),
         "--remediation-evidence-artifact", str(tr["artifact"]),
-        "--remediation-approval-key-file", str(tr["key"]),
+        "--remediation-approval-public-key-file", str(tr["pubkey"]),
         "--release-tag", tr["tag"],
         "--release-sha", tr["sha"],
     )
@@ -381,7 +354,7 @@ def test_preflight_rejects_cross_release_evidence_binding(monkeypatch, capsys, t
         monkeypatch,
         "--remediation-evidence-file", str(tr["record"]),
         "--remediation-evidence-artifact", str(tr["artifact"]),
-        "--remediation-approval-key-file", str(tr["key"]),
+        "--remediation-approval-public-key-file", str(tr["pubkey"]),
         "--release-tag", "v9.9.8",
         "--release-sha", tr["sha"],
     )
