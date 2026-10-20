@@ -7,7 +7,7 @@
  "claimed_at": "2026-10-20T06:00:51Z",
  "lease_expires_at": "2026-10-20T08:21:34Z",
  "execution_base": "1e5af8829ffb8e4b503ed78562cc7e0600a3dc78",
- "status": "active",
+ "status": "delivered",
  "branch": "agent/181/1ef09cbd",
  "heartbeat_at": "2026-10-20T08:15:34Z",
  "supersedes": null,
@@ -59,5 +59,12 @@
   "sha": "5268ff1419d04aebedac9c0be8a4e1f1b3ad28f8",
   "note": "Candidate 5268ff14 (exact SHA, PR head \u540c\u4e00) = 823b025c + \u5355\u4e00 R2 \u7a84\u4fee commit(\u4e0d amend):Weaviate Aggregate \u4e24 alias meta.count \u53ea\u63a5\u53d7\u975e\u8d1f\u771f\u6b63 JSON \u6574\u6570(type(x) is int \u663e\u5f0f\u6392\u9664 bool;bool/float/\u5b57\u7b26\u4e32/null/\u635f\u574f shape \u4e00\u5f8b probe_failed fail-closed);\u5408\u6cd5\u7a7a Aggregate \u4e0e total=0\u2192BLOCKED \u8bed\u4e49\u4e0d\u52a8;\u76f8\u90bb PG \u901a\u9053\u6838\u5bf9\u65e0\u540c\u7c7b\u9057\u6f0f\u4e0d\u6269\u5927\u3002RED(823b025c \u5b9e\u6d4b):False/0.0/0.5/\"0\" \u5047 clean PASS\u3001True/\"3\" \u5047 objects_present(6 failed/10 passed);GREEN:16/16(8 \u975e\u6cd5\u503c\u8d1f\u4f8b+7 \u635f\u574f shape \u8d1f\u4f8b+\u5408\u6cd5 0/3/total=0 \u8bed\u4e49\u9489\u4f4f)\u3002\u5b9a\u5411\u56de\u5f52 12 \u5957\u4ef6 190 passed/0 failed/0 skipped(\u542b\u672c\u5730\u771f\u5b9e 1.28.0 T-WV-09 \u5b9e\u8dd1)\u3002scope-check 20/20 ALLOWED\u3002\u4e0d\u5ba3\u79f0 CI GREEN;#138 \u7ef4\u6301 NO-GO\u3002",
   "delivered_at": "2026-10-20T08:17:04Z"
+ },
+ "completed": {
+  "pr": 182,
+  "merge_commit": "eee5da1e74a4fbf460c2f1a4f1fe66f2ffbfdf49",
+  "candidate_sha": "5268ff1419d04aebedac9c0be8a4e1f1b3ad28f8",
+  "completed_by": "ght-complete-workflow",
+  "completed_at": "2026-10-20T08:29:19Z"
  }
 }
