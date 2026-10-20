@@ -583,7 +583,9 @@ def probe_filesystem_objects(wv_cfg: dict, timeout_s: int) -> int:
     """filesystem 类 Weaviate 对象数(只读探针;R4-1 双身份模式)。
 
     R2-4②/③:先 GET ``/v1/meta``(形状 sanity);GraphQL 单请求双聚合取
-    「集合总对象数」与「filesystem 类对象数」,总对象 = 0 →
+    「集合总对象数」与「filesystem 类对象数」,两 alias 的 ``meta.count``
+    只接受非负真正 JSON 整数(R2 复审阻塞:bool/float/字符串/null 一律
+    fail-closed,绝不隐式转换成计数),总对象 = 0 →
     ``IsolationTargetUnproven``(BLOCKED)。
 
     R3-1(v1 锚模式,新版本 Weaviate):GET /v1/schema,目标 collection 的
@@ -779,16 +781,27 @@ def probe_filesystem_objects(wv_cfg: dict, timeout_s: int) -> int:
         aggregate = data.get("data", {}).get("Aggregate", {}) if isinstance(data, dict) else {}
 
         def _count_of(alias: str) -> int:
+            # R2 复审阻塞(AC2):count 只接受**非负真正 JSON 整数**。
+            # int() 的隐式转换会把非法证据变成 clean 0 → 假 PASS
+            # (false→0、0.5→截断 0、"0"→0);type(x) is int 显式排除 bool
+            # (isinstance(True, int) 为 True)。未知/非法计数 → probe
+            # 失败 fail-closed,绝不产生 PASS;空 Aggregate([])= 合法
+            # 零命中语义不变;总对象 = 0 → BLOCKED 语义不变。
             groups = aggregate.get(alias)
             if groups == []:
                 return 0  # Aggregate 空组 = 零命中
             try:
-                count = int(groups[0]["meta"]["count"])
-            except (KeyError, IndexError, TypeError, ValueError) as exc:
+                raw = groups[0]["meta"]["count"]
+            except (KeyError, IndexError, TypeError) as exc:
                 raise RuntimeError("weaviate 探针响应形状不可读") from exc
-            if count < 0:
+            if type(raw) is not int:
+                raise RuntimeError(
+                    "weaviate 探针 count 非法(bool/float/字符串/null 等非 "
+                    "JSON 整数)—— 未知/非法计数绝不解释为 0,fail-closed"
+                )
+            if raw < 0:
                 raise RuntimeError("weaviate 探针 count 非法(负数)")
-            return count
+            return raw
 
         total = _count_of(alias_total)
         filesystem = _count_of(alias_fs)

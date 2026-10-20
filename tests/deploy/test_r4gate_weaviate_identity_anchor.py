@@ -187,6 +187,7 @@ class _FakeWeaviate128:
         total: int = 5,
         filesystem: int = 0,
         graphql_status: int = 200,
+        aggregate_raw: bytes | None = None,
     ):
         self.meta_hostname = meta_hostname
         self.meta_status = meta_status
@@ -202,6 +203,7 @@ class _FakeWeaviate128:
         self.total = total
         self.filesystem = filesystem
         self.graphql_status = graphql_status
+        self.aggregate_raw = aggregate_raw
         self.meta_hits = 0
         self.nodes_hits = 0
         self.schema_hits = 0
@@ -238,6 +240,10 @@ class _FakeWeaviate128:
                 length = int(self.headers.get("Content-Length", "0"))
                 payload = json.loads(self.rfile.read(length))
                 outer.graphql_queries.append(payload.get("query", ""))
+                if outer.aggregate_raw is not None:
+                    # 故障注入:原样回放损坏/非法聚合响应体(R2 count 严格化负例)
+                    outer._serve(self, outer.graphql_status, outer.aggregate_raw)
+                    return
                 outer._serve(self, outer.graphql_status, json.dumps(
                     {"data": {"Aggregate": {
                         "KnowledgeChunk_TOTAL": [{"meta": {"count": outer.total}}],
@@ -923,3 +929,115 @@ def test_twv19_control_plane_scan_empty_volume_fails_closed(cp_sandbox):
     assert "e3b0c442" not in out and "e3b0c442" not in err, \
         "空清单哈希绝不出现(假 PASS 防护的本质)"
     assert cp_sandbox.eval_argv_text() == ""
+
+
+# --------------------------------------------------------------------------- #
+# R2 复审阻塞窄修(AC2):Weaviate Aggregate count 严格化 —— T-WV-20..22
+# (真实 HTTP fake Weaviate 路径;RED 于 R1 现码 823b025c 实测)
+# --------------------------------------------------------------------------- #
+
+
+def _filesystem_objects_check(verdict: dict) -> dict:
+    wvc = [c for c in _iso_checks(verdict) if c["name"] == "filesystem_objects"]
+    assert wvc, "verdict 缺 filesystem_objects 检查项"
+    return wvc[0]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [False, True, 0.0, 0.5, "0", "3", None, -1],
+    ids=lambda v: f"fs-count={v!r}",
+)
+def test_twv20_illegal_filesystem_count_never_clean_pass(
+    tmp_path, fake_wv128, monkeypatch, bad
+):
+    """T-WV-20:total 为合法正整数而 filesystem meta.count 为非法类型
+    (bool/float/字符串/null/负数)→ 绝不产生 clean PASS,也绝不把非法
+    证据经 int() 隐式转换成任何计数断言 —— 一律 probe_failed fail-closed。
+    RED(823b025c 实测):false/0.0/0.5/"0" 隐式转 0 → 假 clean PASS;
+    True/"3" 隐式转 1/3 → 假 objects_present;null/负数本已 fail-closed
+    (负例钉住不回归)。"""
+    _psql_shim(tmp_path, monkeypatch, f"iso_db\n{_PG_SID}\n0")
+    wv = fake_wv128(total=5, filesystem=bad)
+    m = _write_manifest(tmp_path)
+    verdict, code = evaluate(str(m), verify_upload_isolation=True,
+                             isolation=_full_isolation_v2(tmp_path, wv.port))
+    label = f"filesystem meta.count={bad!r}"
+    assert code == 2, f"{label} 必须 fail-closed,绝不 PASS"
+    chk = _filesystem_objects_check(verdict)
+    assert (
+        chk["status"] == "fail"
+        and chk["class"] == "isolation_filesystem_probe_failed"
+    ), (
+        f"{label} 必须以 probe_failed fail-closed(未知/非法计数不得产生 "
+        f"PASS,也不得转换成其它计数断言),实测 {chk['class']}/{chk['status']}"
+    )
+    assert len(wv.graphql_queries) == 1 and "Aggregate" in wv.graphql_queries[0], \
+        f"{label}:聚合必须真实执行过(非身份短路)"
+
+
+@pytest.mark.parametrize(
+    "raw, shape_label",
+    [
+        (b'{"data": {"Aggregate": {}}}', "alias 缺失"),
+        (b'{"data": {"Aggregate": {"KnowledgeChunk_TOTAL": 5,'
+         b' "KnowledgeChunk_FILESYSTEM": 0}}}', "groups 非列表"),
+        (b'{"data": {"Aggregate": {"KnowledgeChunk_TOTAL": [{}],'
+         b' "KnowledgeChunk_FILESYSTEM": [{"meta": {"count": 0}}]}}}', "meta 缺失"),
+        (b'{"data": {"Aggregate": {"KnowledgeChunk_TOTAL": [{"meta": {"count": 5}}],'
+         b' "KnowledgeChunk_FILESYSTEM": [{"meta": {}}]}}}', "count 缺失"),
+        (b'{"data": {"Aggregate": {"KnowledgeChunk_TOTAL": [{"meta": null}],'
+         b' "KnowledgeChunk_FILESYSTEM": [{"meta": {"count": 0}}]}}}', "meta null"),
+        (b'{"data": {"Aggregate": {"KnowledgeChunk_TOTAL": [{"meta": {"count": 5}}],'
+         b' "KnowledgeChunk_FILESYSTEM": [{"meta": {"count": [0]}}]}}}', "count 非标量"),
+        (b'{"data": null}', "data null"),
+    ],
+)
+def test_twv21_broken_aggregate_shape_fails_closed(
+    tmp_path, fake_wv128, monkeypatch, raw, shape_label
+):
+    """T-WV-21:损坏的 Aggregate 形状(alias 缺失/groups 非列表/meta 缺失/
+    meta null/count 缺失/count 非标量/data null)→ probe_failed fail-closed,
+    绝不解释为 0(R1 现码已 fail-closed 的通道,钉住不回归)。"""
+    _psql_shim(tmp_path, monkeypatch, f"iso_db\n{_PG_SID}\n0")
+    wv = fake_wv128(aggregate_raw=raw)
+    m = _write_manifest(tmp_path)
+    verdict, code = evaluate(str(m), verify_upload_isolation=True,
+                             isolation=_full_isolation_v2(tmp_path, wv.port))
+    assert code == 2, f"{shape_label} 必须 fail-closed"
+    chk = _filesystem_objects_check(verdict)
+    assert (
+        chk["status"] == "fail"
+        and chk["class"] == "isolation_filesystem_probe_failed"
+    ), f"{shape_label} 必须 probe_failed,实测 {chk['class']}/{chk['status']}"
+
+
+def test_twv22_legal_counts_keep_exact_semantics(tmp_path, fake_wv128, monkeypatch):
+    """T-WV-22:合法计数语义不变 —— filesystem=0(合法 JSON 整数 0)→
+    clean PASS;filesystem=3(合法正数)→ objects_present fail(污染如实
+    报告);total=0 → BLOCKED(空集合上的 0 计数不构成隔离证据)。"""
+    m = _write_manifest(tmp_path)
+    # (a) 合法 0 → clean PASS
+    _psql_shim(tmp_path, monkeypatch, f"iso_db\n{_PG_SID}\n0")
+    wv0 = fake_wv128(total=5, filesystem=0)
+    verdict, code = evaluate(str(m), verify_upload_isolation=True,
+                             isolation=_full_isolation_v2(tmp_path, wv0.port))
+    assert code == 0 and verdict["status"] == "pass"
+    chk0 = _filesystem_objects_check(verdict)
+    assert chk0["class"] == "isolation_filesystem_clean" and chk0["status"] == "pass"
+    # (b) 合法正数 → objects_present fail(真实污染证据,如实报告)
+    _psql_shim(tmp_path, monkeypatch, f"iso_db\n{_PG_SID}\n0")
+    wv3 = fake_wv128(total=5, filesystem=3)
+    verdict3, code3 = evaluate(str(m), verify_upload_isolation=True,
+                               isolation=_full_isolation_v2(tmp_path, wv3.port))
+    assert code3 == 2
+    chk3 = _filesystem_objects_check(verdict3)
+    assert chk3["class"] == "isolation_filesystem_objects_present"
+    assert "3 个" in chk3["reason"]
+    # (c) total=0 → BLOCKED(语义不动)
+    wvt0 = fake_wv128(total=0, filesystem=0)
+    verdictt, codet = evaluate(str(m), verify_upload_isolation=True,
+                               isolation=_full_isolation_v2(tmp_path, wvt0.port))
+    assert codet == 2
+    chkt = _filesystem_objects_check(verdictt)
+    assert chkt["status"] == "blocked" and "总对象 = 0" in chkt["reason"]
