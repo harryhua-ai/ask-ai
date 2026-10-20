@@ -16,7 +16,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -87,6 +87,10 @@ from backend.services.document_repair import (
 from backend.services.recovery_events import recovery_counts
 from backend.services.source_deletion import DeletionRequestError, request_deletion
 from backend.services.source_discovery import parse_discovery_rules
+from backend.services.source_identity_guard import (
+    COLLISION_ANCHOR,
+    find_orphan_identity_surfaces,
+)
 from backend.services.source_lifecycle import DELETE_FAILED
 from backend.services.upload_storage import UPLOADS_CORPUS_ROOT
 from backend.services.website_discovery import build_website_preview
@@ -579,9 +583,43 @@ async def create_data_source(
         # 上传知识不因缺省配置自动公开;显式 widget/api grant 才可访客检索。
         req.config.setdefault("channel_visibility", [])
     async with factory() as session:
+        # r3gate R2-3(最小修复):注册事务入口对同 id 串行化 —— READ
+        # COMMITTED 下每条语句独立快照,纯 check→insert 存在竞态窗(R2 并发
+        # 测试在 R1 现码实证:双注册 statuses=[201, 500],后到 INSERT 撞
+        # data_sources_pkey 抛未处理 IntegrityError)。事务级咨询锁
+        # (PG 原生 pg_advisory_xact_lock,非新锁服务)使后到者在锁上等待
+        # 前者 commit → 其 existing-check 见已提交行 → 干净 409;锁随事务
+        # 自动释放,异常路径同样释放(回滚零残留)。不同 id 各锁各键
+        # (hashtextextended 碰撞仅导致无害额外串行,均仍成功)。
+        # 边界(如实):本锁只串行化「注册 vs 注册」;与删除 worker 的交错由
+        # 删除流程自身不变量覆盖(final 事务原子移除账本行+配置行,删除在途
+        # 期间配置行存在 → 注册被 existing-check 拦截),见 guard 模块分析。
+        # PG 专有(生产与测试库均为 PostgreSQL;SQLite 等非 PG 后端不支持)。
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:sid, 0))"),
+            {"sid": source_id},
+        )
         existing = await session.execute(select(DataSource).where(DataSource.id == source_id))
         if existing.scalar_one_or_none():
             raise HTTPException(status_code=409, detail="数据源 ID 已存在")
+        # r3 发布安全门 G3(修复 1):注册期孤儿身份碰撞 fail-closed guard。
+        # 该 id 无活跃来源持有,但存在历史孤儿内容(documents/versions/chunks/
+        # generations/uploads 子树)→ 拒绝注册,要求先显式对账;绝不静默通过
+        # (#178/#179:重注册即重发孤儿内容 = 跨版本重暴露入口)。
+        # 只读 limit(1) 存在性探测,与插入同事务(单事务模式);正常全新 id
+        # 五个探测全部未命中,零影响。
+        collided_surfaces = await find_orphan_identity_surfaces(session, source_id)
+        if collided_surfaces:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{COLLISION_ANCHOR}: source_id={source_id} "
+                    f"surfaces={sorted(collided_surfaces)};拒绝注册。该 id 命中"
+                    "无活跃来源持有的历史孤儿内容,请先走显式对账(核对孤儿内容"
+                    "归属并经删除/对账流程清理或接管后)再注册;"
+                    "跨版本重注册会让历史内容重新挂到新活跃源身份下。"
+                ),
+            )
         ds = DataSource(**{**req.model_dump(exclude_unset=True), "id": source_id})
         session.add(ds)
         await session.commit()

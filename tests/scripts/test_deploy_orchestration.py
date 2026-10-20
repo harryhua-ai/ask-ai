@@ -118,10 +118,13 @@ class TestWorkflowContract:
         assert 'grep -q "$SSH_HOST" "$KH_FILE"' in text
 
     def test_only_existing_primitive_no_docker_reimplementation(self, workflow):
-        """部署职责唯一原语约束(migrate 步引入后按步作用域化):
+        """部署职责唯一原语约束(migrate/preflight 步引入后按步作用域化):
         deploy 步仍只调既有 update.sh,绝不重实现 docker 部署逻辑;migrate 步
         仅允许以既有 compose 一次性服务 sync 作为镜像内迁移执行载体
-        (README 同款 `run --rm sync python scripts/…`),无 build、无 up。"""
+        (README 同款 `run --rm sync python scripts/…`),无 build、无 up;
+        preflight 步(R3-2)仅允许既有 compose 运行机制 `exec -T backend`
+        作为只读执行面(评估器/manifest/锚 stdin 送入运行中生产 backend 容器,
+        凭据经容器自身 env 继承)—— 无 build/run/up/down、无服务生命周期变更。"""
         text = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
         deploy = [s for s in workflow["jobs"]["deploy"]["steps"] if s.get("id") == "deploy"][0]
         assert "deploy/prod/update.sh" in deploy["run"]
@@ -130,10 +133,18 @@ class TestWorkflowContract:
         assert "flock -w 0 /tmp/askai-deploy.lock" in deploy["run"]
         assert "docker build" not in text  # 全 workflow 禁止构建
         migrate = [s for s in workflow["jobs"]["deploy"]["steps"] if s.get("id") == "migrate"][0]
-        assert "docker compose" in migrate["run"]  # 迁移执行载体(唯一例外,见上)
+        assert "docker compose" in migrate["run"]  # 迁移执行载体(例外,见上)
         assert "run --rm -e PYTHONPATH=/app sync python" in migrate["run"]
+        preflight = [s for s in workflow["jobs"]["deploy"]["steps"] if s.get("id") == "preflight"][0]
+        assert "docker compose" in preflight["run"]  # R3-2 只读执行面(例外,见上)
+        assert "exec -T backend" in preflight["run"]
+        for forbidden in (
+            "docker build", "docker compose run", "docker compose up",
+            "docker compose down", "docker compose pull",
+        ):
+            assert forbidden not in preflight["run"], forbidden
         for other in workflow["jobs"]["deploy"]["steps"]:
-            if other.get("id") != "migrate" and "run" in other:
+            if other.get("id") not in ("migrate", "preflight") and "run" in other:
                 assert "docker compose" not in other["run"], other.get("id")
 
     def test_tag_validation_before_ssh(self, workflow):
