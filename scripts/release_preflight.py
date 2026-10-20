@@ -100,6 +100,7 @@ import re
 import socket
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit
@@ -985,6 +986,9 @@ def evaluate(
     env: dict[str, str] | None = None,
     probe_timeout_s: int = DEFAULT_PROBE_TIMEOUT_S,
     remediation_ack: str | None = None,
+    remediation_evidence: dict | None = None,
+    remediation_evidence_error: str | None = None,
+    release_tag: str | None = None,
     pre_contract: bool = False,
     verify_upload_isolation: bool = False,
     isolation: dict | None = None,
@@ -1111,20 +1115,60 @@ def evaluate(
         )
     else:
         gate = str(rollback["remediation_gate"]).strip()
-        if (remediation_ack or "").strip() == gate:
+        evidence = remediation_evidence if isinstance(remediation_evidence, dict) else None
+        if (
+            evidence is not None
+            and not (remediation_evidence_error or "").strip()
+            and evidence.get("gate") == gate
+            and evidence.get("target_tag") == (release_tag or "").strip()
+        ):
             checks.append(
                 _check(
                     "rollback", "previous_compatible", "rollback_ok", "pass",
-                    f"已确认 remediation gate: {gate}",
+                    f"整改证据合法绑定: gate={gate} "
+                    f"target_tag={evidence.get('target_tag')} "
+                    f"evidence_digest={evidence.get('evidence_digest')} "
+                    f"evidence_ref={evidence.get('evidence_ref')} "
+                    f"recorded_at={evidence.get('recorded_at')} "
+                    f"recorded_by={evidence.get('recorded_by')}"
+                    "(A #138 P3:可回读、绑定目标发行与证据身份的唯一合法放行面;"
+                    "不因字符串 ACK 放行)",
                 )
             )
         else:
+            if (remediation_evidence_error or "").strip():
+                reason = (
+                    f"整改证据不可用({remediation_evidence_error})—— fail-closed"
+                )
+            elif evidence is not None and evidence.get("gate") != gate:
+                reason = (
+                    "整改证据绑定失败: 证据 gate="
+                    f"{evidence.get('gate')!r} ≠ manifest 声明 {gate!r}(fail-closed)"
+                )
+            elif evidence is not None:
+                reason = (
+                    "整改证据绑定失败: 证据 target_tag="
+                    f"{evidence.get('target_tag')!r} ≠ 本次部署 release-tag="
+                    f"{(release_tag or '')!r}(跨版本证据不可移作他用,fail-closed)"
+                )
+            elif (remediation_ack or "").strip() == gate:
+                reason = (
+                    "字符串 --remediation-ack 与声明 gate 匹配,但字符串 ACK 不构成"
+                    "整改证明(A #138 P3:不能凭命令行传入相同字符串获得合法放行)"
+                    "—— 必须提供绑定目标发行与证据身份的整改证据工件"
+                    "(--remediation-evidence-file + --release-tag)"
+                )
+            else:
+                reason = (
+                    "该发布声明与先前版本不兼容:普通 previous-tag 回滚不适用,"
+                    "必须提供绑定目标发行与证据身份的整改证据工件"
+                    "(--remediation-evidence-file + --release-tag,声明的 "
+                    f"remediation gate: {gate})"
+                )
             checks.append(
                 _check(
                     "rollback", "previous_compatible", "rollback_remediation_gate_required",
-                    "fail",
-                    "该发布声明与先前版本不兼容:普通 previous-tag 回滚不适用,"
-                    f"必须确认声明的 remediation gate: {gate}",
+                    "fail", reason,
                 )
             )
 
@@ -1197,6 +1241,22 @@ _TRUST_ANCHOR_V2_FIELDS = (
 # 其它任何与 URL 不一致的实际 DNS 名一律身份不匹配)
 _BIND_SHAPE_META_HOSTS = {"::", "0.0.0.0", "*", ""}
 
+# ---- G3 整改证据记录(A #138 P3:字符串 ACK 不构成整改证明)----
+# 唯一合法放行面 = 绑定目标发行与证据身份的证据工件;词表封闭,形状全校验,
+# fail-closed。记录本身非秘密(gate 令牌/发布 tag/64hex 摘要/出处引用)。
+_REMEDIATION_EVIDENCE_VERSIONS = (1,)
+_REMEDIATION_EVIDENCE_V1_FIELDS = (
+    "gate",
+    "target_tag",
+    "evidence_digest",
+    "evidence_ref",
+    "recorded_at",
+    "recorded_by",
+)
+_RELEASE_TAG_PATTERN = r"v[0-9]+\.[0-9]+\.[0-9]+(-r[0-9]+)?"
+_REMEDIATION_GATE_TOKEN_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"
+_EVIDENCE_DIGEST_PATTERN = r"[0-9a-f]{64}"
+
 
 def _load_trust_anchor(path: str | None) -> tuple[dict | None, str | None]:
     """加载带外钉扎的目标身份信任锚(R4-1 双版本,v1/v2 词表封闭)。
@@ -1265,6 +1325,80 @@ def _load_trust_anchor(path: str | None) -> tuple[dict | None, str | None]:
     }, None
 
 
+def _load_remediation_evidence(
+    path: str | None, release_tag: str | None
+) -> tuple[dict | None, str | None]:
+    """加载绑定目标发行与证据身份的整改证据记录(A #138 P3 合法放行面)。
+
+    Returns:
+        (record, None) 或 (None, 结构化错误)。缺文件/不可读/非 JSON/根非映射/
+        版本不符/词表外字段/缺字段/形状非法/缺 --release-tag 绑定键一律拒绝
+        (fail-closed);错误信息只含字段名类结构信息,绝不回显文件内容;
+        记录本身为非秘密(gate 令牌/发布 tag/64hex 摘要/出处引用)。
+        gate 与 manifest 声明、target_tag 与 release_tag 的**值绑定**由
+        rollback 门比对(加载器只做形状校验,与信任锚同构)。
+    """
+    if not path or not path.strip():
+        return None, "缺 --remediation-evidence-file(整改证据工件必填)"
+    if not release_tag or not release_tag.strip():
+        return (
+            None,
+            "缺 --release-tag(整改证据必须绑定本次部署目标发行,fail-closed)",
+        )
+    release_tag = release_tag.strip()
+    if not re.fullmatch(_RELEASE_TAG_PATTERN, release_tag):
+        return None, "--release-tag 形状非法(须为 vX.Y.Z(-rN) 不可变 tag)"
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None, "整改证据文件不可读"
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError:
+        return None, "整改证据文件非合法 JSON"
+    if not isinstance(raw, dict):
+        return None, "整改证据文件根必须是映射"
+    if raw.get("version") not in _REMEDIATION_EVIDENCE_VERSIONS:
+        return None, (
+            f"证据 version 必须为 {'/'.join(map(str, _REMEDIATION_EVIDENCE_VERSIONS))}"
+            f"(实际 {raw.get('version')!r})"
+        )
+    unknown = sorted(
+        set(map(str, raw)) - {"version"} - set(_REMEDIATION_EVIDENCE_V1_FIELDS)
+    )
+    if unknown:
+        return None, f"证据字段词表外: {unknown}"
+    gate = str(raw.get("gate") or "").strip()
+    if not re.fullmatch(_REMEDIATION_GATE_TOKEN_PATTERN, gate):
+        return None, "证据缺字段/形状非法: gate(有界自描述令牌)"
+    target_tag = str(raw.get("target_tag") or "").strip()
+    if not re.fullmatch(_RELEASE_TAG_PATTERN, target_tag):
+        return None, "证据缺字段/形状非法: target_tag(须为 vX.Y.Z(-rN))"
+    digest = str(raw.get("evidence_digest") or "").strip().lower()
+    if not re.fullmatch(_EVIDENCE_DIGEST_PATTERN, digest):
+        return None, "证据缺字段/形状非法: evidence_digest(64 位小写 hex)"
+    ref = str(raw.get("evidence_ref") or "").strip()
+    if not ref or len(ref) > 512:
+        return None, "证据缺字段/形状非法: evidence_ref(非空,≤512 字符)"
+    recorded_at = str(raw.get("recorded_at") or "").strip()
+    try:
+        datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None, "证据缺字段/形状非法: recorded_at(ISO-8601)"
+    recorded_by = str(raw.get("recorded_by") or "").strip()
+    if not recorded_by or len(recorded_by) > 256:
+        return None, "证据缺字段/形状非法: recorded_by(非空,≤256 字符)"
+    return {
+        "version": 1,
+        "gate": gate,
+        "target_tag": target_tag,
+        "evidence_digest": digest,
+        "evidence_ref": ref,
+        "recorded_at": recorded_at,
+        "recorded_by": recorded_by,
+    }, None
+
+
 def _dsn_from_pg_env_parts(env: dict[str, str]) -> str | None:
     """R3-2:从进程自身 env 的 POSTGRES_* 组件装配 libpq DSN(生产 backend
     容器内执行路径 —— 凭据经容器自身 env 继承,零新增传输)。装配只发生在
@@ -1325,6 +1459,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--remediation-ack", default=None,
         help="rollback remediation gate 确认(必须与 manifest 声明精确一致)",
+    )
+    parser.add_argument(
+        "--release-tag", default=None, metavar="TAG",
+        help="本次部署目标不可变 tag(如 v1.6.4-r3);整改证据绑定的目标发行,"
+        "提供 --remediation-evidence-file 时必填",
+    )
+    parser.add_argument(
+        "--remediation-evidence-file", default=None, metavar="PATH",
+        help="整改证据工件 JSON(A #138 P3 唯一合法放行面):"
+        "{version:1,gate,target_tag,evidence_digest,evidence_ref,recorded_at,"
+        "recorded_by};gate 须与 manifest 声明精确一致、target_tag 须与 "
+        "--release-tag 精确一致;词表外/形状非法/绑定不一致一律 fail-closed",
     )
     parser.add_argument(
         "--pre-contract-release", action="store_true",
@@ -1414,6 +1560,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.verify_upload_isolation:
         anchor, anchor_error = _load_trust_anchor(args.isolation_trust_anchor_file)
 
+    # G3 整改证据(A #138 P3 唯一合法放行面):加载失败经 remediation_evidence_error
+    # 传入 rollback 门 → 单条 fail 检查,绝不放行;未提供时零变化(维持 #46/#159
+    # 既有 fail-closed 语义)。
+    evidence: dict | None = None
+    evidence_error: str | None = None
+    if args.remediation_evidence_file:
+        evidence, evidence_error = _load_remediation_evidence(
+            args.remediation_evidence_file, args.release_tag
+        )
+
     # DSN 通道(显式、无回退):--isolation-pg-dsn-parts = 容器 env 组件装配;
     # 否则 file > env 变量。Weaviate URL/class:显式旗标 > env 变量名通道。
     if args.isolation_pg_dsn_parts:
@@ -1432,6 +1588,9 @@ def main(argv: list[str] | None = None) -> int:
         env=env,
         probe_timeout_s=min(max(args.probe_timeout, 1), MAX_PROBE_TIMEOUT_S),
         remediation_ack=args.remediation_ack,
+        remediation_evidence=evidence,
+        remediation_evidence_error=evidence_error,
+        release_tag=args.release_tag,
         pre_contract=args.pre_contract_release,
         verify_upload_isolation=args.verify_upload_isolation,
         isolation=(

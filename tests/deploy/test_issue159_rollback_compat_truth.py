@@ -19,11 +19,15 @@ chunk 回滚证据时宣告 ``rollback.previous_compatible=true``:
 
 - AC1:manifest 必须 ``previous_compatible=false`` + 含义明确且非敏感的
   ``remediation_gate``;preflight 解析之并禁止普通回滚指引;
-- AC2:remediation 确认缺失/错误/过期 ⇒ 任何 DB/配置/应用 mutation 前
-  fail-closed。按 #46 已验收契约,GitHub Production Deployment 正规路径
-  **不提供 ack 通道** ⇒ 不兼容声明在正规路径确定性保持阻断;break-glass
-  ``update.sh --remediation-ack`` 是唯一显式确认面(无默认/硬编码 ack,
-  正向 ack 只记录明确发布决策,不代替 #121 实际生产验证);
+- AC2(A #138 P3 演进,2026-10-20):remediation 确认缺失/错误/过期 ⇒ 任何
+  DB/配置/应用 mutation 前 fail-closed。GitHub Production Deployment 正规
+  路径仍**不提供字符串 ack 通道**;字符串 ``--remediation-ack`` 本身不再是
+  合法放行(「仅有字符串相等判断的 remediation_ack 不是安全整改证明,不能
+  凭命令行传入相同字符串获得合法放行」)——唯一合法放行面 = 绑定目标发行
+  与证据身份的整改证据工件(``update.sh --remediation-evidence-file`` +
+  ``--release-tag``;workflow 经 ``PREFLIGHT_REMEDIATION_EVIDENCE_B64``
+  消费同一机制),且证据工件存在不代替 #121 实际生产验证与 A 对证据本身
+  的 GO 判断;
 - AC3:两版 known-upload missing/[]/[widget]/[api] 授权差异、release
   manifest 判定、update.sh 回滚文案与渠道负例,全部只读/本地模拟;
   不扩大任何来源授权、不改默认隔离。
@@ -276,14 +280,71 @@ def test_preflight_blocks_unconfirmed_rollback_on_repo_manifest(monkeypatch, cap
     assert not any(c["class"] == "rollback_ok" for c in out["checks"])
 
 
-def test_preflight_accepts_only_exact_ack(monkeypatch, capsys):
-    """AC2:精确匹配声明 gate 的显式确认 ⇒ 通过(仍不改变回滚不兼容声明)。"""
+def test_preflight_string_ack_alone_no_longer_releases(monkeypatch, capsys, tmp_path):
+    """AC2(A #138 P3 演进):字符串 --remediation-ack 即使与声明 gate 精确
+    匹配,也不再构成合法放行 —— fail-closed 且结构化指引指向证据工件。
+    契约方向 = 收紧(fail-closed 更严),非放宽。"""
     code = _run_preflight_cli(monkeypatch, "--remediation-ack", GATE)
+    assert code == 2
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "fail"
+    chk = [c for c in out["checks"] if c["class"] == "rollback_remediation_gate_required"]
+    assert chk, out
+    assert "不构成" in chk[0]["reason"]
+    assert "--remediation-evidence-file" in chk[0]["reason"]
+    assert not any(c["class"] == "rollback_ok" for c in out["checks"])
+
+
+def _write_remediation_evidence(path: Path, **overrides) -> Path:
+    record = {
+        "version": 1,
+        "gate": GATE,
+        "target_tag": "v9.9.9",
+        "evidence_digest": "c" * 64,
+        "evidence_ref": "recovery-drill/2026-10-20/bundle-sha",
+        "recorded_at": "2026-10-20T12:00:00Z",
+        "recorded_by": "role-a",
+    }
+    record.update(overrides)
+    path.write_text(json.dumps(record), encoding="utf-8")
+    return path
+
+
+def test_preflight_accepts_bound_remediation_evidence(monkeypatch, capsys, tmp_path):
+    """AC2(P3 合法放行面):证据工件 gate/target_tag 与 manifest 声明及本次
+    部署 --release-tag 精确绑定 ⇒ 通过;可回读身份字段(gate/tag/摘要)全部
+    入 check reason。证据工件存在不改变 previous_compatible=false 声明。"""
+    ev = _write_remediation_evidence(tmp_path / "evidence.json")
+    code = _run_preflight_cli(
+        monkeypatch,
+        "--remediation-evidence-file", str(ev),
+        "--release-tag", "v9.9.9",
+    )
     assert code == 0
     out = json.loads(capsys.readouterr().out)
     assert out["status"] == "pass"
     ok = [c for c in out["checks"] if c["class"] == "rollback_ok"]
-    assert ok and GATE in ok[0]["reason"]
+    assert ok, out
+    reason = ok[0]["reason"]
+    assert GATE in reason and "v9.9.9" in reason and "c" * 64 in reason
+    assert not any(
+        c["class"] == "rollback_remediation_gate_required" for c in out["checks"]
+    )
+
+
+def test_preflight_rejects_cross_release_evidence_binding(monkeypatch, capsys, tmp_path):
+    """AC2(P3 绑定语义):证据 target_tag ≠ 本次部署 tag ⇒ 跨版本证据不可
+    移作他用,fail-closed。"""
+    ev = _write_remediation_evidence(tmp_path / "evidence.json", target_tag="v9.9.8")
+    code = _run_preflight_cli(
+        monkeypatch,
+        "--remediation-evidence-file", str(ev),
+        "--release-tag", "v9.9.9",
+    )
+    assert code == 2
+    out = json.loads(capsys.readouterr().out)
+    chk = [c for c in out["checks"] if c["class"] == "rollback_remediation_gate_required"]
+    assert chk and "v9.9.8" in chk[0]["reason"] and "v9.9.9" in chk[0]["reason"]
 
 
 def test_preflight_rejects_wrong_and_stale_acks(monkeypatch, capsys):
@@ -378,12 +439,25 @@ def test_postdeploy_guidance_for_this_release_never_advertises_ordinary_rollback
 
 
 def test_production_workflow_offers_no_ack_channel_so_release_stays_blocked():
-    """AC2:GitHub Production Deployment 正规路径不提供 remediation ack 通道
-    (#46 已验收契约)⇒ 本发布声明在正规路径确定性 fail-closed(无授权保持
-    阻断);break-glass update.sh --remediation-ack 是唯一显式确认面。"""
+    """AC2(A #138 P3 演进):GitHub Production Deployment 正规路径不提供
+    字符串 ack 通道 ⇒ 无整改证据时本发布声明在正规路径确定性 fail-closed
+    (无授权保持阻断);合法放行通道 = 证据工件 secret
+    PREFLIGHT_REMEDIATION_EVIDENCE_B64(可选:未配置 ⇒ 维持阻断),
+    绑定校验由冻结发布镜像内的 evaluator fail-closed 执行。"""
     text = WORKFLOW.read_text()
     assert "--remediation-ack" not in text, "workflow 正规路径不得引入 ack 通道"
     assert "remediation_ack" not in text, "workflow 不得新增 ack 输入(改变 #46 契约语义)"
+    # P3 合法放行通道 = 证据工件(可选 secret;步骤3 preflight 与步骤5
+    # update.sh 两处消费);未配置 ⇒ rollback 门维持 fail-closed 阻断。
+    assert text.count("PREFLIGHT_REMEDIATION_EVIDENCE_B64") >= 2, (
+        "workflow 必须经证据 secret 通道消费整改事实(P3),不得引入字符串 ack"
+    )
+    required_line = [
+        ln for ln in text.splitlines() if ln.strip().startswith("for v in SSH_KEY")
+    ]
+    assert required_line and all(
+        "REMEDIATION_EVIDENCE_B64" not in ln for ln in required_line
+    ), "证据通道必须可选:未配置时不得阻断非本门的部署流程(现状不变)"
     # 契约期 evaluator 以裸调用执行(无任何 ACK 参数);失败即步骤失败。
     # R3-2:调用形态改为运行中 backend 容器内执行(凭据经容器自身 env 继承),
     # 语义不变 —— 裸调用、非零退出经 CONTAINER_RC 传播为步骤失败。
@@ -404,6 +478,12 @@ def test_update_sh_evaluator_failure_fails_closed_before_any_mutation():
     rollout_idx = text.index("up -d backend")
     assert guard_idx < rollout_idx, "fail-closed 退出必须先于应用 rollout"
     assert 'REMEDIATION_ACK=""' in text
+    assert 'REMEDIATION_EVIDENCE_FILE=""' in text, (
+        "证据文件初值必须为空(无默认证据,显式提供面)"
+    )
+    assert '--release-tag "$TAG"' in text, (
+        "evaluator 调用必须绑定本次部署 tag(P3 目标发行绑定)"
+    )
 
 
 def test_gate_string_is_not_hardcoded_into_any_deploy_or_code_surface():

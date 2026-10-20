@@ -194,6 +194,13 @@ jobs:
       #       `sh -s /var/lib/weaviate` 送入 weaviate 容器执行);旧 GNU
       #       find -printf 管道在 BusyBox 下为空清单假哈希(e3b0c442…),
       #       修正前禁止用于采锚。
+      #       ── G3 整改证据通道(A #138 P3;可选,非秘密)──
+      #       secret PREFLIGHT_REMEDIATION_EVIDENCE_B64 = 整改证据工件 JSON 的
+      #       base64:{version:1,gate,target_tag,evidence_digest,evidence_ref,
+      #       recorded_at,recorded_by};gate 须与目标发布 manifest 声明精确一致、
+      #       target_tag 须与本次部署 tag 精确绑定(evaluator fail-closed 校验)。
+      #       未配置 ⇒ 回退门维持 fail-closed 阻断(现状不变);字符串
+      #       确认参数(裸字符串)不再构成合法放行(A #138 P3 裁决),workflow 全文零 ack 通道。
       - name: Production compatibility preflight (fail-closed; pre-mutation)
         id: preflight
         env:
@@ -203,6 +210,7 @@ jobs:
           SSH_KNOWN_HOSTS_B64: ${{ vars.PROD_SSH_KNOWN_HOSTS_B64 }}
           DEPLOY_TAG: ${{ steps.identity.outputs.tag }}
           TRUST_ANCHOR_B64: ${{ secrets.PREFLIGHT_TRUST_ANCHOR_B64 }}
+          REMEDIATION_EVIDENCE_B64: ${{ secrets.PREFLIGHT_REMEDIATION_EVIDENCE_B64 }}
         run: |
           set -euo pipefail
           KEY_FILE="$RUNNER_TEMP/prod_deploy_key"
@@ -226,6 +234,11 @@ jobs:
           case "$TRUST_ANCHOR_B64" in
             *[!A-Za-z0-9+/=]*) echo "❌ TRUST_ANCHOR_B64 含 base64 词表外字符(非法)" >&2; exit 2;;
           esac
+          # 整改证据通道(A #138 P3;可选):未配置 ⇒ 回退门维持 fail-closed
+          # 阻断;配置时 base64 词表内单行(防远端 env 前缀注入;工件本身非秘密)
+          case "${REMEDIATION_EVIDENCE_B64:-}" in
+            *[!A-Za-z0-9+/=]*) echo "❌ REMEDIATION_EVIDENCE_B64 含 base64 词表外字符(非法)" >&2; exit 2;;
+          esac
           install -m 600 /dev/null "$KEY_FILE"
           printf '%s\n' "$SSH_KEY" > "$KEY_FILE"
           printf '%s' "$SSH_KNOWN_HOSTS_B64" | base64 -d > "$KH_FILE"
@@ -244,7 +257,7 @@ jobs:
           # 同一无注入面模式;凭据零传输 —— 见步骤断言注释)
           remote_preflight() {
             ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" \
-                "DEPLOY_TAG='$DEPLOY_TAG' TRUST_ANCHOR_B64='$TRUST_ANCHOR_B64' bash -s" <<'REMOTE'
+                "DEPLOY_TAG='$DEPLOY_TAG' TRUST_ANCHOR_B64='$TRUST_ANCHOR_B64' REMEDIATION_EVIDENCE_B64='${REMEDIATION_EVIDENCE_B64:-}' bash -s" <<'REMOTE'
           set -euo pipefail
           cd ~/ask-ai
           exec 9>"${TMPDIR:-/tmp}/askai-deploy.lock"
@@ -257,12 +270,17 @@ jobs:
           # R3-2 确定性清扫:连接中断可能残留的上一轮临时工件(均非秘密:
           # 评估器/manifest = 冻结镜像工件,锚 = A 钉扎标识)—— 最小有效期
           rm -f "${TMPDIR:-/tmp}"/askai-trust-anchor.* "${TMPDIR:-/tmp}"/askai-preflight.* \
-                "${TMPDIR:-/tmp}"/askai-compat.* "${TMPDIR:-/tmp}"/askai-release.* 2>/dev/null || true
+                "${TMPDIR:-/tmp}"/askai-compat.* "${TMPDIR:-/tmp}"/askai-release.* \
+                "${TMPDIR:-/tmp}"/askai-remediation-evidence.* 2>/dev/null || true
           ANCHOR_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-trust-anchor.XXXXXXXX")"
           REL_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-release.XXXXXXXX")"
           MAN_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-compat.XXXXXXXX")"
           EVAL_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-preflight.XXXXXXXX")"
-          cleanup() { rm -f "$ANCHOR_TMP" "$REL_TMP" "$MAN_TMP" "$EVAL_TMP"; }
+          EVID_TMP=""
+          cleanup() {
+            rm -f "$ANCHOR_TMP" "$REL_TMP" "$MAN_TMP" "$EVAL_TMP"
+            [ -z "$EVID_TMP" ] || rm -f "$EVID_TMP"
+          }
           trap cleanup EXIT
           # 1) 信任锚(base64;A 带外钉扎的非秘密标识)落远端 0600 临时文件
           printf '%s' "$TRUST_ANCHOR_B64" | base64 -d > "$ANCHOR_TMP" || {
@@ -273,6 +291,22 @@ jobs:
           fi
           python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$ANCHOR_TMP" 2>/dev/null || {
               echo "❌ trust anchor 非合法 JSON(fail-closed)" >&2; exit 1; }
+          # 2) G3 整改证据(A #138 P3 唯一合法放行面;可选:未配置 ⇒ 回退门
+          #    维持 fail-closed 阻断)。非秘密工件,同锚通道纪律:base64 →
+          #    远端 0600 临时文件 → 容器 stdin → 执行前完整性核对。
+          EVID_ARGS=()
+          if [ -n "${REMEDIATION_EVIDENCE_B64:-}" ]; then
+            EVID_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-remediation-evidence.XXXXXXXX")"
+            printf '%s' "$REMEDIATION_EVIDENCE_B64" | base64 -d > "$EVID_TMP" || {
+                echo "❌ remediation evidence base64 解码失败(fail-closed)" >&2; exit 1; }
+            chmod 600 "$EVID_TMP"
+            if [ ! -s "$EVID_TMP" ]; then
+                echo "❌ remediation evidence 为空(fail-closed)" >&2; exit 1
+            fi
+            python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$EVID_TMP" 2>/dev/null || {
+                echo "❌ remediation evidence 非合法 JSON(fail-closed)" >&2; exit 1; }
+            EVID_ARGS=(--remediation-evidence-file /tmp/askai-remediation-evidence.json)
+          fi
           # 1.5) R4-1 v2 控制面锚核验(只读;两层任一不匹配 → 容器 preflight 之前
           #      中止,零 mutation):SSH 通道已被 known_hosts 钉扎;本步对运行中
           #      weaviate 容器做只读 docker inspect(镜像 config digest / 数据卷
@@ -517,10 +551,14 @@ jobs:
             # 零凭据过 SSH;config 检查亦直接读容器运行时 env(同源高保真)。
             $COMPOSE exec -T backend rm -f /tmp/askai-preflight-evaluator.py \
                 /tmp/askai-preflight-manifest.json /tmp/askai-trust-anchor.json \
+                /tmp/askai-remediation-evidence.json \
                 2>/dev/null || true
             $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-preflight-evaluator.py' < "$EVAL_TMP"
             $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-preflight-manifest.json' < "$MAN_TMP"
             $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-trust-anchor.json' < "$ANCHOR_TMP"
+            if [ -n "$EVID_TMP" ]; then
+              $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-remediation-evidence.json' < "$EVID_TMP"
+            fi
             # R4-3①容器内侧哈希核对(执行前;任一不匹配 → 拒绝执行并中止)
             INTEGRITY_OK=1
             for pair in "$H_EVAL:/tmp/askai-preflight-evaluator.py" \
@@ -533,10 +571,19 @@ jobs:
                 INTEGRITY_OK=0
               fi
             done
+            if [ -n "$EVID_TMP" ]; then
+              H_EVID="$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$EVID_TMP")"
+              GOT_EVID="$($COMPOSE exec -T backend sh -c "sha256sum /tmp/askai-remediation-evidence.json 2>/dev/null" | cut -d' ' -f1)"
+              if [ -z "$GOT_EVID" ] || [ "$GOT_EVID" != "$H_EVID" ]; then
+                echo "❌ 容器内工件内容核验不匹配: /tmp/askai-remediation-evidence.json(管道损坏/写入篡改/部分写入)" >&2
+                INTEGRITY_OK=0
+              fi
+            fi
             if [ "$INTEGRITY_OK" != 1 ]; then
               $COMPOSE exec -T backend rm -f /tmp/askai-preflight-evaluator.py \
-                  /tmp/askai-preflight-manifest.json /tmp/askai-trust-anchor.json || true
-              echo "❌ 评估器/manifest/锚 内容完整性核验失败 —— 绝不执行,fail-closed 中止" >&2
+                  /tmp/askai-preflight-manifest.json /tmp/askai-trust-anchor.json \
+                  /tmp/askai-remediation-evidence.json || true
+              echo "❌ 评估器/manifest/锚/整改证据 内容完整性核验失败 —— 绝不执行,fail-closed 中止" >&2
               exit 1
             fi
             CONTAINER_RC=0
@@ -546,10 +593,13 @@ jobs:
                 --isolation-pg-dsn-parts \
                 --isolation-trust-anchor-file /tmp/askai-trust-anchor.json \
                 --isolation-weaviate-url-env WEAVIATE_URL \
-                --isolation-weaviate-class-env WEAVIATE_CLASS_NAME || CONTAINER_RC=$?
+                --isolation-weaviate-class-env WEAVIATE_CLASS_NAME \
+                --release-tag "$DEPLOY_TAG" \
+                ${EVID_ARGS[@]+"${EVID_ARGS[@]}"} || CONTAINER_RC=$?
             # 容器侧临时工件确定性清除(残留亦非秘密,仍清)
             $COMPOSE exec -T backend rm -f /tmp/askai-preflight-evaluator.py \
-                /tmp/askai-preflight-manifest.json /tmp/askai-trust-anchor.json || true
+                /tmp/askai-preflight-manifest.json /tmp/askai-trust-anchor.json \
+                /tmp/askai-remediation-evidence.json || true
             if [ "$CONTAINER_RC" -ne 0 ]; then
               echo "❌ 生产兼容性 preflight(容器内;含 G2 只读隔离断言 + 独立信任锚)未通过" >&2
               echo "   —— 部署中止(DB migration / rollout 之前,零生产变更)" >&2
@@ -687,6 +737,7 @@ jobs:
           SSH_USER: ${{ vars.PROD_SSH_USER }}
           SSH_KNOWN_HOSTS_B64: ${{ vars.PROD_SSH_KNOWN_HOSTS_B64 }}
           DEPLOY_TAG: ${{ steps.identity.outputs.tag }}
+          REMEDIATION_EVIDENCE_B64: ${{ secrets.PREFLIGHT_REMEDIATION_EVIDENCE_B64 }}
         run: |
           set -euo pipefail
           KEY_FILE="$RUNNER_TEMP/prod_deploy_key"
@@ -707,8 +758,17 @@ jobs:
             echo "❌ known_hosts 钉扎缺失或与 PROD_SSH_HOST 不匹配(绝不关闭严格主机键校验)" >&2
             exit 2
           fi
-          # 远端命令:DEPLOY_TAG 已在身份步被 ^vX.Y.Z$ 校验(纯数据,单引号防远端展开);
-          # flock -w 0 = 非阻塞,已有部署在跑则立即失败,不排队不加塞。
+          # 整改证据通道(A #138 P3;可选):base64 词表内单行(防远端 env 前缀
+          # 注入;工件本身非秘密)。未配置 ⇒ update.sh 内 回退门维持
+          # fail-closed 阻断(现状不变)。
+          case "${REMEDIATION_EVIDENCE_B64:-}" in
+            *[!A-Za-z0-9+/=]*) echo "❌ REMEDIATION_EVIDENCE_B64 含 base64 词表外字符(非法)" >&2; exit 2;;
+          esac
+          # 远端命令:DEPLOY_TAG 已在身份步被 ^vX.Y.Z(-rN)?$ 校验(纯数据,单引号
+          # 防远端展开);flock -w 0 = 非阻塞,已有部署在跑则立即失败,不排队不加塞。
+          # 脚本本体经 stdin 原样传递(与迁移/锚同一无注入面模式);证据非秘密,
+          # 远端落 0600 临时文件后透传 update.sh → evaluator,gate/target_tag 与
+          # 本次部署 tag 的绑定由 evaluator fail-closed 校验。
           ssh -i "$KEY_FILE" \
               -o StrictHostKeyChecking=yes \
               -o UserKnownHostsFile="$KH_FILE" \
@@ -716,7 +776,28 @@ jobs:
               -o ConnectTimeout=15 \
               -o ServerAliveInterval=30 \
               "${SSH_USER}@${SSH_HOST}" \
-              "cd ~/ask-ai && flock -w 0 /tmp/askai-deploy.lock ./deploy/prod/update.sh '$DEPLOY_TAG'"
+              "DEPLOY_TAG='$DEPLOY_TAG' REMEDIATION_EVIDENCE_B64='${REMEDIATION_EVIDENCE_B64:-}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd ~/ask-ai
+          rm -f "${TMPDIR:-/tmp}"/askai-remediation-evidence.* 2>/dev/null || true
+          EVID_ARGS=()
+          EVID_TMP=""
+          if [ -n "${REMEDIATION_EVIDENCE_B64:-}" ]; then
+            EVID_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-remediation-evidence.XXXXXXXX")"
+            cleanup_evid() { rm -f "$EVID_TMP"; }
+            trap cleanup_evid EXIT
+            printf '%s' "$REMEDIATION_EVIDENCE_B64" | base64 -d > "$EVID_TMP" || {
+                echo "❌ remediation evidence base64 解码失败(fail-closed)" >&2; exit 1; }
+            chmod 600 "$EVID_TMP"
+            if [ ! -s "$EVID_TMP" ]; then
+                echo "❌ remediation evidence 为空(fail-closed)" >&2; exit 1
+            fi
+            python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$EVID_TMP" 2>/dev/null || {
+                echo "❌ remediation evidence 非合法 JSON(fail-closed)" >&2; exit 1; }
+            EVID_ARGS=(--remediation-evidence-file "$EVID_TMP")
+          fi
+          flock -w 0 /tmp/askai-deploy.lock ./deploy/prod/update.sh "$DEPLOY_TAG" ${EVID_ARGS[@]+"${EVID_ARGS[@]}"}
+          REMOTE
 
       # ---- 6. 运行时身份双断言:version + git_sha(与 break-glass 共用同一验证器) ----
       - name: Verify runtime identity (/health version + git_sha)

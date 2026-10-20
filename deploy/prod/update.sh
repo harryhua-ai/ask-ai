@@ -9,9 +9,12 @@
 #   - 回滚兼容性由【目标发布】冻结镜像内的 compatibility manifest 声明权威裁定;
 #   - 目标发布声明 previous_compatible: true ⇒ 普通 previous-tag 回滚照常可用;
 #   - 目标发布声明 previous_compatible: false ⇒ 普通 previous-tag 回滚不再适用,
-#     必须显式确认该发布声明的修复门:
-#       ./deploy/prod/update.sh <tag> --remediation-ack <declared-gate>
-#     (evaluator 精确匹配;缺失/不匹配 ⇒ 在任何 mutation 之前 fail-closed);
+#     必须提供绑定目标发行与证据身份的整改证据工件(A #138 P3 裁决:
+#     字符串 ACK 不构成整改证明,不能凭命令行传入相同字符串获得合法放行):
+#       ./deploy/prod/update.sh <tag> --remediation-evidence-file <evidence.json>
+#     (evaluator 校验记录形状 + gate/target_tag 与声明及本 tag 精确绑定;
+#     缺失/不匹配 ⇒ 在任何 mutation 之前 fail-closed。
+#     --remediation-ack 仅保留 CLI 兼容,单独使用不再构成合法放行);
 #   - 本脚本不自行判定回退安全性,也不自动回滚 —— 只执行目标发布的冻结声明。
 #
 # 契约(#10 冻结):
@@ -64,6 +67,7 @@ IMAGE="ghcr.io/harryhua-ai/ask-ai"
 # 必须显式确认所声明的修复门才能继续(见文末 RELEASE-ROLLBACK-COMPATIBILITY)。
 TAG=""
 REMEDIATION_ACK=""
+REMEDIATION_EVIDENCE_FILE=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --remediation-ack)
@@ -71,11 +75,16 @@ while [ $# -gt 0 ]; do
             REMEDIATION_ACK="$2"; shift 2 ;;
         --remediation-ack=*)
             REMEDIATION_ACK="${1#*=}"; shift ;;
+        --remediation-evidence-file)
+            [ -n "${2:-}" ] || { echo "❌ --remediation-evidence-file 需要证据文件路径" >&2; exit 2; }
+            REMEDIATION_EVIDENCE_FILE="$2"; shift 2 ;;
+        --remediation-evidence-file=*)
+            REMEDIATION_EVIDENCE_FILE="${1#*=}"; shift ;;
         --*)
             echo "❌ 未知选项: $1" >&2; exit 2 ;;
         *)
             if [ -z "$TAG" ]; then TAG="$1"; shift; else
-                echo "❌ 多余位置参数: $1(用法: $0 <version-tag> [--remediation-ack <gate>])" >&2; exit 2
+                echo "❌ 多余位置参数: $1(用法: $0 <version-tag> [--remediation-evidence-file <path>] [--remediation-ack <gate>])" >&2; exit 2
             fi ;;
     esac
 done
@@ -168,7 +177,8 @@ echo "  ✅ 镜像身份: version=$ACTUAL_VERSION git_sha=$ACTUAL_SHA"
 # 已核验的镜像内 RELEASE.json compatibility_contract 旗标(独立/不可变/确定性;
 # blocker 3:禁止以门禁工件存在性推断时代):
 #   - contract 时代:evaluator 与 manifest 必须真实存在(打包回归 ⇒ fail-closed),
-#     判定全部由 evaluator 给出;--remediation-ack 贯通 rollback 修复门;
+#     判定全部由 evaluator 给出;--remediation-evidence-file 贯通 rollback 修复门
+#     (A #138 P3:唯一合法放行面 = 绑定目标发行与证据身份的证据工件);
 #   - pre_contract 时代:有界兼容路径,显式留痕(AC4)。
 # 本步骤只是调用者,不是 policy engine。
 echo "[3.5/6] 发布兼容性 preflight..."
@@ -197,10 +207,16 @@ if [ "$PREFLIGHT_ERA" = "contract" ]; then
     if [ -n "$REMEDIATION_ACK" ]; then
         ACK_ARGS=(--remediation-ack "$REMEDIATION_ACK")
     fi
+    EVIDENCE_ARGS=()
+    if [ -n "$REMEDIATION_EVIDENCE_FILE" ]; then
+        EVIDENCE_ARGS+=(--remediation-evidence-file "$REMEDIATION_EVIDENCE_FILE")
+    fi
     python3 "$PREFLIGHT_EVAL" \
         --manifest "$PREFLIGHT_MAN" \
         --env-file "$(dirname "$COMPOSE_FILE")/../../.env" \
+        --release-tag "$TAG" \
         "${ACK_ARGS[@]}" \
+        "${EVIDENCE_ARGS[@]}" \
         || { rm -f "$PREFLIGHT_MAN" "$PREFLIGHT_EVAL"; exit 1; }
     # REVIEW_2:把本发布的 rollback verdict 保留到部署完成阶段 ——
     # post-deploy 指引据此条件化(stdlib 读取,值绝不外泄;manifest 内无密值)
