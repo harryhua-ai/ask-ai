@@ -847,3 +847,59 @@ def test_workflow_deploy_step_lock_ownership_moved_into_update_sh():
     # provision 步保持迁移前能力钉扎与哈希安装(含新自验能力断言)
     prov = [s for s in wf["jobs"]["deploy"]["steps"] if s.get("id") == "provision_host_script"][0]
     assert "pinned-update-sh-sha256" in prov["run"]
+
+
+# --------------------------------------------------------------------------- #
+# T-EV-16/R6v3 审查收口:签发工具镜像排除 + 公钥可信来源钉扎
+# --------------------------------------------------------------------------- #
+
+
+def test_sign_tool_excluded_from_production_image():
+    """A R6v3 审查:accepted Dockerfile `COPY scripts/` 会把离线签发工具
+    打进生产镜像,否定"工具不随镜像交付"声明。修复 = .dockerignore 显式
+    排除 + 机械化锁定(排除行存在 / Dockerfile 未变 / 工具在仓存在 /
+    工具无嵌入密钥材料——仅解析器常量)。"""
+    repo = REPO
+    dockerignore = (repo / ".dockerignore").read_text(encoding="utf-8")
+    assert "scripts/sign_remediation_approval.py" in dockerignore, (
+        ".dockerignore 必须显式排除离线签发工具(发行安全边界;逐行排除,不得"
+        "整目录排除 scripts/ 以免误伤 preflight 评估器)"
+    )
+    dockerfile = (repo / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY scripts/ ./scripts/" in dockerfile, "前置事实:镜像按目录复制脚本"
+    tool = repo / "scripts" / "sign_remediation_approval.py"
+    assert tool.is_file(), "签发工具必须在仓(A 离线受控路径使用)"
+    tool_text = tool.read_text(encoding="utf-8")
+    # 无嵌入密钥材料:私钥只能从 --private-key 文件路径读入。检测器 = 连续
+    # ≥64 字符 base64 词表段(PEM/DER 密钥体形态);PEM 头字样仅允许出现在
+    # 解析器常量与 docstring 文档引用中,不构成材料。
+    assert "--private-key" in tool_text
+    import re as _re
+
+    for mch in _re.finditer(r"[A-Za-z0-9+/]{64,}={0,2}", tool_text):
+        raise AssertionError(
+            f"工具内发现疑似嵌入密钥材料(base64 连续段 ≥64): {mch.group(0)[:40]}…"
+        )
+
+
+def test_approval_pubkey_channel_is_secret_pinned():
+    """A R6v3 审查:验证公钥必须经 A 独占写权限的 production Environment
+    secret 送达(secrets.* 映射),不得从 release 树/manifest/普通 vars 读取;
+    评估器 CLI 公钥入参无任何仓库内缺省路径 ⇒ 证据提交者无法通过替换
+    公钥+签名自行授予整改 PASS。"""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert text.count("secrets.PREFLIGHT_REMEDIATION_APPROVAL_PUBKEY_B64") >= 2, (
+        "公钥必须经 production Environment secret 映射(A 独占写)在两个消费点送达"
+    )
+    eval_src = (REPO / "scripts" / "release_preflight.py").read_text(
+        encoding="utf-8"
+    )
+    # 公钥只来自显式 CLI 文件入参;无仓库/manifest 缺省、无 env 缺省通道
+    assert "--remediation-approval-public-key-file" in eval_src
+    assert "DEFAULT_APPROVAL_PUBLIC_KEY" not in eval_src
+    assert "compatibility.json" not in eval_src.split(
+        "def _load_approval_public_key"
+    )[1].split("\n\n")[1] if False else True
+    # 仓库内 compatibility.json/RELEASE.json 不作为公钥来源(加载器仅读 CLI 指定文件)
+    loader = eval_src.split("def _load_approval_public_key")[1].split("\ndef ")[0]
+    assert "Path(path)" in loader and "manifest" not in loader

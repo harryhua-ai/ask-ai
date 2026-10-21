@@ -728,7 +728,7 @@ jobs:
             exit "$RC"
           fi
 
-      # ---- 3.6 宿主部署脚本受信分发与身份钉扎(先于任何 mutation;阻塞 2 修复)----
+      # ---- 3.6 宿主部署脚本受信分发与身份钉扎(先于 DB migration 与 rollout;阻塞 2 修复)----
       # 宿主 ~/ask-ai 非 git 仓库,update.sh 不会随主干/镜像自动升级;若保留
       # 旧版,要到步骤5 才因未知参数失败 —— 已过 migration 边界,违反
       # "能力不匹配在 mutation 前 fail-closed"。本步骤把受信脚本工件
@@ -748,7 +748,7 @@ jobs:
       # (migration 本身不受宿主脚本影响)。
       # 凭据零额外传输(SSH key 仅进 0600 临时件);
       # SSH host-key 钉扎/严格校验不变。
-      - name: Provision trusted update.sh to host (pre-mutation; atomic)
+      - name: Provision trusted update.sh to host (before migration/rollout; atomic)
         id: provision_host_script
         env:
           SSH_KEY: ${{ secrets.PROD_DEPLOY_SSH_KEY }}
@@ -848,7 +848,7 @@ jobs:
             echo "❌ 安装后哈希不匹配 —— fail-closed" >&2
             exit 1
           fi
-          echo "HOST SCRIPT PROVISIONED: sha256=$NEW_HASH(原子替换完成;能力=整改证据消费;先于任何 mutation)"
+          echo "HOST SCRIPT PROVISIONED: sha256=$NEW_HASH(原子替换完成;能力=整改证据消费;先于 DB migration 与 rollout;本步骤自身为受校验的宿主脚本变更)"
           REMOTE
 
       # ---- 4. 数据库迁移(发布绑定;先于依赖新 schema 的应用 rollout;失败绝不 rollout) ----
