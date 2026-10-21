@@ -34,3 +34,7 @@ ask-ai-corpus/
 .env
 .env.*
 !.env.example
+
+# R6v3:整改审批离线签发工具绝不进入生产镜像(A 私钥只出现在 A 受控离线环境;
+# 工具代码无密钥材料,但按发行安全边界不随镜像交付——test_r6gate 机械化锁定本排除)
+scripts/sign_remediation_approval.py

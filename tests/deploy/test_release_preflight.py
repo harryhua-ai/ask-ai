@@ -320,7 +320,10 @@ def test_rollback_incompatible_requires_declared_gate(tmp_path, capsys):
     )
 
 
-def test_rollback_incompatible_with_matching_ack_passes(tmp_path, capsys):
+def test_rollback_incompatible_with_matching_ack_alone_blocked(tmp_path, capsys):
+    """(A #138 P3 演进,2026-10-20)字符串 ack 精确匹配不再单独构成合法放行:
+    「仅有字符串相等判断的 remediation_ack 不是安全整改证明」。fail-closed
+    且结构化指引指向证据工件。"""
     m = _write_manifest(
         tmp_path,
         _cfg_manifest(rollback={
@@ -328,7 +331,43 @@ def test_rollback_incompatible_with_matching_ack_passes(tmp_path, capsys):
             "remediation_gate": "release_mig_002_reindex",
         }),
     )
-    assert _run(["--manifest", str(m), "--remediation-ack", "release_mig_002_reindex"]) == 0
+    assert _run(["--manifest", str(m), "--remediation-ack", "release_mig_002_reindex"]) == 2
+    out = json.loads(capsys.readouterr().out)
+    chk = [c for c in out["checks"] if c["class"] == "rollback_remediation_gate_required"]
+    assert chk and "不构成" in chk[0]["reason"]
+    assert "--remediation-evidence-file" in chk[0]["reason"]
+
+
+def test_rollback_incompatible_bound_evidence_passes(tmp_path, capsys):
+    """(P3 合法放行面,R6v3)真实工件(SHA256 实测一致)+ RSA-2048 签名
+    审批(经生产签发工具同路签发;验证公钥钉扎文件)+ gate/tag/sha 三重
+    绑定 ⇒ pass。"""
+    import sys
+
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    from remediation_v3_trust_root import RsaTrustRoot
+
+    m = _write_manifest(
+        tmp_path,
+        _cfg_manifest(rollback={
+            "previous_compatible": False,
+            "remediation_gate": "release_mig_002_reindex",
+        }),
+    )
+    tr = RsaTrustRoot(tmp_path / "trust-root")
+    record = tr.signed(gate="release_mig_002_reindex")
+    ev = tmp_path / "evidence.json"
+    ev.write_text(json.dumps(record), encoding="utf-8")
+    assert _run([
+        "--manifest", str(m),
+        "--remediation-evidence-file", str(ev),
+        "--remediation-evidence-artifact", str(tr.artifact),
+        "--remediation-approval-public-key-file", str(tr.pubkey_path),
+        "--release-tag", "v9.9.9",
+        "--release-sha", "a" * 40,
+    ]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["status"] == "pass"
 
