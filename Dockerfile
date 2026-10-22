@@ -79,6 +79,10 @@ COPY config/ ./config/
 # (packaging contract:契约期镜像缺此文件 = preflight fail-closed,而非静默
 # 有界路径;test_preflight_boundary 机械锁定本 COPY 与三路路径一致)
 COPY deploy/prod/compatibility.json /app/deploy/prod/compatibility.json
+# 2026-10-22 通道适配:目标身份事实与冻结 UNKNOWN 上传守卫随冻结镜像分发
+# (preflight 提取侧/容器内 evaluator 消费;打包回归由 test_preflight_boundary 同款机械断言锁定)
+COPY deploy/prod/production-identity.json /app/deploy/prod/production-identity.json
+COPY deploy/prod/uploads-unknown-guard.tsv /app/deploy/prod/uploads-unknown-guard.tsv
 
 # #10 版本与发布治理:构建期生成的发布清单(CI 总是先生成;本地构建请先跑
 # scripts/generate_release_manifest.sh)。backend 启动 fail-closed:

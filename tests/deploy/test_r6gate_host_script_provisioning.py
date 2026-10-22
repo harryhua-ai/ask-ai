@@ -216,11 +216,26 @@ class Sandbox:
             "    esac ;;\n"
             "  inspect)\n"
             '    echo "ghcr.io/harryhua-ai/ask-ai:${TSL_FAKE_TAG:-v1.0.0}" ;;\n'
-            "  compose)\n"
-            '    case "${args[2]}" in\n'
-            '      ps) if [ "${args[3]}" = "-q" ]; then echo fakecid00000001; else exit 0; fi ;;\n'
-            "      *) exit 0 ;;\n"
+            "  exec)\n"
+            '    # deployed-version 守卫事实读取:docker exec <cid> cat /app/RELEASE.json\n'
+            '    # 或 /app/deploy/prod/compatibility.json(已部署回滚声明;按 cat\n'
+            '    # 目标路径区分,与真实容器布局一致)\n'
+            '    case " ${args[*]} " in\n'
+            '      *" /app/deploy/prod/compatibility.json "*)\n'
+            '        if [ "${TSL_COMPAT_INCOMPATIBLE:-}" = "1" ]; then\n'
+            '          printf \'{"version":1,"rollback":{"previous_compatible":false,"remediation_gate":"%s"}}\' "${TSL_COMPAT_GATE:-gate-token-x}"\n'
+            '        else\n'
+            '          printf \'{"version":1,"rollback":{"previous_compatible":true}}\'\n'
+            '        fi ;;\n'
+            '      *)\n'
+            '        printf \'{"version":"%s","git_sha":"%s"}\' \\\n'
+            '          "${TSL_DEPLOYED_VERSION:-${TSL_FAKE_VERSION:-1.0.0}}" "${TSL_FAKE_SHA:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" ;;\n'
             "    esac ;;\n"
+            "  compose)\n"
+            '    sub=""\n'
+            '    for i in "${!args[@]}"; do case "${args[$i]}" in ps|exec|run) sub="${args[$i]}"; break;; esac; done\n'
+            '    if [ "$sub" = "ps" ]; then echo fakecid00000001; exit 0; fi\n'
+            "    exit 0 ;;\n"
             '  *) echo "fake docker: unexpected $*" >&2; exit 1 ;;\n'
             "esac\n",
             encoding="utf-8",
@@ -544,29 +559,47 @@ def test_p04_preflight_failure_zero_migration(sandbox):
     assert sandbox.migrate_count() == 0
 
 
-def test_p05_host_gate_rejects_attacker_signed_evidence(sandbox):
-    """P-05:宿主脚本正确但整改证据由攻击者自造密钥签发 ⇒ update.sh 内
-    evaluator(RSA 验签)fail-closed,部署拒绝(宿主侧回退门真实拦截)。"""
+def test_p05_retired_evidence_channel_is_inert(sandbox):
+    """P-05(2026-10-22 退役):证据通道整体退出发布链 —— 攻击者自造密钥
+    签发的"证据"不再被任何部署面消费;部署结果只由 forward/redeploy 语义
+    (deployed-version 守卫)与冻结镜像 evaluator 判定。"""
     atk = _attacker_trust_root()
     record = atk.signed(gate=GATE, target_tag=TAG, release_sha=FAKE_SHA)
     res = sandbox.run_pipeline(
         evidence=record,
         artifact=atk.artifact.read_bytes(),
-        pubkey_b64=_make_evidence()[2],  # 钉扎的是受信公钥,非攻击者公钥
+        pubkey_b64=_make_evidence()[2],
     )
-    assert res["deploy"].returncode != 0, "攻击者签名的证据必须被宿主侧 evaluator 拒绝"
+    assert res["deploy"].returncode == 0, "退役通道对部署零影响(前向/重部署照常放行)"
     out = sandbox.remote_out.read_text(encoding="utf-8")
-    assert "审批无效" in out or "兼容性 preflight 未通过" in out
+    assert "=== ask-ai 部署:" in out
 
 
-def test_p05b_evidence_without_pubkey_blocked(sandbox):
-    """P-05b:提供证据但公钥通道缺省 ⇒ evaluator 结构化拒绝(fail-closed;
-    绝不回退任何 env 通道 —— R6v2 的 env 通道已删除)。"""
+def test_p05b_evidence_without_pubkey_inert(sandbox):
+    """P-05b(退役):证据/公钥通道缺省与否不改变部署语义(零消费面)。"""
     record, artifact, _ = _make_evidence()
     res = sandbox.run_pipeline(evidence=record, artifact=artifact, pubkey_b64="")
-    assert res["deploy"].returncode != 0
+    assert res["deploy"].returncode == 0
     out = sandbox.remote_out.read_text(encoding="utf-8")
-    assert "审批不可验证" in out or "兼容性 preflight 未通过" in out
+    assert "=== ask-ai 部署:" in out
+
+
+def test_p05c_older_target_refused_by_host_guard(sandbox):
+    """P-05c(新):目标旧于已部署 ⇒ update.sh [1.3/6] deployed-version 守卫
+    在任何 rollout mutation 前 fail-closed(宿主侧第二道,覆盖历史 ref
+    dispatch 的旧 workflow 调用路径)。"""
+    env = sandbox.base_env()
+    env["TSL_COMPAT_INCOMPATIBLE"] = "1"
+    # update.sh 的已部署事实 = 运行中 backend 容器 RELEASE.json(sandbox shim)
+    env["TSL_DEPLOYED_VERSION"] = "9.9.9"  # 已部署比目标(1.0.0)新 ⇒ 旧版回退
+    (sandbox.prod / "update.sh").write_text("#!/bin/bash\necho old\n")
+    os.chmod(sandbox.prod / "update.sh", 0o750)
+    r_prov = sandbox.run_step("provision_host_script", env)
+    assert r_prov.returncode == 0
+    r_dep = sandbox.run_step("deploy", env)
+    assert r_dep.returncode != 0, "旧版回退必须被宿主守卫拒绝"
+    out = sandbox.remote_out.read_text(encoding="utf-8")
+    assert "deployed-version 回滚守卫" in out and "零 rollout" in out
 
 
 def test_p06_post_provision_drift_detected_by_locked_selfverify(sandbox):
@@ -647,7 +680,7 @@ def test_p12_provision_step_mechanics():
     assert "TRUSTED_HASH" in text and "WORKTREE_HASH" in text
     assert "脏树/篡改" in text
     assert ".update-sh.provision." in text, "必须使用目标同目录临时件(原子 rename 前提)"
-    assert "grep -q -- '--remediation-evidence-file'" in text, "能力断言必须独立于哈希"
+    assert "grep -q 'ASKAI_DEPLOYED_VERSION_GUARD_V1'" in text, "能力断言必须独立于哈希(回滚守卫标记)"
     assert "grep -q -- '--pinned-update-sh-sha256'" in text, "R6v3 锁内自验能力必须断言"
     assert "bash -n" in text
     assert 'mv -f "$TMP_INST" "$TARGET"' in text
@@ -655,29 +688,25 @@ def test_p12_provision_step_mechanics():
     assert "askai-deploy.lock" in text, "必须持有与部署同一把宿主锁"
 
 
-def test_p13_deploy_step_ownership_in_update_sh_and_evidence_channels():
+def test_p13_deploy_step_ownership_in_update_sh_and_retired_channels():
     """deploy 步:锁外预复核已删(逻辑移入 update.sh 锁内)、外层 flock 已
-    删;钉扎哈希经 env 前缀传入;证据/工件/公钥三通道 + 零审批私钥映射。"""
+    删;钉扎哈希经 env 前缀传入;证据/公钥通道零残留(2026-10-22 退役)。"""
     text = _step_text("deploy")
     assert "--pinned-update-sh-sha256" in text
     assert "PROVISION_SHA256" in text
-    # 锁外预复核必须删除(R6v2 的 HOST_SH_HASH 复核块)
     assert "受信工件不一致" not in text
     assert "HOST_SH_HASH" not in text
-    # 外层 flock 包装必须删除(锁所有权移入 update.sh [1.1/6])
     assert "flock -w 0 /tmp/askai-deploy.lock" not in text
     assert "flock -w 0 " not in text
-    # 三通道 + 公钥容器/宿主 0600 临时件纪律
-    assert "--remediation-evidence-file" in text
-    assert "--remediation-evidence-artifact" in text
-    assert "--remediation-approval-public-key-file" in text
-    assert "REMEDIATION_PUBKEY_B64" in text
-    # 零审批私钥材料(动态构造避免本文件残留被删字面)
+    # 退役通道零残留
+    assert "--remediation-evidence-file" not in text
+    assert "--remediation-evidence-artifact" not in text
+    assert "--remediation-approval-public-key-file" not in text
+    assert "REMEDIATION_PUBKEY_B64" not in text
     channel = "secrets." + "PREFLIGHT_REMEDIATION_" + "APPROVAL_KEY"
     assert channel not in text
     assert "APPROVAL_KEY_B64" not in text
-    # 公钥钉扎通道纪律:SSH stdin → 0600 临时件
-    assert "askai-approval-pubkey" in text
+    assert "askai-approval-pubkey" not in text
 
 
 def test_p14_update_sh_locked_selfverify_mechanics():

@@ -820,6 +820,232 @@ def probe_filesystem_objects(wv_cfg: dict, timeout_s: int) -> int:
         conn.close()
 
 
+# r3 冻结语义:本发布注销并清零的两个上传来源(2026-10-22 生产验收事实;
+# 字面前缀 = source_id + "/",与 #187 恢复门禁/清零程序同口径)。
+_RETIRED_UPLOAD_SOURCES = ("knowledge-support-cases", "knowledge-cb70f5ae")
+_RETIRED_SOURCE_PREFIXES = tuple(s + "/" for s in _RETIRED_UPLOAD_SOURCES)
+
+
+def _retired_source_residue_sql() -> str:
+    """构造 12 计数只读探针单 SELECT(两注销来源 × 全层 + 共享层)。
+
+    列序:ksc_docs/ksc_versions/ksc_chunks/kc_docs/kc_versions/kc_chunks/
+    ksc_gens/kc_gens/external_refs/active_registrations/inflight_syncs/
+    legacy_generations。所有谓词与 scripts/restore_ingress_gate.sh(G5-G11)
+    逐字同口径(严格字面前缀;external = 外部版本引用本源专属 generation;
+    active = enabled 且未 retired;inflight = 未终态;legacy = 共享 generation)。
+    """
+    a, b = _RETIRED_UPLOAD_SOURCES
+    pa, pb = a + "/", b + "/"
+    la, lb = len(pa), len(pb)
+    return (
+        "SELECT "
+        f"(SELECT count(*) FROM documents WHERE left(source_id,{la})='{pa}'),"
+        f"(SELECT count(*) FROM document_versions WHERE left(source_id,{la})='{pa}'),"
+        f"(SELECT count(*) FROM document_version_chunks c WHERE EXISTS "
+        f"(SELECT 1 FROM document_versions v WHERE v.id=c.version_id AND left(v.source_id,{la})='{pa}')),"
+        f"(SELECT count(*) FROM documents WHERE left(source_id,{lb})='{pb}'),"
+        f"(SELECT count(*) FROM document_versions WHERE left(source_id,{lb})='{pb}'),"
+        f"(SELECT count(*) FROM document_version_chunks c WHERE EXISTS "
+        f"(SELECT 1 FROM document_versions v WHERE v.id=c.version_id AND left(v.source_id,{lb})='{pb}')),"
+        f"(SELECT count(*) FROM index_generations WHERE source_id='{a}'),"
+        f"(SELECT count(*) FROM index_generations WHERE source_id='{b}'),"
+        "(SELECT count(*) FROM document_versions v WHERE v.generation_id IN "
+        f"(SELECT id FROM index_generations WHERE source_id='{a}' OR source_id='{b}') "
+        f"AND NOT (left(v.source_id,{la})='{pa}' OR left(v.source_id,{lb})='{pb}')),"
+        f"(SELECT count(*) FROM data_sources WHERE (id='{a}' OR id='{b}') "
+        "AND enabled=true AND coalesce(lifecycle_state,'active')<>'retired'),"
+        f"(SELECT count(*) FROM sync_requests WHERE (source_id='{a}' OR source_id='{b}' "
+        f"OR left(source_id,{la})='{pa}' OR left(source_id,{lb})='{pb}') "
+        "AND status NOT IN ('done','completed','failed','cancelled','skipped')),"
+        "(SELECT count(*) FROM index_generations WHERE source_id='*legacy*')"
+    )
+
+
+_RETIRE_RESIDUE_KEYS = (
+    "ksc_documents", "ksc_versions", "ksc_chunks",
+    "kc_documents", "kc_versions", "kc_chunks",
+    "ksc_generations", "kc_generations",
+    "external_generation_refs", "active_registrations",
+    "inflight_sync_requests", "legacy_generations",
+)
+# 前十一个必须为 0;legacy 必须 >=1(共享层不得误删)。
+_RETIRE_RESIDUE_MUST_BE_ZERO = frozenset(_RETIRE_RESIDUE_KEYS[:-1])
+
+
+def _pg_probe_retired_residue_psql(dsn: str, timeout_s: int) -> tuple[str, str, list[int]]:
+    """psql 通道:单会话 current_database/system_identifier/12 计数。"""
+    base_argv, _db, password = _parse_pg_target(dsn)
+    argv = base_argv + [
+        "-c", _CURRENT_DATABASE_SQL, "-c", _PG_SYSTEM_ID_SQL, "-c", _retired_source_residue_sql(),
+    ]
+    env = {**os.environ, "PGPASSWORD": password} if password else None
+    try:
+        proc = subprocess.run(  # noqa: S603 - argv 由封闭词表构造
+            argv, capture_output=True, text=True, timeout=max(1, timeout_s),
+            env=env, check=False,
+        )
+    except FileNotFoundError as exc:
+        raise IsolationChannelUnavailable("psql 不可用(只读 DB 查询通道缺失)") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"psql 残留探针超时(有界 {timeout_s}s)") from exc
+    if proc.returncode != 0:
+        raise RuntimeError(f"psql 残留探针失败(returncode={proc.returncode};输出不回显)")
+    lines = [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
+    if len(lines) < 3:
+        raise IsolationIdentityMismatch("psql 残留探针输出缺身份行/计数行 —— fail-closed")
+    counts = [_count_or_fail(part) for part in lines[2].split("|")]
+    if len(counts) != len(_RETIRE_RESIDUE_KEYS):
+        raise RuntimeError(
+            f"psql 残留探针计数列数不符(got {len(counts)} want {len(_RETIRE_RESIDUE_KEYS)})"
+        )
+    return lines[0], lines[1], counts
+
+
+def _pg_probe_retired_residue_driver(dsn: str, timeout_s: int) -> tuple[str, str, list[int]]:
+    """psycopg2 通道(psql 缺失容器内):与 psql 通道相同的三条只读语句。"""
+    psycopg2 = _import_psycopg2()
+    f = _pg_target_fields(dsn)
+    try:
+        conn = psycopg2.connect(
+            host=f["host"] or None, port=f["port"] or 5432,
+            user=f["user"] or None, password=f["password"] or None,
+            dbname=f["dbname"], connect_timeout=max(1, timeout_s),
+        )
+    except Exception as exc:  # noqa: BLE001 - 详情可能含 conninfo,绝不回显
+        raise RuntimeError(f"psycopg2 残留探针连接失败({type(exc).__name__})") from exc
+    try:
+        with conn.cursor() as cur:
+            cur.execute(_CURRENT_DATABASE_SQL)
+            db = str(cur.fetchone()[0])
+            cur.execute(_PG_SYSTEM_ID_SQL)
+            sid = str(cur.fetchone()[0])
+            cur.execute(_retired_source_residue_sql())
+            counts = [_strict_probe_count(row) for row in cur.fetchone()]
+        conn.rollback()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"psycopg2 残留探针失败({type(exc).__name__})") from exc
+    finally:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+    if len(counts) != len(_RETIRE_RESIDUE_KEYS):
+        raise RuntimeError("psycopg2 残留探针计数列数不符")
+    return db, sid, counts
+
+
+def probe_retired_source_residue(pg_cfg: dict, timeout_s: int) -> dict:
+    """注销来源全层残留 + 共享层守恒(有界只读;身份核验同 upload_mode 探针)。
+
+    Returns: {_RETIRE_RESIDUE_KEYS 各键: int}。
+    Raises: 与 probe_upload_mode_rows 同契约(通道缺失→BLOCKED;身份不符→
+    IsolationIdentityMismatch;其余失败→RuntimeError,fail-closed)。
+    """
+    dsn = str(pg_cfg.get("dsn") or "").strip()
+    if not dsn:
+        raise IsolationChannelUnavailable("缺隔离 DB DSN(残留探针通道不可用)")
+    expected_sid = str(pg_cfg.get("expected_pg_system_id") or "").strip()
+    if not expected_sid:
+        raise IsolationIdentityMismatch(
+            "缺信任锚期望 pg system_identifier:残留断言绝不记在未声明目标上,fail-closed"
+        )
+    try:
+        actual_db, actual_sid, counts = _pg_probe_retired_residue_psql(dsn, timeout_s)
+    except IsolationChannelUnavailable:
+        actual_db, actual_sid, counts = _pg_probe_retired_residue_driver(dsn, timeout_s)
+    if actual_db != _pg_target_fields(dsn)["dbname"]:
+        raise IsolationIdentityMismatch(
+            f"目标 DB 身份不一致:current_database()={actual_db!r} ≠ DSN 声明,fail-closed"
+        )
+    if not re.fullmatch(r"[0-9]+", actual_sid or "") or actual_sid != expected_sid:
+        raise IsolationIdentityMismatch(
+            f"目标 DB 身份不一致:system_identifier={actual_sid} ≠ 信任锚钉扎值,fail-closed"
+        )
+    return dict(zip(_RETIRE_RESIDUE_KEYS, counts))
+
+
+def probe_uploads_unknown_guard(sources_dir: str, guard_path: str, timeout_s: int) -> dict:
+    """uploads 真实挂载目录 × 冻结 UNKNOWN 守卫清单(纯 stdlib 只读)。
+
+    语义(与 Batch 2 清理成功判据同口径):枚举 ``sources_dir`` 下全部常规
+    文件(路径相对化),与守卫清单做【集合相等 + 逐文件 SHA256 相等】双断言。
+    - 守卫文件缺失/不可读/行非法 → RuntimeError(fail-closed);
+    - 目录不可达/枚举错误/遇符号链接或特殊文件 → RuntimeError(fail-closed);
+    - 多余文件 / 守卫文件缺席 / 哈希不一致 → 返回结构化差异(调用方判 FAIL);
+    - 全等 → {"status": "clean", "files": N}。
+    路径为操作元数据(与既有审计回执同口径),绝不读取文件内容正文。
+    """
+    import hashlib  # noqa: PLC0415 - stdlib;局部导入保持模块头部零第三方
+
+    guard_file = Path(guard_path)
+    try:
+        guard_lines = guard_file.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise RuntimeError(f"守卫清单不可读({type(exc).__name__})") from exc
+    guard: dict[str, str] = {}
+    for lineno, line in enumerate(guard_lines, 1):
+        if not line.strip():
+            continue
+        parts = line.split("	")
+        if len(parts) != 2 or not parts[0] or not re.fullmatch(r"[0-9a-f]{64}", parts[1]):
+            raise RuntimeError(f"守卫清单第 {lineno} 行非法(须 路径\t64hex)")
+        if parts[0] in guard:
+            raise RuntimeError(f"守卫清单第 {lineno} 行路径重复")
+        guard[parts[0]] = parts[1]
+    if not guard:
+        raise RuntimeError("守卫清单为空(冻结清单不得为空,fail-closed)")
+    root = Path(sources_dir)
+    try:
+        entries = sorted(root.rglob("*"))
+    except OSError as exc:
+        raise RuntimeError(f"uploads 目录不可枚举({type(exc).__name__})") from exc
+    actual: dict[str, str] = {}
+    for entry in entries:
+        rel = entry.relative_to(root).as_posix()
+        if entry.is_symlink():
+            raise RuntimeError(
+                f"uploads 目录内发现符号链接:{rel} —— fail-closed"
+            )
+        if entry.is_dir():
+            continue  # 目录本身不构成条目;其内容由 rglob 继续枚举
+        if not entry.is_file():
+            raise RuntimeError(
+                f"uploads 目录内发现非常规文件:{rel} —— fail-closed"
+            )
+        rel = entry.relative_to(root).as_posix()
+        try:
+            digest = hashlib.sha256(entry.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise RuntimeError(f"uploads 文件不可读:{rel}({type(exc).__name__})") from exc
+        actual[rel] = digest
+    extra = sorted(set(actual) - set(guard))
+    missing = sorted(set(guard) - set(actual))
+    changed = sorted(p for p in set(actual) & set(guard) if actual[p] != guard[p])
+    if extra or missing or changed:
+        return {
+            "status": "drift",
+            "files": len(actual),
+            "guard_entries": len(guard),
+            "extra": extra,
+            "missing": missing,
+            "hash_changed": changed,
+        }
+    return {"status": "clean", "files": len(actual), "guard_entries": len(guard)}
+
+
+def _parse_release_version(tag: str) -> tuple[int, int, int, int] | None:
+    """``v1.6.4-r3``/``1.6.4-r3`` → (1,6,4,3);无 -r 后缀 → (…,0);形状不符 → None。
+
+    ``v`` 前缀可选:--release-tag 来自 workflow 身份步(带 v),--deployed-
+    release-version 来自 RELEASE.json version 字段/宿主部署标记(无 v)。
+    """
+    m = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)(?:-r(\d+))?", tag.strip())
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4) or 0))
+
+
 def _upload_isolation_checks(isolation: dict, timeout_s: int) -> list[dict]:
     """构造 isolation 检查项;BLOCKED 与 fail 均使整体非零退出(fail-closed)。
 
@@ -975,6 +1201,120 @@ def _upload_isolation_checks(isolation: dict, timeout_s: int) -> list[dict]:
                         "filesystem 类 Weaviate 对象 = 0",
                     )
                 )
+
+    # ---- 注销来源全层残留 + 共享层守恒(2026-10-22 通道适配新增;只读) ----
+    # 口径与 scripts/restore_ingress_gate.sh(G5-G11)一致:两注销来源
+    # docs/versions/chunks/gens/外部引用/活动注册/未终态请求必须全零;
+    # 共享 *legacy* generation 必须 >=1(不得误删)。
+    if dsn and anchor:
+        try:
+            residue = probe_retired_source_residue(
+                {"dsn": dsn, "expected_pg_system_id": anchor["pg_system_id"]},
+                timeout_s,
+            )
+        except IsolationChannelUnavailable as exc:
+            out.append(
+                _check(
+                    "isolation", "retired_source_residue",
+                    "isolation_residue_unprovable", "blocked",
+                    f"只读 DB 查询通道不可用:{exc}(BLOCKED,不谎报 PASS)",
+                )
+            )
+        except IsolationIdentityMismatch as exc:
+            out.append(
+                _check(
+                    "isolation", "retired_source_residue",
+                    "isolation_residue_identity_mismatch", "fail",
+                    f"{exc}(fail-closed:不把证据记在未声明的目标上)",
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - 探针失败 = 证据不成立
+            out.append(
+                _check(
+                    "isolation", "retired_source_residue",
+                    "isolation_residue_probe_failed", "fail",
+                    f"残留探针失败({type(exc).__name__}),隔离证据不成立,fail-closed",
+                )
+            )
+        else:
+            nonzero = {k: v for k, v in residue.items() if k in _RETIRE_RESIDUE_MUST_BE_ZERO and v}
+            legacy = residue.get("legacy_generations", 0)
+            if nonzero:
+                out.append(
+                    _check(
+                        "isolation", "retired_source_residue",
+                        "isolation_residue_present", "fail",
+                        "注销来源残留非零:"
+                        + ",".join(f"{k}={v}" for k, v in sorted(nonzero.items()))
+                        + ";与恢复门禁/清零验收同口径,必须全零(fail-closed)",
+                    )
+                )
+            else:
+                out.append(
+                    _check(
+                        "isolation", "retired_source_residue",
+                        "isolation_residue_clean", "pass",
+                        "注销来源 docs/versions/chunks/generations/外部引用/活动注册/"
+                        "未终态请求全零(计数匿名,口径同 #187 恢复门禁)",
+                    )
+                )
+            if legacy < 1:
+                out.append(
+                    _check(
+                        "isolation", "legacy_generation",
+                        "isolation_legacy_missing", "fail",
+                        "共享 *legacy* generation 缺失(疑似误删共享层)—— fail-closed",
+                    )
+                )
+            else:
+                out.append(
+                    _check(
+                        "isolation", "legacy_generation", "isolation_legacy_present",
+                        "pass", "共享 *legacy* generation 存在(共享层守恒)",
+                    )
+                )
+
+    # ---- uploads 真实挂载目录 × 冻结 UNKNOWN 守卫(2026-10-22 通道适配新增) ----
+    # 目录取自身份锚的 uploads_sources_dir(= backend 容器内应用真实挂载路径,
+    # 由 workflow 控制面对 docker inspect 卷挂载做独立核验,不接受调用方另指
+    # 目录);守卫清单 = 随冻结镜像分发的已审核事实(Batch 2 清理后 UNKNOWN
+    # 保留集,路径+SHA256)。集合相等 + 逐文件哈希相等才 PASS。
+    sources_dir = str(anchor.get("uploads_sources_dir") or "").strip() if anchor else ""
+    guard_path = str(anchor.get("uploads_unknown_guard") or "").strip() if anchor else ""
+    if sources_dir and guard_path:
+        try:
+            uploads = probe_uploads_unknown_guard(sources_dir, guard_path, timeout_s)
+        except Exception as exc:  # noqa: BLE001 - 任何枚举/守卫读取失败都不可 PASS
+            out.append(
+                _check(
+                    "isolation", "uploads_unknown_guard",
+                    "isolation_uploads_guard_invalid", "fail",
+                    f"uploads 守卫检查不可证明({type(exc).__name__}):目录="
+                    f"{sources_dir} 必须真实可达且守卫清单合法 —— fail-closed",
+                )
+            )
+        else:
+            if uploads.get("status") == "clean":
+                out.append(
+                    _check(
+                        "isolation", "uploads_unknown_guard", "isolation_uploads_clean",
+                        "pass",
+                        "uploads 真实目录与冻结 UNKNOWN 守卫完全一致"
+                        f"(files={uploads.get('files')},guard={uploads.get('guard_entries')})",
+                    )
+                )
+            else:
+                out.append(
+                    _check(
+                        "isolation", "uploads_unknown_guard",
+                        "isolation_uploads_drift", "fail",
+                        "uploads 目录与冻结守卫不一致:"
+                        f"extra={len(uploads.get('extra', []))},"
+                        f"missing={len(uploads.get('missing', []))},"
+                        f"hash_changed={len(uploads.get('hash_changed', []))}"
+                        "(UNKNOWN 保留集漂移 → fail-closed;明细见部署日志审计)",
+                    )
+                )
     return out
 
 
@@ -989,12 +1329,7 @@ def evaluate(
     env: dict[str, str] | None = None,
     probe_timeout_s: int = DEFAULT_PROBE_TIMEOUT_S,
     remediation_ack: str | None = None,
-    remediation_evidence: dict | None = None,
-    remediation_evidence_error: str | None = None,
-    remediation_artifact_digest: str | None = None,
-    remediation_artifact_error: str | None = None,
-    approval_public_key: dict | None = None,
-    approval_public_key_error: str | None = None,
+    deployed_version: str | None = None,
     release_tag: str | None = None,
     release_sha: str | None = None,
     pre_contract: bool = False,
@@ -1123,118 +1458,86 @@ def evaluate(
         )
     else:
         gate = str(rollback["remediation_gate"]).strip()
-        evidence = remediation_evidence if isinstance(remediation_evidence, dict) else None
-        # 放行 = 全链验证(逐环给出结构化 actionable 拒绝;任一环失败即
-        # fail-closed,绝不部分放行):
-        #   记录形状 → 工件真实性(SHA256 对实际文件) → 验证公钥可用 →
-        #   RSA-2048 签名审批真伪 → gate/target_tag/release_sha 三重绑定 →
-        #   有效期。签名验证 = 纯 stdlib RSASSA-PKCS1-v1_5(SHA-256):
-        #   公钥只能验签、无法签发 ⇒ 应用容器 env 权限不构成签发能力
-        #   (A R6v2 审查阻塞 1:对称 HMAC 密钥经 compose env_file 扩散 =
-        #   自授权面,已整体移除)。
-        bind_ok = False
-        reason = ""
-        if (remediation_evidence_error or "").strip():
-            reason = f"整改证据不可用({remediation_evidence_error})—— fail-closed"
-        elif evidence is None:
-            if (remediation_ack or "").strip() == gate:
-                reason = (
-                    "字符串 --remediation-ack 与声明 gate 匹配,但字符串 ACK 不构成"
-                    "整改证明(A #138 P3:不能凭命令行传入相同字符串获得合法放行)"
-                    "—— 必须提供【真实不可变证据工件 + 受信审批】"
-                    "(--remediation-evidence-file + --remediation-evidence-artifact"
-                    " + --release-tag + --release-sha)"
+        # 2026-10-22 通道裁决(A #138 正式授权):新增离线 RSA 签发与 4 项
+        # Environment Secrets 不再构成发布依赖(User 无私钥/秘密配置通道;
+        # 整改实质已由已验收的清零与 #187 恢复门禁落地)。本门在此语义下重排:
+        #   - 字符串 ACK 永不构成放行(A #138 P3 原则保留;此参数仅用于把
+        #     试图绕过者显式打成 FAIL,不给静默 PASS 面);
+        #   - 该发布声明 previous_compatible=false 的实际强制 = 部署面
+        #     deployed-version 守卫:目标版本旧于【当前已部署版本】⇒ 拒绝
+        #     (evaluator 由调用方提供已部署版本事实;workflow 必传,
+        #     update.sh 守卫为宿主侧第二道,覆盖历史 ref dispatch 的旧
+        #     workflow 调用路径);
+        #   - 已部署版本不可证明 ⇒ BLOCKED(回滚方向无法判定,不谎报 PASS;
+        #     空宿主首部署属 bootstrap 语境,如实披露于通道文档)。
+        ack = (remediation_ack or "").strip()
+        deployed = (deployed_version or "").strip()
+        if ack:
+            checks.append(
+                _check(
+                    "rollback", "previous_compatible",
+                    "rollback_ack_not_accepted", "fail",
+                    f"字符串 --remediation-ack(即使与声明 gate {gate!r} 一致)不构成"
+                    "放行:该发布声明 previous_compatible=false ⇒ 普通 previous-tag "
+                    "回滚不适用;签名/ACK 放行通道已按 2026-10-22 A 裁决退役,"
+                    "不安全旧版回滚由部署面 deployed-version 守卫强制 —— fail-closed",
                 )
-            else:
-                reason = (
-                    "该发布声明与先前版本不兼容:普通 previous-tag 回滚不适用,"
-                    "必须提供【真实不可变证据工件 + 受信审批】的整改证据记录"
-                    "(--remediation-evidence-file + --remediation-evidence-artifact"
-                    f" + --release-tag + --release-sha,声明的 remediation gate: {gate})"
-                )
-        elif (remediation_artifact_error or "").strip():
-            reason = (
-                f"整改证据工件不可信({remediation_artifact_error})"
-                "—— 记录声明不等于工件本身,fail-closed"
             )
-        elif (approval_public_key_error or "").strip():
-            reason = f"整改审批不可验证({approval_public_key_error})—— fail-closed"
         else:
-            if not _approval_signature_valid(
-                approval_public_key,
-                str(evidence["approval"]["signature"]),
-                _approval_signature_payload(evidence),
-            ):
-                reason = (
-                    "整改审批无效(RSA-2048 签名校验失败:记录未经审批私钥签发或"
-                    "任一绑定字段被篡改)—— 自填 recorded_by/伪造审批不构成"
-                    "整改证明;验证公钥无法签发 ⇒ 容器 env 权限不构成签发能力,"
-                    "fail-closed"
+            target_v = _parse_release_version(release_tag or "")
+            if target_v is None:
+                checks.append(
+                    _check(
+                        "rollback", "previous_compatible",
+                        "rollback_target_tag_unparsable", "fail",
+                        f"目标 tag {release_tag!r} 形状不可解析(须 vX.Y.Z[-rN]):"
+                        "回滚方向无法判定,fail-closed",
+                    )
                 )
-            elif evidence.get("gate") != gate:
-                reason = (
-                    "整改证据绑定失败: 证据 gate="
-                    f"{evidence.get('gate')!r} ≠ manifest 声明 {gate!r}(fail-closed)"
-                )
-            elif evidence.get("target_tag") != (release_tag or "").strip():
-                reason = (
-                    "整改证据绑定失败: 证据 target_tag="
-                    f"{evidence.get('target_tag')!r} ≠ 本次部署 release-tag="
-                    f"{(release_tag or '')!r}(跨发行证据不可移作他用,fail-closed)"
-                )
-            elif evidence.get("release_sha") != (release_sha or "").strip().lower():
-                reason = (
-                    "整改证据绑定失败: 证据 release_sha="
-                    f"{evidence.get('release_sha')!r} ≠ 本次部署 release-sha="
-                    f"{(release_sha or '')!r}(跨 SHA/镜像身份证据不可挪用,"
-                    "fail-closed)"
+            elif not deployed:
+                checks.append(
+                    _check(
+                        "rollback", "previous_compatible",
+                        "rollback_direction_unprovable", "fail",
+                        "已部署版本事实缺失(调用方未提供 --deployed-release-version):"
+                        "目标-已部署先后关系无法判定 ⇒ 不安全旧版回滚守卫不可证明,"
+                        "BLOCKED(不谎报 PASS;空宿主 bootstrap 语境见通道文档)",
+                    )
                 )
             else:
-                na, na_err = _parse_iso_datetime(evidence["not_after"], "not_after")
-                if na_err or na is None:
-                    reason = f"整改证据不可用({na_err})—— fail-closed"
-                elif datetime.now(timezone.utc) > na:
-                    reason = (
-                        f"整改审批已过期(not_after={evidence['not_after']})"
-                        "—— 过期证据不放行,fail-closed"
+                deployed_v = _parse_release_version(deployed)
+                if deployed_v is None:
+                    checks.append(
+                        _check(
+                            "rollback", "previous_compatible",
+                            "rollback_deployed_version_unparsable", "fail",
+                            f"已部署版本 {deployed!r} 形状不可解析:回滚方向无法判定,"
+                            "fail-closed",
+                        )
+                    )
+                elif target_v < deployed_v:
+                    checks.append(
+                        _check(
+                            "rollback", "previous_compatible",
+                            "rollback_incompatible_refused", "fail",
+                            f"目标 {release_tag} 旧于当前已部署 {deployed},而已部署发布"
+                            f"声明 previous_compatible=false(remediation gate: {gate})"
+                            "⇒ 普通 previous-tag 回滚不适用,部署入口在此拒绝"
+                            "(r2 旧上传来源默认可见性语义可能重暴露已清理/禁止公开"
+                            "数据;fail-closed,先于任何 mutation)",
+                        )
                     )
                 else:
-                    bind_ok = True
-                    reason = (
-                        f"整改证据全链验证通过: gate={gate} "
-                        f"target_tag={evidence.get('target_tag')} "
-                        f"release_sha={evidence.get('release_sha')}"
-                        "(诚实边界: release_sha 绑定的是镜像内 RELEASE.json "
-                        "git_sha 断言,非 OCI image 内容摘要) "
-                        f"evidence_digest={evidence.get('evidence_digest')}(工件"
-                        "SHA256 实测一致) "
-                        f"evidence_ref={evidence.get('evidence_ref')}(自述引用:"
-                        "仅证明工件与批准记录一致,不证明演练真实发生/审核方"
-                        "实际批准 —— 后者属 A 受信审计) "
-                        f"approved_by={evidence['approval']['approved_by']} "
-                        f"approved_at={evidence['approval']['approved_at']} "
-                        f"not_after={evidence.get('not_after')}"
-                        "(A #138 P3:真实工件 + 非对称签名审批 + 发行/SHA/镜像"
-                        "身份三重绑定;不因字符串 ACK 或自述记录放行)"
+                    checks.append(
+                        _check(
+                            "rollback", "previous_compatible", "rollback_ok", "pass",
+                            f"部署方向合法({release_tag} ≥ 已部署 {deployed});本发布"
+                            "声明 previous_compatible=false ⇒ 部署完成后普通 "
+                            "previous-tag 回滚不适用(由宿主 update.sh 守卫与 "
+                            "deployed-version 断言强制;诚实边界:持有生产主机最高"
+                            "权限的手工 docker/脚本操作不在脚本阻止范围内)",
+                        )
                     )
-        if bind_ok:
-            checks.append(
-                _check(
-                    "rollback", "previous_compatible", "rollback_ok", "pass", reason,
-                )
-            )
-        else:
-            if not reason:
-                reason = (
-                    "该发布声明与先前版本不兼容:普通 previous-tag 回滚不适用,"
-                    f"必须提供真实证据工件与受信审批(gate: {gate})"
-                )
-            checks.append(
-                _check(
-                    "rollback", "previous_compatible", "rollback_remediation_gate_required",
-                    "fail", reason,
-                )
-            )
 
     # ---- G2 只读隔离断言(显式启用;未启用零变化)----
     if verify_upload_isolation:
@@ -1300,6 +1603,11 @@ _TRUST_ANCHOR_V2_FIELDS = (
     "weaviate_image_digest",
     "weaviate_volume_name",
     "weaviate_volume_manifest_sha256",
+    # 2026-10-22 通道适配:上传面绑定字段(可选;随冻结镜像分发的已审核事实)
+    "uploads_volume_name",
+    "uploads_mount_path",
+    "uploads_sources_dir",
+    "uploads_unknown_guard",
 )
 # v2 数据面允许的 /v1/meta.hostname 绑定地址形态(1.28.0 实测自述值;
 # 其它任何与 URL 不一致的实际 DNS 名一律身份不匹配)
@@ -1417,16 +1725,49 @@ def _load_trust_anchor(path: str | None) -> tuple[dict | None, str | None]:
         return None, "锚缺字段: weaviate_volume_name(fail-closed)"
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,253}", vol):
         return None, "锚 weaviate_volume_name 形状非法"
+    # 2026-10-22 通道裁决(A #138):动态卷清单哈希不再是发布强制锚(活卷随
+    # 活跃同步持续漂移);字段保留为可选兼容形状,存在时仍做形状校验但发布
+    # 链不再消费。身份独立性的现状来源 = 随冻结镜像分发的已审核身份事实
+    # (deploy/prod/production-identity.json)。
     manifest = str(raw.get("weaviate_volume_manifest_sha256") or "").strip().lower()
-    if not re.fullmatch(r"[0-9a-f]{64}", manifest):
-        return None, "锚 weaviate_volume_manifest_sha256 必须是 64 位小写 hex"
-    return {
+    if manifest and not re.fullmatch(r"[0-9a-f]{64}", manifest):
+        return None, "锚 weaviate_volume_manifest_sha256 必须是 64 位小写 hex(或缺省)"
+    anchor = {
         "pg_system_id": pg,
         "weaviate_cluster_hostname": host,
         "weaviate_image_digest": digest,
         "weaviate_volume_name": vol,
-        "weaviate_volume_manifest_sha256": manifest,
-    }, None
+    }
+    if manifest:
+        anchor["weaviate_volume_manifest_sha256"] = manifest
+    # 上传面绑定字段(可选;由 workflow 控制面与 uploads 守卫探针消费):
+    up_vol = str(raw.get("uploads_volume_name") or "").strip()
+    if up_vol:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,253}", up_vol):
+            return None, "锚 uploads_volume_name 形状非法"
+        anchor["uploads_volume_name"] = up_vol
+    up_mount = str(raw.get("uploads_mount_path") or "").strip()
+    if up_mount:
+        if not up_mount.startswith("/") or up_mount.endswith("/"):
+            return None, "锚 uploads_mount_path 必须是绝对路径(无尾斜杠)"
+        anchor["uploads_mount_path"] = up_mount
+    up_src = str(raw.get("uploads_sources_dir") or "").strip()
+    if up_src:
+        if not up_src.startswith("/") or up_src.endswith("/"):
+            return None, "锚 uploads_sources_dir 必须是绝对路径(无尾斜杠)"
+        anchor["uploads_sources_dir"] = up_src
+    up_guard = str(raw.get("uploads_unknown_guard") or "").strip()
+    if up_guard:
+        if not up_guard.startswith("/"):
+            return None, "锚 uploads_unknown_guard 必须是绝对路径"
+        anchor["uploads_unknown_guard"] = up_guard
+    return anchor, None
+
+
+# ---- 以下 R6v3 整改证据辅助函数(2026-10-22 起)已退出正式部署链
+# (evaluate()/main() 不再消费;保持为非发布执行面的辅助审计代码,
+# scripts/sign_remediation_approval.py 离线签发工具仍复用其载荷构造;
+# 测试信任根 tests/deploy/remediation_v3_trust_root.py 同源)。----
 
 
 def _parse_iso_datetime(value: str, field: str) -> tuple[datetime | None, str | None]:
@@ -1452,7 +1793,7 @@ def _load_remediation_evidence(
         错误信息只含字段名类结构信息,绝不回显文件内容;记录本身非秘密。
     """
     if not path or not path.strip():
-        return None, "缺 --remediation-evidence-file(整改证据记录必填)"
+        return None, "缺整改证据记录文件路径(审计面加载器必填)"
     if not release_tag or not release_tag.strip():
         return (
             None,
@@ -1592,8 +1933,7 @@ def _load_approval_public_key(path: str | None) -> tuple[dict | None, str | None
     if not path or not path.strip():
         return (
             None,
-            "缺 --remediation-approval-public-key-file(整改审批无法验证,"
-            "fail-closed)",
+            "缺审批验证公钥(审计面加载器;整改审批无法验证,fail-closed)",
         )
     try:
         text = Path(path).read_text(encoding="utf-8")
@@ -1740,12 +2080,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--remediation-ack", default=None,
-        help="rollback remediation gate 确认(必须与 manifest 声明精确一致)",
+        help="已退役放行通道(2026-10-22):任何非空 ACK 都会被显式判 FAIL"
+        "(字符串确认从不构成放行;仅保留参数以给出结构化拒绝)",
     )
     parser.add_argument(
         "--release-tag", default=None, metavar="TAG",
         help="本次部署目标不可变 tag(如 v1.6.4-r3);整改证据绑定的目标发行,"
-        "提供 --remediation-evidence-file 时必填",
+        "审计面加载器加载失败即拒绝(发布链已于 2026-10-22 退役该通道)",
     )
     parser.add_argument(
         "--release-sha", default=None, metavar="SHA",
@@ -1753,25 +2094,11 @@ def main(argv: list[str] | None = None) -> int:
         "取镜像内 RELEASE.json git_sha);整改证据绑定的镜像身份",
     )
     parser.add_argument(
-        "--remediation-evidence-artifact", default=None, metavar="PATH",
-        help="整改证据工件(真实不可变文件;对其计算 SHA256 并与记录声明"
-        "evidence_digest 精确比对)—— 记录自述摘要不是证据,必须实测工件",
-    )
-    parser.add_argument(
-        "--remediation-approval-public-key-file", default=None, metavar="PATH",
-        help="受信审批**验证公钥**文件(JSON {\"kty\":\"rsa\",\"n_hex\":<512hex>,"
-        "\"e_hex\":\"010001\"};非秘密,但经与信任锚同款钉扎通道送达:"
-        "workflow secret → SSH stdin → 0600 文件,绝不走 compose env_file/"
-        "容器 env)。公钥只能验签、无法签发 ⇒ 应用容器 env 权限不构成签发能力;"
-        "提供 --remediation-evidence-file 时必填,缺失/形状非法 fail-closed",
-    )
-    parser.add_argument(
-        "--remediation-evidence-file", default=None, metavar="PATH",
-        help="整改证据工件 JSON(A #138 P3 唯一合法放行面):"
-        "{version:3,gate,target_tag,release_sha,evidence_digest,evidence_ref,"
-        "recorded_at,recorded_by,not_after,approval{approved_by,approved_at,"
-        "signature}};gate 须与 manifest 声明精确一致、target_tag 须与 "
-        "--release-tag 精确一致;词表外/形状非法/绑定不一致一律 fail-closed",
+        "--deployed-release-version", default=None, metavar="VERSION",
+        help="当前【已部署】发布版本事实(如 1.6.4-r2;由调用方从运行中 "
+        "backend 容器 /app/RELEASE.json 只读读取,或宿主部署标记读取;评估器"
+        "绝不自证)。previous_compatible=false 时与 --release-tag 比较判定"
+        "回滚方向:目标旧于已部署 ⇒ fail-closed 拒绝;缺失 ⇒ BLOCKED",
     )
     parser.add_argument(
         "--pre-contract-release", action="store_true",
@@ -1825,13 +2152,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--isolation-trust-anchor-file", default=None, metavar="PATH",
-        help="带外钉扎的目标身份信任锚 JSON(A 采集;独立于被测 DSN/URL)。"
-        "v1={version:1,pg_system_id,weaviate_collection_id}(新版 Weaviate);"
+        help="目标身份事实文件(2026-10-22 起 = 随冻结镜像分发的已审核身份"
+        "deploy/prod/production-identity.json;独立于被测 DSN/URL/自报 "
+        "metadata,不再要求 workflow secret 带外钉扎)。"
+        "v1={version:1,pg_system_id,weaviate_collection_id};"
         "v2={version:2,pg_system_id,weaviate_cluster_hostname,"
-        "weaviate_image_digest,weaviate_volume_name,"
-        "weaviate_volume_manifest_sha256}(1.28.0 控制面+数据面组合锚,"
-        "控制面核验由 deploy workflow 强制)。--verify-upload-isolation 下必填:"
-        "缺失/不可读/缺字段/形状非法/不匹配一律 fail-closed,绝不进入隔离断言",
+        "weaviate_image_digest,weaviate_volume_name[,uploads_* 绑定字段]}"
+        "(动态卷清单哈希已按 A 裁决退出发布强制锚)。"
+        "--verify-upload-isolation 下必填:缺失/不可读/缺字段/形状非法一律 "
+        "fail-closed,绝不进入隔离断言",
     )
     parser.add_argument(
         "--isolation-weaviate-url", default=None,
@@ -1861,51 +2190,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.verify_upload_isolation:
         anchor, anchor_error = _load_trust_anchor(args.isolation_trust_anchor_file)
 
-    # G3 整改证据(A #138 P3 唯一合法放行面):加载失败经 remediation_evidence_error
-    # 传入 rollback 门 → 单条 fail 检查,绝不放行;未提供时零变化(维持 #46/#159
-    # 既有 fail-closed 语义)。
-    evidence: dict | None = None
-    evidence_error: str | None = None
-    artifact_digest: str | None = None
-    artifact_error: str | None = None
-    approval_public_key: dict | None = None
-    approval_public_key_error: str | None = None
-    if args.remediation_approval_public_key_file:
-        approval_public_key, approval_public_key_error = _load_approval_public_key(
-            args.remediation_approval_public_key_file
-        )
-    elif args.remediation_evidence_file:
-        # 提供证据但缺钉扎公钥 ⇒ 结构化拒绝(审批无法验证,fail-closed)
-        approval_public_key_error = (
-            "缺 --remediation-approval-public-key-file(整改审批无法验证,"
-            "fail-closed;公钥经可信钉扎通道送达,绝不走容器 env)"
-        )
-    if args.remediation_evidence_file:
-        evidence, evidence_error = _load_remediation_evidence(
-            args.remediation_evidence_file, args.release_tag, args.release_sha
-        )
-        if evidence is not None:
-            # 工件真实性:必须对实际不可变文件实测 SHA256 并与声明一致;
-            # 引用不存在/摘要伪造在此拒绝(记录自述不是证据)。
-            if args.remediation_evidence_artifact:
-                artifact_digest, artifact_error = _hash_evidence_artifact(
-                    args.remediation_evidence_artifact
-                )
-                if (
-                    artifact_digest is not None
-                    and artifact_digest != evidence["evidence_digest"]
-                ):
-                    artifact_error = (
-                        "实际工件 SHA256 与记录声明 evidence_digest 不一致"
-                        "(fail-closed)"
-                    )
-                    artifact_digest = None
-            else:
-                artifact_error = (
-                    "缺 --remediation-evidence-artifact(必须对实际不可变证据"
-                    "工件计算 SHA256;记录自述摘要不是证据)"
-                )
-
     # DSN 通道(显式、无回退):--isolation-pg-dsn-parts = 容器 env 组件装配;
     # 否则 file > env 变量。Weaviate URL/class:显式旗标 > env 变量名通道。
     if args.isolation_pg_dsn_parts:
@@ -1924,12 +2208,7 @@ def main(argv: list[str] | None = None) -> int:
         env=env,
         probe_timeout_s=min(max(args.probe_timeout, 1), MAX_PROBE_TIMEOUT_S),
         remediation_ack=args.remediation_ack,
-        remediation_evidence=evidence,
-        remediation_evidence_error=evidence_error,
-        remediation_artifact_digest=artifact_digest,
-        remediation_artifact_error=artifact_error,
-        approval_public_key=approval_public_key,
-        approval_public_key_error=approval_public_key_error,
+        deployed_version=args.deployed_release_version,
         release_tag=args.release_tag,
         release_sha=args.release_sha,
         pre_contract=args.pre_contract_release,

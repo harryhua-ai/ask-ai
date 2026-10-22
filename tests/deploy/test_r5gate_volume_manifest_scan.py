@@ -111,6 +111,11 @@ def _container_up() -> bool:
         return False
 
 
+_requires_container = pytest.mark.skipif(
+    not _container_up(), reason="本地真实 weaviate 容器未运行(r4-weaviate-128)"
+)
+
+
 def _strip_comment_lines(text: str) -> str:
     return "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
 
@@ -144,26 +149,38 @@ def test_r5s01_old_defective_pipeline_removed_from_workflow():
     assert "find . -type f -printf" not in _strip_comment_lines(wf_text)
 
 
-def test_r5s02_embedded_script_byte_identical_and_wired_via_stdin():
-    """workflow 内嵌扫描脚本与仓库规范脚本逐字节一致;经 stdin 送入容器
-    (同 R3 脚本-via-stdin 模式),不拼远端命令字符串。"""
-    assert _volscan_embedded_script() == _script_text()
-    run_exec = _strip_comment_lines(_preflight_run_text())
-    assert 'docker exec -i "$WID" sh -s /var/lib/weaviate < "$VOLSCAN_TMP"' in run_exec
+def test_r5s02_scan_script_retained_as_audit_tool_not_deploy_wired():
+    """2026-10-22 通道裁决:动态卷清单哈希退出发布强制锚(活卷随活跃同步
+    漂移;见 docs/release/v164-r3-g2-anchor-drift-analysis.md)。扫描脚本
+    保留为辅助审计工具(仓库内存在且自身行为不变),但 workflow 不再内嵌
+    副本、不再在部署链消费 —— 机械锁定"非接线"状态,防止静默复活或误配。
+    """
+    import yaml
+
+    wf = WORKFLOW.read_text(encoding="utf-8")
+    assert "VOLSCAN_SH" not in wf, "workflow 不再内嵌卷扫描脚本(退出发布链)"
+    assert "VOLSCAN_OK" not in wf and "MANIFEST_SHA256" not in wf, (
+        "发布链不得消费动态清单哈希"
+    )
+    # 脚本本体保留为审计工具
+    assert SCAN_SRC.is_file(), "扫描脚本保留为辅助审计工具(scripts/)"
+    # 审计使用形态在脚本头注文档化(sh -s /var/lib/weaviate),与仓库脚本一致
+    assert "sh -s /var/lib/weaviate" in SCAN_SRC.read_text(encoding="utf-8")
 
 
-def test_r5s03_runner_side_triple_validation_fail_closed():
-    """runner 端三重校验(退出码 + 64hex + FILES≥1)与比对 fail-closed;
-    扫描失败与证据缺失分别显式留因,阻断 evaluator 与 migration。"""
-    run_exec = _strip_comment_lines(_preflight_run_text())
-    assert "VOLSCAN_RC=0" in run_exec and "|| VOLSCAN_RC=$?" in run_exec
-    assert "sed -n 's/^VOLSCAN_OK MANIFEST_SHA256=\\([0-9a-f]\\{64\\}\\) FILES=[1-9][0-9]*$/\\1/p'" in run_exec
-    assert "数据卷元数据扫描失败" in run_exec
-    assert "无合法证据行" in run_exec
-    # 空证据(OBS_MAN="")→ 比对不通过 → CP_FAIL → 容器 preflight 之前中止
-    assert '[ -n "$OBS_MAN" ] && [ "$OBS_MAN" != "$CP_MAN" ]' in run_exec
-    assert 'if [ -n "$CP_FAIL" ]; then' in run_exec
 
+def test_r5s03_deploy_chain_has_no_dynamic_manifest_consumption():
+    """2026-10-22:部署链零 VOLSCAN 消费点(退出强制锚);预检数据隔离
+    断言由容器内 evaluator + 已审核身份事实承担(见 test_channel_adapt_*)。
+    本测试钉住"无消费"状态:防止未来有人把动态哈希重新接线而未过评审。"""
+    import yaml
+
+    wf = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    preflight = [s for s in wf["jobs"]["deploy"]["steps"] if s.get("id") == "preflight"][0]
+    run = preflight["run"]
+    assert "VOLSCAN" not in run
+    assert "sha256sum" in run, "容器内工件完整性核对(R4-3①)保留"
+    assert "--verify-upload-isolation" in run, "数据隔离断言保留"
 
 def test_r5s04_scanner_never_reads_volume_file_contents():
     """元数据清单边界:扫描器绝不读卷内文件内容 —— 无 cat/xargs/重定向
@@ -181,23 +198,16 @@ def test_r5s04_scanner_never_reads_volume_file_contents():
     assert "stat -c '%n|%s|%Y' \"$F\"" in exec_lines, "卷内文件只允许 stat(元数据)"
 
 
-def test_r5s05_anchor_collection_path_documented():
-    """A 采锚路径同步:workflow 注释钉住同一脚本同一调用形态,并显式禁止
-    旧 GNU find -printf 命令采锚(修正前 A 不得按旧命令采生产锚)。"""
+def test_r5s05_dynamic_anchor_retirement_documented():
+    """2026-10-22:动态锚退役与替代身份事实在 workflow 头注 + 漂移分析
+    文档双向锚定;旧 GNU find -printf 采锚命令仍被显式禁止(审计面)。"""
     wf_text = WORKFLOW.read_text(encoding="utf-8")
-    assert "scripts/weaviate_volume_manifest_scan.sh" in wf_text
-    assert "sh -s /var/lib/weaviate" in wf_text
-    assert "禁止用于采锚" in wf_text
-    assert "A 生产锚采集必须用同一脚本同一形态" in wf_text
-
-
-# --------------------------------------------------------------------------- #
-# 真实容器(离线本地 r4-weaviate-128;不可达即 skip,不冒充)
-# --------------------------------------------------------------------------- #
-
-_requires_container = pytest.mark.skipif(
-    not _container_up(), reason="本地真实容器 r4-weaviate-128 未运行(如实 skip,不冒充)"
-)
+    assert "deploy/prod/production-identity.json" in wf_text, "已审核身份事实文件被引用"
+    drift_doc = (REPO / "docs" / "release" / "v164-r3-g2-anchor-drift-analysis.md")
+    assert drift_doc.is_file(), "漂移语义分析文档在仓"
+    assert "活性指纹" in drift_doc.read_text(encoding="utf-8")
+    scan_text = SCAN_SRC.read_text(encoding="utf-8")
+    assert "-printf" in scan_text, "扫描脚本头注继续显式禁止旧 GNU 命令"
 
 
 @_requires_container

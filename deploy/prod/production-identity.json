@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "pg_system_id": "7670132346517975075",
+  "weaviate_cluster_hostname": "7adc06acc397",
+  "weaviate_image_digest": "sha256:b06b9711246633ce1f83d21394ced5a9c18aadfff32c273ae8e25ca06b27f4d2",
+  "weaviate_volume_name": "tesla-t4_weaviate_data",
+  "uploads_volume_name": "tesla-t4_uploads_data",
+  "uploads_mount_path": "/app/data/uploads",
+  "uploads_sources_dir": "/app/data/uploads/data-sources",
+  "uploads_unknown_guard": "/app/deploy/prod/uploads-unknown-guard.tsv"
+}

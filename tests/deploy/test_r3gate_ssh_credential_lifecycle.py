@@ -59,13 +59,13 @@ _FAKE_KEY = (
 )
 _FAKE_HOST = "tesla-t4.fake.invalid"
 _FAKE_KH = f"{_FAKE_HOST} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFAKER3TST\n"
-_ANCHOR_JSON = json.dumps(
-    {
-        "version": 1,
-        "pg_system_id": "7100000000000000001",
-        "weaviate_collection_id": "01234567-89ab-cdef-0123-456789abcdef",
-    }
-)
+_IDENTITY_JSON = json.dumps({
+    "version": 2,
+    "pg_system_id": "7400000000000000004",
+    "weaviate_cluster_hostname": "fake-node.invalid",
+    "weaviate_image_digest": "sha256:fakeimage0000000000000000000000000000000000000000000000000000000000",
+    "weaviate_volume_name": "fake-t4_weaviate_data",
+})
 
 
 def _preflight_run_text() -> str:
@@ -104,6 +104,9 @@ class Sandbox:
     # ------------------------------------------------------------------ shims
     def _write_shims(self) -> None:
         (self.bin / "flock").write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+        # fake docker:pull/create/rm/cp(冻结镜像工件提取,含身份事实+上传守卫)/
+        # inspect(控制面三问:Image/Mounts/Config.Env)/compose(ps 定位 + exec:
+        # cat=deployed-version 读取、sh=工件写入与容器内哈希、rm、python3=评估器)
         (self.bin / "docker").write_text(
             "#!/bin/bash\n"
             'echo "$*" >> "$TSL_DOCKER_ARGV_LOG"\n'
@@ -126,37 +129,39 @@ class Sandbox:
             '      *compatibility.json)\n'
             '        printf \'{"version":1,"config":[],"host":[],"topology":[],"dependencies":[],"rollback":{"previous_compatible":true}}\' \\\n'
             '          > "$dest" ;;\n'
+            '      *production-identity.json)\n'
+            '        if [ "${TSL_IDENTITY_MISSING:-}" = "1" ]; then exit 1; fi\n'
+            '        printf \'%s\' "$TSL_IDENTITY_JSON" > "$dest" ;;\n'
+            '      *uploads-unknown-guard.tsv)\n'
+            '        printf \'%s\' "$TSL_GUARD_CONTENT" > "$dest" ;;\n'
             "      *) exit 1 ;;\n"
             "    esac ;;\n"
             "  inspect)\n"
             '    fmt="${args[@]:2}"\n'
             '    case "$fmt" in\n'
-            "      *.Image*) echo \"sha256:fakeimage0000000000000000000000000000000000000000000000000000000000\" ;;\n"
+            '      *.Image*) echo "sha256:fakeimage0000000000000000000000000000000000000000000000000000000000" ;;\n'
+            '      *Mounts*) echo "${TSL_CP_VOLS:-fake-t4_weaviate_data=/var/lib/weaviate }" ;;\n'
+            '      *Config.Env*) printf \'%s\\n\' "${TSL_CP_ENV:-CLUSTER_HOSTNAME=fake-node.invalid}" ;;\n'
             '      *) echo "fake docker inspect: unknown fmt" >&2; exit 1 ;;\n'
             "    esac ;;\n"
             "  compose)\n"
-            '    # 形如: compose -f <file> exec -T backend <cmd...>\n'
+            '    if [ "${TSL_PS_EMPTY:-}" = "1" ]; then exit 0; fi\n'
+            '    sub=""\n'
+            '    for i in "${!args[@]}"; do case "${args[$i]}" in ps|exec) sub="${args[$i]}"; break;; esac; done\n'
+            '    if [ "$sub" = "ps" ]; then echo fake-wv-cid; exit 0; fi\n'
             "    exec_idx=-1; svc_idx=-1\n"
             '    for i in "${!args[@]}"; do\n'
             '      if [ "${args[$i]}" = "exec" ]; then exec_idx=$i; fi\n'
             '      if [ "$exec_idx" -ge 0 ] && [ "${args[$i]}" = "backend" ]; then svc_idx=$i; break; fi\n'
             "    done\n"
-            '    # T-SEC-03 确定性中断注入(#183):原实现"锚落盘后 sleep 0.2s 再\n'
-            '    # SIGKILL"是时序竞速 —— Linux CI 上远端脚本可在 0.2s 内跑完并\n'
-            '    # 执行 EXIT trap 清场 → 残留为空,注入失真。现由本 shim 在首个\n'
-            '    # 容器 exec(严格晚于全部非密临时件 mktemp/锚写入/工件提取)处\n'
-            '    # SIGKILL 远端脚本($PPID):SIGKILL 不可捕获 → EXIT trap 绝不\n'
-            '    # 执行,残留可确定性观察;本进程立即自终,不悬挂步骤。\n'
-            '    if [ -n "${TSL_INTERRUPT_HOLD:-}" ] && [ "$svc_idx" -ge 0 ]; then\n'
-            '      kill -9 "$PPID" 2>/dev/null\n'
-            "      exit 9\n"
-            "    fi\n"
             '    if [ "$svc_idx" -lt 0 ]; then echo "fake compose: no backend exec" >&2; exit 1; fi\n'
             '    cmd=("${args[@]:$((svc_idx + 1))}")\n'
             '    case "${cmd[0]}" in\n'
+            "      cat)\n"
+            '        # deployed-version 事实读取:运行中 backend /app/RELEASE.json\n'
+            '        if [ "${TSL_DEPLOYED_UNREADABLE:-}" = "1" ]; then exit 1; fi\n'
+            '        printf \'{"version":"%s","git_sha":"deployed0sha"}\' "${TSL_DEPLOYED_VERSION:-1.0.0}" ;;\n'
             "      sh)\n"
-            '        # sh -c 两种形态(R4-3①起):cat > /tmp/xxx(stdin 写入容器根)\n'
-            '        # /sha256sum <path>(容器内工件哈希 —— 对容器根内真实文件求值)\n'
             '        case "${cmd[2]}" in\n'
             '          "cat > "*)\n'
             '            target="${cmd[2]#cat > }"\n'
@@ -166,7 +171,9 @@ class Sandbox:
             '          sha256sum*)\n'
             '            raw="${cmd[2]#sha256sum }"\n'
             '            f="${raw%% *}"\n'
-            '            if [ -f "$TSL_CONTAINER_ROOT$f" ]; then\n'
+            '            if [ -n "${TSL_TAMPER:-}" ]; then\n'
+            '              echo "deadbeef00000000000000000000000000000000000000000000000000000000  $f"\n'
+            '            elif [ -f "$TSL_CONTAINER_ROOT$f" ]; then\n'
             '              if command -v sha256sum >/dev/null 2>&1; then sha256sum "$TSL_CONTAINER_ROOT$f"; else shasum -a 256 "$TSL_CONTAINER_ROOT$f"; fi | sed "s#$TSL_CONTAINER_ROOT##"\n'
             '            else\n'
             '              exit 1\n'
@@ -175,11 +182,10 @@ class Sandbox:
             '            echo "fake compose sh: unexpected: ${cmd[2]}" >&2; exit 1 ;;\n'
             '        esac ;;\n'
             "      rm)\n"
-            '        shift_args=("${cmd[@]:2}")  # rm -f p1 p2 ...\n'
+            '        shift_args=("${cmd[@]:2}")\n'
             '        for p in "${shift_args[@]}"; do\n'
             '          rm -f "$TSL_CONTAINER_ROOT$p" 2>/dev/null || true\n'
-            "        done\n"
-            "        ;;\n"
+            "        done ;;\n"
             "      python3)\n"
             '        printf \'%s\\n\' "${cmd[*]}" >> "$TSL_EVAL_ARGV_LOG"\n'
             '        exit "${TSL_EVAL_RC:-0}"\n'
@@ -203,19 +209,23 @@ class Sandbox:
             "  execute|interrupt)\n"
             '    prefix="${remote_cmd%bash -s}"\n'
             '    cat > "$TSL_SANDBOX/remote_script_captured.sh"\n'
-            '    eval "export ${prefix}"   # 远端 env 前缀(fixture 自产:tag + base64 锚)\n'
+            '    eval "export ${prefix}"\n'
             '    export HOME="$TSL_REMOTE_HOME"\n'
             '    export TMPDIR="$TSL_REMOTE_TMP"\n'
             '    export PATH="$TSL_FAKEBIN:$PATH"\n'
             '    if [ "${TSL_SSH_MODE}" = "interrupt" ]; then\n'
-            '      # 连接中断语义:fake docker shim 在首个容器 exec(全部非密\n'
-            '      # 临时件已落盘、清扫窗口已过)处以 SIGKILL 终止远端脚本\n'
-            '      # ($PPID,trap 未及执行)—— 确定性注入点,替代原 0.2s 时序\n'
-            '      # 竞速(#183)。本循环仅为有界兜底(脚本提前失败/未达注入点\n'
-            '      # 时仍中断并返回 255 = 连接中断语义)。\n'
+            '      # 连接中断语义:后台启动远端脚本;待非密临时件(评估器/manifest/\n'
+            '      # 身份事实/守卫)全部落盘(以 deployed-version 读取出现为界)后,\n'
+            '      # 直接 SIGKILL 远端脚本 pid —— kill 不可捕获,EXIT trap 绝不执行,\n'
+            '      # 残留可确定性观察(#183 时序竞速替代)。\n'
             '      TSL_INTERRUPT_HOLD=1 bash "$TSL_SANDBOX/remote_script_captured.sh" & pid=$!\n'
             '      i=0\n'
-            '      while [ "$i" -lt 200 ] && kill -0 "$pid" 2>/dev/null; do\n'
+            '      while [ "$i" -lt 400 ] && kill -0 "$pid" 2>/dev/null; do\n'
+            '        if grep -q "exec -T backend cat /app/RELEASE.json" \\\n'
+            '           "$TSL_DOCKER_ARGV_LOG" 2>/dev/null; then\n'
+            '          sleep 0.1\n'
+            '          break\n'
+            '        fi\n'
             '        sleep 0.05; i=$((i + 1))\n'
             '      done\n'
             '      kill -9 "$pid" 2>/dev/null\n'
@@ -225,13 +235,32 @@ class Sandbox:
             '    bash "$TSL_SANDBOX/remote_script_captured.sh"\n'
             "    exit $?\n"
             "    ;;\n"
-            '  *) echo "fake ssh: unknown mode" >&2; exit 1 ;;\n'
             "esac\n",
             encoding="utf-8",
         )
-        for shim in ("flock", "docker", "ssh"):
-            p = self.bin / shim
-            p.chmod(0o755)
+        (self.bin / "stat").write_text(
+            "#!/bin/bash\n"
+            "if [ \"$1\" = \"-c\" ]; then\n"
+            "    if /usr/bin/stat --version >/dev/null 2>&1; then\n"
+            "        exec /usr/bin/stat \"$@\"\n"
+            "    fi\n"
+            "    if [ \"$2\" = \"%n|%s|%Y\" ]; then\n"
+            "        shift 2\n"
+            "        exec /usr/bin/stat -f \'%N|%z|%m\' \"$@\"\n"
+            "    fi\n"
+            "fi\n"
+            "exec /usr/bin/stat \"$@\"\n",
+            encoding="utf-8",
+        )
+        (self.bin / "sha256sum").write_text(
+            "#!/bin/bash\n"
+            "if [ -x /usr/bin/sha256sum ]; then exec /usr/bin/sha256sum \"$@\"; fi\n"
+            "if [ -x /bin/sha256sum ]; then exec /bin/sha256sum \"$@\"; fi\n"
+            "exec /usr/bin/shasum -a 256 \"$@\"\n",
+            encoding="utf-8",
+        )
+        for shim in ("flock", "docker", "ssh", "stat", "sha256sum"):
+            (self.bin / shim).chmod(0o755)
 
     # ------------------------------------------------------------------ env
     def step_env(self, *, ssh_mode: str = "execute", **overrides) -> dict:
@@ -254,7 +283,8 @@ class Sandbox:
             "SSH_USER": "deployer",
             "SSH_KNOWN_HOSTS_B64": base64.b64encode(_FAKE_KH.encode()).decode(),
             "DEPLOY_TAG": "v1.0.0",
-            "TRUST_ANCHOR_B64": base64.b64encode(_ANCHOR_JSON.encode()).decode(),
+            "TSL_IDENTITY_JSON": _IDENTITY_JSON,
+            "TSL_GUARD_CONTENT": "retained/keep.txt\t" + "bb" * 32 + "\n",
         }
         (self.base / "runner-home").mkdir(exist_ok=True)
         env.update(overrides)
@@ -320,7 +350,7 @@ def test_tsec01_happy_path_no_credential_files_anywhere(sandbox):
     eval_argv = sandbox.eval_argv.read_text(encoding="utf-8")
     assert "--verify-upload-isolation" in eval_argv
     assert "--isolation-pg-dsn-parts" in eval_argv, "DSN 必须经容器自身 env 组件通道"
-    assert "--isolation-trust-anchor-file /tmp/askai-trust-anchor.json" in eval_argv
+    assert "--isolation-trust-anchor-file /tmp/askai-production-identity.json" in eval_argv
     assert "--isolation-weaviate-url-env WEAVIATE_URL" in eval_argv
     # 无任何含密文件:SSH 私钥材料在沙箱零存在(trap 已清;从未写远端)
     assert sandbox.scan_sandbox("R3SEC-FAKEKEY") == [], "SSH 私钥材料绝不落任何文件"
@@ -343,7 +373,9 @@ def test_tsec01_design_has_no_secret_file_path_or_dsn_env(sandbox):
     preflight = [s for s in wf["jobs"]["deploy"]["steps"] if s.get("id") == "preflight"][0]
     assert "ISOLATION_DSN" not in preflight["env"]
     assert "PREFLIGHT_ISOLATION_PG_DSN" not in str(preflight["env"])
-    assert preflight["env"]["TRUST_ANCHOR_B64"].startswith("${{ secrets."), "A-owned 锚占位"
+    assert "TRUST_ANCHOR_B64" not in str(preflight["env"]), "锚 secret 已退出(2026-10-22 通道)"
+    assert "PREFLIGHT_" not in str(preflight["env"]), "四项 PREFLIGHT_* secret 全部退出"
+    assert preflight["env"]["SSH_KEY"] == "${{ secrets.PROD_DEPLOY_SSH_KEY }}", "SSH 凭据通道保留"
     # 捕获的远端脚本:绝不出现远端含密文件写入(cat > $HOME/...)
     sandbox.run_step(sandbox.step_env())
     remote = (sandbox.base / "remote_script_captured.sh").read_text(encoding="utf-8")
@@ -461,11 +493,13 @@ def test_tsec06_watchdog_bounds_hung_preflight(sandbox):
 # --------------------------------------------------------------------------- #
 
 
-def test_tsec07_missing_trust_anchor_fails_closed_before_ssh(sandbox):
-    rc, out, err = sandbox.run_step(sandbox.step_env(TRUST_ANCHOR_B64=""))
+def test_tsec07_missing_required_var_fails_closed_before_ssh(sandbox):
+    """2026-10-22 通道:锚/证据 secret 退出;SSH 通道必需变量缺失仍须在
+    远程执行前 fail-closed(ssh 零调用)。"""
+    rc, out, err = sandbox.run_step(sandbox.step_env(DEPLOY_TAG=""))
     assert rc != 0
-    assert "TRUST_ANCHOR_B64" in err
-    assert not sandbox.ssh_argv.exists(), "锚缺失 → 绝不发起 SSH(零远端副作用)"
+    assert "DEPLOY_TAG" in err
+    assert not sandbox.ssh_argv.exists(), "必需变量缺失 → 绝不发起 SSH(零远端副作用)"
     assert sandbox.leftovers(sandbox.runner, "prod_deploy_key") == []
 
 

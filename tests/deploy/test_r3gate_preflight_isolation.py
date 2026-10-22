@@ -99,6 +99,7 @@ def test_t9_enabled_without_channels_blocks_fail_closed(tmp_path):
 def test_t9_contaminated_evidence_fails_closed(tmp_path, monkeypatch):
     """有通道且证据为污染(upload_mode 行 > 0 / filesystem 对象 > 0)→ fail。"""
     monkeypatch.setattr(rp, "probe_upload_mode_rows", lambda cfg, timeout_s: 2)
+    monkeypatch.setattr(rp, "probe_retired_source_residue", lambda cfg, timeout_s: dict.fromkeys(rp._RETIRE_RESIDUE_KEYS, 1))
     monkeypatch.setattr(rp, "probe_filesystem_objects", lambda cfg, timeout_s: 7)
     m = _write_manifest(tmp_path)
     verdict, code = evaluate(
@@ -115,6 +116,7 @@ def test_t9_contaminated_evidence_fails_closed(tmp_path, monkeypatch):
 def test_t9_clean_evidence_passes(tmp_path, monkeypatch):
     """0 注册行 + 0 filesystem 对象(基线)→ PASS,退出码 0。"""
     monkeypatch.setattr(rp, "probe_upload_mode_rows", lambda cfg, timeout_s: 0)
+    monkeypatch.setattr(rp, "probe_retired_source_residue", lambda cfg, timeout_s: {**dict.fromkeys(rp._RETIRE_RESIDUE_KEYS, 0), "legacy_generations": 1})
     monkeypatch.setattr(rp, "probe_filesystem_objects", lambda cfg, timeout_s: 0)
     m = _write_manifest(tmp_path)
     verdict, code = evaluate(
@@ -127,6 +129,8 @@ def test_t9_clean_evidence_passes(tmp_path, monkeypatch):
     assert {c["class"] for c in iso} == {
         "isolation_upload_mode_clean",
         "isolation_filesystem_clean",
+        "isolation_residue_clean",
+        "isolation_legacy_present",
     }
 
 
@@ -138,6 +142,7 @@ def test_probe_unavailable_blocked_vs_probe_failed_fail(tmp_path, monkeypatch):
         raise rp.IsolationChannelUnavailable("psql 不可用")
 
     monkeypatch.setattr(rp, "probe_upload_mode_rows", _raise_unavailable)
+    monkeypatch.setattr(rp, "probe_retired_source_residue", _raise_unavailable)
     monkeypatch.setattr(rp, "probe_filesystem_objects", _raise_unavailable)
     verdict, code = evaluate(
         str(m), verify_upload_isolation=True, isolation=dict(_FULL_ISOLATION_WITH_ANCHOR)
@@ -149,6 +154,7 @@ def test_probe_unavailable_blocked_vs_probe_failed_fail(tmp_path, monkeypatch):
         raise RuntimeError("connection refused")
 
     monkeypatch.setattr(rp, "probe_upload_mode_rows", _raise_probe)
+    monkeypatch.setattr(rp, "probe_retired_source_residue", _raise_probe)
     monkeypatch.setattr(rp, "probe_filesystem_objects", _raise_probe)
     verdict2, code2 = evaluate(
         str(m), verify_upload_isolation=True, isolation=dict(_FULL_ISOLATION_WITH_ANCHOR)
@@ -158,6 +164,7 @@ def test_probe_unavailable_blocked_vs_probe_failed_fail(tmp_path, monkeypatch):
     assert {c["class"] for c in _iso_checks(verdict2)} == {
         "isolation_upload_mode_probe_failed",
         "isolation_filesystem_probe_failed",
+        "isolation_residue_probe_failed",
     }
 
 
@@ -350,6 +357,7 @@ def test_weaviate_probe_non_200_fails_closed(monkeypatch):
 
 def test_main_cli_wiring_clean(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(rp, "probe_upload_mode_rows", lambda cfg, timeout_s: 0)
+    monkeypatch.setattr(rp, "probe_retired_source_residue", lambda cfg, timeout_s: {**dict.fromkeys(rp._RETIRE_RESIDUE_KEYS, 0), "legacy_generations": 1})
     monkeypatch.setattr(rp, "probe_filesystem_objects", lambda cfg, timeout_s: 0)
     monkeypatch.setenv("ISOLATION_PG_DSN", _FULL_ISOLATION["pg_dsn"])
     anchor = tmp_path / "anchor.json"
