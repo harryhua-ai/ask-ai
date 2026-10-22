@@ -1,0 +1,16 @@
+{
+  "version": 3,
+  "gate": "upload-source-acl-verified-issue-121",
+  "target_tag": "v1.6.4-r3",
+  "release_sha": "FILL_BY_ROLE_A_40HEX_TAG_TARGET_SHA",
+  "evidence_digest": "72ee99903274a0753a3e3236704251e131af2d79aa6be62a1a96d1f4464e62c9",
+  "evidence_ref": "docs/release/v164-r3-g2g3-remediation-artifact.md (zips e61baa0c/53153ddb/3c3c90e2/10d2305a/b310f798; PR #187 gate candidate)",
+  "recorded_at": "2026-10-22T04:00:00Z",
+  "recorded_by": "agent-b (collection+execution; role-a final review)",
+  "not_after": "FILL_BY_ROLE_A_ISO8601_RECOMMEND_SIGN_TIME_PLUS_72H",
+  "approval": {
+    "approved_by": "FILL_BY_ROLE_A",
+    "approved_at": "FILL_BY_ROLE_A",
+    "signature": "FILL_BY_ROLE_A_SIGN_TOOL"
+  }
+}
