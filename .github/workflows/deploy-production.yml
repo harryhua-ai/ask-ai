@@ -255,7 +255,23 @@ jobs:
           EVAL_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-preflight.XXXXXXXX")"
           ID_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-identity.XXXXXXXX")"
           GUARD_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-uploads-guard.XXXXXXXX")"
-          cleanup() { rm -f "$REL_TMP" "$MAN_TMP" "$EVAL_TMP" "$ID_TMP" "$GUARD_TMP"; }
+          # R2(A 评审 2026-10-22):容器内守卫工件精确所有权清理 ——
+          # ① 自有模式临时件(.askai-guard-new-*;仅普通文件,绝不触碰其它
+          #   文件/守卫本体);
+          # ② 仅当目标为「本次发布」(GUARD_OWN=1)且内容仍与冻结提取件逐字节
+          #   一致时才移除目标(被并发替换 ⇒ 不删非本次文件;复用/冲突场景
+          #   的既有文件绝不删除)。送达发生前 GUARD_TARGET 为空 ⇒ 无操作。
+          guard_container_cleanup() {
+            [ -n "${GUARD_TARGET:-}" ] || return 0
+            $COMPOSE exec -T backend sh -c 'D="$1"; for s in "$D"/.askai-guard-new-*; do [ -e "$s" ] && [ ! -L "$s" ] && rm -f "$s"; done; true' guard "$(dirname "$GUARD_TARGET")" 2>/dev/null || true
+            if [ "${GUARD_OWN:-0}" = "1" ]; then
+              $COMPOSE exec -T backend sh -c 'T="$1"; H="$2"; G="$(sha256sum "$T" 2>/dev/null | cut -d" " -f1)"; [ "$G" = "$H" ] && rm -f "$T" || true' guard "$GUARD_TARGET" "${H_GUARD:-}" 2>/dev/null || true
+            fi
+          }
+          cleanup() {
+            rm -f "$REL_TMP" "$MAN_TMP" "$EVAL_TMP" "$ID_TMP" "$GUARD_TMP"
+            guard_container_cleanup
+          }
           trap cleanup EXIT
           # 1) 拉取冻结镜像;时代判定源 = 镜像内 RELEASE.json 旗标(blocker 3)
           docker pull "$IMAGE" >/dev/null
@@ -368,31 +384,89 @@ jobs:
             $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-preflight-evaluator.py' < "$EVAL_TMP"
             $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-preflight-manifest.json' < "$MAN_TMP"
             $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-production-identity.json' < "$ID_TMP"
-            # 冻结守卫送达(A 修正 2026-10-22):必须落位身份事实声明的绝对路径
-            # (GUARD_TARGET),而非任意 /tmp 路径 —— 冻结 evaluator 按声明路径读取。
-            # 送达前三态探针:symlink ⇒ 逃逸风险拒;已存在 ⇒ 逐字节核对(不一致拒,
-            # 一致则复用不覆盖,尊重旧容器既有文件);缺席 ⇒ 受控送达。
-            GUARD_CREATED=0
-            GUARD_PROBE="$($COMPOSE exec -T backend sh -c "if [ -L $GUARD_TARGET ]; then echo __G3_SYMLINK__; elif [ -f $GUARD_TARGET ]; then sha256sum $GUARD_TARGET | cut -d' ' -f1; else echo __G3_ABSENT__; fi" 2>/dev/null || true)"
-            case "$GUARD_PROBE" in
+            # 冻结守卫送达(A 评审 R1/R2 修正 2026-10-22):必须落位身份事实
+            # 声明的绝对路径(GUARD_TARGET),而非任意 /tmp 路径 —— 冻结
+            # evaluator 按声明路径读取。送达在【单次容器内执行】中完成:
+            #   祖先逐级真目录校验 → 自有模式陈旧临时件清扫 → 目标三态 →
+            #   同目录 PID 唯一临时名 noclobber(O_CREAT|O_EXCL)写入 →
+            #   容器侧哈希核对 → ln 硬链接原子发布。
+            # 竞态面收敛:检查与打开之间无跨 exec 往返窗口;末级绝不跟随
+            # symlink、绝不打开既有 inode;ln 发布 create-排他,失败 ⇒ 目标
+            # 被并发创建/替换,复核内容后裁决。部分写入/哈希不符绝不发布,
+            # 临时件按所有权清理(trap 覆盖异常退出)。
+            GUARD_OWN=0
+            GUARD_STATUS="$($COMPOSE exec -T backend sh -c '
+              set -eu
+              T="$1"; H="$2"
+              D="$(dirname "$T")"
+              N=".askai-guard-new-$$"
+              trap "rm -f \"$D/$N\" 2>/dev/null || true" 0 1 2 15
+              # R1:父目录链逐级校验 —— 从根到父目录每级必须是真实目录
+              _acc=""; _rest="${D#/}"
+              while [ -n "$_rest" ]; do
+                _seg="${_rest%%/*}"
+                if [ "$_seg" = "$_rest" ]; then _rest=""; else _rest="${_rest#*/}"; fi
+                _acc="$_acc/$_seg"
+                if [ -L "$_acc" ]; then echo __G3_PARENT_SYMLINK__; exit 9; fi
+                if [ ! -d "$_acc" ]; then echo __G3_PARENT_NOT_DIR__; exit 9; fi
+              done
+              # R2:自有模式陈旧临时件清扫(上一轮异常退出残留;模式独有,
+              # 绝不触碰守卫本体/其它文件;非普通文件 ⇒ 拒)
+              for _s in "$D"/.askai-guard-new-*; do
+                [ -e "$_s" ] || continue
+                if [ -L "$_s" ] || [ ! -f "$_s" ]; then echo __G3_STALE_INVALID__; exit 9; fi
+                rm -f "$_s" || { echo __G3_STALE_UNREMOVABLE__; exit 9; }
+              done
+              # 目标三态:末级 symlink ⇒ 逃逸拒;已存在 ⇒ 内容裁决;缺席 ⇒ 受控送达
+              if [ -L "$T" ]; then echo __G3_SYMLINK__; exit 9; fi
+              if [ -e "$T" ]; then
+                _g="$(sha256sum "$T" | cut -d" " -f1)"
+                if [ "$_g" = "$H" ]; then echo __G3_REUSE__; exit 0; fi
+                echo __G3_CONFLICT__; exit 9
+              fi
+              # 受控送达:同目录 PID 唯一临时名 + noclobber —— O_CREAT|O_EXCL,
+              # 末级绝不跟随 symlink/打开既有 inode;stdin = 冻结提取件字节流
+              set -C
+              cat > "$D/$N" || { echo __G3_WRITE_FAIL__; exit 9; }
+              set +C
+              # R2:发布前容器侧哈希核对 —— 部分写入/管道损坏绝不发布
+              _g="$(sha256sum "$D/$N" | cut -d" " -f1)"
+              if [ "$_g" != "$H" ]; then rm -f "$D/$N"; echo __G3_PARTIAL_HASH__; exit 9; fi
+              # R1:ln 硬链接发布 = create-排他(目标存在即 EEXIST,不跟随
+              # symlink);失败 ⇒ 探针后目标被并发创建/替换 —— 复核内容裁决
+              if ln "$D/$N" "$T" 2>/dev/null; then
+                rm -f "$D/$N"
+                echo __G3_CREATED__; exit 0
+              fi
+              _g2=""
+              if [ -f "$T" ] && [ ! -L "$T" ]; then _g2="$(sha256sum "$T" | cut -d" " -f1)"; fi
+              if [ "$_g2" = "$H" ]; then echo __G3_RACE_ALIGNED__; exit 0; fi
+              echo __G3_RACE_CONFLICT__; exit 9
+            ' guard "$GUARD_TARGET" "$H_GUARD" < "$GUARD_TMP" 2>/dev/null || true)"
+            case "$GUARD_STATUS" in
+              __G3_CREATED__)
+                GUARD_OWN=1
+                echo "守卫送达:$GUARD_TARGET(本次受控发布;SHA256=$H_GUARD)" ;;
+              __G3_REUSE__|__G3_RACE_ALIGNED__)
+                echo "守卫送达:$GUARD_TARGET 已存在且内容与冻结工件一致(SHA256 相同)—— 复用不覆盖" ;;
+              __G3_PARENT_SYMLINK__|__G3_PARENT_NOT_DIR__)
+                echo "❌ 守卫送达父目录链含符号链接或非目录($GUARD_STATUS:$GUARD_TARGET;路径逃逸风险)—— 绝不写入,fail-closed" >&2
+                exit 1 ;;
               __G3_SYMLINK__)
                 echo "❌ 守卫送达目标 $GUARD_TARGET 为符号链接(路径逃逸风险)—— 绝不写入,fail-closed" >&2
                 exit 1 ;;
-              __G3_ABSENT__)
-                $COMPOSE exec -T backend sh -c "cat > $GUARD_TARGET" < "$GUARD_TMP" || {
-                  echo "❌ 守卫送达失败:无法安全创建 $GUARD_TARGET(目录缺失/不可写)—— fail-closed" >&2
-                  exit 1
-                }
-                GUARD_CREATED=1
-                echo "守卫送达:$GUARD_TARGET(本次创建;SHA256=$H_GUARD)" ;;
-              "$H_GUARD")
-                echo "守卫送达:$GUARD_TARGET 已存在且内容与冻结工件一致(SHA256 相同)—— 复用不覆盖" ;;
+              __G3_CONFLICT__|__G3_RACE_CONFLICT__)
+                echo "❌ 守卫送达目标 $GUARD_TARGET 已存在但内容与冻结工件不一致($GUARD_STATUS)——" >&2
+                echo "   旧容器内同路径存在不可信未知文件,绝不覆盖/择一 ⇒ fail-closed,交操作员对账" >&2
+                exit 1 ;;
+              __G3_WRITE_FAIL__|__G3_PARTIAL_HASH__|__G3_STALE_UNREMOVABLE__|__G3_STALE_INVALID__)
+                echo "❌ 守卫送达失败($GUARD_STATUS):无法安全创建/部分写入哈希核对不匹配/陈旧临时件异常 —— 临时件已按所有权清理,绝不发布,fail-closed" >&2
+                exit 1 ;;
               "")
-                echo "❌ 守卫送达探针失败:$GUARD_TARGET 状态不可判定(容器 exec 失败)—— fail-closed" >&2
+                echo "❌ 守卫送达执行失败:$GUARD_TARGET 状态不可判定(容器 exec 失败/异常退出)—— fail-closed" >&2
                 exit 1 ;;
               *)
-                echo "❌ 守卫送达目标 $GUARD_TARGET 已存在但内容与冻结工件不一致(SHA256=$GUARD_PROBE ≠ $H_GUARD)——" >&2
-                echo "   旧容器内同路径存在不可信未知文件,绝不覆盖/择一 ⇒ fail-closed,交操作员对账" >&2
+                echo "❌ 守卫送达返回未知状态($GUARD_STATUS)—— fail-closed" >&2
                 exit 1 ;;
             esac
             INTEGRITY_OK=1
@@ -410,10 +484,8 @@ jobs:
             if [ "$INTEGRITY_OK" != 1 ]; then
               $COMPOSE exec -T backend rm -f /tmp/askai-preflight-evaluator.py \
                   /tmp/askai-preflight-manifest.json /tmp/askai-production-identity.json || true
-              # 本次送达的守卫仅在"本次创建"范围内清理;复用的既有文件绝不删除
-              if [ "$GUARD_CREATED" = "1" ]; then
-                $COMPOSE exec -T backend rm -f "$GUARD_TARGET" || true
-              fi
+              # R2:精确所有权清理(临时件模式清扫 + 仅本次发布且内容一致才删)
+              guard_container_cleanup
               echo "❌ 评估器/manifest/身份事实/上传守卫 内容完整性核验失败 —— 绝不执行,fail-closed 中止" >&2
               exit 1
             fi
@@ -433,9 +505,9 @@ jobs:
                 || CONTAINER_RC=$?
             $COMPOSE exec -T backend rm -f /tmp/askai-preflight-evaluator.py \
                 /tmp/askai-preflight-manifest.json /tmp/askai-production-identity.json || true
-            if [ "$GUARD_CREATED" = "1" ]; then
-              $COMPOSE exec -T backend rm -f "$GUARD_TARGET" || true
-            fi
+            # R2:精确所有权清理(临时件模式清扫 + 仅本次发布且内容一致才删;
+            # 复用/冲突场景的既有文件绝不删除)
+            guard_container_cleanup
             if [ "$CONTAINER_RC" -ne 0 ]; then
               echo "❌ 生产兼容性 preflight(容器内;数据隔离断言 + 已审核身份事实 + deployed-version 守卫)未通过" >&2
               echo "   —— 部署中止(DB migration / rollout 之前,零生产变更)" >&2

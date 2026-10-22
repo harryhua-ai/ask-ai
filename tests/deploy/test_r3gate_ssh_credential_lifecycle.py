@@ -103,6 +103,10 @@ class Sandbox:
         self.docker_argv = self.logs / "docker_argv.log"
         self.eval_argv = self.logs / "eval_argv.log"
         self.container_tmp = self.remote_tmp / "container-tmp"
+        # A 评审 R1/R2(2026-10-22):旧 r2 容器布局 —— 守卫声明路径的父目录
+        # /app/deploy/prod 必须真实存在(真实 r2 容器内即真目录),供送达
+        # 脚本祖先链校验 + 受控发布真实执行
+        (self.container / "app" / "deploy" / "prod").mkdir(parents=True, exist_ok=True)
         self._write_shims()
 
     # ------------------------------------------------------------------ shims
@@ -193,6 +197,16 @@ class Sandbox:
             '            else\n'
             '              exit 1\n'
             '            fi ;;\n'
+            '          *"set -eu"*|T=*|D=*)\n'
+            '            # A 评审 R1/R2(2026-10-22):守卫送达/所有权清理/临时件\n'
+            '            # 清扫脚本原样真实执行 —— 容器绝对路径机械映射到容器根\n'
+            '            sargs=()\n'
+            '            for a in "${cmd[@]:4}"; do\n'
+            '              case "$a" in /*) sargs+=("$TSL_CONTAINER_ROOT$a") ;; *) sargs+=("$a") ;; esac\n'
+            '            done\n'
+            '            bash -c "${cmd[2]}" guard "${sargs[@]}"\n'
+            '            exit $?\n'
+            '            ;;\n'
             '          *)\n'
             '            echo "fake compose sh: unexpected: ${cmd[2]}" >&2; exit 1 ;;\n'
             '        esac ;;\n'
