@@ -92,14 +92,15 @@ class R2CompatSandbox(ControlPlaneSandbox):
         assert old in body
         body = body.replace(old, new, 1)
         # compose exec 失败注入:backend 容器未启动语义
-        old2 = '    if [ "$sub" = "ps" ]; then echo fake-weaviate-cid; exit 0; fi\n'
+        # anchor = 主沙箱 ps 分支改写后的形态(per-service cid;注入保序)
+        old2 = '    if [ "$sub" = "ps" ]; then\n'
+        assert old2 in body
         new2 = old2 + (
             '    if [ "${TSL_CP_EXEC_FAIL:-}" = "1" ]; then\n'
             '      echo "fake compose exec: backend container not running (injected)" >&2\n'
             "      exit 1\n"
             '    fi\n'
         )
-        assert old2 in body
         body = body.replace(old2, new2, 1)
         docker.write_text(body, encoding="utf-8")
 
