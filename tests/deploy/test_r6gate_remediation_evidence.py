@@ -709,8 +709,27 @@ def test_workflow_wiring_v3():
     assert "deploy/prod/uploads-unknown-guard.tsv" in text
     assert '"$H_ID:/tmp/askai-production-identity.json"' in text
     assert '"$H_GUARD:$GUARD_TARGET"' in text, '守卫完整性核对绑定身份声明路径'
-    assert 'GUARD_CREATED' in text and 'cat > $GUARD_TARGET' in text, '三态送达+创建范围清理在位'
-    assert 'if [ -L' in text and '__G3_SYMLINK__' in text, 'symlink 逃逸探测在位'
+    # A 评审 R1/R2 修正后的送达不变量(2026-10-22):单次容器内执行完成
+    # 「祖先真目录校验 → 自有模式临时件清扫 → 三态 → O_EXCL 临时写入 →
+    # 容器侧哈希核对 → ln 原子发布」;精确所有权清理(GUARD_OWN)。
+    for token in (
+        'GUARD_OWN',
+        'guard_container_cleanup',
+        '__G3_SYMLINK__',
+        '__G3_PARENT_SYMLINK__',
+        '__G3_CREATED__',
+        '__G3_REUSE__',
+        '__G3_CONFLICT__',
+        '__G3_RACE_CONFLICT__',
+        '__G3_WRITE_FAIL__',
+        '__G3_PARTIAL_HASH__',
+        '.askai-guard-new-',
+        'set -C',
+        'ln "$D/$N" "$T"',
+        'trap cleanup EXIT',
+    ):
+        assert token in text, f'守卫送达/所有权清理标记缺失: {token}'
+    assert 'cat > $GUARD_TARGET' not in text, '旧式直达写入必须移除(R1 竞态面)'
     assert "--deployed-release-version" in text
     assert "已部署版本不可读" in text
     assert "--verify-upload-isolation" in text
