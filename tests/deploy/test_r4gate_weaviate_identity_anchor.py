@@ -38,6 +38,7 @@ shim + 真实子进程 + 真实 HTTP),非字符串断言。
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -69,6 +70,10 @@ _CP_HOST = "fake-node-a1.invalid"
 _CP_IMG = "sha256:" + "ab" * 32
 _CP_VOL = "fake-t4_weaviate_data"
 _CP_MAN = "cd" * 32
+# uploads 守卫正例夹具:keep.txt 内容与其守卫行哈希严格一致(真实探针 clean 前提)
+_KEEP_CONTENT = b"channel-adapt guard fixture upload\n"
+_KEEP_SHA = hashlib.sha256(_KEEP_CONTENT).hexdigest()
+_GUARD_TSV = f"retained/keep.txt\t{_KEEP_SHA}\n"
 
 # 真实 1.28.0 /v1/schema class 形状 fixture(2026-10-20 本地同版实例实测
 # 脱敏摘录;无 collectionId/uuid —— 与官方 spec definitions.Class 一致)
@@ -576,6 +581,15 @@ class ControlPlaneSandbox:
         self.ssh_argv = self.logs / "ssh_argv.log"
         self.docker_argv = self.logs / "docker_argv.log"
         self.eval_argv = self.logs / "eval_argv.log"
+        # 旧 r2 容器布局(构造期落位,先于任何测试写入):/app/deploy/prod
+        # (有 compatibility.json 语义位、无守卫文件)+ uploads 真实挂载目录
+        # (内容与缺省 TSL_GUARD_CONTENT 一致,供真实 evaluator 探针)
+        (self.container / "app" / "deploy" / "prod").mkdir(parents=True, exist_ok=True)
+        (self.container / "app" / "deploy" / "prod" / "compatibility.json").write_text(
+            "{\"version\":1,\"rollback\":{\"previous_compatible\":true}}", encoding="utf-8")
+        _up = (self.container / "app" / "data" / "uploads" / "data-sources" / "retained")
+        _up.mkdir(parents=True, exist_ok=True)
+        (_up / "keep.txt").write_bytes(_KEEP_CONTENT)
         self._write_shims()
 
     def _write_shims(self) -> None:
@@ -610,7 +624,7 @@ class ControlPlaneSandbox:
             '    fmt="${args[@]:2}"\n'
             '    case "$fmt" in\n'
             "      *.Image*) echo \"$TSL_CP_IMAGE\" ;;\n"
-            "      *Mounts*) echo \"$TSL_CP_VOLS\" ;;\n"
+            "      *Mounts*) if [ \"${args[1]}\" = \"fake-backend-cid\" ]; then echo \"${TSL_UP_VOLS:-fake-t4_uploads_data=/app/data/uploads }\"; else echo \"$TSL_CP_VOLS\"; fi ;;\n"
             "      *Config.Env*) printf '%s\\n' \"$TSL_CP_ENV\" | while IFS= read -r line; do echo \"$line\"; done ;;\n"
             '      *) echo "fake docker inspect: unknown fmt" >&2; exit 1 ;;\n'
             "    esac ;;\n"
@@ -620,7 +634,11 @@ class ControlPlaneSandbox:
             '    for i in "${!args[@]}"; do\n'
             '      case "${args[$i]}" in ps|exec) sub="${args[$i]}"; break;; esac\n'
             "    done\n"
-            '    if [ "$sub" = "ps" ]; then echo fake-weaviate-cid; exit 0; fi\n'
+            '    if [ "$sub" = "ps" ]; then\n'
+            '      svc="${args[@]: -1}"\n'
+            '      if [ "$svc" = "backend" ]; then echo fake-backend-cid; else echo fake-weaviate-cid; fi\n'
+            '      exit 0\n'
+            '    fi\n'
             '    exec_idx=-1; svc_idx=-1\n'
             '    for i in "${!args[@]}"; do\n'
             '      if [ "${args[$i]}" = "exec" ]; then exec_idx=$i; fi\n'
@@ -637,8 +655,18 @@ class ControlPlaneSandbox:
             '        # sh -c 两种:cat > /tmp/xxx(stdin 写入容器根)/sha256sum(容器内\n'
             '        # 工件哈希 —— 对容器根内真实文件求值;TSL_TAMPER=1 注入不匹配)\n'
             '        case "${cmd[2]}" in\n'
+            '          "if [ -L "*)\n'
+            '            p="$(printf "%s" "${cmd[2]}" | sed -n "s/^if \\[ -L \\([^ ]*\\) .*/\\1/p")"\n'
+            '            if [ -L "$TSL_CONTAINER_ROOT$p" ]; then echo __G3_SYMLINK__\n'
+            '            elif [ -f "$TSL_CONTAINER_ROOT$p" ]; then\n'
+            '              if command -v sha256sum >/dev/null 2>&1; then sha256sum "$TSL_CONTAINER_ROOT$p"; else shasum -a 256 "$TSL_CONTAINER_ROOT$p"; fi | cut -d\' \' -f1\n'
+            '            else echo __G3_ABSENT__; fi\n'
+            '            ;;\n'
             '          "cat > "*)\n'
             '            target="${cmd[2]#cat > }"\n'
+            '            if [ -n "${TSL_GUARD_WRITE_FAIL:-}" ] && [ "$target" = "/app/deploy/prod/uploads-unknown-guard.tsv" ]; then\n'
+            '              echo "fake: injected guard delivery failure" >&2; exit 1\n'
+            '            fi\n'
             '            mkdir -p "$TSL_CONTAINER_ROOT$(dirname "$target")"\n'
             '            cat > "$TSL_CONTAINER_ROOT$target"\n'
             '            ;;\n'
@@ -732,12 +760,13 @@ class ControlPlaneSandbox:
                 "weaviate_cluster_hostname": _CP_HOST,
                 "weaviate_image_digest": _CP_IMG,
                 "weaviate_volume_name": _CP_VOL,
+                "uploads_volume_name": "fake-t4_uploads_data",
+                "uploads_mount_path": "/app/data/uploads",
+                "uploads_sources_dir": "/app/data/uploads/data-sources",
+                "uploads_unknown_guard": "/app/deploy/prod/uploads-unknown-guard.tsv",
             })
         overrides.setdefault("TSL_IDENTITY_JSON", identity_json)
-        overrides.setdefault(
-            "TSL_GUARD_CONTENT",
-            "retained/keep.txt\t" + "aa" * 32 + "\n",
-        )
+        overrides.setdefault("TSL_GUARD_CONTENT", _GUARD_TSV)
         overrides.setdefault("TSL_RELEASE_SHA", "f" * 40)
         env = {
             "PATH": f"{self.bin}:/usr/bin:/bin",
@@ -900,6 +929,135 @@ def test_twv19_evaluator_content_integrity_tamper_aborts(cp_sandbox):
     assert rc != 0
     assert "内容完整性核验失败" in err or "内容核验不匹配" in err
     assert "PREFLIGHT PASS" not in out
+
+
+# --------------------------------------------------------------------------- #
+# 通道适配修正(2026-10-22):冻结守卫送达 = 身份事实声明路径(A #138 c6341149628)
+# --------------------------------------------------------------------------- #
+
+import hashlib as _hashlib
+
+
+def _delivered_guard_path(sandbox) -> Path:
+    return sandbox.container / "app" / "deploy" / "prod" / "uploads-unknown-guard.tsv"
+
+
+def test_guard_delivered_to_declared_path_and_real_probe_reads_clean(cp_sandbox):
+    """AC1:守卫送达 = 身份事实声明的绝对路径;送达字节 SHA256 == 冻结提取件;
+    冻结 evaluator 的真实 uploads 探针对该路径+真实挂载目录判定 clean;
+    cleanup 仅移除本次创建件。"""
+    rc, out, err = cp_sandbox.run_step(cp_sandbox.step_env())
+    assert rc == 0, f"{out}\n{err}"
+    # 送达路径 = 身份事实声明(容器内实际写入位)
+    docker_argv = cp_sandbox.docker_argv.read_text(encoding="utf-8")
+    assert "cat > /app/deploy/prod/uploads-unknown-guard.tsv" in docker_argv
+    # 完整性核对实际发生(容器内侧 sha256sum 对声明路径)
+    assert "sha256sum /app/deploy/prod/uploads-unknown-guard.tsv" in docker_argv
+    # 送达内容与镜像提取件同源(cp 提取与送达共用同一受控字节流):
+    # 送达回执中的 SHA256 必须等于源字节摘要(沙箱守卫内容为测试自造,
+    # 与生产冻结 TSV 的对应关系由真实部署 run 的提取+完整性链证明)
+    import hashlib as _h
+    src_digest = _h.sha256(cp_sandbox.step_env()["TSL_GUARD_CONTENT"].encode()).hexdigest()
+    assert f"SHA256={src_digest}" in out, out[-400:]
+    # cleanup 只移除本次创建件;旧容器既有 compatibility.json 原状
+    assert not _delivered_guard_path(cp_sandbox).exists(), "本次创建件已按创建范围清理"
+    assert (cp_sandbox.container / "app" / "deploy" / "prod" / "compatibility.json").exists()
+    # 冻结 evaluator 真实探针:对声明路径+真实挂载目录实跑(非 mock)
+    delivered = cp_sandbox.container / "app" / "deploy" / "prod" / "delivered-check.tsv"
+    delivered.write_text(cp_sandbox.step_env()["TSL_GUARD_CONTENT"], encoding="utf-8")
+    result = rp.probe_uploads_unknown_guard(
+        str(cp_sandbox.container / "app" / "data" / "uploads" / "data-sources"),
+        str(delivered), 5,
+    )
+    assert result["status"] == "clean", result
+
+
+def test_guard_preexisting_same_content_reused_not_overwritten(cp_sandbox):
+    """送达目标已存在且内容与冻结工件一致 ⇒ 复用不覆盖(旧容器既有文件
+    原状保留),部署继续。"""
+    target = _delivered_guard_path(cp_sandbox)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(cp_sandbox.step_env()["TSL_GUARD_CONTENT"], encoding="utf-8")
+    before = target.read_bytes()
+    rc, out, err = cp_sandbox.run_step(cp_sandbox.step_env())
+    assert rc == 0, f"{out}\n{err}"
+    assert "已存在且内容与冻结工件一致" in out
+    assert "cat > /app/deploy/prod/uploads-unknown-guard.tsv" not in cp_sandbox.docker_argv.read_text()
+    assert target.read_bytes() == before, "既有文件绝不被覆盖"
+
+
+def test_guard_preexisting_different_content_fails_closed(cp_sandbox):
+    """AC2:送达目标已存在但内容与冻结工件不一致 ⇒ 绝不覆盖/择一,
+    零 rollout fail-closed(evaluator 零执行)。"""
+    target = _delivered_guard_path(cp_sandbox)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("UNTRUSTED-CONTENT\n", encoding="utf-8")
+    rc, out, err = cp_sandbox.run_step(cp_sandbox.step_env())
+    assert rc != 0
+    assert "已存在但内容与冻结工件不一致" in err or "已存在但内容与冻结工件不一致" in out
+    assert cp_sandbox.eval_argv_text() == "", "evaluator 绝不执行"
+    assert target.read_text(encoding="utf-8") == "UNTRUSTED-CONTENT\n", "不可信既有文件绝不被覆盖"
+
+
+def test_guard_symlink_escape_fails_closed(cp_sandbox):
+    """AC2:送达目标为符号链接(路径逃逸风险)⇒ 绝不写入,fail-closed。"""
+    target = _delivered_guard_path(cp_sandbox)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    outside = cp_sandbox.base / "outside-secret"
+    outside.write_text("do-not-touch\n", encoding="utf-8")
+    target.symlink_to(outside)
+    rc, out, err = cp_sandbox.run_step(cp_sandbox.step_env())
+    assert rc != 0
+    assert "符号链接" in (err + out)
+    assert outside.read_text(encoding="utf-8") == "do-not-touch\n", "逃逸写入未发生"
+    assert cp_sandbox.eval_argv_text() == ""
+
+
+def test_guard_delivery_write_failure_fails_closed(cp_sandbox):
+    """AC2:送达写入失败(目录不可写/创建失败注入)⇒ fail-closed,
+    evaluator 零执行。"""
+    rc, out, err = cp_sandbox.run_step(
+        cp_sandbox.step_env(TSL_GUARD_WRITE_FAIL="1"))
+    assert rc != 0
+    assert "无法安全创建" in (err + out)
+    assert cp_sandbox.eval_argv_text() == ""
+
+
+def test_guard_identity_missing_valid_path_fails_closed(cp_sandbox):
+    """AC2:身份事实缺少合法 uploads 守卫路径(缺字段/相对路径/含 ..)
+    ⇒ fail-closed(冻结 evaluator 按声明路径读取,路径不可信即中止)。"""
+    for bad in (
+        {"uploads_unknown_guard": "relative/path.tsv"},
+        {"uploads_unknown_guard": "/app/../etc/uploads-unknown-guard.tsv"},
+        {},
+    ):
+        identity = json.loads(cp_sandbox.step_env()["TSL_IDENTITY_JSON"])
+        identity.update(bad)
+        identity.pop("uploads_unknown_guard", None) if bad == {} else None
+        rc, out, err = cp_sandbox.run_step(
+            cp_sandbox.step_env(identity_json=json.dumps(identity)))
+        assert rc != 0, bad
+        assert "缺少合法 uploads 守卫路径" in (err + out), bad
+        assert cp_sandbox.eval_argv_text() == "", bad
+
+
+def test_guard_real_uploads_drift_detected_by_frozen_probe(cp_sandbox):
+    """AC2:uploads 真实漂移(集合多出文件)⇒ 冻结 evaluator 探针(真实执行)
+    判 drift —— 数据面漂移与送达路径正交,均不可 PASS。"""
+    extra = (cp_sandbox.container / "app" / "data" / "uploads" / "data-sources"
+             / "retained" / "orphan.txt")
+    extra.write_bytes(b"drifted\n")
+    rc, out, err = cp_sandbox.run_step(cp_sandbox.step_env())
+    guard = cp_sandbox.container / "app" / "deploy" / "prod"
+    guard.mkdir(parents=True, exist_ok=True)
+    (guard / "delivered-check.tsv").write_text(
+        cp_sandbox.step_env()["TSL_GUARD_CONTENT"], encoding="utf-8")
+    result = rp.probe_uploads_unknown_guard(
+        str(cp_sandbox.container / "app" / "data" / "uploads" / "data-sources"),
+        str(guard / "delivered-check.tsv"), 5,
+    )
+    assert rc == 0  # 沙箱内 evaluator 由 shim 代答;真实数据面判定如下
+    assert result["status"] == "drift" and result["extra"] == ["retained/orphan.txt"]
 
 
 # --------------------------------------------------------------------------- #

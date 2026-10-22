@@ -65,6 +65,10 @@ _IDENTITY_JSON = json.dumps({
     "weaviate_cluster_hostname": "fake-node.invalid",
     "weaviate_image_digest": "sha256:fakeimage0000000000000000000000000000000000000000000000000000000000",
     "weaviate_volume_name": "fake-t4_weaviate_data",
+    "uploads_volume_name": "fake-t4_uploads_data",
+    "uploads_mount_path": "/app/data/uploads",
+    "uploads_sources_dir": "/app/data/uploads/data-sources",
+    "uploads_unknown_guard": "/app/deploy/prod/uploads-unknown-guard.tsv",
 })
 
 
@@ -140,7 +144,7 @@ class Sandbox:
             '    fmt="${args[@]:2}"\n'
             '    case "$fmt" in\n'
             '      *.Image*) echo "sha256:fakeimage0000000000000000000000000000000000000000000000000000000000" ;;\n'
-            '      *Mounts*) echo "${TSL_CP_VOLS:-fake-t4_weaviate_data=/var/lib/weaviate }" ;;\n'
+            "      *Mounts*) if [ \"${args[1]}\" = \"fake-backend-cid\" ]; then echo \"${TSL_UP_VOLS:-fake-t4_uploads_data=/app/data/uploads }\"; else echo \"${TSL_CP_VOLS:-fake-t4_weaviate_data=/var/lib/weaviate }\"; fi ;;\n"
             '      *Config.Env*) printf \'%s\\n\' "${TSL_CP_ENV:-CLUSTER_HOSTNAME=fake-node.invalid}" ;;\n'
             '      *) echo "fake docker inspect: unknown fmt" >&2; exit 1 ;;\n'
             "    esac ;;\n"
@@ -148,8 +152,12 @@ class Sandbox:
             '    if [ "${TSL_PS_EMPTY:-}" = "1" ]; then exit 0; fi\n'
             '    sub=""\n'
             '    for i in "${!args[@]}"; do case "${args[$i]}" in ps|exec) sub="${args[$i]}"; break;; esac; done\n'
-            '    if [ "$sub" = "ps" ]; then echo fake-wv-cid; exit 0; fi\n'
-            "    exec_idx=-1; svc_idx=-1\n"
+            '    if [ "$sub" = "ps" ]; then\n'
+            '      svc="${args[@]: -1}"\n'
+            '      if [ "$svc" = "backend" ]; then echo fake-backend-cid; else echo fake-wv-cid; fi\n'
+            '      exit 0\n'
+            '    fi\n'
+            '    exec_idx=-1; svc_idx=-1\n'
             '    for i in "${!args[@]}"; do\n'
             '      if [ "${args[$i]}" = "exec" ]; then exec_idx=$i; fi\n'
             '      if [ "$exec_idx" -ge 0 ] && [ "${args[$i]}" = "backend" ]; then svc_idx=$i; break; fi\n'
@@ -163,6 +171,13 @@ class Sandbox:
             '        printf \'{"version":"%s","git_sha":"deployed0sha"}\' "${TSL_DEPLOYED_VERSION:-1.0.0}" ;;\n'
             "      sh)\n"
             '        case "${cmd[2]}" in\n'
+            '          "if [ -L "*)\n'
+            '            p="$(printf "%s" "${cmd[2]}" | sed -n "s/^if \\[ -L \\([^ ]*\\) .*/\\1/p")"\n'
+            '            if [ -L "$TSL_CONTAINER_ROOT$p" ]; then echo __G3_SYMLINK__\n'
+            '            elif [ -f "$TSL_CONTAINER_ROOT$p" ]; then\n'
+            '              if command -v sha256sum >/dev/null 2>&1; then sha256sum "$TSL_CONTAINER_ROOT$p"; else shasum -a 256 "$TSL_CONTAINER_ROOT$p"; fi | cut -d\' \' -f1\n'
+            '            else echo __G3_ABSENT__; fi\n'
+            '            ;;\n'
             '          "cat > "*)\n'
             '            target="${cmd[2]#cat > }"\n'
             '            mkdir -p "$TSL_CONTAINER_ROOT$(dirname "$target")"\n'

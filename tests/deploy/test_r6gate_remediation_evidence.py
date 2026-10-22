@@ -708,7 +708,9 @@ def test_workflow_wiring_v3():
     assert "deploy/prod/production-identity.json" in text
     assert "deploy/prod/uploads-unknown-guard.tsv" in text
     assert '"$H_ID:/tmp/askai-production-identity.json"' in text
-    assert '"$H_GUARD:/tmp/askai-uploads-unknown-guard.tsv"' in text
+    assert '"$H_GUARD:$GUARD_TARGET"' in text, '守卫完整性核对绑定身份声明路径'
+    assert 'GUARD_CREATED' in text and 'cat > $GUARD_TARGET' in text, '三态送达+创建范围清理在位'
+    assert 'if [ -L' in text and '__G3_SYMLINK__' in text, 'symlink 逃逸探测在位'
     assert "--deployed-release-version" in text
     assert "已部署版本不可读" in text
     assert "--verify-upload-isolation" in text

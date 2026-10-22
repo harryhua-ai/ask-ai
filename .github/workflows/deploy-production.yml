@@ -308,6 +308,15 @@ jobs:
             ID_HOST="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['weaviate_cluster_hostname'])" "$ID_TMP")"
             ID_UPVol="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('uploads_volume_name',''))" "$ID_TMP")"
             ID_UPMount="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('uploads_mount_path',''))" "$ID_TMP")"
+            # 守卫送达目标 = 身份事实声明的绝对路径(冻结语义,不得改写/绕过):
+            # 形状校验(绝对/词表内/无 .. /有界);缺失或非法 ⇒ fail-closed
+            # 单行 python(YAML 块标量内禁列 0 续行):形状=绝对路径/词表内/无 ..;非法输出空串
+            GUARD_TARGET="$(python3 -c 'import json,re,sys; v=str(json.load(open(sys.argv[1])).get("uploads_unknown_guard") or ""); print(v if (re.fullmatch(r"/[A-Za-z0-9][A-Za-z0-9._/-]{0,254}", v) and ".." not in v) else "")' "$ID_TMP")"
+            if [ -z "$GUARD_TARGET" ]; then
+              echo "❌ 控制面:身份事实缺少合法 uploads 守卫路径(uploads_unknown_guard 须为绝对路径、词表内、无 ..)—— 冻结 evaluator 按该路径读取 ⇒ fail-closed" >&2
+              exit 1
+            fi
+            echo "控制面核验 PASS(d):守卫送达目标 = $GUARD_TARGET(身份事实声明;只读)"
             WID="$($COMPOSE ps -q weaviate)"
             if [ -z "$WID" ]; then
               echo "❌ 控制面:weaviate 容器未运行(compose ps 为空)—— 目标身份无法核验,fail-closed" >&2
@@ -355,17 +364,42 @@ jobs:
             H_ID="$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$ID_TMP")"
             H_GUARD="$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$GUARD_TMP")"
             $COMPOSE exec -T backend rm -f /tmp/askai-preflight-evaluator.py \
-                /tmp/askai-preflight-manifest.json /tmp/askai-production-identity.json \
-                /tmp/askai-uploads-unknown-guard.tsv 2>/dev/null || true
+                /tmp/askai-preflight-manifest.json /tmp/askai-production-identity.json 2>/dev/null || true
             $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-preflight-evaluator.py' < "$EVAL_TMP"
             $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-preflight-manifest.json' < "$MAN_TMP"
             $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-production-identity.json' < "$ID_TMP"
-            $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-uploads-unknown-guard.tsv' < "$GUARD_TMP"
+            # 冻结守卫送达(A 修正 2026-10-22):必须落位身份事实声明的绝对路径
+            # (GUARD_TARGET),而非任意 /tmp 路径 —— 冻结 evaluator 按声明路径读取。
+            # 送达前三态探针:symlink ⇒ 逃逸风险拒;已存在 ⇒ 逐字节核对(不一致拒,
+            # 一致则复用不覆盖,尊重旧容器既有文件);缺席 ⇒ 受控送达。
+            GUARD_CREATED=0
+            GUARD_PROBE="$($COMPOSE exec -T backend sh -c "if [ -L $GUARD_TARGET ]; then echo __G3_SYMLINK__; elif [ -f $GUARD_TARGET ]; then sha256sum $GUARD_TARGET | cut -d' ' -f1; else echo __G3_ABSENT__; fi" 2>/dev/null || true)"
+            case "$GUARD_PROBE" in
+              __G3_SYMLINK__)
+                echo "❌ 守卫送达目标 $GUARD_TARGET 为符号链接(路径逃逸风险)—— 绝不写入,fail-closed" >&2
+                exit 1 ;;
+              __G3_ABSENT__)
+                $COMPOSE exec -T backend sh -c "cat > $GUARD_TARGET" < "$GUARD_TMP" || {
+                  echo "❌ 守卫送达失败:无法安全创建 $GUARD_TARGET(目录缺失/不可写)—— fail-closed" >&2
+                  exit 1
+                }
+                GUARD_CREATED=1
+                echo "守卫送达:$GUARD_TARGET(本次创建;SHA256=$H_GUARD)" ;;
+              "$H_GUARD")
+                echo "守卫送达:$GUARD_TARGET 已存在且内容与冻结工件一致(SHA256 相同)—— 复用不覆盖" ;;
+              "")
+                echo "❌ 守卫送达探针失败:$GUARD_TARGET 状态不可判定(容器 exec 失败)—— fail-closed" >&2
+                exit 1 ;;
+              *)
+                echo "❌ 守卫送达目标 $GUARD_TARGET 已存在但内容与冻结工件不一致(SHA256=$GUARD_PROBE ≠ $H_GUARD)——" >&2
+                echo "   旧容器内同路径存在不可信未知文件,绝不覆盖/择一 ⇒ fail-closed,交操作员对账" >&2
+                exit 1 ;;
+            esac
             INTEGRITY_OK=1
             for pair in "$H_EVAL:/tmp/askai-preflight-evaluator.py" \
                          "$H_MAN:/tmp/askai-preflight-manifest.json" \
                          "$H_ID:/tmp/askai-production-identity.json" \
-                         "$H_GUARD:/tmp/askai-uploads-unknown-guard.tsv"; do
+                         "$H_GUARD:$GUARD_TARGET"; do
               WANT="${pair%%:*}"; TPATH="${pair#*:}"
               GOT="$($COMPOSE exec -T backend sh -c "sha256sum $TPATH 2>/dev/null" | cut -d' ' -f1)"
               if [ -z "$GOT" ] || [ "$GOT" != "$WANT" ]; then
@@ -375,8 +409,11 @@ jobs:
             done
             if [ "$INTEGRITY_OK" != 1 ]; then
               $COMPOSE exec -T backend rm -f /tmp/askai-preflight-evaluator.py \
-                  /tmp/askai-preflight-manifest.json /tmp/askai-production-identity.json \
-                  /tmp/askai-uploads-unknown-guard.tsv || true
+                  /tmp/askai-preflight-manifest.json /tmp/askai-production-identity.json || true
+              # 本次送达的守卫仅在"本次创建"范围内清理;复用的既有文件绝不删除
+              if [ "$GUARD_CREATED" = "1" ]; then
+                $COMPOSE exec -T backend rm -f "$GUARD_TARGET" || true
+              fi
               echo "❌ 评估器/manifest/身份事实/上传守卫 内容完整性核验失败 —— 绝不执行,fail-closed 中止" >&2
               exit 1
             fi
@@ -395,8 +432,10 @@ jobs:
                 --deployed-release-version "$DEPLOYED_VERSION" \
                 || CONTAINER_RC=$?
             $COMPOSE exec -T backend rm -f /tmp/askai-preflight-evaluator.py \
-                /tmp/askai-preflight-manifest.json /tmp/askai-production-identity.json \
-                /tmp/askai-uploads-unknown-guard.tsv || true
+                /tmp/askai-preflight-manifest.json /tmp/askai-production-identity.json || true
+            if [ "$GUARD_CREATED" = "1" ]; then
+              $COMPOSE exec -T backend rm -f "$GUARD_TARGET" || true
+            fi
             if [ "$CONTAINER_RC" -ne 0 ]; then
               echo "❌ 生产兼容性 preflight(容器内;数据隔离断言 + 已审核身份事实 + deployed-version 守卫)未通过" >&2
               echo "   —— 部署中止(DB migration / rollout 之前,零生产变更)" >&2
