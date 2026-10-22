@@ -8,23 +8,25 @@
 # 回滚兼容契约(#46 RELEASE-ROLLBACK-COMPATIBILITY):
 #   - 回滚兼容性由【目标发布】冻结镜像内的 compatibility manifest 声明权威裁定;
 #   - 目标发布声明 previous_compatible: true ⇒ 普通 previous-tag 回滚照常可用;
-#   - 目标发布声明 previous_compatible: false ⇒ 普通 previous-tag 回滚不再适用,
-#     必须提供【真实不可变证据工件 + 非对称签名审批】(A #138 P3 + R6v3):
-#       ./deploy/prod/update.sh <tag> --remediation-evidence-file <record.json> \
-#           --remediation-evidence-artifact <artifact.bin> \
-#           --remediation-approval-public-key-file <pubkey.json>
-#     evaluator fail-closed 全链验证:实际工件 SHA256 == 记录声明摘要;
-#     审批 = RSASSA-PKCS1-v1_5(SHA-256) 签名(纯 stdlib 验签):私钥仅在
-#     A 离线受控路径(scripts/sign_remediation_approval.py 签发),验证公钥
-#     为非秘密材料、经可信钉扎通道(与信任锚同款:workflow secret → SSH
-#     stdin → 0600 临时文件)送达,绝不走 compose env_file/容器 env ——
-#     R6v2 的对称 HMAC 密钥 env 通道已整体删除(公钥无法签发 ⇒ 应用容器
-#     env 权限不构成签发能力);
-#     gate == manifest 声明 ∧ target_tag == 本 tag ∧ release_sha == 镜像内
-#     RELEASE.json git_sha(诚实边界:release_sha 是 git_sha 断言,非 OCI
-#     image 内容摘要);not_after 未过期。任一环失败 ⇒ 任何 rollout mutation
-#     之前 fail-closed。--remediation-ack 仅保留 CLI 兼容,单独使用不再构成
-#     合法放行);
+#   - 目标发布声明 previous_compatible: false ⇒ 普通 previous-tag 回滚不再适用。
+#     2026-10-22 通道裁决(A #138 正式授权):新增离线 RSA 签发与 4 项
+#     Environment Secrets 退出发布依赖(User 无私钥/新增秘密配置通道;整改
+#     实质已由已验收的来源清零与 #187 恢复门禁落地)。不安全旧版回滚改由
+#     【deployed-version 守卫】强制([1.3/6],标记 ASKAI_DEPLOYED_VERSION_GUARD_V1):
+#       - 已部署版本事实 = 宿主部署标记 deploy/prod/.deployed-release.json
+#         (本脚本每次成功部署后写;优先)> 运行中 backend 容器
+#         /app/RELEASE.json + /app/deploy/prod/compatibility.json(只读
+#         docker exec 读;已部署事实与被部署目标分离,不自证);
+#       - 已部署发布声明 previous_compatible=false 且目标 tag 旧于已部署
+#         ⇒ 任何 rollout mutation 之前 fail-closed(历史 ref dispatch 的
+#         旧 workflow 调用本脚本同样被拦截 —— evaluator 冻结于各自镜像,
+#         无法覆盖该旁路面,本守卫补上);
+#       - 已部署版本不可证明 ⇒ 显式告警后继续:仅在宿主无任何已部署 r3
+#         状态(无标记、无运行容器)的 bootstrap 语境可达;此时不存在
+#         "从声明不兼容的已发布版本回退"的状态(诚实披露,非静默跳过);
+#       - 退役整改证据通道的三参数(记录文件/证据工件/验证公钥)整体移除;
+#         --remediation-ack 仅保留 CLI 兼容并透传 evaluator 显式判 FAIL
+#         (字符串 ACK 永不构成放行,A #138 P3 原则不变)。
 #   - 本脚本不自行判定回退安全性,也不自动回滚 —— 只执行目标发布的冻结声明。
 #
 # 宿主脚本身份自验(R6v3,A R6v2 审查阻塞 3 修复;--pinned-update-sh-sha256):
@@ -93,32 +95,14 @@ IMAGE="ghcr.io/harryhua-ai/ask-ai"
 # 必须显式确认所声明的修复门才能继续(见文末 RELEASE-ROLLBACK-COMPATIBILITY)。
 TAG=""
 REMEDIATION_ACK=""
-REMEDIATION_EVIDENCE_FILE=""
-REMEDIATION_EVIDENCE_ARTIFACT=""
-REMEDIATION_APPROVAL_PUBLIC_KEY_FILE=""
 PINNED_UPDATE_SH_SHA256=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --remediation-ack)
-            [ -n "${2:-}" ] || { echo "❌ --remediation-ack 需要 gate 名称" >&2; exit 2; }
+            [ -n "${2:-}" ] || { echo "❌ --remediation-ack 需要 gate 值" >&2; exit 2; }
             REMEDIATION_ACK="$2"; shift 2 ;;
         --remediation-ack=*)
             REMEDIATION_ACK="${1#*=}"; shift ;;
-        --remediation-evidence-file)
-            [ -n "${2:-}" ] || { echo "❌ --remediation-evidence-file 需要证据文件路径" >&2; exit 2; }
-            REMEDIATION_EVIDENCE_FILE="$2"; shift 2 ;;
-        --remediation-evidence-file=*)
-            REMEDIATION_EVIDENCE_FILE="${1#*=}"; shift ;;
-        --remediation-evidence-artifact)
-            [ -n "${2:-}" ] || { echo "❌ --remediation-evidence-artifact 需要证据工件路径" >&2; exit 2; }
-            REMEDIATION_EVIDENCE_ARTIFACT="$2"; shift 2 ;;
-        --remediation-evidence-artifact=*)
-            REMEDIATION_EVIDENCE_ARTIFACT="${1#*=}"; shift ;;
-        --remediation-approval-public-key-file)
-            [ -n "${2:-}" ] || { echo "❌ --remediation-approval-public-key-file 需要验证公钥文件路径" >&2; exit 2; }
-            REMEDIATION_APPROVAL_PUBLIC_KEY_FILE="$2"; shift 2 ;;
-        --remediation-approval-public-key-file=*)
-            REMEDIATION_APPROVAL_PUBLIC_KEY_FILE="${1#*=}"; shift ;;
         --pinned-update-sh-sha256)
             [ -n "${2:-}" ] || { echo "❌ --pinned-update-sh-sha256 需要 64 位 hex 钉扎值" >&2; exit 2; }
             PINNED_UPDATE_SH_SHA256="$2"; shift 2 ;;
@@ -128,7 +112,7 @@ while [ $# -gt 0 ]; do
             echo "❌ 未知选项: $1" >&2; exit 2 ;;
         *)
             if [ -z "$TAG" ]; then TAG="$1"; shift; else
-                echo "❌ 多余位置参数: $1(用法: $0 <version-tag> [--remediation-evidence-file <path>] [--remediation-ack <gate>])" >&2; exit 2
+                echo "❌ 多余位置参数: $1(用法: $0 <version-tag> [--pinned-update-sh-sha256 <64hex>] [--remediation-ack <gate>])" >&2; exit 2
             fi ;;
     esac
 done
@@ -187,6 +171,126 @@ if [ -n "$PINNED_UPDATE_SH_SHA256" ]; then
     echo "  ✅ 宿主脚本身份自验通过(锁内;sha256=$SELF_SH_HASH;先于任何 mutation)"
 fi
 
+
+# ---------- [1.3/6] deployed-version 回滚守卫(ASKAI_DEPLOYED_VERSION_GUARD_V1) ----------
+# 见头注「不安全旧版回滚」节。已部署事实源:宿主标记与运行中 backend 容器
+# **独立双读**。此守卫独立于 evaluator(evaluator 随各自镜像冻结;经历史 ref
+# dispatch 调用旧 workflow 时,目标镜像的 evaluator 不含本语义 —— 本守卫在
+# 宿主侧补上该旁路面)。
+# 语义(A PR #188 复审钉扎,不安全旧版回退的失败即止):
+#   1) 双源冲突 ⇒ 零 rollout fail-closed:版本不一致;或同版本而
+#      previous_compatible 声明互相矛盾(绝不静默取较宽松一侧);
+#   2) 向旧版本部署时,只有所依赖事实源**显式声明** previous_compatible=true
+#      才放行;声明 false ⇒ 拒绝;声明缺失/不可解析 ⇒ 无法排除不兼容 ⇒ 拒绝
+#      (缺字段绝不默认按兼容处理);
+#   3) 运行中 backend 存在但版本/兼容信息不可验证 ⇒ 不构成 clean bootstrap:
+#      目标旧于标记所记版本 ⇒ 拒绝(无法排除运行实例实为更新且不兼容的发布);
+#      目标不旧于标记 ⇒ 按前向/重部署既有语义放行;
+#   4) 双源皆缺(无标记且无运行容器)⇒ bootstrap 语境,显式告警后继续
+#      (此时宿主无任何已部署 r3 状态,不存在"从其回退"的对象)。
+DEPLOYED_VERSION_ARGS=()
+MARKER_FILE="$(dirname "$0")/.deployed-release.json"
+MARKER_VERSION=""
+MARKER_PREV_COMPAT=""
+if [ -f "$MARKER_FILE" ]; then
+    MARKER_VERSION="$(python3 -c 'import json,sys
+try: print(str(json.load(open(sys.argv[1])).get("version") or ""))
+except Exception: print("")' "$MARKER_FILE" 2>/dev/null || true)"
+    # 兼容声明严格解析:缺字段/非布尔 ⇒ 空串(未知),绝不默认判兼容
+    MARKER_PREV_COMPAT="$(python3 -c 'import json,sys
+try:
+    v=json.load(open(sys.argv[1])).get("previous_compatible")
+    print("true" if v is True else "false" if v is False else "")
+except Exception: print("")' "$MARKER_FILE" 2>/dev/null || true)"
+fi
+CONTAINER_VERSION=""
+CONTAINER_PREV_COMPAT=""
+BACKEND_CID="$(docker compose -f "$COMPOSE_FILE" ps -q backend 2>/dev/null || true)"
+if [ -n "$BACKEND_CID" ]; then
+    CONTAINER_VERSION="$(docker exec "$BACKEND_CID" cat /app/RELEASE.json 2>/dev/null \
+        | python3 -c 'import json,sys
+try: print(str(json.load(sys.stdin).get("version") or ""))
+except Exception: print("")' 2>/dev/null || true)"
+    CONTAINER_PREV_COMPAT="$(docker exec "$BACKEND_CID" cat /app/deploy/prod/compatibility.json 2>/dev/null \
+        | python3 -c 'import json,sys
+try:
+    v=json.load(sys.stdin).get("rollback",{}).get("previous_compatible")
+    print("true" if v is True else "false" if v is False else "")
+except Exception: print("")' 2>/dev/null || true)"
+fi
+LIVE_UNVERIFIABLE=0
+if [ -n "$BACKEND_CID" ] && [ -z "$CONTAINER_VERSION" ]; then
+    LIVE_UNVERIFIABLE=1  # 运行实例存在但关键事实不可读(非 clean bootstrap)
+fi
+# 1) 双源冲突检测(先于一切择源与 mutation)
+if [ -n "$MARKER_VERSION" ] && [ -n "$CONTAINER_VERSION" ]; then
+    if [ "$MARKER_VERSION" != "$CONTAINER_VERSION" ]; then
+        echo "❌ deployed-version 回滚守卫:部署状态双源冲突 ——" >&2
+        echo "   宿主标记 $MARKER_FILE version=$MARKER_VERSION" >&2
+        echo "   运行中 backend 容器 version=$CONTAINER_VERSION" >&2
+        echo "   两事实源互相矛盾(标记过期/容器被非通道方式更换/DR 换栈),守卫无法" >&2
+        echo "   证明任何一侧可信 ⇒ 零 rollout fail-closed。对账后再部署:使运行容器" >&2
+        echo "   与标记一致,或经核验后删除过期标记重跑(绝不静默择一继续)。" >&2
+        exit 1
+    fi
+    if [ -n "$MARKER_PREV_COMPAT" ] && [ -n "$CONTAINER_PREV_COMPAT" ] \
+       && [ "$MARKER_PREV_COMPAT" != "$CONTAINER_PREV_COMPAT" ]; then
+        echo "❌ deployed-version 回滚守卫:同版本($MARKER_VERSION)兼容性声明互相矛盾 ——" >&2
+        echo "   宿主标记 previous_compatible=$MARKER_PREV_COMPAT / 运行容器=$CONTAINER_PREV_COMPAT" >&2
+        echo "   两事实源对同一版本给出相反回滚语义,至少一侧不可信 ⇒ 零 rollout" >&2
+        echo "   fail-closed(绝不静默取较宽松一侧)。对账后再部署。" >&2
+        exit 1
+    fi
+fi
+# 择源(无冲突):标记优先;容器回退;双缺 ⇒ bootstrap(见 4)
+DEPLOYED_VERSION=""
+DEPLOYED_PREV_COMPAT=""
+if [ -n "$MARKER_VERSION" ]; then
+    DEPLOYED_VERSION="$MARKER_VERSION"
+    DEPLOYED_PREV_COMPAT="$MARKER_PREV_COMPAT"
+elif [ -n "$CONTAINER_VERSION" ]; then
+    DEPLOYED_VERSION="$CONTAINER_VERSION"
+    DEPLOYED_PREV_COMPAT="$CONTAINER_PREV_COMPAT"
+fi
+askai_version_lt() {  # $1=candidate $2=deployed → rc0 当 candidate < deployed(可解析时)
+    [ "$(python3 -c 'import re,sys
+def v(s):
+    m=re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)(?:-r(\d+))?", str(s).strip())
+    return (int(m.group(1)),int(m.group(2)),int(m.group(3)),int(m.group(4) or 0)) if m else None
+a,b=v(sys.argv[1]),v(sys.argv[2])
+print("lt" if (a is not None and b is not None and a<b) else "no")' "$1" "$2")" = "lt" ]
+}
+if [ -n "$DEPLOYED_VERSION" ]; then
+    if askai_version_lt "$EXPECTED_VERSION" "$DEPLOYED_VERSION"; then
+        # 向旧版本部署:必须由所依赖事实源显式证明回退兼容,否则拒绝
+        if [ "$DEPLOYED_PREV_COMPAT" = "true" ] && [ "$LIVE_UNVERIFIABLE" != "1" ]; then
+            echo "  ✅ deployed-version 回滚守卫:已部署 $DEPLOYED_VERSION 显式声明回退兼容,普通 previous-tag 回滚照常(先于任何 mutation)"
+            DEPLOYED_VERSION_ARGS=(--deployed-release-version "$DEPLOYED_VERSION")
+        else
+            if [ "$DEPLOYED_PREV_COMPAT" = "false" ]; then
+                echo "❌ deployed-version 回滚守卫:目标 $TAG 旧于当前已部署 $DEPLOYED_VERSION," >&2
+                echo "   而已部署发布声明 previous_compatible=false ⇒ 普通 previous-tag 回滚不适用" >&2
+                echo "   (旧上传来源默认可见性语义可能重暴露已清理/禁止公开的数据)" >&2
+            elif [ "$LIVE_UNVERIFIABLE" = "1" ]; then
+                echo "❌ deployed-version 回滚守卫:目标 $TAG 旧于宿主标记所记 $DEPLOYED_VERSION," >&2
+                echo "   但运行中 backend 的版本/兼容信息不可验证(实例存在、读取失败)——" >&2
+                echo "   无法排除运行实例实为更新且不兼容的发布 ⇒ 不能按标记的兼容声明放行" >&2
+            else
+                echo "❌ deployed-version 回滚守卫:目标 $TAG 旧于当前已部署 $DEPLOYED_VERSION," >&2
+                echo "   且其 previous_compatible 声明缺失/不可解析 ⇒ 无法排除不兼容" >&2
+            fi
+            echo "   零 rollout fail-closed(先于任何 mutation)。" >&2
+            exit 1
+        fi
+    else
+        echo "  ✅ deployed-version 回滚守卫:目标 $TAG 不旧于已部署 $DEPLOYED_VERSION(前向/重部署;先于任何 mutation)"
+        [ "$LIVE_UNVERIFIABLE" = "1" ] && echo "  ⚠️ 运行中 backend 事实不可验证;前向部署由目标发布自身 preflight 门承担" >&2
+        DEPLOYED_VERSION_ARGS=(--deployed-release-version "$DEPLOYED_VERSION")
+    fi
+else
+    echo "  ⚠️ deployed-version 回滚守卫:已部署版本不可证明(无宿主标记且无运行中" >&2
+    echo "     backend)—— 仅 bootstrap 语境可达(宿主无任何已部署 r3 状态);显式告警后继续" >&2
+fi
 
 # ---------- post-deploy 回退指引(#46 REVIEW_2;AC4 条件化) ----------
 # post-deploy operator guidance 必须遵循【本次已部署发布】冻结声明的 rollback
@@ -255,8 +359,8 @@ echo "  ✅ 镜像身份: version=$ACTUAL_VERSION git_sha=$ACTUAL_SHA"
 # 已核验的镜像内 RELEASE.json compatibility_contract 旗标(独立/不可变/确定性;
 # blocker 3:禁止以门禁工件存在性推断时代):
 #   - contract 时代:evaluator 与 manifest 必须真实存在(打包回归 ⇒ fail-closed),
-#     判定全部由 evaluator 给出;--remediation-evidence-file 贯通 rollback 修复门
-#     (A #138 P3:唯一合法放行面 = 绑定目标发行与证据身份的证据工件);
+#     判定全部由 evaluator 给出;deployed-version 回滚守卫贯通不安全旧版
+#     回滚拒绝(2026-10-22 通道裁决);
 #   - pre_contract 时代:有界兼容路径,显式留痕(AC4)。
 # 本步骤只是调用者,不是 policy engine。
 echo "[3.5/6] 发布兼容性 preflight..."
@@ -285,26 +389,13 @@ if [ "$PREFLIGHT_ERA" = "contract" ]; then
     if [ -n "$REMEDIATION_ACK" ]; then
         ACK_ARGS=(--remediation-ack "$REMEDIATION_ACK")
     fi
-    EVIDENCE_ARGS=()
-    if [ -n "$REMEDIATION_EVIDENCE_FILE" ]; then
-        EVIDENCE_ARGS+=(--remediation-evidence-file "$REMEDIATION_EVIDENCE_FILE")
-        [ -n "$REMEDIATION_EVIDENCE_ARTIFACT" ] || {
-            echo "❌ 提供 --remediation-evidence-file 时必须同时提供 --remediation-evidence-artifact(记录自述不是证据,必须实测工件)" >&2
-            rm -f "$PREFLIGHT_MAN" "$PREFLIGHT_EVAL"; exit 1; }
-        EVIDENCE_ARGS+=(--remediation-evidence-artifact "$REMEDIATION_EVIDENCE_ARTIFACT")
-        # 验证公钥(非秘密;经可信钉扎通道送达的 0600 文件)—— 缺失由
-        # evaluator fail-closed(审批无法验证,绝不放行)
-        if [ -n "$REMEDIATION_APPROVAL_PUBLIC_KEY_FILE" ]; then
-            EVIDENCE_ARGS+=(--remediation-approval-public-key-file "$REMEDIATION_APPROVAL_PUBLIC_KEY_FILE")
-        fi
-    fi
     python3 "$PREFLIGHT_EVAL" \
         --manifest "$PREFLIGHT_MAN" \
         --env-file "$(dirname "$COMPOSE_FILE")/../../.env" \
         --release-tag "$TAG" \
         --release-sha "$ACTUAL_SHA" \
+        ${DEPLOYED_VERSION_ARGS[@]+"${DEPLOYED_VERSION_ARGS[@]}"} \
         ${ACK_ARGS[@]+"${ACK_ARGS[@]}"} \
-        ${EVIDENCE_ARGS[@]+"${EVIDENCE_ARGS[@]}"} \
         || { rm -f "$PREFLIGHT_MAN" "$PREFLIGHT_EVAL"; exit 1; }
     # REVIEW_2:把本发布的 rollback verdict 保留到部署完成阶段 ——
     # post-deploy 指引据此条件化(stdlib 读取,值绝不外泄;manifest 内无密值)
@@ -370,6 +461,14 @@ done
 echo ""
 echo "=== 部署完成:$TAG(version=$EXPECTED_VERSION,git_sha=$ACTUAL_SHA)==="
 docker compose -f "$COMPOSE_FILE" ps
+# ---------- [6.1/6] 宿主部署标记(回滚守卫事实源;成功路径唯一写入点) ----------
+# 值全部来自已校验来源(TAG 形状校验 / 镜像内 RELEASE.json / manifest 布尔);
+# printf 模板固定,无注入面。
+printf '{\n  "tag": "%s",\n  "version": "%s",\n  "git_sha": "%s",\n  "previous_compatible": %s,\n  "updated_at": "%s"\n}\n' \
+    "$TAG" "$ACTUAL_VERSION" "$ACTUAL_SHA" "$ROLLBACK_COMPATIBLE" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$MARKER_FILE"
+echo "  ✅ 宿主部署标记已更新:$MARKER_FILE"
+
 echo ""
 print_postdeploy_rollback_guidance
 echo "手动同步 / reindex(按需):"

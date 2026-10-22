@@ -53,6 +53,23 @@
 #   - Repository variables:PROD_SSH_HOST / PROD_SSH_USER /
 #     PROD_SSH_KNOWN_HOSTS_B64(known_hosts 行的 base64,含主机公钥钉扎)/
 #     可选 PROD_BACKEND_PORT(缺省 18000)。
+#
+# 2026-10-22 发布通道适配(A #138 正式授权;单一源码行为变更):
+#   - 新增离线 RSA 签发与 4 项 PREFLIGHT_* Environment Secrets 退出发布依赖
+#     (名称清单见 #138 授权原文)—— User 无私钥/新增秘密配置通道;整改实质
+#     已由已验收的上传来源清零与 #187 恢复门禁落地;
+#   - 部署前数据隔离 fail-closed 保留并加严:目标身份期望 = 随冻结镜像分发的
+#     已审核事实(deploy/prod/production-identity.json;PG SID/Weaviate
+#     CLUSTER_HOSTNAME/镜像 digest/卷名/uploads 挂载绑定),不再使用动态
+#     逐文件卷清单哈希(活卷随活跃同步持续漂移,见 docs/release 漂移分析);
+#     evaluator(容器内)核验注销来源全层残留全零、共享 *legacy* generation
+#     存在、uploads 真实挂载目录与冻结 UNKNOWN 守卫逐文件哈希一致;
+#   - 不安全旧版回滚保留强制:目标旧于已部署(已部署发布声明
+#     previous_compatible=false)⇒ preflight(容器内 evaluator)与宿主
+#     update.sh deployed-version 守卫([1.3/6])双道拒绝,均先于任何 mutation;
+#   - 诚实边界:持有生产主机最高权限的手工 docker/脚本操作(含停止容器后
+#     手工拉起旧镜像)不在脚本阻止范围;evaluator 随各自镜像冻结,经历史
+#     ref dispatch 的旧 workflow 由宿主 update.sh 守卫拦截。
 
 name: Production Deployment
 
@@ -143,83 +160,35 @@ jobs:
           echo "deployment_id=$DEPLOYMENT_ID" >> "$GITHUB_OUTPUT"
 
       # ---- 3.5 生产兼容性 preflight(#46;fail-closed;先于任何生产 mutation) ----
-      # evaluator 与 manifest 都从冻结镜像内提取(release-owned;mutable main
-      # 无法重解释历史发布)。本步骤只调用、不裁决(update.sh 不变 policy
-      # engine);非零退出 ⇒ 在 DB migration(首个不可逆 mutation)之前中止,
-      # 零生产变更。前契约镜像(镜像内无 evaluator)走有界兼容路径并显式留痕。
+      # evaluator/manifest/身份事实/上传守卫都从冻结镜像内提取(release-owned;
+      # mutable main 无法重解释历史发布)。本步骤只调用、不裁决(update.sh 不变
+      # policy engine);非零退出 ⇒ 在 DB migration(首个不可逆 mutation)之前
+      # 中止,零生产变更。前契约镜像(镜像内无 evaluator)走有界兼容路径并显式
+      # 留痕。
       #
-      # R2-4 候选接线(语义保留):强制启用 G2 只读隔离断言;隔离子项 PASS
-      # ≠ G2 门 PASS;G2 正式满足以本 workflow 在生产仓库强制生效并完成真实
-      # 部署验证为准。
-      #
-      # R3-1 可信生产身份绑定(2026-10-20):隔离断言强制携带**独立信任锚**
-      # (--isolation-trust-anchor-file):PG 用 pg_control_system().system_
-      # identifier(每集群 initdb 唯一,文件级复制恢复保留生产 id = 正确语义),
-      # Weaviate 用 /v1/schema 目标 collection 的 collectionId 稳定标识。
-      # R2 的 current_database()==DSN dbname 与 /v1/meta hostname==URL 自洽
-      # 检查保留但不再单独构成身份证据 —— 锚不匹配/缺失/不可读一律
-      # fail-closed,绝不进入隔离断言。
-      #
-      # R3-2 SSH 凭据生命周期(2026-10-20,**消除而非清理**):R2 候选曾把
-      # 隔离 DSN(PREFLIGHT_ISOLATION_PG_DSN secret)经 stdin 写入远端
-      # $HOME/.askai_preflight_iso_dsn —— SSH 中断/远程 trap 未装好/清理连接
-      # 失败时可残留含密文件。R3 起该路径整体移除:
-      #   - CI→SSH 只传**非秘密参数**:冻结 tag(已 ^vX.Y.Z(-rN)?$ 校验)+
-      #     A 带外钉扎的信任锚(base64 JSON,内容为非秘密的集群/集合唯一标识);
-      #   - 生产 backend 容器环境自身已含完整 DB DSN 组件与 Weaviate 目标
-      #     (POSTGRES_*/WEAVIATE_*,compose env_file+environment 注入):
-      #     evaluator/manifest/锚经既有 compose exec 通道送入**运行中 backend
-      #     容器**,评估器在容器内执行,凭据经容器自身 env 继承
-      #     (--isolation-pg-dsn-parts / --isolation-weaviate-*-env 只传变量名)
-      #     —— 零新增含密文件、零凭据过 SSH、零 CI 侧 DSN secret;
-      #   - 远端/容器临时工件(评估器/manifest/锚)均**非秘密**,单 SSH 会话
-      #     内 trap 确定性清除;连接中断残留亦为非秘密工件,且下次运行开始时
-      #     确定性清扫(最小有效期);
-      #   - 冻结镜像 evaluator、preflight 先于 migration 与 rollout、身份+
-      #     隔离同一强制链、remediation gate 与无 ACK 语义、gate 三值均不变;
-      #   - A-owned 输入(未配置 ⇒ fail-closed 中止,不部署):
-      #       secret PREFLIGHT_TRUST_ANCHOR_B64 = trust-anchor JSON 的 base64,
-      #       A 按目标 Weaviate 版本钉扎其一(R4-1 双版本,词表封闭):
-      #       v1 {"version":1,"pg_system_id":"<pg_control_system 钉扎值>",
-      #           "weaviate_collection_id":"<collectionId 钉扎值>"}
-      #          (新版本 Weaviate:/v1/schema class 含 collectionId,数据面单层锚);
-      #       v2 {"version":2,"pg_system_id":"...","weaviate_cluster_hostname":
-      #           "<CLUSTER_HOSTNAME>","weaviate_image_digest":"sha256:<64hex>",
-      #           "weaviate_volume_name":"<外部数据卷名>",
-      #           "weaviate_volume_manifest_sha256":"<64hex>"}
-      #          (生产固定 1.28.0:API 层无强唯一标识 —— 官方 spec definitions.Class
-      #           与真实同版实例实测均无 collectionId/uuid → 控制面+数据面组合锚)。
-      #       值由 A 只读采集一次带外提供;本地实现绝不编造生产锚。
-      #       R5:manifest_sha256 采集必须用 R5 扫描脚本
-      #       (scripts/weaviate_volume_manifest_scan.sh,经 stdin
-      #       `sh -s /var/lib/weaviate` 送入 weaviate 容器执行);旧 GNU
-      #       find -printf 管道在 BusyBox 下为空清单假哈希(e3b0c442…),
-      #       修正前禁止用于采锚。
-      #       ── G3 整改证据消费(R6v3;A #138 P3 + R6v2 审查阻塞 1/2 修复;可选)──
-      #       放行 = 【真实不可变证据工件 + 非对称签名审批】双因子,缺一
-      #       fail-closed:
-      #       secret PREFLIGHT_REMEDIATION_EVIDENCE_B64 = 整改证据记录 JSON 的
-      #         base64(v3 封闭词表,含 approval 块;非秘密工件);
-      #       secret PREFLIGHT_REMEDIATION_EVIDENCE_ARTIFACT_B64 = 实际证据工件
-      #         的 base64(≤64KB);evaluator 对其实测 SHA256 并与记录声明摘要
-      #         精确比对 —— 记录自述摘要不是证据;
-      #       secret PREFLIGHT_REMEDIATION_APPROVAL_PUBKEY_B64 = 审批**验证
-      #         公钥** JSON({"kty":"rsa","n_hex":<512hex>,"e_hex":"010001"})
-      #         的 base64(非秘密材料,但经与信任锚同款钉扎通道送达:本
-      #         secret → SSH stdin → 宿主 0600 临时件 → 容器文件;**绝不**
-      #         走 compose env_file/容器 env)。evaluator 以纯 stdlib
-      #         RSASSA-PKCS1-v1_5(SHA-256)验证记录 approval.signature ——
-      #         R6v2 的对称 HMAC 密钥(验证=签发同钥)经 compose env_file
-      #         扩散到全部应用 workload = 自授权面,已整体删除
-      #         该对称密钥 env 通道全仓库零残留);公钥
-      #         无法签发 ⇒ 应用容器 env 权限不构成签发能力;
-      #       身份绑定:gate == manifest 声明 ∧ target_tag == 部署 tag ∧
-      #         release_sha == 本次部署不可变 SHA(工作流身份步仓库权威解析
-      #         / 镜像内 RELEASE.json git_sha;诚实边界:git_sha 断言,非
-      #         OCI image 内容摘要);not_after 过期 ⇒ 拒绝。
-      #       任一输入未配置 ⇒ 回退门维持 fail-closed 阻断(现状不变);
-      #       裸字符串确认参数不再构成合法放行(A #138 P3 裁决),workflow
-      #       全文零 ack 通道。
+      # 2026-10-22 发布通道适配(A #138 正式授权;详见文件头注):
+      #   - 数据隔离断言强制启用(--verify-upload-isolation),身份期望 =
+      #     镜像内已审核事实 deploy/prod/production-identity.json(PG SID/
+      #     Weaviate CLUSTER_HOSTNAME/镜像 config digest/数据卷名/uploads 挂载
+      #     绑定/UNKNOWN 守卫路径)——期望与被测目标分离(来自随发布冻结、
+      #     经评审入库的事实文件,不自证;诚实边界:其独立性 = 仓库评审链,
+      #     生产身份重建(如集群迁移)须先修订该文件并重审,否则预检 fail-closed);
+      #   - 隔离断言核验(容器内 evaluator):PG 目标身份一致;注销来源
+      #     knowledge-support-cases/knowledge-cb70f5ae 的 docs/versions/chunks/
+      #     generations/外部引用/活动注册/未终态请求全零;Weaviate 实例身份
+      #     匹配且 filesystem 检索残留 = 0;uploads 真实挂载目录与冻结 UNKNOWN
+      #     守卫(路径+SHA256)集合相等;共享 *legacy* generation >= 1;
+      #     只读探针失败/通道缺失 → FAIL/BLOCKED(fail-closed,不谎报 PASS);
+      #   - 动态逐文件卷清单哈希退出强制锚(活卷随活跃同步持续漂移;扫描脚本
+      #     scripts/weaviate_volume_manifest_scan.sh 保留为辅助审计工具);
+      #   - 不安全旧版回滚强制:已部署版本事实(运行中 backend /app/RELEASE.json
+      #     只读读取,缺失即 fail-closed)传入 evaluator,目标旧于已部署且已
+      #     部署声明 previous_compatible=false ⇒ 拒绝;宿主 update.sh [1.3/6]
+      #     守卫为第二道(覆盖历史 ref dispatch 的旧 workflow 路径);
+      #   - 字符串 ACK 永不构成放行(evaluator 显式 FAIL;A #138 P3 原则保留);
+      #   - 保留:production Environment、PROD_DEPLOY_SSH_KEY、PROD_SSH_* 三
+      #     变量、known_hosts 严格校验、flock、冻结镜像 RELEASE.json 身份断言、
+      #     迁移先于 rollout、/health version+git_sha 双断言、失败状态记录。
       - name: Production compatibility preflight (fail-closed; pre-mutation)
         id: preflight
         env:
@@ -229,20 +198,19 @@ jobs:
           SSH_KNOWN_HOSTS_B64: ${{ vars.PROD_SSH_KNOWN_HOSTS_B64 }}
           DEPLOY_TAG: ${{ steps.identity.outputs.tag }}
           RELEASE_SHA: ${{ steps.identity.outputs.sha }}
-          TRUST_ANCHOR_B64: ${{ secrets.PREFLIGHT_TRUST_ANCHOR_B64 }}
-          REMEDIATION_EVIDENCE_B64: ${{ secrets.PREFLIGHT_REMEDIATION_EVIDENCE_B64 }}
-          REMEDIATION_ARTIFACT_B64: ${{ secrets.PREFLIGHT_REMEDIATION_EVIDENCE_ARTIFACT_B64 }}
-          REMEDIATION_PUBKEY_B64: ${{ secrets.PREFLIGHT_REMEDIATION_APPROVAL_PUBKEY_B64 }}
         run: |
           set -euo pipefail
           KEY_FILE="$RUNNER_TEMP/prod_deploy_key"
           KH_FILE="$RUNNER_TEMP/prod_known_hosts"
           cleanup() { rm -f "$KEY_FILE" "$KH_FILE"; }
           trap cleanup EXIT INT TERM
-          for v in SSH_KEY SSH_HOST SSH_USER SSH_KNOWN_HOSTS_B64 TRUST_ANCHOR_B64 DEPLOY_TAG; do
+          # 2026-10-22 通道适配:四个 PREFLIGHT_* 新 secret 退出必需清单;
+          # 身份期望改由冻结镜像内已审核事实(deploy/prod/production-identity.json)
+          # 提供,目标-期望分离保留(期望不来自被测目标自报)。
+          for v in SSH_KEY SSH_HOST SSH_USER SSH_KNOWN_HOSTS_B64 DEPLOY_TAG; do
             if [ -z "${!v}" ]; then
-              echo "❌ $v 未配置(production Environment secret / repository variables;" >&2
-              echo "   含 A-owned 信任锚 PREFLIGHT_TRUST_ANCHOR_B64):隔离断言无法证明 → 部署中止" >&2
+              echo "❌ $v 未配置(production Environment secret / repository variables)" >&2
+              echo "   → 隔离断言无法进行 → 部署中止" >&2
               exit 2
             fi
           done
@@ -252,25 +220,6 @@ jobs:
             v[0-9]*.[0-9]*.[0-9]*|v[0-9]*.[0-9]*.[0-9]*-r[0-9]*) ;;
             *) echo "❌ DEPLOY_TAG 形状非法(拒绝进入远端命令)" >&2; exit 2;;
           esac
-          # 信任锚必须为 base64 词表内单行(防远端 env 前缀注入;锚值本身非秘密)
-          case "$TRUST_ANCHOR_B64" in
-            *[!A-Za-z0-9+/=]*) echo "❌ TRUST_ANCHOR_B64 含 base64 词表外字符(非法)" >&2; exit 2;;
-          esac
-          # 整改证据通道(A #138 P3;可选):未配置 ⇒ 回退门维持 fail-closed
-          # 阻断;配置时 base64 词表内单行(防远端 env 前缀注入;工件本身非秘密)
-          case "${REMEDIATION_EVIDENCE_B64:-}" in
-            *[!A-Za-z0-9+/=]*) echo "❌ REMEDIATION_EVIDENCE_B64 含 base64 词表外字符(非法)" >&2; exit 2;;
-          esac
-          case "${REMEDIATION_ARTIFACT_B64:-}" in
-            *[!A-Za-z0-9+/=]*) echo "❌ REMEDIATION_ARTIFACT_B64 含 base64 词表外字符(非法)" >&2; exit 2;;
-          esac
-          case "${REMEDIATION_PUBKEY_B64:-}" in
-            *[!A-Za-z0-9+/=]*) echo "❌ REMEDIATION_PUBKEY_B64 含 base64 词表外字符(非法)" >&2; exit 2;;
-          esac
-          # 工件有界传输(≤64KB base64;防无限读入)
-          if [ -n "${REMEDIATION_ARTIFACT_B64:-}" ] && [ "${#REMEDIATION_ARTIFACT_B64}" -gt 65536 ]; then
-            echo "❌ REMEDIATION_ARTIFACT_B64 超过有界上界(>64KB base64)" >&2; exit 2
-          fi
           install -m 600 /dev/null "$KEY_FILE"
           printf '%s\n' "$SSH_KEY" > "$KEY_FILE"
           printf '%s' "$SSH_KNOWN_HOSTS_B64" | base64 -d > "$KH_FILE"
@@ -285,300 +234,30 @@ jobs:
               -o BatchMode=yes
               -o ConnectTimeout=15
               -o ServerAliveInterval=30)
-          # 单 SSH 会话执行远端 preflight(脚本本体经 stdin 原样传递,与迁移
-          # 同一无注入面模式;凭据零传输 —— 见步骤断言注释)
+          # 单 SSH 会话执行远端 preflight(脚本本体经 stdin 原样传递;CI→SSH
+          # 零凭据传输 —— DSN/Weaviate 目标由运行中 backend 容器自身 env 继承)
           remote_preflight() {
             ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" \
-                "DEPLOY_TAG='$DEPLOY_TAG' TRUST_ANCHOR_B64='$TRUST_ANCHOR_B64' REMEDIATION_EVIDENCE_B64='${REMEDIATION_EVIDENCE_B64:-}' REMEDIATION_ARTIFACT_B64='${REMEDIATION_ARTIFACT_B64:-}' REMEDIATION_PUBKEY_B64='${REMEDIATION_PUBKEY_B64:-}' RELEASE_SHA='${RELEASE_SHA:-}' bash -s" <<'REMOTE'
+                "DEPLOY_TAG='$DEPLOY_TAG' RELEASE_SHA='${RELEASE_SHA:-}' bash -s" <<'REMOTE'
           set -euo pipefail
           cd ~/ask-ai
           exec 9>"${TMPDIR:-/tmp}/askai-deploy.lock"
           flock -w 0 9 || { echo "❌ 部署锁被占用(另一生产变更在执行)" >&2; exit 1; }
           export ASKAI_IMAGE_TAG="$DEPLOY_TAG"
           IMAGE="ghcr.io/harryhua-ai/ask-ai:$DEPLOY_TAG"
-          # R4-1:COMPOSE 提前定义 —— 控制面锚核验(1.5 步)在容器 preflight 之前
-          # 即需 compose ps 定位运行中 weaviate 容器(set -u 下先定义后引用)
           COMPOSE="docker compose -f deploy/prod/docker-compose.yml"
-          # R3-2 确定性清扫:连接中断可能残留的上一轮临时工件(均非秘密:
-          # 评估器/manifest = 冻结镜像工件,锚 = A 钉扎标识)—— 最小有效期
-          rm -f "${TMPDIR:-/tmp}"/askai-trust-anchor.* "${TMPDIR:-/tmp}"/askai-preflight.* \
-                "${TMPDIR:-/tmp}"/askai-compat.* "${TMPDIR:-/tmp}"/askai-release.* \
-                "${TMPDIR:-/tmp}"/askai-remediation-evidence.* \
-                "${TMPDIR:-/tmp}"/askai-remediation-artifact.* \
-                "${TMPDIR:-/tmp}"/askai-approval-pubkey.* 2>/dev/null || true
-          ANCHOR_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-trust-anchor.XXXXXXXX")"
+          # 确定性清扫:上一轮可能残留的临时工件(均非秘密)—— 最小有效期
+          rm -f "${TMPDIR:-/tmp}"/askai-preflight.* "${TMPDIR:-/tmp}"/askai-compat.* \
+                "${TMPDIR:-/tmp}"/askai-release.* "${TMPDIR:-/tmp}"/askai-identity.* \
+                "${TMPDIR:-/tmp}"/askai-uploads-guard.* 2>/dev/null || true
           REL_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-release.XXXXXXXX")"
           MAN_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-compat.XXXXXXXX")"
           EVAL_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-preflight.XXXXXXXX")"
-          EVID_TMP=""
-          ART_TMP=""
-          PUB_TMP=""
-          cleanup() {
-            rm -f "$ANCHOR_TMP" "$REL_TMP" "$MAN_TMP" "$EVAL_TMP"
-            [ -z "$EVID_TMP" ] || rm -f "$EVID_TMP"
-            [ -z "$ART_TMP" ] || rm -f "$ART_TMP"
-            [ -z "$PUB_TMP" ] || rm -f "$PUB_TMP"
-          }
+          ID_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-identity.XXXXXXXX")"
+          GUARD_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-uploads-guard.XXXXXXXX")"
+          cleanup() { rm -f "$REL_TMP" "$MAN_TMP" "$EVAL_TMP" "$ID_TMP" "$GUARD_TMP"; }
           trap cleanup EXIT
-          # 1) 信任锚(base64;A 带外钉扎的非秘密标识)落远端 0600 临时文件
-          printf '%s' "$TRUST_ANCHOR_B64" | base64 -d > "$ANCHOR_TMP" || {
-              echo "❌ trust anchor base64 解码失败(fail-closed)" >&2; exit 1; }
-          chmod 600 "$ANCHOR_TMP"
-          if [ ! -s "$ANCHOR_TMP" ]; then
-              echo "❌ trust anchor 为空(fail-closed)" >&2; exit 1
-          fi
-          python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$ANCHOR_TMP" 2>/dev/null || {
-              echo "❌ trust anchor 非合法 JSON(fail-closed)" >&2; exit 1; }
-          # 2) G3 整改证据(A #138 P3 唯一合法放行面;可选:未配置 ⇒ 回退门
-          #    维持 fail-closed 阻断)。非秘密工件,同锚通道纪律:base64 →
-          #    远端 0600 临时文件 → 容器 stdin → 执行前完整性核对。
-          EVID_ARGS=()
-          if [ -n "${REMEDIATION_EVIDENCE_B64:-}" ]; then
-            EVID_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-remediation-evidence.XXXXXXXX")"
-            printf '%s' "$REMEDIATION_EVIDENCE_B64" | base64 -d > "$EVID_TMP" || {
-                echo "❌ remediation evidence base64 解码失败(fail-closed)" >&2; exit 1; }
-            chmod 600 "$EVID_TMP"
-            if [ ! -s "$EVID_TMP" ]; then
-                echo "❌ remediation evidence 为空(fail-closed)" >&2; exit 1
-            fi
-            python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$EVID_TMP" 2>/dev/null || {
-                echo "❌ remediation evidence 非合法 JSON(fail-closed)" >&2; exit 1; }
-            EVID_ARGS=(--remediation-evidence-file /tmp/askai-remediation-evidence.json)
-            # 记录必须伴随真实工件:无工件 ⇒ evaluator 端 fail-closed
-            # (记录自述摘要不是证据;R6v2 阻塞 1 修复)
-            if [ -n "${REMEDIATION_ARTIFACT_B64:-}" ]; then
-              ART_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-remediation-artifact.XXXXXXXX")"
-              printf '%s' "$REMEDIATION_ARTIFACT_B64" | base64 -d > "$ART_TMP" || {
-                  echo "❌ remediation artifact base64 解码失败(fail-closed)" >&2; exit 1; }
-              chmod 600 "$ART_TMP"
-              if [ ! -s "$ART_TMP" ]; then
-                  echo "❌ remediation artifact 为空(fail-closed)" >&2; exit 1
-              fi
-              EVID_ARGS+=(--remediation-evidence-artifact /tmp/askai-remediation-artifact.bin)
-            fi
-          fi
-          # 3) 审批验证公钥(R6v3 阻塞 1;可选,非秘密材料,钉扎通道纪律同锚):
-          #    提供证据时公钥缺失 ⇒ evaluator fail-closed(审批无法验证)。
-          #    R6v2 的对称 HMAC 审批密钥 env 通道已整体删除(零残留)。
-          if [ -n "${REMEDIATION_PUBKEY_B64:-}" ]; then
-            PUB_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-approval-pubkey.XXXXXXXX")"
-            cleanup() { rm -f "$ANCHOR_TMP" "$REL_TMP" "$MAN_TMP" "$EVAL_TMP" "$PUB_TMP"; [ -z "$EVID_TMP" ] || rm -f "$EVID_TMP"; [ -z "$ART_TMP" ] || rm -f "$ART_TMP"; }
-            trap cleanup EXIT
-            printf '%s' "$REMEDIATION_PUBKEY_B64" | base64 -d > "$PUB_TMP" || {
-                echo "❌ approval public key base64 解码失败(fail-closed)" >&2; exit 1; }
-            chmod 600 "$PUB_TMP"
-            if [ ! -s "$PUB_TMP" ]; then
-                echo "❌ approval public key 为空(fail-closed)" >&2; exit 1
-            fi
-            python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$PUB_TMP" 2>/dev/null || {
-                echo "❌ approval public key 非合法 JSON(fail-closed)" >&2; exit 1; }
-            PUB_ARGS=(--remediation-approval-public-key-file /tmp/askai-approval-pubkey.json)
-          fi
-          # 1.5) R4-1 v2 控制面锚核验(只读;两层任一不匹配 → 容器 preflight 之前
-          #      中止,零 mutation):SSH 通道已被 known_hosts 钉扎;本步对运行中
-          #      weaviate 容器做只读 docker inspect(镜像 config digest / 数据卷
-          #      挂载 / CLUSTER_HOSTNAME env)与数据卷目录**元数据清单哈希**
-          #      (文件名/大小/mtime 排序后 sha256,不读客户内容),与 A 带外钉扎
-          #      值精确比对。v1 锚(新版 Weaviate collectionId 单层锚)无控制面
-          #      字段 → 跳过,身份由数据面 collectionId 比对承担。诚实边界:数据
-          #      卷内容钉扎后被整体原样替换且元数据恰好一致不可排除(PARTIAL)。
-          #      R5 窄修:清单哈希扫描 = 非秘密脚本经 stdin 送入容器执行
-          #      (逐段显式校验;空/部分清单 fail-closed 绝无哈希;stderr
-          #      透传;详见 scripts/weaviate_volume_manifest_scan.sh 头部)。
-          ANCHOR_VERSION="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('version'))" "$ANCHOR_TMP")"
-          if [ "$ANCHOR_VERSION" = "2" ]; then
-            CP_PARSE="$(python3 - "$ANCHOR_TMP" <<'PYCP'
-          import json, re, sys
-          a = json.load(open(sys.argv[1]))
-          fields = (
-              ("weaviate_image_digest", r"sha256:[0-9a-f]{64}"),
-              ("weaviate_volume_name", r"[A-Za-z0-9][A-Za-z0-9_.-]{0,253}"),
-              ("weaviate_cluster_hostname", r"[A-Za-z0-9][A-Za-z0-9._-]{0,253}"),
-              ("weaviate_volume_manifest_sha256", r"[0-9a-f]{64}"),
-          )
-          vals = []
-          for key, pat in fields:
-              v = str(a.get(key) or "").strip()
-              if not re.fullmatch(pat, v):
-                  print("__INVALID__" + key)
-                  sys.exit(0)
-              vals.append(v)
-          print(" ".join(vals))
-          PYCP
-          )"
-            set -- $CP_PARSE
-            CP_IMG="${1:-}"; CP_VOL="${2:-}"; CP_HOST="${3:-}"; CP_MAN="${4:-}"
-            case "$CP_IMG" in
-              __INVALID__*)
-                echo "❌ 控制面:锚 v2 字段形状非法(${CP_IMG#__INVALID__})—— fail-closed" >&2; exit 1;;
-              "") echo "❌ 控制面:锚 v2 字段读取失败 —— fail-closed" >&2; exit 1;;
-            esac
-            WID="$($COMPOSE ps -q weaviate)"
-            if [ -z "$WID" ]; then
-              echo "❌ 控制面:weaviate 容器未运行(compose ps 为空)—— 目标身份无法核验,fail-closed" >&2
-              exit 1
-            fi
-            OBS_IMG="$(docker inspect "$WID" --format '{{.Image}}')"
-            OBS_VOLS="$(docker inspect "$WID" --format '{{range .Mounts}}{{.Name}}={{.Destination}} {{end}}')"
-            OBS_HOST="$(docker inspect "$WID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^CLUSTER_HOSTNAME=//p' | head -n1)"
-            CP_FAIL=""
-            # R5(卷清单假 PASS 窄修,A 审查裁决 issuecomment-6281863560):旧
-            # `find -printf … 2>/dev/null | sha256sum` 管道三缺陷(真实容器
-            # r4-weaviate-128/BusyBox v1.37.0 实测):-printf 不支持、stderr
-            # 被吞、空/部分清单仍输出"有效"哈希 e3b0c442… → 假 PASS。替换为
-            # scripts/weaviate_volume_manifest_scan.sh(下方内嵌副本与其逐字
-            # 节一致,测试钉住):非秘密脚本经 stdin 送入容器执行(同 R3
-            # 脚本-via-stdin 无注入面模式);逐段显式校验,空/部分清单
-            # fail-closed 绝无哈希输出,stderr 透传不隐藏。
-            # A 生产锚采集必须用同一脚本同一形态(修正前禁用旧命令采锚):
-            #   docker exec -i <weaviate 容器> sh -s /var/lib/weaviate < 脚本
-            VOLSCAN_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-volscan.XXXXXXXX")"
-            cleanup() { rm -f "$ANCHOR_TMP" "$REL_TMP" "$MAN_TMP" "$EVAL_TMP" "$VOLSCAN_TMP"; }
-            trap cleanup EXIT
-            cat > "$VOLSCAN_TMP" <<'VOLSCAN_SH'
-          #!/bin/sh
-          # weaviate_volume_manifest_scan.sh — Weaviate 数据卷**元数据清单**哈希扫描。
-          #
-          # r3gate R5 窄修(A 审查裁决 issuecomment-6281863560):替换
-          # deploy-production.yml 旧管道
-          #   `find . -type f -printf "%P\t%s\t%T@\n" 2>/dev/null | LC_ALL=C sort | sha256sum`
-          # 的三个确定性缺陷:
-          #   1. `-printf` 是 GNU find 扩展 —— Weaviate 1.28.0 官方镜像
-          #      (cr.weaviate.io/semitechnologies/weaviate,Alpine/BusyBox v1.37.0
-          #      实测)不支持,报错且无输出;
-          #   2. `2>/dev/null` 把扫描错误整体吞掉(失败原因不可见);
-          #   3. 管道无逐段校验 —— 末环 sha256sum 对空输入仍返回有效哈希
-          #      e3b0c44298fc…,空/部分清单两次扫出同一"合法"哈希 → G2 控制面
-          #      假 PASS 风险(真实容器实测:非空卷上旧命令 rc=0 输出空清单哈希)。
-          #
-          # 语义(与 R4-1 一致,**元数据清单,绝不读文件内容**):
-          #   清单 = 卷内全部常规文件的 `<路径>|<大小字节>|<mtime 自纪元秒>` 行,
-          #   LC_ALL=C 排序后取 sha256。客户内容零读取;元数据清单的原理性边界
-          #   (内容被整体替换而 path/size/mtime 秒级元数据恰好一致时不可辨别)
-          #   如实保留为 PARTIAL 残余,本脚本不宣称排除。
-          #
-          # fail-closed 契约(逐段显式校验,不依赖最后一环,不隐藏 stderr):
-          #   段0 卷根存在且可进入 → 段1 find 退出码显式校验 + stderr 必须为空
-          #   (stderr 始终透传,且非空即判部分遍历 → fail)→ 段2 文件清单非空(-s)
-          #   → 段3 逐文件 stat 成功 + size/mtime 纯数字形状校验 → 段4 sort/
-          #   sha256sum 退出码显式校验 → 哈希 64-hex 形状校验 → 文件计数 ≥1。
-          #   任一段失败:stderr 输出 `VOLSCAN FAIL: <原因>`(原因可见),退出码 3,
-          #   stdout 绝无哈希 —— 绝不产生空/部分清单哈希。
-          #
-          # 成功输出(stdout 恰一行,供 runner 端机器校验;FILES≥1 = 非空清单证据):
-          #   VOLSCAN_OK MANIFEST_SHA256=<64hex> FILES=<n>
-          #
-          # 用法(部署 workflow 经 stdin 送入 weaviate 容器,同 R3 脚本-via-stdin
-          # 无注入面模式;A 生产锚采集必须使用同一脚本与同一调用形态):
-          #   docker exec -i <weaviate 容器> sh -s /var/lib/weaviate < 本脚本
-          #
-          # 环境与已实测边界(2026-10-20,r4-weaviate-128 真实容器 BusyBox v1.37.0):
-          #   - 仅依赖 busybox 多调用二进制:sh/find/stat/sha256sum/mktemp/sort/cut;
-          #   - 路径按 find 换行协议:含换行的文件名不在 Weaviate 数据卷出现;含
-          #     `|` 的文件名会被行形状校验(size/mtime 必须纯数字)拦截为 fail;
-          #   - 000 目录使 find 部分遍历(实测 stderr + rc=1)→ fail-closed;
-          #   - 000 **常规文件**的元数据(path/size/mtime)仍可 stat(元数据读取
-          #     不需要文件读权限)→ 不构成扫描故障,与"元数据清单"语义一致,
-          #     内容仍零读取 —— 此为元数据清单的如实边界,非隐藏错误。
-          set -u
-
-          ROOT="${1:-/var/lib/weaviate}"
-
-          fail() {
-              echo "VOLSCAN FAIL: $*" >&2
-              exit 3
-          }
-
-          # 段0:卷根必须存在且可进入(目标不可达/不可进入 = fail-closed)
-          [ -d "$ROOT" ] || fail "卷根目录不可达: $ROOT"
-          cd "$ROOT" || fail "无法进入卷根: $ROOT"
-
-          LIST="$(mktemp "${TMPDIR:-/tmp}/askai-volscan-list.XXXXXX")" \
-              || fail "mktemp(文件清单)失败"
-          META="$(mktemp "${TMPDIR:-/tmp}/askai-volscan-meta.XXXXXX")" \
-              || fail "mktemp(元数据清单)失败"
-          ERR="$(mktemp "${TMPDIR:-/tmp}/askai-volscan-err.XXXXXX")" \
-              || fail "mktemp(stderr 捕获)失败"
-          cleanup() { rm -f "$LIST" "$META" "$ERR"; }
-          trap cleanup EXIT INT TERM
-
-          # 段1:find —— 退出码显式校验;stderr 捕获后**始终透传**(绝不隐藏),
-          #       且 stderr 非空即视为部分遍历(如 000 目录权限拒绝)→ fail-closed
-          LC_ALL=C find . -type f -print > "$LIST" 2> "$ERR"
-          FIND_RC=$?
-          if [ -s "$ERR" ]; then
-              cat "$ERR" >&2
-          fi
-          [ "$FIND_RC" -eq 0 ] || fail "find 扫描失败(rc=$FIND_RC;目标不可达/权限异常,stderr 已透传见上)"
-          [ ! -s "$ERR" ] || fail "find 扫描产生错误输出(部分遍历风险,stderr 已透传见上)"
-
-          # 段2:文件清单必须非空 —— 空/部分清单绝不产生哈希
-          [ -s "$LIST" ] || fail "文件清单为空(卷内 0 个常规文件)—— 空/部分清单绝不输出哈希"
-
-          # 段3:逐文件 stat 成功 + 行形状校验(任一失败 → fail-closed,绝无哈希)
-          N=0
-          while IFS= read -r F || [ -n "$F" ]; do
-              [ -n "$F" ] || fail "文件清单含空行(部分扫描可疑)"
-              LINE="$(stat -c '%n|%s|%Y' "$F")" \
-                  || fail "stat 失败: $F(扫描期间文件消失/权限异常)"
-              SZ="${LINE##*|}"
-              REST="${LINE%|*}"
-              MT="${REST##*|}"
-              case "$SZ" in ""|*[!0-9]*) fail "size 非数字(stat 输出形状异常): $LINE" ;; esac
-              case "$MT" in ""|*[!0-9]*) fail "mtime 非数字(stat 输出形状异常): $LINE" ;; esac
-              printf '%s\n' "$LINE" || fail "元数据清单写出失败"
-              N=$((N + 1))
-          done < "$LIST" > "$META"
-
-          # 段4:排序 + sha256sum —— 退出码显式校验(最后一环不单独信任)
-          LC_ALL=C sort -o "$META" "$META" || fail "sort 失败"
-          [ -s "$META" ] || fail "元数据清单为空(与文件清单不一致)—— fail-closed"
-          SUM_OUT="$(sha256sum "$META")" || fail "sha256sum 失败"
-          HEX="$(printf '%s\n' "$SUM_OUT" | cut -d ' ' -f1)"
-          case "$HEX" in
-              ????????????????????????????????????????????????????????????????) ;;
-              *) fail "哈希形状异常(非 64 字符): $SUM_OUT" ;;
-          esac
-          case "$HEX" in
-              *[!0-9a-f]*) fail "哈希含非 [0-9a-f] 字符: $HEX" ;;
-          esac
-          [ "$N" -ge 1 ] || fail "文件计数为 0 —— fail-closed"
-
-          echo "VOLSCAN_OK MANIFEST_SHA256=$HEX FILES=$N"
-          exit 0
-          VOLSCAN_SH
-            VOLSCAN_RC=0
-            VOLSCAN_OUT="$(docker exec -i "$WID" sh -s /var/lib/weaviate < "$VOLSCAN_TMP")" || VOLSCAN_RC=$?
-            rm -f "$VOLSCAN_TMP"
-            # runner 端三重校验:远端退出码 + 输出含 64-hex 哈希 + FILES≥1
-            # 非空清单证据标记;任一缺失 → OBS_MAN 为空 → 比对失败 fail-closed
-            # (阻断 evaluator 与 migration;preflight 先于 migrate 已由测试钉住)
-            OBS_MAN=""
-            if [ "$VOLSCAN_RC" -ne 0 ]; then
-              CP_FAIL="${CP_FAIL:+$CP_FAIL,}数据卷元数据扫描失败(rc=$VOLSCAN_RC;失败原因 stderr 已透传)"
-            else
-              OBS_MAN="$(printf '%s\n' "$VOLSCAN_OUT" | sed -n 's/^VOLSCAN_OK MANIFEST_SHA256=\([0-9a-f]\{64\}\) FILES=[1-9][0-9]*$/\1/p' | tail -n 1)"
-              if [ -z "$OBS_MAN" ]; then
-                CP_FAIL="${CP_FAIL:+$CP_FAIL,}数据卷扫描输出无合法证据行(需 64hex 哈希 + FILES≥1)"
-              fi
-            fi
-            [ "$OBS_IMG" = "$CP_IMG" ] || CP_FAIL="${CP_FAIL:+$CP_FAIL,}镜像_config_digest"
-            case " $OBS_VOLS " in
-              *" $CP_VOL=/var/lib/weaviate "*) ;;
-              *) CP_FAIL="${CP_FAIL:+$CP_FAIL,}数据卷挂载";;
-            esac
-            [ "$OBS_HOST" = "$CP_HOST" ] || CP_FAIL="${CP_FAIL:+$CP_FAIL,}CLUSTER_HOSTNAME"
-            if [ -n "$OBS_MAN" ] && [ "$OBS_MAN" != "$CP_MAN" ]; then
-              CP_FAIL="${CP_FAIL:+$CP_FAIL,}数据卷元数据清单哈希"
-            fi
-            if [ -n "$CP_FAIL" ]; then
-              echo "❌ 控制面锚不匹配($CP_FAIL)—— 运行中 weaviate 容器与 A 带外钉扎值不一致:" >&2
-              echo "   容器 preflight 与任何生产 mutation 之前中止(fail-closed)" >&2
-              exit 1
-            fi
-            echo "控制面锚核验 PASS:镜像/数据卷/CLUSTER_HOSTNAME/卷元数据清单与钉扎值一致(只读)"
-          fi
-          # 2) 拉取冻结镜像;时代判定源 = 镜像内 RELEASE.json 旗标(blocker 3)
+          # 1) 拉取冻结镜像;时代判定源 = 镜像内 RELEASE.json 旗标(blocker 3)
           docker pull "$IMAGE" >/dev/null
           CID=$(docker create "$IMAGE")
           docker cp "$CID:/app/RELEASE.json" "$REL_TMP" >/dev/null 2>&1 || {
@@ -591,59 +270,102 @@ jobs:
           EVAL_OK=1
           docker cp "$CID:/app/scripts/release_preflight.py" "$EVAL_TMP" >/dev/null 2>&1 || EVAL_OK=0
           if [ "$ERA" = "contract" ]; then
-            # 契约期:evaluator/manifest 必须真实打包(REVIEW_1 blocker 1/3)
+            # 契约期:evaluator/manifest/身份事实/上传守卫必须真实打包(REVIEW_1 blocker 1/3)
             if [ "$EVAL_OK" != 1 ]; then
-              docker rm "$CID" >/dev/null 2>&1 || true
-              echo "❌ 契约期镜像缺失 scripts/release_preflight.py(打包违约)—— fail-closed" >&2
+                docker rm "$CID" >/dev/null 2>&1 || true
+                echo "❌ 契约期镜像缺失 scripts/release_preflight.py(打包违约)—— fail-closed" >&2
+                exit 1
+            fi
+            docker cp "$CID:/app/deploy/prod/compatibility.json" "$MAN_TMP" >/dev/null 2>&1 || {
+                docker rm "$CID" >/dev/null 2>&1 || true
+                echo "❌ 契约期镜像缺失 deploy/prod/compatibility.json(打包违约)—— fail-closed" >&2
+                exit 1
+            }
+            docker cp "$CID:/app/deploy/prod/production-identity.json" "$ID_TMP" >/dev/null 2>&1 || {
+                docker rm "$CID" >/dev/null 2>&1 || true
+                echo "❌ 契约期镜像缺失 deploy/prod/production-identity.json(已审核目标身份事实;打包违约)—— fail-closed" >&2
+                exit 1
+            }
+            docker cp "$CID:/app/deploy/prod/uploads-unknown-guard.tsv" "$GUARD_TMP" >/dev/null 2>&1 || {
+                docker rm "$CID" >/dev/null 2>&1 || true
+                echo "❌ 契约期镜像缺失 deploy/prod/uploads-unknown-guard.tsv(冻结 UNKNOWN 守卫;打包违约)—— fail-closed" >&2
+                exit 1
+            }
+            docker rm "$CID" >/dev/null
+            # R4-3 审计留痕:评估器实际提取源镜像的不可变 config digest
+            EVAL_SOURCE_IMAGE="$(docker inspect "$CID" --format '{{.Image}}' 2>/dev/null || echo unknown)"
+            echo "PREFLIGHT EVALUATOR SOURCE IMAGE:$DEPLOY_TAG image=$EVAL_SOURCE_IMAGE"
+            # 2) 控制面只读核验(容器 preflight 之前;零 mutation):
+            #    a. weaviate 容器身份 vs 镜像内已审核事实(镜像 digest/数据卷挂载/
+            #       CLUSTER_HOSTNAME env);动态逐文件清单哈希已按 2026-10-22 裁决
+            #       退出(活卷随活跃同步漂移;漂移语义见 docs/release 分析)。
+            #    b. backend uploads 挂载 vs 身份事实(真实应用挂载目录,非任意目录)。
+            #    c. 已部署版本事实(运行中 backend /app/RELEASE.json;只读;
+            #       目标-已部署分离,不自证)—— previous_compatible=false 的
+            #       deployed-version 守卫输入,缺失 ⇒ fail-closed。
+            ID_DIGEST="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['weaviate_image_digest'])" "$ID_TMP")"
+            ID_VOL="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['weaviate_volume_name'])" "$ID_TMP")"
+            ID_HOST="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['weaviate_cluster_hostname'])" "$ID_TMP")"
+            ID_UPVol="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('uploads_volume_name',''))" "$ID_TMP")"
+            ID_UPMount="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('uploads_mount_path',''))" "$ID_TMP")"
+            WID="$($COMPOSE ps -q weaviate)"
+            if [ -z "$WID" ]; then
+              echo "❌ 控制面:weaviate 容器未运行(compose ps 为空)—— 目标身份无法核验,fail-closed" >&2
               exit 1
             fi
-            if ! docker cp "$CID:/app/deploy/prod/compatibility.json" "$MAN_TMP" >/dev/null 2>&1; then
-              echo "⚠️ 镜像内未携带 deploy/prod/compatibility.json(评估器将对缺失 manifest fail-closed)" >&2
+            OBS_IMG="$(docker inspect "$WID" --format '{{.Image}}')"
+            OBS_VOLS="$(docker inspect "$WID" --format '{{range .Mounts}}{{.Name}}={{.Destination}} {{end}}')"
+            OBS_HOST="$(docker inspect "$WID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^CLUSTER_HOSTNAME=//p' | head -n1)"
+            CP_FAIL=""
+            [ "$OBS_IMG" = "$ID_DIGEST" ] || CP_FAIL="${CP_FAIL:+$CP_FAIL,}镜像_config_digest"
+            case " $OBS_VOLS " in
+              *" $ID_VOL=/var/lib/weaviate "*) ;;
+              *) CP_FAIL="${CP_FAIL:+$CP_FAIL,}数据卷挂载";;
+            esac
+            [ "$OBS_HOST" = "$ID_HOST" ] || CP_FAIL="${CP_FAIL:+$CP_FAIL,}CLUSTER_HOSTNAME"
+            if [ -n "$CP_FAIL" ]; then
+              echo "❌ 控制面:运行中 weaviate 容器与已审核身份事实不一致($CP_FAIL)—— fail-closed" >&2
+              exit 1
             fi
-            # R4-3 审计留痕:评估器实际提取源镜像的不可变 config digest
-            # (必须在 docker rm 之前捕获;日志留痕供事后核对)
-            EVAL_SOURCE_IMAGE="$(docker inspect "$CID" --format '{{.Image}}' 2>/dev/null || echo unknown)"
-            docker rm "$CID" >/dev/null
-            # R4-3 缺陷修复①(内容完整性核验):提取侧计算 SHA-256;工件经
-            # stdin 管道写入容器后、执行前逐一核对容器内实际内容哈希 ——
-            # 管道损坏/写入篡改/部分写入 → 拒绝执行评估器,fail-closed 中止。
+            echo "控制面核验 PASS(a):weaviate 镜像/数据卷/CLUSTER_HOSTNAME 与冻结身份事实一致(只读)"
+            if [ -n "$ID_UPVol" ] && [ -n "$ID_UPMount" ]; then
+              BID="$($COMPOSE ps -q backend)"
+              if [ -z "$BID" ]; then
+                echo "❌ 控制面:backend 容器未运行(preflight 在容器内执行,前提不满足)—— fail-closed" >&2
+                exit 1
+              fi
+              case " $(docker inspect "$BID" --format '{{range .Mounts}}{{.Name}}={{.Destination}} {{end}}') " in
+                *" $ID_UPVol=$ID_UPMount "*) ;;
+                  *) echo "❌ 控制面:backend uploads 挂载与已审核身份事实不一致(期望 $ID_UPVol=$ID_UPMount)—— fail-closed" >&2; exit 1;;
+              esac
+              echo "控制面核验 PASS(b):uploads 真实挂载与冻结身份事实一致(只读)"
+            fi
+            # 单行 python:YAML 块标量内禁止列 0 续行;JSON 非法/缺失 ⇒ 空串
+            # (下方显式 fail-closed),异常文本不回显
+            DEPLOYED_VERSION="$($COMPOSE exec -T backend cat /app/RELEASE.json 2>/dev/null | python3 -c 'import json,sys; print(str((json.load(sys.stdin) or {}).get("version") or ""))' 2>/dev/null || true)"
+            if [ -z "$DEPLOYED_VERSION" ]; then
+              echo "❌ 控制面:已部署版本不可读(运行中 backend /app/RELEASE.json)——" >&2
+              echo "   previous_compatible=false 的回滚方向无法判定,fail-closed" >&2
+              exit 1
+            fi
+            echo "控制面核验 PASS(c):已部署版本 = $DEPLOYED_VERSION(只读;回滚方向判定输入)"
+            # 3) R4-3① 内容完整性核验(提取侧 SHA-256 → 容器内侧哈希核对)
             H_EVAL="$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$EVAL_TMP")"
             H_MAN="$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$MAN_TMP")"
-            H_ANCHOR="$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$ANCHOR_TMP")"
-            echo "PREFLIGHT EVALUATOR SOURCE IMAGE:$DEPLOY_TAG image=$EVAL_SOURCE_IMAGE"
-            COMPOSE="docker compose -f deploy/prod/docker-compose.yml"
-            # R3-2:评估器/manifest/锚 经既有 compose exec 通道(stdin 管道)
-            # 送入运行中 backend 容器;评估器在容器内执行 —— DSN/Weaviate 目标
-            # 经容器自身 env(POSTGRES_*/WEAVIATE_*)继承,零新增含密文件、
-            # 零凭据过 SSH;config 检查亦直接读容器运行时 env(同源高保真)。
+            H_ID="$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$ID_TMP")"
+            H_GUARD="$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$GUARD_TMP")"
             $COMPOSE exec -T backend rm -f /tmp/askai-preflight-evaluator.py \
-                /tmp/askai-preflight-manifest.json /tmp/askai-trust-anchor.json \
-                /tmp/askai-remediation-evidence.json \
-                /tmp/askai-remediation-artifact.bin \
-                /tmp/askai-approval-pubkey.json \
-                2>/dev/null || true
+                /tmp/askai-preflight-manifest.json /tmp/askai-production-identity.json \
+                /tmp/askai-uploads-unknown-guard.tsv 2>/dev/null || true
             $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-preflight-evaluator.py' < "$EVAL_TMP"
             $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-preflight-manifest.json' < "$MAN_TMP"
-            $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-trust-anchor.json' < "$ANCHOR_TMP"
-            if [ -n "$EVID_TMP" ]; then
-              $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-remediation-evidence.json' < "$EVID_TMP"
-            fi
-            if [ -n "$ART_TMP" ]; then
-              $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-remediation-artifact.bin' < "$ART_TMP"
-            fi
-            if [ -n "$PUB_TMP" ]; then
-              $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-approval-pubkey.json' < "$PUB_TMP"
-            fi
-            # R4-3①容器内侧哈希核对(执行前;任一不匹配 → 拒绝执行并中止)
+            $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-production-identity.json' < "$ID_TMP"
+            $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-uploads-unknown-guard.tsv' < "$GUARD_TMP"
             INTEGRITY_OK=1
-            INTEGRITY_PAIRS=("$H_EVAL:/tmp/askai-preflight-evaluator.py" \
-                             "$H_MAN:/tmp/askai-preflight-manifest.json" \
-                             "$H_ANCHOR:/tmp/askai-trust-anchor.json")
-            if [ -n "$PUB_TMP" ]; then
-              H_PUB="$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$PUB_TMP")"
-              INTEGRITY_PAIRS+=("$H_PUB:/tmp/askai-approval-pubkey.json")
-            fi
-            for pair in "${INTEGRITY_PAIRS[@]}"; do
+            for pair in "$H_EVAL:/tmp/askai-preflight-evaluator.py" \
+                         "$H_MAN:/tmp/askai-preflight-manifest.json" \
+                         "$H_ID:/tmp/askai-production-identity.json" \
+                         "$H_GUARD:/tmp/askai-uploads-unknown-guard.tsv"; do
               WANT="${pair%%:*}"; TPATH="${pair#*:}"
               GOT="$($COMPOSE exec -T backend sh -c "sha256sum $TPATH 2>/dev/null" | cut -d' ' -f1)"
               if [ -z "$GOT" ] || [ "$GOT" != "$WANT" ]; then
@@ -651,56 +373,37 @@ jobs:
                 INTEGRITY_OK=0
               fi
             done
-            if [ -n "$EVID_TMP" ]; then
-              H_EVID="$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$EVID_TMP")"
-              GOT_EVID="$($COMPOSE exec -T backend sh -c "sha256sum /tmp/askai-remediation-evidence.json 2>/dev/null" | cut -d' ' -f1)"
-              if [ -z "$GOT_EVID" ] || [ "$GOT_EVID" != "$H_EVID" ]; then
-                echo "❌ 容器内工件内容核验不匹配: /tmp/askai-remediation-evidence.json(管道损坏/写入篡改/部分写入)" >&2
-                INTEGRITY_OK=0
-              fi
-            fi
-            if [ -n "$ART_TMP" ]; then
-              H_ART="$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$ART_TMP")"
-              GOT_ART="$($COMPOSE exec -T backend sh -c "sha256sum /tmp/askai-remediation-artifact.bin 2>/dev/null" | cut -d' ' -f1)"
-              if [ -z "$GOT_ART" ] || [ "$GOT_ART" != "$H_ART" ]; then
-                echo "❌ 容器内工件内容核验不匹配: /tmp/askai-remediation-artifact.bin(管道损坏/写入篡改/部分写入)" >&2
-                INTEGRITY_OK=0
-              fi
-            fi
             if [ "$INTEGRITY_OK" != 1 ]; then
               $COMPOSE exec -T backend rm -f /tmp/askai-preflight-evaluator.py \
-                  /tmp/askai-preflight-manifest.json /tmp/askai-trust-anchor.json \
-                  /tmp/askai-remediation-evidence.json \
-                  /tmp/askai-remediation-artifact.bin || true
-              echo "❌ 评估器/manifest/锚/整改证据 内容完整性核验失败 —— 绝不执行,fail-closed 中止" >&2
+                  /tmp/askai-preflight-manifest.json /tmp/askai-production-identity.json \
+                  /tmp/askai-uploads-unknown-guard.tsv || true
+              echo "❌ 评估器/manifest/身份事实/上传守卫 内容完整性核验失败 —— 绝不执行,fail-closed 中止" >&2
               exit 1
             fi
+            # 4) 容器内 evaluator(数据隔离 fail-closed;身份期望 = 冻结镜像内
+            #    已审核事实;探针失败/身份不符/残留不满足/守卫漂移一律非零)
             CONTAINER_RC=0
             $COMPOSE exec -T backend python3 /tmp/askai-preflight-evaluator.py \
                 --manifest /tmp/askai-preflight-manifest.json \
                 --verify-upload-isolation \
                 --isolation-pg-dsn-parts \
-                --isolation-trust-anchor-file /tmp/askai-trust-anchor.json \
+                --isolation-trust-anchor-file /tmp/askai-production-identity.json \
                 --isolation-weaviate-url-env WEAVIATE_URL \
                 --isolation-weaviate-class-env WEAVIATE_CLASS_NAME \
                 --release-tag "$DEPLOY_TAG" \
                 --release-sha "${RELEASE_SHA:-}" \
-                ${EVID_ARGS[@]+"${EVID_ARGS[@]}"} \
-                ${PUB_ARGS[@]+"${PUB_ARGS[@]}"} || CONTAINER_RC=$?
-            # 容器侧临时工件确定性清除(残留亦非秘密,仍清)
+                --deployed-release-version "$DEPLOYED_VERSION" \
+                || CONTAINER_RC=$?
             $COMPOSE exec -T backend rm -f /tmp/askai-preflight-evaluator.py \
-                /tmp/askai-preflight-manifest.json /tmp/askai-trust-anchor.json \
-                /tmp/askai-remediation-evidence.json \
-                /tmp/askai-remediation-artifact.bin \
-                /tmp/askai-approval-pubkey.json || true
+                /tmp/askai-preflight-manifest.json /tmp/askai-production-identity.json \
+                /tmp/askai-uploads-unknown-guard.tsv || true
             if [ "$CONTAINER_RC" -ne 0 ]; then
-              echo "❌ 生产兼容性 preflight(容器内;含 G2 只读隔离断言 + 独立信任锚)未通过" >&2
+              echo "❌ 生产兼容性 preflight(容器内;数据隔离断言 + 已审核身份事实 + deployed-version 守卫)未通过" >&2
               echo "   —— 部署中止(DB migration / rollout 之前,零生产变更)" >&2
               exit "$CONTAINER_RC"
             fi
             echo "PREFLIGHT PASS:$DEPLOY_TAG(容器内评估;凭据零 SSH 传输;"
-            echo "G2 只读隔离断言含独立信任锚;先于迁移/rollout;零 mutation)"
-            echo "注意:隔离子项 PASS ≠ G2 门 PASS,G2 以正式集成验收为准"
+            echo "数据隔离断言含已审核身份事实与上传守卫;先于迁移/rollout;零 mutation)"
           else
             docker rm "$CID" >/dev/null 2>&1 || true
             echo "PRE-CONTRACT RELEASE:$DEPLOY_TAG(镜像 RELEASE.json 无 compatibility_contract 旗标)——"
@@ -722,8 +425,8 @@ jobs:
           kill "$WATCHDOG_PID" 2>/dev/null || true
           wait "$WATCHDOG_PID" 2>/dev/null || true
           if [ "$RC" -ne 0 ]; then
-            echo "❌ 兼容性 preflight(含 G2 只读隔离断言与独立信任锚)未通过或有界超时" \
-                "(R3-2:CI→SSH 零凭据传输;远端零含密文件)—— 部署中止" \
+            echo "❌ 兼容性 preflight(数据隔离断言 + 已审核身份事实 + deployed-version 守卫)未通过或有界超时" \
+                "(CI→SSH 零凭据传输;远端零含密文件)—— 部署中止" \
                 "(DB migration / rollout 之前,零生产变更)" >&2
             exit "$RC"
           fi
@@ -735,8 +438,8 @@ jobs:
       # (= 冻结发行树 $RELEASE_SHA 内的 deploy/prod/update.sh,经 git 权威
       # 解析,不以 runner 工作区文件为准)经 SSH stdin 安全分发到宿主:
       # 同目录临时文件(0600)→ 宿主侧 SHA256 核对(传输中断/截断 ⇒ 拒绝)→
-      # 能力断言(--remediation-evidence-file / --pinned-update-sh-sha256
-      # 支持)→ bash -n 语法校验 → 同目录原子 rename 安装(无半更新窗口)→
+      # 能力断言(ASKAI_DEPLOYED_VERSION_GUARD_V1 回滚守卫 / --pinned-update-sh-sha256
+      # 锁内自验)→ bash -n 语法校验 → 同目录原子 rename 安装(无半更新窗口)→
       # 安装后哈希复核。任何失败 ⇒ 在 DB migration 之前中止,旧脚本原状
       # 保留。持有与部署同一把宿主 flock 锁,与并发部署互斥。
       # R6v3(阻塞 3)语义:provision 只负责安装与钉扎哈希来源(git 权威
@@ -829,10 +532,11 @@ jobs:
             echo "❌ 受信 update.sh 哈希不匹配(传输中断/截断/篡改): got=$GOT_HASH want=$PROVISION_SHA256 —— 安装被拒绝,旧脚本原状保留,迁移前中止" >&2
             exit 1
           fi
-          # 3) 能力断言:必须支持整改证据参数与 R6v3 锁内自验旗标(契约面;
-          #    哈希钉扎之外的独立能力证明,不依赖哈希知识)
-          if ! grep -q -- '--remediation-evidence-file' "$TMP_INST"; then
-            echo "❌ 受信工件缺少整改证据能力(版本过旧)—— 安装被拒绝,迁移前中止" >&2
+          # 3) 能力断言:必须支持 deployed-version 回滚守卫与 R6v3 锁内自验
+          #    旗标(契约面;哈希钉扎之外的独立能力证明,不依赖哈希知识)。
+          #    2026-10-22 通道适配:整改证据参数能力断言由回滚守卫标记取代。
+          if ! grep -q 'ASKAI_DEPLOYED_VERSION_GUARD_V1' "$TMP_INST"; then
+            echo "❌ 受信工件缺少 deployed-version 回滚守卫能力(ASKAI_DEPLOYED_VERSION_GUARD_V1,版本过旧)—— 安装被拒绝,迁移前中止" >&2
             exit 1
           fi
           if ! grep -q -- '--pinned-update-sh-sha256' "$TMP_INST"; then
@@ -848,7 +552,7 @@ jobs:
             echo "❌ 安装后哈希不匹配 —— fail-closed" >&2
             exit 1
           fi
-          echo "HOST SCRIPT PROVISIONED: sha256=$NEW_HASH(原子替换完成;能力=整改证据消费;先于 DB migration 与 rollout;本步骤自身为受校验的宿主脚本变更)"
+          echo "HOST SCRIPT PROVISIONED: sha256=$NEW_HASH(原子替换完成;能力=回滚守卫+锁内自验;先于 DB migration 与 rollout;本步骤自身为受校验的宿主脚本变更)"
           REMOTE
 
       # ---- 4. 数据库迁移(发布绑定;先于依赖新 schema 的应用 rollout;失败绝不 rollout) ----
@@ -954,21 +658,12 @@ jobs:
           SSH_KNOWN_HOSTS_B64: ${{ vars.PROD_SSH_KNOWN_HOSTS_B64 }}
           DEPLOY_TAG: ${{ steps.identity.outputs.tag }}
           RELEASE_SHA: ${{ steps.identity.outputs.sha }}
-          REMEDIATION_EVIDENCE_B64: ${{ secrets.PREFLIGHT_REMEDIATION_EVIDENCE_B64 }}
-          REMEDIATION_ARTIFACT_B64: ${{ secrets.PREFLIGHT_REMEDIATION_EVIDENCE_ARTIFACT_B64 }}
-          REMEDIATION_PUBKEY_B64: ${{ secrets.PREFLIGHT_REMEDIATION_APPROVAL_PUBKEY_B64 }}
         run: |
           set -euo pipefail
           KEY_FILE="$RUNNER_TEMP/prod_deploy_key"
           KH_FILE="$RUNNER_TEMP/prod_known_hosts"
           cleanup() { rm -f "$KEY_FILE" "$KH_FILE"; }
-          trap cleanup EXIT
-          for v in SSH_KEY SSH_HOST SSH_USER SSH_KNOWN_HOSTS_B64; do
-            if [ -z "${!v}" ]; then
-              echo "❌ $v 未配置(production Environment secret / repository variables)" >&2
-              exit 2
-            fi
-          done
+          trap cleanup EXIT INT TERM
           install -m 600 /dev/null "$KEY_FILE"
           printf '%s\n' "$SSH_KEY" > "$KEY_FILE"
           printf '%s' "$SSH_KNOWN_HOSTS_B64" | base64 -d > "$KH_FILE"
@@ -977,34 +672,15 @@ jobs:
             echo "❌ known_hosts 钉扎缺失或与 PROD_SSH_HOST 不匹配(绝不关闭严格主机键校验)" >&2
             exit 2
           fi
-          # 整改证据通道(R6v3;可选):base64 词表内单行(防远端 env 前缀
-          # 注入;记录/工件/验证公钥均为非秘密材料)。未配置 ⇒ update.sh 内
-          # 回退门维持 fail-closed 阻断(现状不变)。审批**私钥**不存在于任何
-          # 传输/容器/宿主面(R6v3 阻塞 1:R6v2 的 HMAC env 通道已删除);
-          # 验证公钥经本 secret → SSH stdin → 宿主 0600 临时文件送达
-          # (与信任锚同款钉扎通道,绝不走 compose env_file/容器 env)。
-          case "${REMEDIATION_EVIDENCE_B64:-}" in
-            *[!A-Za-z0-9+/=]*) echo "❌ REMEDIATION_EVIDENCE_B64 含 base64 词表外字符(非法)" >&2; exit 2;;
-          esac
-          case "${REMEDIATION_ARTIFACT_B64:-}" in
-            *[!A-Za-z0-9+/=]*) echo "❌ REMEDIATION_ARTIFACT_B64 含 base64 词表外字符(非法)" >&2; exit 2;;
-          esac
-          case "${REMEDIATION_PUBKEY_B64:-}" in
-            *[!A-Za-z0-9+/=]*) echo "❌ REMEDIATION_PUBKEY_B64 含 base64 词表外字符(非法)" >&2; exit 2;;
-          esac
-          if [ -n "${REMEDIATION_ARTIFACT_B64:-}" ] && [ "${#REMEDIATION_ARTIFACT_B64}" -gt 65536 ]; then
-            echo "❌ REMEDIATION_ARTIFACT_B64 超过有界上界(>64KB base64)" >&2; exit 2
-          fi
           # 受信工件哈希(git 冻结发行树权威解析;经 env 前缀传入 update.sh,
           # 由其在【自身 flock 持有区间内、任何 mutation 前】做锁内自验 ——
-          # R6v3 阻塞 3:R6v2 的锁外预复核与执行之间的竞争窗已消除,
-          # 「校验 + 执行」在同一锁持有区间内原子完成)。
+          # R6v3 阻塞 3:「校验 + 执行」在同一锁持有区间内原子完成)。
           PROVISION_SHA256="$(git show "$RELEASE_SHA:deploy/prod/update.sh" | python3 -c 'import hashlib,sys;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
           # 远端命令:DEPLOY_TAG 已在身份步被 ^vX.Y.Z(-rN)?$ 校验(纯数据,单引号
-          # 防远端展开)。脚本本体经 stdin 原样传递(与迁移/锚同一无注入面模式);
-          # 证据/公钥非秘密,远端落 0600 临时文件后透传 update.sh → evaluator,
-          # 全链绑定(工件哈希/签名审批/gate/tag/镜像 git_sha)由 evaluator
-          # fail-closed 校验。
+          # 防远端展开)。脚本本体经 stdin 原样传递(无注入面模式)。2026-10-22
+          # 通道适配:整改证据/公钥通道整体移除(四 PREFLIGHT_* secret 退出发布
+          # 依赖);不安全旧版回滚由 update.sh [1.3/6] deployed-version 守卫
+          # 与 preflight evaluator deployed-version 断言双道强制。
           ssh -i "$KEY_FILE" \
               -o StrictHostKeyChecking=yes \
               -o UserKnownHostsFile="$KH_FILE" \
@@ -1012,66 +688,14 @@ jobs:
               -o ConnectTimeout=15 \
               -o ServerAliveInterval=30 \
               "${SSH_USER}@${SSH_HOST}" \
-              "DEPLOY_TAG='$DEPLOY_TAG' PROVISION_SHA256='$PROVISION_SHA256' REMEDIATION_EVIDENCE_B64='${REMEDIATION_EVIDENCE_B64:-}' REMEDIATION_ARTIFACT_B64='${REMEDIATION_ARTIFACT_B64:-}' REMEDIATION_PUBKEY_B64='${REMEDIATION_PUBKEY_B64:-}' bash -s" <<'REMOTE'
+              "DEPLOY_TAG='$DEPLOY_TAG' PROVISION_SHA256='$PROVISION_SHA256' bash -s" <<'REMOTE'
           set -euo pipefail
           cd ~/ask-ai
-          rm -f "${TMPDIR:-/tmp}"/askai-remediation-evidence.* \
-                "${TMPDIR:-/tmp}"/askai-remediation-artifact.* \
-                "${TMPDIR:-/tmp}"/askai-approval-pubkey.* 2>/dev/null || true
-          EVID_ARGS=()
-          EVID_TMP=""
-          ART_TMP=""
-          PUB_TMP=""
-          cleanup_evid() {
-            rm -f "${TMPDIR:-/tmp}"/askai-remediation-evidence.* 2>/dev/null || true
-            [ -z "$ART_TMP" ] || rm -f "$ART_TMP"
-            [ -z "$PUB_TMP" ] || rm -f "$PUB_TMP"
-          }
-          if [ -n "${REMEDIATION_EVIDENCE_B64:-}" ]; then
-            EVID_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-remediation-evidence.XXXXXXXX")"
-            trap cleanup_evid EXIT
-            printf '%s' "$REMEDIATION_EVIDENCE_B64" | base64 -d > "$EVID_TMP" || {
-                echo "❌ remediation evidence base64 解码失败(fail-closed)" >&2; exit 1; }
-            chmod 600 "$EVID_TMP"
-            if [ ! -s "$EVID_TMP" ]; then
-                echo "❌ remediation evidence 为空(fail-closed)" >&2; exit 1
-            fi
-            python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$EVID_TMP" 2>/dev/null || {
-                echo "❌ remediation evidence 非合法 JSON(fail-closed)" >&2; exit 1; }
-            EVID_ARGS=(--remediation-evidence-file "$EVID_TMP")
-            # 记录必须伴随真实工件(update.sh 侧同样强制;记录自述不是证据)
-            if [ -n "${REMEDIATION_ARTIFACT_B64:-}" ]; then
-              ART_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-remediation-artifact.XXXXXXXX")"
-              printf '%s' "$REMEDIATION_ARTIFACT_B64" | base64 -d > "$ART_TMP" || {
-                  echo "❌ remediation artifact base64 解码失败(fail-closed)" >&2; exit 1; }
-              chmod 600 "$ART_TMP"
-              if [ ! -s "$ART_TMP" ]; then
-                  echo "❌ remediation artifact 为空(fail-closed)" >&2; exit 1
-              fi
-              EVID_ARGS+=(--remediation-evidence-artifact "$ART_TMP")
-            fi
-          fi
-          # 审批验证公钥(非秘密;钉扎通道纪律同锚;缺失 ⇒ evaluator
-          # fail-closed:审批无法验证)
-          PUB_ARGS=()
-          if [ -n "${REMEDIATION_PUBKEY_B64:-}" ]; then
-            PUB_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-approval-pubkey.XXXXXXXX")"
-            printf '%s' "$REMEDIATION_PUBKEY_B64" | base64 -d > "$PUB_TMP" || {
-                echo "❌ approval public key base64 解码失败(fail-closed)" >&2; exit 1; }
-            chmod 600 "$PUB_TMP"
-            if [ ! -s "$PUB_TMP" ]; then
-                echo "❌ approval public key 为空(fail-closed)" >&2; exit 1
-            fi
-            python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$PUB_TMP" 2>/dev/null || {
-                echo "❌ approval public key 非合法 JSON(fail-closed)" >&2; exit 1; }
-            PUB_ARGS=(--remediation-approval-public-key-file "$PUB_TMP")
-          fi
           # 唯一部署原语;宿主锁由 update.sh 自身持有(内部 flock,[1.1/6]),
-          # 锁内自验 --pinned-update-sh-sha256([1.2/6],任何 mutation 前)。
+          # 锁内自验 --pinned-update-sh-sha256([1.2/6])与 deployed-version
+          # 回滚守卫([1.3/6])先于任何 mutation。
           ./deploy/prod/update.sh "$DEPLOY_TAG" \
-              --pinned-update-sh-sha256 "$PROVISION_SHA256" \
-              ${EVID_ARGS[@]+"${EVID_ARGS[@]}"} \
-              ${PUB_ARGS[@]+"${PUB_ARGS[@]}"}
+              --pinned-update-sh-sha256 "$PROVISION_SHA256"
           REMOTE
 
       - name: Verify runtime identity (/health version + git_sha)

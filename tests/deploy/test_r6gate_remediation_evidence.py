@@ -137,14 +137,17 @@ def _run(tmp_path: Path, *extra: str, incompatible: bool = True):
     return code, out, (chk[0] if chk else None)
 
 
-def _full_args(rt: RsaTrustRoot, *, tag: str = TAG, sha: str = SHA):
-    return (
-        "--remediation-evidence-file", str(rt.record_path),
-        "--remediation-evidence-artifact", str(rt.artifact),
-        "--remediation-approval-public-key-file", str(rt.pubkey_path),
-        "--release-tag", tag,
-        "--release-sha", sha,
-    )
+def _forward_args(*, tag: str = TAG, deployed: str = "1.6.3-r9"):
+    """2026-10-22 通道语义:前向/重部署(目标 >= 已部署)合法放行路径。"""
+    return ("--release-tag", tag, "--deployed-release-version", deployed)
+
+
+def _load_evidence(rt_or_path, tag: str = TAG, sha: str = SHA):
+    """审计面直调:签发/加载与 CLI 解耦后,加载器测试经本助手直调。"""
+    from scripts.release_preflight import _load_remediation_evidence
+
+    path = getattr(rt_or_path, "record_path", None)
+    return _load_remediation_evidence(str(path or rt_or_path), tag, sha)
 
 
 # --------------------------------------------------------------------------- #
@@ -152,155 +155,87 @@ def _full_args(rt: RsaTrustRoot, *, tag: str = TAG, sha: str = SHA):
 # --------------------------------------------------------------------------- #
 
 
-def test_trusted_evidence_full_chain_passes(tmp_path, tr):
-    """T-EV-01:测试信任根正例(生产签发工具同路签发)—— 真实工件 SHA256
-    实测一致 + RSA 签名审批 + gate/tag/sha 三重绑定 + 未过期 ⇒ PASS;
-    可回读身份字段全入 reason,且两条诚实边界明示(git_sha 非 OCI digest;
-    evidence_ref 为自述引用)。"""
-    tr.write_record(tr.signed())
-    code, out, chk = _run(tmp_path, *_full_args(tr))
+def test_forward_deploy_passes_without_any_remediation_input(tmp_path, tr):
+    """2026-10-22 通道(T-EV-01 替换):前向部署(目标 >= 已部署)在【零
+    remediation 输入、零新增 Secret】下放行;记录/工件/公钥通道不再存在。
+    """
+    tr.write_record(tr.signed())  # 即使盘上存在历史记录,通道也不消费
+    code, out, chk = _run(tmp_path, "--release-tag", TAG, "--deployed-release-version", "1.6.3-r9")
     assert code == 0, chk
     assert out["status"] == "pass"
     assert chk["class"] == "rollback_ok"
-    reason = chk["reason"]
-    assert "全链验证通过" in reason
-    assert "gate-token-x" in reason and TAG in reason and SHA in reason
-    assert tr.digest in reason and "实测一致" in reason
-    assert "role-a" in reason and "2099-01-01" in reason
-    # 诚实边界(不得夸大):release_sha = git_sha 断言,非 OCI 内容摘要
-    assert "git_sha" in reason and "非 OCI" in reason
-    # 诚实边界:evidence_ref 为自述引用,不证明演练真实发生
-    assert "自述引用" in reason and "不证明" in reason
+    assert TAG in chk["reason"] and "1.6.3-r9" in chk["reason"]
+    # 诚实边界保留:手工最高权限旁路如实声明
+    assert "手工" in chk["reason"]
 
 
-def test_no_input_keeps_gate_blocked(tmp_path):
-    """T-EV-02:无任何 remediation 输入 ⇒ fail-closed(真实 G3 演练未完成时
-    生产维持 BLOCKED 的机制保障;通道可选,现状不变)。"""
-    code, out, chk = _run(tmp_path)
+def test_no_deployed_version_blocks_direction_judgement(tmp_path):
+    """T-EV-02(重定义):previous_compatible=false 且已部署版本事实缺失 ⇒
+    回滚方向无法判定,BLOCKED(不谎报 PASS;空宿主 bootstrap 语境见通道文档)。"""
+    code, out, chk = _run(tmp_path, "--release-tag", TAG)
     assert code == 2
-    assert chk["class"] == "rollback_remediation_gate_required"
-    assert "gate-token-x" in chk["reason"]
-    assert "--remediation-evidence-file" in chk["reason"]
+    assert chk["class"] == "rollback_direction_unprovable"
+    assert "--deployed-release-version" in chk["reason"]
 
 
 def test_exact_string_ack_alone_no_longer_releases(tmp_path):
-    """T-EV-03(A #138 P3):字符串 --remediation-ack 即使精确匹配也不再放行。"""
-    code, out, chk = _run(tmp_path, "--remediation-ack", "gate-token-x")
+    """T-EV-03(A #138 P3 原则保留):字符串 --remediation-ack 即使精确匹配
+    声明 gate 也显式 FAIL(退役通道不给出任何静默 PASS 面)。"""
+    code, out, chk = _run(
+        tmp_path, "--release-tag", TAG, "--deployed-release-version", "1.6.3-r9",
+        "--remediation-ack", "gate-token-x",
+    )
     assert code == 2
-    assert chk["class"] == "rollback_remediation_gate_required"
+    assert chk["class"] == "rollback_ack_not_accepted"
     assert "不构成" in chk["reason"]
     assert not any(c["class"] == "rollback_ok" for c in out["checks"])
 
 
-# --------------------------------------------------------------------------- #
-# T-EV-04..07:伪造工件/摘要/审批(A 阻塞 1 反例矩阵)
-# --------------------------------------------------------------------------- #
-
-
-def test_forged_evidence_ref_missing_artifact_blocked(tmp_path, tr):
-    """T-EV-04:记录引用的工件不存在(A 反例:nonexistent://...)⇒ fail。"""
-    rec = tr.signed(evidence_ref="nonexistent://recovery/does-not-exist")
-    tr.write_record(rec)
+def test_older_target_refused_against_incompatible_deployed(tmp_path):
+    """T-EV-04(新):目标旧于已部署且已部署声明 previous_compatible=false
+    ⇒ 拒绝(r2 旧上传来源默认可见性语义可能重暴露已清理数据)。"""
     code, out, chk = _run(
-        tmp_path,
-        "--remediation-evidence-file", str(tr.record_path),
-        "--remediation-evidence-artifact", str(tmp_path / "missing.bin"),
-        "--remediation-approval-public-key-file", str(tr.pubkey_path),
-        "--release-tag", TAG,
-        "--release-sha", SHA,
+        tmp_path, "--release-tag", "v1.6.4-r2", "--deployed-release-version", "1.6.4-r3",
     )
     assert code == 2
-    assert "工件不可" in chk["reason"]
+    assert chk["class"] == "rollback_incompatible_refused"
+    assert "1.6.4-r2" in chk["reason"] and "1.6.4-r3" in chk["reason"]
+    assert "gate-token-x" in chk["reason"]
 
 
-def test_forged_digest_blocked_by_actual_artifact_hash(tmp_path, tr):
-    """T-EV-05(A 反例:64 位虚构 ffff...):工件存在但声明摘要不符 ⇒ fail。"""
-    tr.write_record(tr.signed(evidence_digest="f" * 64))
-    code, out, chk = _run(tmp_path, *_full_args(tr))
-    assert code == 2
-    assert "SHA256" in chk["reason"] and "不一致" in chk["reason"]
-
-
-def test_self_filled_signature_without_private_key_blocked(tmp_path, tr):
-    """T-EV-06(A 反例:自填 recorded_by=role-a + 虚构签名)⇒ 审批无效。"""
-    rec = tr.signed()
-    rec["approval"]["signature"] = "c" * 512  # 自填伪签名
-    tr.write_record(rec)
-    code, out, chk = _run(tmp_path, *_full_args(tr))
-    assert code == 2
-    assert "审批无效" in chk["reason"]
-    assert "RSA-2048" in chk["reason"]
-
-
-def test_unsigned_record_rejected(tmp_path, tr):
-    """T-EV-07:无 approval 块(未经审批的记录)⇒ 形状拒绝(绝不放行)。"""
-    rec = tr.base_record()
-    tr.write_record(rec)
-    code, out, chk = _run(tmp_path, *_full_args(tr))
-    assert code == 2
-    assert "approval" in chk["reason"]
-
-
-def test_evidence_without_public_key_unverifiable_blocked(tmp_path, tr):
-    """T-EV-10:有记录有工件但无验证公钥 ⇒ 审批不可验证,fail-closed。"""
-    tr.write_record(tr.signed())
+def test_redeploy_same_version_passes(tmp_path):
+    """同版本重部署不构成回滚,放行。"""
     code, out, chk = _run(
-        tmp_path,
-        "--remediation-evidence-file", str(tr.record_path),
-        "--remediation-evidence-artifact", str(tr.artifact),
-        "--release-tag", TAG,
-        "--release-sha", SHA,
+        tmp_path, "--release-tag", TAG, "--deployed-release-version", "9.9.9",
     )
-    assert code == 2
-    assert "审批不可验证" in chk["reason"]
+    assert code == 0, chk
+    assert chk["class"] == "rollback_ok"
 
 
-# --------------------------------------------------------------------------- #
-# T-EV-08/09/11/12:绑定与有效期
-# --------------------------------------------------------------------------- #
+def test_unparsable_versions_fail_closed(tmp_path):
+    """目标/已部署版本形状不可解析 ⇒ 方向无法判定,fail-closed。"""
+    code, out, chk = _run(
+        tmp_path, "--release-tag", "not-a-version", "--deployed-release-version", "1.6.4-r3",
+    )
+    assert code == 2 and chk["class"] == "rollback_target_tag_unparsable"
+    code, out, chk = _run(
+        tmp_path, "--release-tag", TAG, "--deployed-release-version", "banana",
+    )
+    assert code == 2 and chk["class"] == "rollback_deployed_version_unparsable"
 
 
-def test_cross_release_tag_reuse_blocked(tmp_path, tr):
-    """T-EV-08:同一证据挪用于其他 Release Tag ⇒ fail。"""
+def test_evidence_channel_cli_args_removed(tmp_path, tr):
+    """退役通道的三个 CLI 参数必须被 argparse 显式拒绝(allow_abbrev=False,
+    无静默前缀匹配;历史证据/工件即使落盘也不再构成任何发布输入)。"""
     tr.write_record(tr.signed())
-    code, out, chk = _run(tmp_path, *_full_args(tr, tag="v9.9.8"))
-    assert code == 2
-    assert "target_tag" in chk["reason"] and "v9.9.8" in chk["reason"]
-
-
-def test_cross_release_sha_reuse_blocked(tmp_path, tr):
-    """T-EV-09:同一证据挪用于其他不可变 SHA/镜像身份 ⇒ fail。"""
-    tr.write_record(tr.signed())
-    code, out, chk = _run(tmp_path, *_full_args(tr, sha="b" * 40))
-    assert code == 2
-    assert "release_sha" in chk["reason"]
-
-
-def test_expired_approval_blocked(tmp_path, tr):
-    """T-EV-11:not_after 已过 ⇒ fail-closed。"""
-    tr.write_record(tr.signed(not_after="2000-01-01T00:00:00+00:00"))
-    code, out, chk = _run(tmp_path, *_full_args(tr))
-    assert code == 2
-    assert "过期" in chk["reason"]
-
-
-def test_post_signing_field_tampering_blocked(tmp_path, tr):
-    """T-EV-12:签名对原字段签发,事后改 target_tag ⇒ 签名校验失败(防延展)。"""
-    rec = tr.signed()
-    rec["target_tag"] = "v1.0.0"  # 签发后篡改
-    tr.write_record(rec)
-    code, out, chk = _run(tmp_path, *_full_args(tr))
-    assert code == 2
-    assert "审批无效" in chk["reason"]
-
-
-def test_artifact_swapped_after_signing_blocked(tmp_path, tr):
-    """T-EV-12b:审批签发后工件被整体替换 ⇒ 实测 SHA256 ≠ 声明 ⇒ fail。"""
-    tr.write_record(tr.signed())
-    tr.artifact.write_bytes(b"TAMPERED-CONTENT\n")
-    code, out, chk = _run(tmp_path, *_full_args(tr))
-    assert code == 2
-    assert "SHA256" in chk["reason"]
+    for flag in (
+        "--remediation-evidence-file",
+        "--remediation-evidence-artifact",
+        "--remediation-approval-public-key-file",
+    ):
+        with pytest.raises(SystemExit) as exc:
+            _run(tmp_path, flag, str(tr.record_path))
+        assert exc.value.code == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -328,25 +263,22 @@ def test_artifact_swapped_after_signing_blocked(tmp_path, tr):
     ],
 )
 def test_invalid_record_shapes_fail_closed(tmp_path, tr, mutate):
-    tr.write_record(mutate(tr.signed()))
-    code, out, chk = _run(tmp_path, *_full_args(tr))
-    assert code == 2
-    assert chk["class"] == "rollback_remediation_gate_required"
-    assert not chk["reason"].startswith("整改证据全链验证通过")
+    """审计面(直调加载器):v3 记录形状矩阵全部拒绝 —— 加载器保留为辅助
+    审计代码,形状契约不因通道退役而放松。"""
+    rec = mutate(tr.signed())
+    path = tmp_path / "record.json"
+    path.write_text(json.dumps(rec), encoding="utf-8")
+    loaded, err = _load_evidence(path)
+    assert loaded is None and err, err
 
 
 def test_missing_release_sha_binding_key_rejected(tmp_path, tr):
-    """缺 --release-sha 绑定键 ⇒ fail-closed(镜像身份绑定不可豁免)。"""
+    """审计面:缺 release_sha 绑定键 ⇒ 加载器拒绝(镜像身份绑定不可豁免)。"""
     tr.write_record(tr.signed())
-    code, out, chk = _run(
-        tmp_path,
-        "--remediation-evidence-file", str(tr.record_path),
-        "--remediation-evidence-artifact", str(tr.artifact),
-        "--remediation-approval-public-key-file", str(tr.pubkey_path),
-        "--release-tag", TAG,
-    )
-    assert code == 2
-    assert "--release-sha" in chk["reason"]
+    from scripts.release_preflight import _load_remediation_evidence
+
+    loaded, err = _load_remediation_evidence(str(tr.record_path), TAG, None)
+    assert loaded is None and err and "--release-sha" in err
 
 
 # --------------------------------------------------------------------------- #
@@ -376,22 +308,15 @@ def test_missing_release_sha_binding_key_rejected(tmp_path, tr):
 def test_invalid_public_key_shapes_fail_closed(tmp_path, tr, content, label):
     """T-EV-14:公钥缺失/不可读/非 JSON/词表外/kty/n_hex 长度/模数位长/
     偶指数/空文件 ⇒ 审批不可验证 fail-closed(绝不放行)。"""
-    tr.write_record(tr.signed())
+    from scripts.release_preflight import _load_approval_public_key
+
     if content is None:
         pub = tmp_path / "does-not-exist.json"
     else:
         pub = tmp_path / f"pub-{label}.json"
         pub.write_text(content, encoding="utf-8")
-    code, out, chk = _run(
-        tmp_path,
-        "--remediation-evidence-file", str(tr.record_path),
-        "--remediation-evidence-artifact", str(tr.artifact),
-        "--remediation-approval-public-key-file", str(pub),
-        "--release-tag", TAG,
-        "--release-sha", SHA,
-    )
-    assert code == 2, label
-    assert "审批不可验证" in chk["reason"], label
+    loaded, err = _load_approval_public_key(str(pub))
+    assert loaded is None and err, (label, err)
 
 
 # --------------------------------------------------------------------------- #
@@ -400,91 +325,52 @@ def test_invalid_public_key_shapes_fail_closed(tmp_path, tr, content, label):
 
 
 def test_attacker_owned_key_signature_blocked(tmp_path, tr, attacker):
-    """T-EV-15:攻击者用**自造密钥**签发完整合规记录 ⇒ 验证侧钉扎公钥
-    不匹配,签名校验失败 fail-closed(自造信任根不可移植)。"""
+    """T-EV-15(审计面直调):攻击者用自造密钥签发完整合规记录 ⇒ 对验证侧
+    信任根公钥验签失败。部署链层面该通道已整体退役(CLI 参数被 argparse
+    拒绝,见 test_evidence_channel_cli_args_removed)。"""
+    from scripts.release_preflight import (
+        _approval_signature_payload,
+        _approval_signature_valid,
+        _load_approval_public_key,
+    )
+
     rec = attacker.signed()
-    tr.write_record(rec)  # 记录落盘位置无关紧要;验证只看钉扎公钥
-    code, out, chk = _run(tmp_path, *_full_args(tr))
-    assert code == 2
-    assert "审批无效" in chk["reason"]
-    assert not any(c["class"] == "rollback_ok" for c in out["checks"])
+    pub, err = _load_approval_public_key(str(tr.pubkey_path))
+    assert pub and err is None
+    assert not _approval_signature_valid(
+        pub, rec["approval"]["signature"], _approval_signature_payload(rec)
+    )
 
 
 def test_attacker_full_env_access_cannot_forge_pass(tmp_path, tr, attacker, monkeypatch):
-    """T-EV-16(env-attacker,阻塞 1 接受条件):攻击者拥有应用容器**全部
-    env 权限**(可设置任意 PREFLIGHT_* 变量、伪造密钥材料、旧 HMAC env
-    通道变量)但无审批私钥 ⇒ 无论怎么组合都无法构造任何 PASS。
-
-    攻击面组合(全部拒绝):
-    a) 旧 HMAC env 通道变量 + 自选 HMAC 密钥签的伪记录(evaluator 无
-       env 审批通道,签名/字段均无效);
-    b) 攻击者自造 RSA 密钥签发 + env 注入伪造公钥材料(evaluator 只读
-       CLI 钉扎路径文件,env 零效果);
-    c) 全零签名 / 纯随机签名(EM 解码必失败);
-    d) 篡改字段后重放原签名。"""
-    from scripts.release_preflight import main
-
-    manifest = _write_manifest(tmp_path)
+    """T-EV-16(env-attacker,结构化):部署链没有任何 env 审批/证据通道;
+    攻击者设置全部历史通道变量后,evaluator 行为与未设置完全一致 —— 前向
+    部署语义只由 tag/deployed-version 决定,不存在可被 env 撬动的放行面。"""
     monkeypatch.setenv("PREFLIGHT_REMEDIATION_APPROVAL_KEY", "zXRhY2tlci1jb250cm9sbGVkLWtleS1tYXRlcmlhbA==")
     monkeypatch.setenv("PREFLIGHT_REMEDIATION_APPROVAL_KEY_FILE", "/attacker/owned/path")
     monkeypatch.setenv("PREFLIGHT_REMEDIATION_APPROVAL_PUBKEY_B64", attacker.pubkey_b64())
     monkeypatch.setenv("PREFLIGHT_REMEDIATION_APPROVAL_PUBKEY_FILE", str(attacker.pubkey_path))
     monkeypatch.setenv("REMEDIATION_PUBKEY_B64", attacker.pubkey_b64())
-
-    attempts = []
-
-    def attempt(record, label):
-        tr.write_record(record)
-        stdout = io.StringIO()
-        with contextlib.redirect_stdout(stdout):
-            code = main([
-                "--manifest", str(manifest),
-                "--remediation-evidence-file", str(tr.record_path),
-                "--remediation-evidence-artifact", str(tr.artifact),
-                "--remediation-approval-public-key-file", str(tr.pubkey_path),
-                "--release-tag", TAG,
-                "--release-sha", SHA,
-            ])
-        out = json.loads(stdout.getvalue())
-        attempts.append((label, code))
-        assert code == 2, (label, out)
-        assert not any(c["class"] == "rollback_ok" for c in out["checks"]), label
-
-    # a) HMAC 时代的伪记录(64 hex 自填)—— schema v3 词表外字段 ⇒ 形状拒绝
-    hmac_era = attacker.base_record()
-    hmac_era["approval"]["hmac_sha256"] = "0" * 64
-    hmac_era["approval"]["signature"] = "1" * 512
-    attempt(hmac_era, "hmac-era forged")
-
-    # b) 攻击者自造密钥的合法签名(v3 形状完全合规)⇒ 公钥不匹配
-    attempt(attacker.signed(), "attacker-key signed")
-
-    # c) 全零 / 随机形状合规签名
-    attempt({**attacker.signed(), "approval": {**attacker.base_record()["approval"], "signature": "0" * 512}}, "all-zero sig")
-    attempt({**attacker.signed(), "approval": {**attacker.base_record()["approval"], "signature": "d" * 512}}, "junk sig")
-
-    # d) 真实签名 + 签发后篡改绑定字段
-    rec = attacker.signed()
-    rec["evidence_digest"] = "e" * 64
-    attempt(rec, "tamper-after-sign")
-
-    assert len(attempts) == 5
+    code, out, chk = _run(
+        tmp_path, "--release-tag", "v1.6.4-r2", "--deployed-release-version", "1.6.4-r3",
+    )
+    assert code == 2
+    assert chk["class"] == "rollback_incompatible_refused"
+    assert not any(c["class"] == "rollback_ok" for c in out["checks"])
+    # 历史通道 env 变量对前向部署路径同样零效果
+    code2, out2, chk2 = _run(
+        tmp_path, "--release-tag", TAG, "--deployed-release-version", "1.6.3-r9",
+    )
+    assert code2 == 0 and chk2["class"] == "rollback_ok"
 
 
 def test_removed_env_channel_has_zero_effect(tmp_path, tr, monkeypatch):
-    """T-EV-16b:即使 env 提供旧通道变量与任意密钥材料,合法签发的正例语义
-    完全由 CLI 钉扎公钥决定;删除 env 通道后这些变量零效果(不崩、不放行)。"""
-    tr.write_record(tr.signed())
+    """T-EV-16b:旧通道变量存在与否,部署语义完全一致(不崩、不放行旧版)。"""
     monkeypatch.setenv("PREFLIGHT_REMEDIATION_APPROVAL_KEY", "bm90LWEta2V5LWF0LWFsbA==")
-    code, out, chk = _run(tmp_path, *_full_args(tr))
-    assert code == 0, chk  # 正例不受 env 影响:验签只依赖 CLI 钉扎公钥
-    # 负例同样只由签名决定
-    rec = tr.signed()
-    rec["approval"]["signature"] = "f" * 512
-    tr.write_record(rec)
-    code, out, chk = _run(tmp_path, *_full_args(tr))
-    assert code == 2
-    assert "审批无效" in chk["reason"]
+    code, out, chk = _run(
+        tmp_path, "--release-tag", "v1.6.4-r2", "--deployed-release-version", "1.6.4-r3",
+    )
+    assert code == 2 and chk["class"] == "rollback_incompatible_refused"
 
 
 # --------------------------------------------------------------------------- #
@@ -692,16 +578,13 @@ def test_sign_tool_roundtrip_and_loader_acceptance(tmp_path, tr):
     assert len(signed["approval"]["signature"]) == 512
     emitted_pub = json.loads(pubkey_path.read_text(encoding="utf-8"))
     assert emitted_pub == tr.pubkey
-    # 产物通过评估器同款加载器
+    # 产物通过评估器同款加载器(审计面;发布链不再消费证据通道)
     from scripts.release_preflight import _load_remediation_evidence
 
     loaded, err = _load_remediation_evidence(
         str(signed_path), signed["target_tag"], signed["release_sha"]
     )
     assert loaded is not None, err
-    tr.write_record(signed)
-    code, out, chk = _run(tmp_path, *_full_args(tr))
-    assert code == 0, chk
 
 
 def test_sign_tool_rejects_bad_inputs(tmp_path, tr, attacker):
@@ -780,54 +663,57 @@ def test_compatible_release_unaffected_by_evidence_channel(tmp_path, tr):
 
 
 def test_update_sh_wiring_v3():
+    """2026-10-22 通道接线(机械):退役证据通道零残留;deployed-version
+    回滚守卫 + 宿主部署标记 + 锁内自验在位。"""
     text = UPDATE_SH.read_text(encoding="utf-8")
-    assert 'REMEDIATION_EVIDENCE_ARTIFACT=""' in text
-    assert 'REMEDIATION_APPROVAL_PUBLIC_KEY_FILE=""' in text
-    assert "--remediation-evidence-artifact)" in text
-    assert "--remediation-approval-public-key-file)" in text
-    # 旧审批密钥通道必须消失
-    assert "--remediation-approval-key-file" not in text
-    assert 'REMEDIATION_APPROVAL_KEY_FILE=""' not in text
-    # 记录必须伴随真实工件(缺工件 ⇒ 记录自述不是证据)
-    assert '必须同时提供 --remediation-evidence-artifact' in text
-    # 镜像身份绑定:evaluator 以镜像内 RELEASE.json git_sha 校验
+    assert "--remediation-evidence-file" not in text
+    assert "--remediation-evidence-artifact" not in text
+    assert "--remediation-approval-public-key-file" not in text
+    assert "REMEDIATION_EVIDENCE" not in text
+    assert "REMEDIATION_APPROVAL" not in text
+    assert 'REMEDIATION_ACK=""' in text
+    assert "ASKAI_DEPLOYED_VERSION_GUARD_V1" in text
+    assert "[1.3/6]" in text and "[6.1/6]" in text
+    assert ".deployed-release.json" in text
+    assert "--deployed-release-version" in text
+    assert "previous_compatible" in text
     assert '--release-sha "$ACTUAL_SHA"' in text
     assert '--release-tag "$TAG"' in text
-    assert 'REMEDIATION_EVIDENCE_FILE=""' in text
-    assert 'REMEDIATION_ACK=""' in text
-    # R6v3:锁内自验选项 + 锁所有权(诚实语义头注)
     assert "--pinned-update-sh-sha256" in text
     assert 'PINNED_UPDATE_SH_SHA256=""' in text
     assert "[1.2/6]" in text and "[1.1/6]" in text
     assert "askai-deploy.lock" in text
     assert "rollout mutation" in text
-    assert "不依赖本宿主脚本" in text  # migration 与宿主脚本解耦的诚实边界
-    assert "git_sha" in text and "非 OCI" in text
+    assert "不依赖本宿主脚本" in text
+    assert "bootstrap" in text
 
 
 def test_workflow_wiring_v3():
+    """2026-10-22 通道接线(机械):四 PREFLIGHT_* secret / 证据通道零残留;
+    已审核身份事实与上传守卫随镜像提取;deployed-version 必传。"""
     text = WORKFLOW.read_text(encoding="utf-8")
-    # 无裸 ack 通道 + 无 rollback 字面(#46/#159/编排冻结契约)
+    for gone in (
+        "PREFLIGHT_TRUST_ANCHOR_B64",
+        "PREFLIGHT_REMEDIATION_EVIDENCE_B64",
+        "PREFLIGHT_REMEDIATION_EVIDENCE_ARTIFACT_B64",
+        "PREFLIGHT_REMEDIATION_APPROVAL_PUBKEY_B64",
+    ):
+        assert gone not in text, gone
     assert "--remediation-ack" not in text
-    assert "remediation_ack" not in text
+    assert "remediation-evidence" not in text
+    assert "approval-public-key" not in text
     assert "rollback" not in text.lower()
-    # 四通道:记录 + 工件 + 验证公钥(secret,非秘密材料);锁内自验哈希
-    assert text.count("PREFLIGHT_REMEDIATION_EVIDENCE_B64") >= 2
-    assert text.count("PREFLIGHT_REMEDIATION_EVIDENCE_ARTIFACT_B64") >= 2
-    assert text.count("PREFLIGHT_REMEDIATION_APPROVAL_PUBKEY_B64") >= 2
-    # 审批私钥材料绝不进入 workflow env/secret 映射(静态;动态构造避免
-    # 本文件残留被删字面)
-    channel = "secrets." + "PREFLIGHT_REMEDIATION_" + "APPROVAL_KEY"
-    assert channel not in text
-    assert "APPROVAL_KEY_B64" not in text
-    assert "PRIVKEY" not in text.upper().replace("PUBKEY", "")
-    # RELEASE_SHA 绑定(容器内 evaluator 调用)
+    assert text.count("secrets.PROD_DEPLOY_SSH_KEY") >= 1
+    assert 'SSH_KNOWN_HOSTS_B64: ${{ vars.PROD_SSH_KNOWN_HOSTS_B64 }}' in text
+    assert "deploy/prod/production-identity.json" in text
+    assert "deploy/prod/uploads-unknown-guard.tsv" in text
+    assert '"$H_ID:/tmp/askai-production-identity.json"' in text
+    assert '"$H_GUARD:/tmp/askai-uploads-unknown-guard.tsv"' in text
+    assert "--deployed-release-version" in text
+    assert "已部署版本不可读" in text
+    assert "--verify-upload-isolation" in text
+    assert "--isolation-trust-anchor-file /tmp/askai-production-identity.json" in text
     assert '--release-sha "${RELEASE_SHA:-}"' in text
-    assert 'RELEASE_SHA: ${{ steps.identity.outputs.sha }}' in text
-    # 工件容器内完整性核对 + 公钥容器内钉扎
-    assert "sha256sum /tmp/askai-remediation-artifact.bin" in text
-    assert "askai-approval-pubkey.json" in text
-    assert "--remediation-approval-public-key-file" in text
 
 
 def test_workflow_deploy_step_lock_ownership_moved_into_update_sh():
@@ -844,14 +730,9 @@ def test_workflow_deploy_step_lock_ownership_moved_into_update_sh():
     assert "--pinned-update-sh-sha256" in run
     assert "PROVISION_SHA256" in run
     assert 'git show "$RELEASE_SHA:deploy/prod/update.sh"' in run
-    # provision 步保持迁移前能力钉扎与哈希安装(含新自验能力断言)
     prov = [s for s in wf["jobs"]["deploy"]["steps"] if s.get("id") == "provision_host_script"][0]
     assert "pinned-update-sh-sha256" in prov["run"]
-
-
-# --------------------------------------------------------------------------- #
-# T-EV-16/R6v3 审查收口:签发工具镜像排除 + 公钥可信来源钉扎
-# --------------------------------------------------------------------------- #
+    assert "ASKAI_DEPLOYED_VERSION_GUARD_V1" in prov["run"]
 
 
 def test_sign_tool_excluded_from_production_image():
@@ -870,9 +751,6 @@ def test_sign_tool_excluded_from_production_image():
     tool = repo / "scripts" / "sign_remediation_approval.py"
     assert tool.is_file(), "签发工具必须在仓(A 离线受控路径使用)"
     tool_text = tool.read_text(encoding="utf-8")
-    # 无嵌入密钥材料:私钥只能从 --private-key 文件路径读入。检测器 = 连续
-    # ≥64 字符 base64 词表段(PEM/DER 密钥体形态);PEM 头字样仅允许出现在
-    # 解析器常量与 docstring 文档引用中,不构成材料。
     assert "--private-key" in tool_text
     import re as _re
 
@@ -882,24 +760,14 @@ def test_sign_tool_excluded_from_production_image():
         )
 
 
-def test_approval_pubkey_channel_is_secret_pinned():
-    """A R6v3 审查:验证公钥必须经 A 独占写权限的 production Environment
-    secret 送达(secrets.* 映射),不得从 release 树/manifest/普通 vars 读取;
-    评估器 CLI 公钥入参无任何仓库内缺省路径 ⇒ 证据提交者无法通过替换
-    公钥+签名自行授予整改 PASS。"""
+def test_approval_pubkey_channel_fully_removed():
+    """2026-10-22 通道:验证公钥钉扎通道随 RSA 审批一起退出发布链 ——
+    workflow 零 secret 映射、evaluator 零 CLI 入参、update.sh 零透传
+    (审计面辅助函数保留,但不存在任何发布路径消费它)。"""
     text = WORKFLOW.read_text(encoding="utf-8")
-    assert text.count("secrets.PREFLIGHT_REMEDIATION_APPROVAL_PUBKEY_B64") >= 2, (
-        "公钥必须经 production Environment secret 映射(A 独占写)在两个消费点送达"
-    )
-    eval_src = (REPO / "scripts" / "release_preflight.py").read_text(
-        encoding="utf-8"
-    )
-    # 公钥只来自显式 CLI 文件入参;无仓库/manifest 缺省、无 env 缺省通道
-    assert "--remediation-approval-public-key-file" in eval_src
-    assert "DEFAULT_APPROVAL_PUBLIC_KEY" not in eval_src
-    assert "compatibility.json" not in eval_src.split(
-        "def _load_approval_public_key"
-    )[1].split("\n\n")[1] if False else True
-    # 仓库内 compatibility.json/RELEASE.json 不作为公钥来源(加载器仅读 CLI 指定文件)
-    loader = eval_src.split("def _load_approval_public_key")[1].split("\ndef ")[0]
-    assert "Path(path)" in loader and "manifest" not in loader
+    channel = "PREFLIGHT_REMEDIATION_APPROVAL_PUBKEY_B64"
+    assert channel not in text
+    eval_src = EVALUATOR.read_text(encoding="utf-8")
+    assert "--remediation-approval-public-key-file" not in eval_src
+    assert "--remediation-evidence-file" not in eval_src
+    assert "_load_approval_public_key" in eval_src

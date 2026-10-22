@@ -1,3 +1,9 @@
+> **ⓘ 状态更新(2026-10-22,通道适配 A 裁决)**:本 HOWTO 描述的 RSA 签发与
+> 四项 PREFLIGHT_* Environment Secrets 发布依赖已按 A 正式授权退出发布链
+> (User 无私钥/新增秘密配置通道)。本文件与其引用的工件/记录**保留为历史
+> 审计记录,不篡改**;现行部署通道见 `.github/workflows/deploy-production.yml`
+> 头注与 `deploy/prod/update.sh` [1.3/6] deployed-version 回滚守卫。
+
 # v1.6.4-r3 整改记录签发 HOWTO(A 专属;B 无私钥、不代签)
 
 物料(本目录,B 已备,均非秘密):

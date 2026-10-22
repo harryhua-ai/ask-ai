@@ -102,7 +102,12 @@ def psql_shim(tmp_path, monkeypatch):
         body = (
             "#!/bin/bash\n"
             f'printf \'%s\\n\' "$@" > "{argv_file}"\n'
-            f'printf \'%s\\n\' "{psql_output}"\n'
+            # 残留电池语句(12 计数)→ 同会话身份行+全零+legacy=1;
+            # 其余语句(upload_mode 计数等)→ 测试给定输出
+            'if printf \'%s\\n\' "$@" | grep -q "left(source_id"; then '
+            'printf \'%s\\n\' "iso_db" && printf \'%s\\n\' "' + _PG_SID + '" && '
+            'printf \'%s\\n\' "0|0|0|0|0|0|0|0|0|0|0|1"; '
+            f'else printf \'%s\\n\' "{psql_output}"; fi\n'
         )
         if returncode:
             body += f"exit {returncode}\n"

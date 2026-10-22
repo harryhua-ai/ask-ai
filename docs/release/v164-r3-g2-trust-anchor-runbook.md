@@ -1,3 +1,8 @@
+> **ⓘ 状态更新(2026-10-22,通道适配 A 裁决)**:带外采锚与
+> PREFLIGHT_TRUST_ANCHOR_B64 写 secret 流程不再是发布前置;目标身份事实已
+> 冻结入仓(deploy/prod/production-identity.json,随镜像分发)。本文的
+> 只读采集命令与探测面注意事项仍可作为审计复核手段使用。
+
 # v1.6.4-r3｜G2 生产信任锚只读采集清单(Role B 交 A,2026-10-22)
 
 授权边界:本清单全程**只读**(docker inspect/exec 只读命令 + backend /health);

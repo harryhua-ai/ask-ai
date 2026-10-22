@@ -248,10 +248,28 @@ def _seed_isolation_fixtures() -> str:
     """端到端净集 fixture:data_sources 表(upload_mode 空)= 0 注册;
     Document collection 1 个 upload 对象 = total>0、filesystem=0。
     返回本地 v2 锚(非秘密,本地自造标识)。"""
+    # 六表按生产形状重建(残留电池/注册计数谓词依赖 enabled/lifecycle_state/
+    # 文本 id 形态;一次性栈内 DROP 幂等)
     _compose("exec", "-T", "postgres", "psql", "-U", "ask_ai", "-d", "ask_ai", "-q", "-c",
-             "CREATE TABLE IF NOT EXISTS data_sources (id serial primary key, config jsonb);"
-             "INSERT INTO data_sources (config) SELECT '{\"source\":\"seed\"}'::jsonb"
-             " WHERE NOT EXISTS (SELECT 1 FROM data_sources);")
+             "DROP TABLE IF EXISTS document_version_chunks;"
+             "DROP TABLE IF EXISTS document_versions;"
+             "DROP TABLE IF EXISTS documents;"
+             "DROP TABLE IF EXISTS index_generations;"
+             "DROP TABLE IF EXISTS sync_requests;"
+             "DROP TABLE IF EXISTS data_sources;"
+             "CREATE TABLE data_sources (id text primary key, enabled bool,"
+             " lifecycle_state text, config jsonb);"
+             "CREATE TABLE documents (source_id text);"
+             "CREATE TABLE document_versions (id uuid DEFAULT gen_random_uuid(),"
+             " source_id text, generation_id uuid);"
+             "CREATE TABLE document_version_chunks"
+             " (id uuid DEFAULT gen_random_uuid(), version_id uuid);"
+             "CREATE TABLE index_generations"
+             " (id uuid DEFAULT gen_random_uuid(), source_id text);"
+             "CREATE TABLE sync_requests (source_id text, status text);"
+             "INSERT INTO data_sources (id, config) SELECT 'seed-row',"
+             " '{\"source\":\"seed\"}'::jsonb WHERE true;"
+             "INSERT INTO index_generations SELECT gen_random_uuid(), '*legacy*';")
     _backend_exec(
         ["python3", "-c",
          "import json, os, urllib.request\n"

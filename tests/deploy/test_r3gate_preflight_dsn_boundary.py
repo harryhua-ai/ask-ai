@@ -115,7 +115,10 @@ def _psql_shim(tmp_path, monkeypatch):
         f'printf \'%s\' "${{PGPASSWORD-}}" > "{pw_file}"\n'
         'printf \'%s\\n\' "iso_db"\n'
         f'printf \'%s\\n\' "{_ANCHOR_SID}"\n'
-        'echo "0"\n',
+        # 第三条语句:upload_mode 计数 → 0;残留电池(12 计数)→ 全零+legacy=1
+        # (按 SQL 内容识别,不依赖 argv 位次 —— DSN 组件有无会平移位置)
+        'if printf \'%s\\n\' "$@" | grep -q "left(source_id"; then '
+        'printf \'%s\\n\' "0|0|0|0|0|0|0|0|0|0|0|1"; else echo "0"; fi\n',
         encoding="utf-8",
     )
     shim.chmod(0o755)
@@ -199,6 +202,7 @@ def test_named_env_var_injection_positive(tmp_path, monkeypatch):
     """--isolation-pg-dsn-env <VAR_NAME>:argparse 只见变量名,值经 env 进入。"""
     monkeypatch.setenv("R2TEST_ISO_DSN", _FAKE_DSN)
     monkeypatch.setattr(rp, "probe_upload_mode_rows", lambda cfg, timeout_s: 0)
+    monkeypatch.setattr(rp, "probe_retired_source_residue", lambda cfg, timeout_s: {**dict.fromkeys(rp._RETIRE_RESIDUE_KEYS, 0), "legacy_generations": 1})
     monkeypatch.setattr(rp, "probe_filesystem_objects", lambda cfg, timeout_s: 0)
     m = _write_manifest(tmp_path)
     verdict, code = rp.evaluate(

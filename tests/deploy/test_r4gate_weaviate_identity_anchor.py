@@ -156,10 +156,14 @@ def _iso_checks(verdict: dict) -> list[dict]:
 def _psql_shim(tmp_path: Path, monkeypatch, output: str) -> None:
     argv_file = tmp_path / "psql_shim_argv.txt"
     shim = tmp_path / "psql"
+    # 残留电池语句(12 计数)→ 同会话身份行+全零+legacy=1;其余语句 → 原样输出
     shim.write_text(
         "#!/bin/bash\n"
         f'printf \'%s\\n\' "$@" > "{argv_file}"\n'
-        f'printf \'%s\\n\' "{output}"\n',
+        'if printf \'%s\\n\' "$@" | grep -q "left(source_id"; then '
+        'printf \'%s\\n\' "iso_db" && printf \'%s\\n\' "' + _PG_SID + '" && '
+        'printf \'%s\\n\' "0|0|0|0|0|0|0|0|0|0|0|1"; '
+        f'else printf \'%s\\n\' "{output}"; fi\n',
         encoding="utf-8",
     )
     shim.chmod(0o755)
@@ -393,17 +397,37 @@ def test_twv05_v2_anchor_loader_shape_validation(tmp_path):
         {**good, "weaviate_volume_name": ""},
         {**good, "pg_system_id": "not-a-number"},
         {k: v for k, v in good.items() if k != "weaviate_cluster_hostname"},
-        {k: v for k, v in good.items() if k != "weaviate_volume_manifest_sha256"},
         {**good, "evil": "x"},                                # 词表外
         {**good, "weaviate_collection_id": "01234567-89ab-cdef-0123-456789abcdef"},  # v1/v2 混装
         {**good, "version": 3},
         {**good, "version": 1},  # version=1 却带 v2 字段 → 词表外拒绝
+        {**good, "weaviate_image_digest": "nothex"},
+        {**good, "uploads_sources_dir": "relative/path"},
     ]
     for payload in bad_payloads:
         p = tmp_path / "bad-anchor.json"
         p.write_text(json.dumps(payload), encoding="utf-8")
         anchor, err = rp._load_trust_anchor(str(p))
         assert anchor is None and err, f"应拒绝: {sorted(payload)}"
+    # 2026-10-22 通道:动态卷清单哈希可选(缺省=退出强制锚);上传面绑定
+    # 字段可选且形状受校验
+    ok = tmp_path / "ok-anchor.json"
+    ok.write_text(json.dumps({k: v for k, v in good.items()
+                              if k != "weaviate_volume_manifest_sha256"}),
+                  encoding="utf-8")
+    anchor, err = rp._load_trust_anchor(str(ok))
+    assert anchor is not None and err is None, err
+    assert "weaviate_volume_manifest_sha256" not in anchor
+    ok2 = tmp_path / "ok-anchor2.json"
+    ok2.write_text(json.dumps({**good,
+                               "uploads_volume_name": "fake_uploads_data",
+                               "uploads_mount_path": "/app/data/uploads",
+                               "uploads_sources_dir": "/app/data/uploads/data-sources",
+                               "uploads_unknown_guard": "/app/deploy/prod/uploads-unknown-guard.tsv"}),
+                    encoding="utf-8")
+    anchor2, err2 = rp._load_trust_anchor(str(ok2))
+    assert anchor2 is not None and err2 is None, err2
+    assert anchor2["uploads_sources_dir"] == "/app/data/uploads/data-sources"
 
 
 def test_twv06_meta_dns_name_mismatch_rejected_in_v2(tmp_path, fake_wv128, monkeypatch):
@@ -569,11 +593,17 @@ class ControlPlaneSandbox:
             '    src="${args[1]}"; dest="${args[$((${#args[@]} - 1))]}"\n'
             '    case "$src" in\n'
             '      *RELEASE.json)\n'
-            '        printf \'{"version":"1.0.0","compatibility_contract":true}\' > "$dest" ;;\n'
+            '        printf \'{"version":"1.0.0","git_sha":"%s","compatibility_contract":true}\' "$TSL_RELEASE_SHA" > "$dest" ;;\n'
             '      *release_preflight.py) cp "$TSL_EVALUATOR_SRC" "$dest" ;;\n'
             '      *compatibility.json)\n'
             '        printf \'{"version":1,"config":[],"host":[],"topology":[],'
             '"dependencies":[],"rollback":{"previous_compatible":true}}\' > "$dest" ;;\n'
+            '      *production-identity.json)\n'
+            '        if [ "${TSL_IDENTITY_MISSING:-}" = "1" ]; then exit 1; fi\n'
+            '        printf \'%s\' "$TSL_IDENTITY_JSON" > "$dest" ;;\n'
+            '      *uploads-unknown-guard.tsv)\n'
+            '        if [ "${TSL_GUARD_MISSING:-}" = "1" ]; then exit 1; fi\n'
+            '        printf \'%s\' "$TSL_GUARD_CONTENT" > "$dest" ;;\n'
             "      *) exit 1 ;;\n"
             "    esac ;;\n"
             "  inspect)\n"
@@ -584,25 +614,6 @@ class ControlPlaneSandbox:
             "      *Config.Env*) printf '%s\\n' \"$TSL_CP_ENV\" | while IFS= read -r line; do echo \"$line\"; done ;;\n"
             '      *) echo "fake docker inspect: unknown fmt" >&2; exit 1 ;;\n'
             "    esac ;;\n"
-            "  exec)\n"
-            '    printf \'%s\\n\' "$*" >> "$TSL_DOCKER_ARGV_LOG"\n'
-            "    # R5:卷扫描脚本经 stdin 到达;在沙箱卷目录真实执行(真实 sh 语义)\n"
-            '    vs="$(mktemp "${TMPDIR:-/tmp}/r5volscan.XXXXXXX")"\n'
-            '    cat > "$vs"\n'
-            '    if [ -n "${TSL_VOLSCAN_EVIDENCE_TAMPER:-}" ]; then\n'
-            '      printf \'%s\\n\' "$TSL_VOLSCAN_EVIDENCE_TAMPER"\n'
-            '      rm -f "$vs"\n'
-            "      exit 0\n"
-            "    fi\n"
-            '    if [ "${TSL_VOLSCAN_EXEC_FAIL:-}" = "1" ]; then\n'
-            '      rm -f "$vs"\n'
-            '      echo "fake docker exec: injected scan failure" >&2\n'
-            "      exit 7\n"
-            "    fi\n"
-            '    sh "$vs" "${TSL_VOLSCAN_ROOT:-$TSL_CONTAINER_ROOT/var/lib/weaviate}"\n'
-            "    rc=$?\n"
-            '    rm -f "$vs"\n'
-            "    exit $rc ;;\n"
             "  compose)\n"
             '    if [ "${TSL_PS_EMPTY:-}" = "1" ]; then exit 0; fi\n'
             '    sub=""\n'
@@ -618,6 +629,10 @@ class ControlPlaneSandbox:
             '    if [ "$svc_idx" -lt 0 ]; then echo "fake compose: no backend exec" >&2; exit 1; fi\n'
             '    cmd=("${args[@]:$((svc_idx + 1))}")\n'
             '    case "${cmd[0]}" in\n'
+            "      cat)\n"
+            '        # deployed-version 事实读取:运行中 backend /app/RELEASE.json\n'
+            '        if [ "${TSL_DEPLOYED_UNREADABLE:-}" = "1" ]; then exit 1; fi\n'
+            '        printf \'{"version":"%s","git_sha":"deployed0sha"}\' "${TSL_DEPLOYED_VERSION:-1.0.0}" ;;\n'
             "      sh)\n"
             '        # sh -c 两种:cat > /tmp/xxx(stdin 写入容器根)/sha256sum(容器内\n'
             '        # 工件哈希 —— 对容器根内真实文件求值;TSL_TAMPER=1 注入不匹配)\n'
@@ -707,22 +722,23 @@ class ControlPlaneSandbox:
         for shim in ("flock", "docker", "ssh", "stat", "sha256sum"):
             (self.bin / shim).chmod(0o755)
 
-    def step_env(self, *, anchor_json: str | None = None, **overrides) -> dict:
-        # R5:TSL_CP_MAN 缺省 = 用 workflow 内嵌真实扫描脚本对沙箱卷实测
-        # (非硬编码);缺省 v2 锚的 manifest 钉扎值同步 = 该实测哈希
-        # (控制面 PASS 前提 = 钉扎值 == 真实扫描输出,任何一侧漂移即暴露);
-        # 测试可显式覆盖 anchor_json / TSL_CP_MAN(如 T-WV-12 不匹配注入)
-        if "TSL_CP_MAN" not in overrides:
-            overrides["TSL_CP_MAN"] = self._seeded_volume_hash()
-        if anchor_json is None:
-            anchor_json = json.dumps({
+    def step_env(self, *, identity_json: str | None = None, **overrides) -> dict:
+        # 2026-10-22 通道:身份事实 = 沙箱 docker cp 提供的镜像内文件内容
+        # (与被测 docker inspect 分离);动态清单哈希已退出,无 volscan 种子。
+        if identity_json is None:
+            identity_json = json.dumps({
                 "version": 2,
                 "pg_system_id": "7300000000000000003",
                 "weaviate_cluster_hostname": _CP_HOST,
                 "weaviate_image_digest": _CP_IMG,
                 "weaviate_volume_name": _CP_VOL,
-                "weaviate_volume_manifest_sha256": overrides["TSL_CP_MAN"],
             })
+        overrides.setdefault("TSL_IDENTITY_JSON", identity_json)
+        overrides.setdefault(
+            "TSL_GUARD_CONTENT",
+            "retained/keep.txt\t" + "aa" * 32 + "\n",
+        )
+        overrides.setdefault("TSL_RELEASE_SHA", "f" * 40)
         env = {
             "PATH": f"{self.bin}:/usr/bin:/bin",
             "HOME": str(self.base / "runner-home"),
@@ -739,7 +755,6 @@ class ControlPlaneSandbox:
             "TSL_CP_IMAGE": _CP_IMG,
             "TSL_CP_VOLS": f"{_CP_VOL}=/var/lib/weaviate ",
             "TSL_CP_ENV": f"CLUSTER_HOSTNAME={_CP_HOST}",
-            "TSL_CP_MAN": _CP_MAN,
             "SSH_KEY": "R4GRN-FAKEKEY-NOT-A-REAL-KEY",
             "SSH_HOST": "tesla-t4.fake.invalid",
             "SSH_USER": "deployer",
@@ -747,7 +762,7 @@ class ControlPlaneSandbox:
                 b"tesla-t4.fake.invalid ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFAKER4TST\n"
             ).decode(),
             "DEPLOY_TAG": "v1.0.0",
-            "TRUST_ANCHOR_B64": base64.b64encode(anchor_json.encode()).decode(),
+            "RELEASE_SHA": overrides.get("TSL_RELEASE_SHA", "f" * 40),
         }
         (self.base / "runner-home").mkdir(exist_ok=True)
         env.update(overrides)
@@ -774,65 +789,47 @@ class ControlPlaneSandbox:
             else ""
         )
 
-    def _seeded_volume_hash(self) -> str:
-        """R5:用 workflow 内嵌扫描脚本对沙箱卷实测元数据哈希(控制面 PASS
-        前提 = 钉扎值 == 真实扫描输出;脚本漂移在此即刻暴露)。PATH 前置
-        沙箱 fakebin(跨平台 stat/sha256sum shim,模拟 BusyBox `-c` 语义)。"""
-        script_text = _volscan_embedded_script()
-        env = dict(os.environ)
-        env["PATH"] = f"{self.bin}:{os.environ.get('PATH', '')}"
-        r = subprocess.run(
-            ["/bin/sh", "-s", str(self.container / "var" / "lib" / "weaviate")],
-            input=script_text, capture_output=True, text=True, timeout=60,
-            env=env, check=False,
-        )
-        assert r.returncode == 0, f"沙箱卷自扫描失败: {r.stderr}"
-        m = re.search(r"MANIFEST_SHA256=([0-9a-f]{64}) FILES=([1-9][0-9]*)", r.stdout)
-        assert m, f"沙箱卷自扫描输出形状异常: {r.stdout!r}"
-        return m.group(1)
-
-
 @pytest.fixture
 def cp_sandbox(tmp_path):
     return ControlPlaneSandbox(tmp_path)
 
 
 def test_twv10_control_plane_match_proceeds_to_container_preflight(cp_sandbox):
-    """控制面全匹配 → 核验 PASS → 容器 preflight 真实执行 → 步骤成功。"""
+    """控制面全匹配 → 核验 PASS(a/c)→ 容器 preflight 真实执行 → 步骤成功。"""
     rc, out, err = cp_sandbox.run_step(cp_sandbox.step_env())
     assert rc == 0, f"应成功: {out}\n{err}"
-    assert "控制面锚核验 PASS" in out
+    assert "控制面核验 PASS(a)" in out
+    assert "控制面核验 PASS(c)" in out
     assert "PREFLIGHT PASS:v1.0.0" in out
     eval_argv = cp_sandbox.eval_argv_text()
     assert "--verify-upload-isolation" in eval_argv
+    assert "--deployed-release-version 1.0.0" in eval_argv
+    assert "--isolation-trust-anchor-file /tmp/askai-production-identity.json" in eval_argv
     docker_argv = cp_sandbox.docker_argv.read_text(encoding="utf-8")
     assert "inspect" in docker_argv and "exec" in docker_argv, "控制面只读 inspect/exec 真实发生"
 
 
 def test_twv11_control_plane_digest_mismatch_aborts_before_preflight(cp_sandbox):
-    """镜像 digest 不匹配 → 中止;容器内 evaluator 零执行、镜像零拉取。"""
+    """镜像 digest 不匹配 → 中止;容器内 evaluator 零执行、无 PASS。"""
     wrong = "sha256:" + "ff" * 32
     rc, out, err = cp_sandbox.run_step(
         cp_sandbox.step_env(TSL_CP_IMAGE=wrong)
     )
     assert rc != 0
-    assert "控制面锚不匹配" in err and "镜像" in err
+    assert "已审核身份事实不一致" in err and "镜像" in err
     assert cp_sandbox.eval_argv_text() == "", "evaluator 绝不执行"
     assert "PREFLIGHT PASS" not in out
-    docker_argv = cp_sandbox.docker_argv.read_text(encoding="utf-8")
-    assert " pull " not in f" {docker_argv} ", "中止发生在 docker pull 之前"
 
 
-def test_twv12_control_plane_volume_hostname_manifest_mismatch_aborts(cp_sandbox):
-    """数据卷挂载缺失 / CLUSTER_HOSTNAME 不匹配 / 清单哈希不匹配 → 全部中止。"""
+def test_twv12_control_plane_volume_hostname_mismatch_aborts(cp_sandbox):
+    """数据卷挂载缺失 / CLUSTER_HOSTNAME 不匹配 → 全部中止(容器 preflight 之前)。"""
     for label, overrides in [
         ("volume", dict(TSL_CP_VOLS="some_other_volume=/var/lib/weaviate ")),
         ("hostname", dict(TSL_CP_ENV="CLUSTER_HOSTNAME=other-node.invalid")),
-        ("manifest", dict(TSL_CP_MAN="ee" * 32)),
     ]:
         rc, out, err = cp_sandbox.run_step(cp_sandbox.step_env(**overrides))
         assert rc != 0, label
-        assert "控制面锚不匹配" in err, label
+        assert "已审核身份事实不一致" in err, label
         assert cp_sandbox.eval_argv_text() == "", label
 
 
@@ -844,31 +841,65 @@ def test_twv13_control_plane_weaviate_not_running_aborts(cp_sandbox):
     assert cp_sandbox.eval_argv_text() == ""
 
 
-def test_twv14_control_plane_v1_anchor_skips_inspect_legacy_path(cp_sandbox):
-    """v1 锚(新版 Weaviate 单层锚)→ 控制面块跳过(零 inspect/exec of weaviate),
-    走 R3 原有容器 preflight 路径(向后兼容,行为不变)。"""
-    v1 = json.dumps({
-        "version": 1,
-        "pg_system_id": "7300000000000000003",
-        "weaviate_collection_id": "01234567-89ab-cdef-0123-456789abcdef",
-    })
-    rc, out, err = cp_sandbox.run_step(cp_sandbox.step_env(anchor_json=v1))
-    assert rc == 0, f"v1 路径应保持 R3 行为: {out}\n{err}"
-    assert "控制面锚核验" not in out, "v1 锚无控制面块"
-    assert "PREFLIGHT PASS:v1.0.0" in out
-    docker_argv = cp_sandbox.docker_argv.read_text(encoding="utf-8")
-    assert "inspect fake-weaviate-cid" not in docker_argv, \
-        "v1 锚不做运行中 weaviate 容器的控制面核验(仅允许审计用镜像 inspect)"
-
-
-def test_twv15_control_plane_invalid_v2_anchor_shape_aborts(cp_sandbox):
-    """锚 v2 字段形状非法 → 控制面 fail-closed(容器 preflight 零执行)。"""
-    bad = json.dumps({**json.loads(_ANCHOR_V2_JSON),
-                      "weaviate_image_digest": "sha256:nothex"})
-    rc, out, err = cp_sandbox.run_step(cp_sandbox.step_env(anchor_json=bad))
+def test_twv14_identity_file_missing_from_image_aborts(cp_sandbox):
+    """2026-10-22 通道:镜像缺 deploy/prod/production-identity.json(打包违约)
+    ⇒ fail-closed 中止(身份期望不可缺失,绝不退化为自证)。"""
+    rc, out, err = cp_sandbox.run_step(cp_sandbox.step_env(TSL_IDENTITY_MISSING="1"))
     assert rc != 0
-    assert "形状非法" in err
+    assert "production-identity.json" in err
     assert cp_sandbox.eval_argv_text() == ""
+    assert "PREFLIGHT PASS" not in out
+
+
+def test_twv15_control_plane_invalid_identity_content_aborts(cp_sandbox):
+    """身份事实内容非法(非 JSON/字段形状坏)→ fail-closed(容器 preflight 零执行)。"""
+    bad_json = "{not-json"
+    rc, out, err = cp_sandbox.run_step(
+        cp_sandbox.step_env(identity_json=bad_json))
+    assert rc != 0
+    assert cp_sandbox.eval_argv_text() == ""
+    bad_digest = json.dumps({
+        "version": 2,
+        "pg_system_id": "7300000000000000003",
+        "weaviate_cluster_hostname": _CP_HOST,
+        "weaviate_image_digest": "sha256:nothex",
+        "weaviate_volume_name": _CP_VOL,
+    })
+    rc2, out2, err2 = cp_sandbox.run_step(
+        cp_sandbox.step_env(identity_json=bad_digest))
+    assert rc2 != 0
+    assert cp_sandbox.eval_argv_text() == ""
+
+
+def test_twv17_deployed_version_unreadable_aborts(cp_sandbox):
+    """2026-10-22 通道:已部署版本事实不可读(运行中 backend /app/RELEASE.json
+    不可得)⇒ previous_compatible=false 的回滚方向无法判定 → fail-closed 中止。"""
+    rc, out, err = cp_sandbox.run_step(
+        cp_sandbox.step_env(TSL_DEPLOYED_UNREADABLE="1"))
+    assert rc != 0
+    assert "已部署版本不可读" in err
+    assert cp_sandbox.eval_argv_text() == ""
+    assert "PREFLIGHT PASS" not in out
+
+
+def test_twv18_uploads_guard_missing_from_image_aborts(cp_sandbox):
+    """镜像缺 deploy/prod/uploads-unknown-guard.tsv(打包违约)→ fail-closed 中止。"""
+    rc, out, err = cp_sandbox.run_step(
+        cp_sandbox.step_env(TSL_GUARD_MISSING="1"))
+    assert rc != 0
+    assert "uploads-unknown-guard" in err
+    assert cp_sandbox.eval_argv_text() == ""
+    assert "PREFLIGHT PASS" not in out
+
+
+def test_twv19_evaluator_content_integrity_tamper_aborts(cp_sandbox):
+    """容器内侧哈希核对(评估器/manifest/身份事实/守卫)任一不匹配 ⇒ 绝不执行
+    evaluator,fail-closed 中止(R4-3① 纪律在新工件面等价保留)。"""
+    rc, out, err = cp_sandbox.run_step(
+        cp_sandbox.step_env(TSL_TAMPER="1"))
+    assert rc != 0
+    assert "内容完整性核验失败" in err or "内容核验不匹配" in err
+    assert "PREFLIGHT PASS" not in out
 
 
 # --------------------------------------------------------------------------- #
@@ -897,49 +928,6 @@ def test_twv16_cli_full_chain_v2_anchor_verdict_pass(tmp_path, fake_wv128, monke
     assert code == 0
     argv = (tmp_path / "psql_shim_argv.txt").read_text(encoding="utf-8")
     assert _FAKE_PW not in argv and "postgresql://" not in argv
-
-
-# --------------------------------------------------------------------------- #
-# 控制面 R5 窄修(卷清单哈希假 PASS 防护):T-WV-17..19(沙箱故障注入)
-# --------------------------------------------------------------------------- #
-
-
-def test_twv17_control_plane_scan_exec_failure_aborts(cp_sandbox):
-    """R5 T-WV-17:卷扫描执行失败(注入 rc=7)→ fail-closed 中止;
-    evaluator 绝不执行,无 PASS 输出(旧管道会把失败吞成空清单哈希)。"""
-    rc, out, err = cp_sandbox.run_step(
-        cp_sandbox.step_env(TSL_VOLSCAN_EXEC_FAIL="1"))
-    assert rc != 0
-    assert "数据卷元数据扫描失败" in err
-    assert "控制面锚不匹配" in err, "扫描失败不得与『哈希不匹配』混同(原因可见)"
-    assert cp_sandbox.eval_argv_text() == "", "evaluator 绝不执行"
-    assert "PREFLIGHT PASS" not in out
-
-
-def test_twv18_control_plane_scan_missing_evidence_line_aborts(cp_sandbox):
-    """R5 T-WV-18:扫描输出缺合法证据行(旧管道形态:裸哈希、无
-    VOLSCAN_OK/FILES≥1 标记)→ 不采信,fail-closed 中止。"""
-    tampered = f"{_CP_MAN}  -"  # 旧 `sha256sum | cut -d" " -f1` 的输出形状
-    rc, out, err = cp_sandbox.run_step(
-        cp_sandbox.step_env(TSL_VOLSCAN_EVIDENCE_TAMPER=tampered))
-    assert rc != 0
-    assert "无合法证据行" in err
-    assert cp_sandbox.eval_argv_text() == ""
-    assert "PREFLIGHT PASS" not in out
-
-
-def test_twv19_control_plane_scan_empty_volume_fails_closed(cp_sandbox):
-    """R5 T-WV-19:扫描目标空目录(脚本内清单 -s 校验)→ 扫描 rc=3 且无
-    哈希 → 步骤 fail-closed;空清单哈希 e3b0c442… 绝不出现在任何输出。"""
-    empty = cp_sandbox.base / "empty-vol"
-    empty.mkdir(exist_ok=True)
-    rc, out, err = cp_sandbox.run_step(
-        cp_sandbox.step_env(TSL_VOLSCAN_ROOT=str(empty)))
-    assert rc != 0
-    assert "数据卷元数据扫描失败" in err
-    assert "e3b0c442" not in out and "e3b0c442" not in err, \
-        "空清单哈希绝不出现(假 PASS 防护的本质)"
-    assert cp_sandbox.eval_argv_text() == ""
 
 
 # --------------------------------------------------------------------------- #
