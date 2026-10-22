@@ -173,35 +173,60 @@ fi
 
 
 # ---------- [1.3/6] deployed-version 回滚守卫(ASKAI_DEPLOYED_VERSION_GUARD_V1) ----------
-# 见头注「不安全旧版回滚」节。已部署事实源优先级:宿主标记 > 运行中 backend
-# 容器(只读)。已部署声明 previous_compatible=false 且目标旧于已部署 ⇒ 在
+# 见头注「不安全旧版回滚」节。已部署事实源:宿主标记与运行中 backend 容器
+# **独立双读**。已部署声明 previous_compatible=false 且目标旧于已部署 ⇒ 在
 # 任何 mutation(含 [2/6] 镜像拉取)之前 fail-closed。此守卫独立于 evaluator
 # (evaluator 随各自镜像冻结;经历史 ref dispatch 调用旧 workflow 时,目标
 # 镜像的 evaluator 不含本语义 —— 本守卫在宿主侧补上该旁路面)。
+# A 修正(通道适配复审):双源**冲突检测** —— 标记与运行中容器同时可读且
+# 版本不一致 ⇒ 部署状态真值自相矛盾(标记过期/容器被手工更换/DR 换栈),
+# 守卫无法证明任何一侧可信 ⇒ 零 rollout fail-closed,交操作员对账
+# (对账 = 使容器与标记一致,或删除过期标记后重跑;绝不静默择一)。
 DEPLOYED_VERSION_ARGS=()
 MARKER_FILE="$(dirname "$0")/.deployed-release.json"
-DEPLOYED_VERSION=""
-DEPLOYED_PREV_COMPAT=""
+MARKER_VERSION=""
+MARKER_PREV_COMPAT=""
 if [ -f "$MARKER_FILE" ]; then
-    DEPLOYED_VERSION="$(python3 -c 'import json,sys
+    MARKER_VERSION="$(python3 -c 'import json,sys
 try: print(str(json.load(open(sys.argv[1])).get("version") or ""))
 except Exception: print("")' "$MARKER_FILE" 2>/dev/null || true)"
-    DEPLOYED_PREV_COMPAT="$(python3 -c 'import json,sys
+    MARKER_PREV_COMPAT="$(python3 -c 'import json,sys
 try: m=json.load(open(sys.argv[1])); print("true" if m.get("previous_compatible", True) else "false")
 except Exception: print("")' "$MARKER_FILE" 2>/dev/null || true)"
 fi
-if [ -z "$DEPLOYED_VERSION" ]; then
-    BACKEND_CID="$(docker compose -f "$COMPOSE_FILE" ps -q backend 2>/dev/null || true)"
-    if [ -n "$BACKEND_CID" ]; then
-        DEPLOYED_VERSION="$(docker exec "$BACKEND_CID" cat /app/RELEASE.json 2>/dev/null \
-            | python3 -c 'import json,sys
+CONTAINER_VERSION=""
+CONTAINER_PREV_COMPAT=""
+BACKEND_CID="$(docker compose -f "$COMPOSE_FILE" ps -q backend 2>/dev/null || true)"
+if [ -n "$BACKEND_CID" ]; then
+    CONTAINER_VERSION="$(docker exec "$BACKEND_CID" cat /app/RELEASE.json 2>/dev/null \
+        | python3 -c 'import json,sys
 try: print(str(json.load(sys.stdin).get("version") or ""))
 except Exception: print("")' 2>/dev/null || true)"
-        DEPLOYED_PREV_COMPAT="$(docker exec "$BACKEND_CID" cat /app/deploy/prod/compatibility.json 2>/dev/null \
-            | python3 -c 'import json,sys
+    CONTAINER_PREV_COMPAT="$(docker exec "$BACKEND_CID" cat /app/deploy/prod/compatibility.json 2>/dev/null \
+        | python3 -c 'import json,sys
 try: m=json.load(sys.stdin); print("true" if m.get("rollback",{}).get("previous_compatible", True) else "false")
 except Exception: print("")' 2>/dev/null || true)"
-    fi
+fi
+# 双源冲突检测(先于一切择源与 mutation;两源均可读且版本不等 ⇒ fail-closed)
+if [ -n "$MARKER_VERSION" ] && [ -n "$CONTAINER_VERSION" ] \
+   && [ "$MARKER_VERSION" != "$CONTAINER_VERSION" ]; then
+    echo "❌ deployed-version 回滚守卫:部署状态双源冲突 ——" >&2
+    echo "   宿主标记 $MARKER_FILE version=$MARKER_VERSION" >&2
+    echo "   运行中 backend 容器 version=$CONTAINER_VERSION" >&2
+    echo "   两事实源互相矛盾(标记过期/容器被非通道方式更换/DR 换栈),守卫无法" >&2
+    echo "   证明任何一侧可信 ⇒ 零 rollout fail-closed。对账后再部署:使运行容器" >&2
+    echo "   与标记一致,或经核验后删除过期标记重跑(绝不静默择一继续)。" >&2
+    exit 1
+fi
+# 择源(无冲突):标记优先;容器回退;双缺 ⇒ bootstrap 告警(诚实披露)
+DEPLOYED_VERSION=""
+DEPLOYED_PREV_COMPAT=""
+if [ -n "$MARKER_VERSION" ]; then
+    DEPLOYED_VERSION="$MARKER_VERSION"
+    DEPLOYED_PREV_COMPAT="$MARKER_PREV_COMPAT"
+elif [ -n "$CONTAINER_VERSION" ]; then
+    DEPLOYED_VERSION="$CONTAINER_VERSION"
+    DEPLOYED_PREV_COMPAT="$CONTAINER_PREV_COMPAT"
 fi
 askai_version_lt() {  # $1=candidate $2=deployed → rc0 当 candidate < deployed(可解析时)
     [ "$(python3 -c 'import re,sys

@@ -602,6 +602,53 @@ def test_p05c_older_target_refused_by_host_guard(sandbox):
     assert "deployed-version 回滚守卫" in out and "零 rollout" in out
 
 
+def test_p05d_marker_container_conflict_fails_closed(sandbox):
+    """P-05d(通道复审修正):宿主部署标记与运行中 backend 容器版本互相矛盾
+    ⇒ [1.3/6] 守卫零 rollout fail-closed(绝不静默择一继续)——标记过期/
+    容器被非通道方式更换/DR 换栈都属于部署状态真值自相矛盾。"""
+    env = sandbox.base_env()
+    env["TSL_COMPAT_INCOMPATIBLE"] = "1"
+    env["TSL_DEPLOYED_VERSION"] = "1.0.0"   # 容器事实(docker exec shim)
+    # 宿主标记故意写成另一个版本(= 标记过期/容器被手工更换的矛盾形态)
+    (sandbox.prod / ".deployed-release.json").write_text(json.dumps({
+        "tag": "v9.9.9", "version": "9.9.9",
+        "git_sha": "c" * 40, "previous_compatible": False,
+        "updated_at": "2026-10-22T00:00:00Z",
+    }), encoding="utf-8")
+    (sandbox.prod / "update.sh").write_text("#!/bin/bash\necho old\n")
+    os.chmod(sandbox.prod / "update.sh", 0o750)
+    r_prov = sandbox.run_step("provision_host_script", env)
+    assert r_prov.returncode == 0
+    r_dep = sandbox.run_step("deploy", env)
+    assert r_dep.returncode != 0, "双源冲突必须 fail-closed"
+    out = sandbox.remote_out.read_text(encoding="utf-8")
+    assert "部署状态双源冲突" in out
+    assert "9.9.9" in out and "1.0.0" in out, "冲突两值都必须可见(可对账)"
+    assert "部署完成" not in out and "up -d backend" not in out, "零 rollout"
+
+
+def test_p05e_marker_container_consistent_proceeds(sandbox):
+    """P-05e:标记与容器一致 ⇒ 无冲突,守卫按既有语义放行(择源不变)。"""
+    env = sandbox.base_env()
+    env["TSL_COMPAT_INCOMPATIBLE"] = "1"
+    env["TSL_DEPLOYED_VERSION"] = "1.0.0"   # 容器事实 = 目标同版本(重部署)
+    (sandbox.prod / ".deployed-release.json").write_text(json.dumps({
+        "tag": TAG, "version": "1.0.0",
+        "git_sha": "c" * 40, "previous_compatible": False,
+        "updated_at": "2026-10-22T00:00:00Z",
+    }), encoding="utf-8")
+    (sandbox.prod / "update.sh").write_text("#!/bin/bash\necho old\n")
+    os.chmod(sandbox.prod / "update.sh", 0o750)
+    r_prov = sandbox.run_step("provision_host_script", env)
+    assert r_prov.returncode == 0
+    r_dep = sandbox.run_step("deploy", env)
+    assert r_dep.returncode == 0, r_dep.stderr
+    out = sandbox.remote_out.read_text(encoding="utf-8")
+    assert "部署状态双源冲突" not in out
+    assert "deployed-version 回滚守卫" in out
+    assert "=== ask-ai 部署:" in out
+
+
 def test_p06_post_provision_drift_detected_by_locked_selfverify(sandbox):
     """P-06(R6v3 阻塞 3):provision 之后、部署之前宿主脚本被篡改 ⇒
     update.sh【锁内自验】([1.2/6],任何 rollout mutation 前)拒绝,
