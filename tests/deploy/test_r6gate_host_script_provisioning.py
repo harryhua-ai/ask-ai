@@ -228,6 +228,7 @@ class Sandbox:
             '          printf \'{"version":1,"rollback":{"previous_compatible":true}}\'\n'
             '        fi ;;\n'
             '      *)\n'
+            '        if [ "${TSL_DEPLOYED_UNREADABLE:-}" = "1" ]; then exit 1; fi\n'
             '        printf \'{"version":"%s","git_sha":"%s"}\' \\\n'
             '          "${TSL_DEPLOYED_VERSION:-${TSL_FAKE_VERSION:-1.0.0}}" "${TSL_FAKE_SHA:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" ;;\n'
             "    esac ;;\n"
@@ -647,6 +648,78 @@ def test_p05e_marker_container_consistent_proceeds(sandbox):
     assert "部署状态双源冲突" not in out
     assert "deployed-version 回滚守卫" in out
     assert "=== ask-ai 部署:" in out
+
+
+def test_p05f_same_version_compat_contradiction_fails_closed(sandbox):
+    """P-05f(A 评审负例 1):标记与运行容器对**同一版本**给出相反的
+    previous_compatible 声明(true vs false)⇒ [1.3/6] 绝不静默取较宽松
+    一侧,零 rollout fail-closed(A REVIEW 42f0eed0 残余 1)。"""
+    env = sandbox.base_env()
+    env["TSL_COMPAT_INCOMPATIBLE"] = "1"      # 运行容器兼容声明 = false
+    env["TSL_DEPLOYED_VERSION"] = "9.9.9"     # 双源同版本
+    (sandbox.prod / ".deployed-release.json").write_text(json.dumps({
+        "tag": "v9.9.9", "version": "9.9.9",
+        "git_sha": "c" * 40, "previous_compatible": True,
+        "updated_at": "2026-10-22T00:00:00Z",
+    }), encoding="utf-8")
+    (sandbox.prod / "update.sh").write_text("#!/bin/bash\necho old\n")
+    os.chmod(sandbox.prod / "update.sh", 0o750)
+    r_prov = sandbox.run_step("provision_host_script", env)
+    assert r_prov.returncode == 0
+    r_dep = sandbox.run_step("deploy", env)
+    assert r_dep.returncode != 0, "同版本兼容性矛盾必须 fail-closed"
+    out = sandbox.remote_out.read_text(encoding="utf-8")
+    assert "兼容性声明互相矛盾" in out
+    assert "previous_compatible=True" in out.replace("true", "True") or "true" in out
+    assert "部署完成" not in out, "零 rollout"
+
+
+def test_p05g_live_unverifiable_older_target_refused(sandbox):
+    """P-05g(A 评审负例 2):运行中 backend 存在但版本/兼容信息不可读取,
+    且宿主标记所记版本新于目标 ⇒ 无法排除运行实例实为更新且不兼容的发布,
+    不得按标记的兼容声明放行旧目标(零 rollout fail-closed;
+    A REVIEW 42f0eed0 残余 2)。"""
+    env = sandbox.base_env()
+    env["TSL_COMPAT_INCOMPATIBLE"] = "1"
+    env["TSL_DEPLOYED_UNREADABLE"] = "1"      # 运行实例存在但关键读取失败
+    env["DEPLOY_TAG"] = "v0.9.9"              # 目标旧于标记所记 1.0.0
+    (sandbox.prod / ".deployed-release.json").write_text(json.dumps({
+        "tag": "v1.0.0", "version": "1.0.0",
+        "git_sha": "c" * 40, "previous_compatible": True,
+        "updated_at": "2026-10-22T00:00:00Z",
+    }), encoding="utf-8")
+    (sandbox.prod / "update.sh").write_text("#!/bin/bash\necho old\n")
+    os.chmod(sandbox.prod / "update.sh", 0o750)
+    r_prov = sandbox.run_step("provision_host_script", env)
+    assert r_prov.returncode == 0
+    r_dep = sandbox.run_step("deploy", env)
+    assert r_dep.returncode != 0, "无法排除不安全降级必须 fail-closed"
+    out = sandbox.remote_out.read_text(encoding="utf-8")
+    assert "不可验证" in out and "无法排除" in out
+    assert "部署完成" not in out, "零 rollout"
+
+
+def test_p05h_live_unverifiable_forward_redeploy_proceeds(sandbox):
+    """P-05h(边界保留):运行实例不可验证但目标**不旧于**标记所记版本
+    ⇒ 前向/同版本重部署按既有语义放行(告警不阻断;A 评审:正常前向发布
+    与同版本安全重部署仍按既有语义处理)。"""
+    env = sandbox.base_env()
+    env["TSL_COMPAT_INCOMPATIBLE"] = "1"
+    env["TSL_DEPLOYED_UNREADABLE"] = "1"      # 运行实例不可验证
+    env["DEPLOY_TAG"] = "v1.0.0"              # 等于标记所记版本(重部署)
+    (sandbox.prod / ".deployed-release.json").write_text(json.dumps({
+        "tag": "v1.0.0", "version": "1.0.0",
+        "git_sha": "c" * 40, "previous_compatible": False,
+        "updated_at": "2026-10-22T00:00:00Z",
+    }), encoding="utf-8")
+    (sandbox.prod / "update.sh").write_text("#!/bin/bash\necho old\n")
+    os.chmod(sandbox.prod / "update.sh", 0o750)
+    r_prov = sandbox.run_step("provision_host_script", env)
+    assert r_prov.returncode == 0
+    r_dep = sandbox.run_step("deploy", env)
+    assert r_dep.returncode == 0, r_dep.stderr
+    out = sandbox.remote_out.read_text(encoding="utf-8")
+    assert "前向/重部署" in out
 
 
 def test_p06_post_provision_drift_detected_by_locked_selfverify(sandbox):

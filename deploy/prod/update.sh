@@ -174,14 +174,20 @@ fi
 
 # ---------- [1.3/6] deployed-version 回滚守卫(ASKAI_DEPLOYED_VERSION_GUARD_V1) ----------
 # 见头注「不安全旧版回滚」节。已部署事实源:宿主标记与运行中 backend 容器
-# **独立双读**。已部署声明 previous_compatible=false 且目标旧于已部署 ⇒ 在
-# 任何 mutation(含 [2/6] 镜像拉取)之前 fail-closed。此守卫独立于 evaluator
-# (evaluator 随各自镜像冻结;经历史 ref dispatch 调用旧 workflow 时,目标
-# 镜像的 evaluator 不含本语义 —— 本守卫在宿主侧补上该旁路面)。
-# A 修正(通道适配复审):双源**冲突检测** —— 标记与运行中容器同时可读且
-# 版本不一致 ⇒ 部署状态真值自相矛盾(标记过期/容器被手工更换/DR 换栈),
-# 守卫无法证明任何一侧可信 ⇒ 零 rollout fail-closed,交操作员对账
-# (对账 = 使容器与标记一致,或删除过期标记后重跑;绝不静默择一)。
+# **独立双读**。此守卫独立于 evaluator(evaluator 随各自镜像冻结;经历史 ref
+# dispatch 调用旧 workflow 时,目标镜像的 evaluator 不含本语义 —— 本守卫在
+# 宿主侧补上该旁路面)。
+# 语义(A PR #188 复审钉扎,不安全旧版回退的失败即止):
+#   1) 双源冲突 ⇒ 零 rollout fail-closed:版本不一致;或同版本而
+#      previous_compatible 声明互相矛盾(绝不静默取较宽松一侧);
+#   2) 向旧版本部署时,只有所依赖事实源**显式声明** previous_compatible=true
+#      才放行;声明 false ⇒ 拒绝;声明缺失/不可解析 ⇒ 无法排除不兼容 ⇒ 拒绝
+#      (缺字段绝不默认按兼容处理);
+#   3) 运行中 backend 存在但版本/兼容信息不可验证 ⇒ 不构成 clean bootstrap:
+#      目标旧于标记所记版本 ⇒ 拒绝(无法排除运行实例实为更新且不兼容的发布);
+#      目标不旧于标记 ⇒ 按前向/重部署既有语义放行;
+#   4) 双源皆缺(无标记且无运行容器)⇒ bootstrap 语境,显式告警后继续
+#      (此时宿主无任何已部署 r3 状态,不存在"从其回退"的对象)。
 DEPLOYED_VERSION_ARGS=()
 MARKER_FILE="$(dirname "$0")/.deployed-release.json"
 MARKER_VERSION=""
@@ -190,8 +196,11 @@ if [ -f "$MARKER_FILE" ]; then
     MARKER_VERSION="$(python3 -c 'import json,sys
 try: print(str(json.load(open(sys.argv[1])).get("version") or ""))
 except Exception: print("")' "$MARKER_FILE" 2>/dev/null || true)"
+    # 兼容声明严格解析:缺字段/非布尔 ⇒ 空串(未知),绝不默认判兼容
     MARKER_PREV_COMPAT="$(python3 -c 'import json,sys
-try: m=json.load(open(sys.argv[1])); print("true" if m.get("previous_compatible", True) else "false")
+try:
+    v=json.load(open(sys.argv[1])).get("previous_compatible")
+    print("true" if v is True else "false" if v is False else "")
 except Exception: print("")' "$MARKER_FILE" 2>/dev/null || true)"
 fi
 CONTAINER_VERSION=""
@@ -204,21 +213,36 @@ try: print(str(json.load(sys.stdin).get("version") or ""))
 except Exception: print("")' 2>/dev/null || true)"
     CONTAINER_PREV_COMPAT="$(docker exec "$BACKEND_CID" cat /app/deploy/prod/compatibility.json 2>/dev/null \
         | python3 -c 'import json,sys
-try: m=json.load(sys.stdin); print("true" if m.get("rollback",{}).get("previous_compatible", True) else "false")
+try:
+    v=json.load(sys.stdin).get("rollback",{}).get("previous_compatible")
+    print("true" if v is True else "false" if v is False else "")
 except Exception: print("")' 2>/dev/null || true)"
 fi
-# 双源冲突检测(先于一切择源与 mutation;两源均可读且版本不等 ⇒ fail-closed)
-if [ -n "$MARKER_VERSION" ] && [ -n "$CONTAINER_VERSION" ] \
-   && [ "$MARKER_VERSION" != "$CONTAINER_VERSION" ]; then
-    echo "❌ deployed-version 回滚守卫:部署状态双源冲突 ——" >&2
-    echo "   宿主标记 $MARKER_FILE version=$MARKER_VERSION" >&2
-    echo "   运行中 backend 容器 version=$CONTAINER_VERSION" >&2
-    echo "   两事实源互相矛盾(标记过期/容器被非通道方式更换/DR 换栈),守卫无法" >&2
-    echo "   证明任何一侧可信 ⇒ 零 rollout fail-closed。对账后再部署:使运行容器" >&2
-    echo "   与标记一致,或经核验后删除过期标记重跑(绝不静默择一继续)。" >&2
-    exit 1
+LIVE_UNVERIFIABLE=0
+if [ -n "$BACKEND_CID" ] && [ -z "$CONTAINER_VERSION" ]; then
+    LIVE_UNVERIFIABLE=1  # 运行实例存在但关键事实不可读(非 clean bootstrap)
 fi
-# 择源(无冲突):标记优先;容器回退;双缺 ⇒ bootstrap 告警(诚实披露)
+# 1) 双源冲突检测(先于一切择源与 mutation)
+if [ -n "$MARKER_VERSION" ] && [ -n "$CONTAINER_VERSION" ]; then
+    if [ "$MARKER_VERSION" != "$CONTAINER_VERSION" ]; then
+        echo "❌ deployed-version 回滚守卫:部署状态双源冲突 ——" >&2
+        echo "   宿主标记 $MARKER_FILE version=$MARKER_VERSION" >&2
+        echo "   运行中 backend 容器 version=$CONTAINER_VERSION" >&2
+        echo "   两事实源互相矛盾(标记过期/容器被非通道方式更换/DR 换栈),守卫无法" >&2
+        echo "   证明任何一侧可信 ⇒ 零 rollout fail-closed。对账后再部署:使运行容器" >&2
+        echo "   与标记一致,或经核验后删除过期标记重跑(绝不静默择一继续)。" >&2
+        exit 1
+    fi
+    if [ -n "$MARKER_PREV_COMPAT" ] && [ -n "$CONTAINER_PREV_COMPAT" ] \
+       && [ "$MARKER_PREV_COMPAT" != "$CONTAINER_PREV_COMPAT" ]; then
+        echo "❌ deployed-version 回滚守卫:同版本($MARKER_VERSION)兼容性声明互相矛盾 ——" >&2
+        echo "   宿主标记 previous_compatible=$MARKER_PREV_COMPAT / 运行容器=$CONTAINER_PREV_COMPAT" >&2
+        echo "   两事实源对同一版本给出相反回滚语义,至少一侧不可信 ⇒ 零 rollout" >&2
+        echo "   fail-closed(绝不静默取较宽松一侧)。对账后再部署。" >&2
+        exit 1
+    fi
+fi
+# 择源(无冲突):标记优先;容器回退;双缺 ⇒ bootstrap(见 4)
 DEPLOYED_VERSION=""
 DEPLOYED_PREV_COMPAT=""
 if [ -n "$MARKER_VERSION" ]; then
@@ -236,18 +260,33 @@ def v(s):
 a,b=v(sys.argv[1]),v(sys.argv[2])
 print("lt" if (a is not None and b is not None and a<b) else "no")' "$1" "$2")" = "lt" ]
 }
-if [ -n "$DEPLOYED_VERSION" ] && [ "$DEPLOYED_PREV_COMPAT" = "false" ]; then
+if [ -n "$DEPLOYED_VERSION" ]; then
     if askai_version_lt "$EXPECTED_VERSION" "$DEPLOYED_VERSION"; then
-        echo "❌ deployed-version 回滚守卫:目标 $TAG 旧于当前已部署 $DEPLOYED_VERSION," >&2
-        echo "   而已部署发布声明 previous_compatible=false ⇒ 普通 previous-tag 回滚不适用" >&2
-        echo "   (旧上传来源默认可见性语义可能重暴露已清理/禁止公开的数据;零 rollout fail-closed)" >&2
-        exit 1
+        # 向旧版本部署:必须由所依赖事实源显式证明回退兼容,否则拒绝
+        if [ "$DEPLOYED_PREV_COMPAT" = "true" ] && [ "$LIVE_UNVERIFIABLE" != "1" ]; then
+            echo "  ✅ deployed-version 回滚守卫:已部署 $DEPLOYED_VERSION 显式声明回退兼容,普通 previous-tag 回滚照常(先于任何 mutation)"
+            DEPLOYED_VERSION_ARGS=(--deployed-release-version "$DEPLOYED_VERSION")
+        else
+            if [ "$DEPLOYED_PREV_COMPAT" = "false" ]; then
+                echo "❌ deployed-version 回滚守卫:目标 $TAG 旧于当前已部署 $DEPLOYED_VERSION," >&2
+                echo "   而已部署发布声明 previous_compatible=false ⇒ 普通 previous-tag 回滚不适用" >&2
+                echo "   (旧上传来源默认可见性语义可能重暴露已清理/禁止公开的数据)" >&2
+            elif [ "$LIVE_UNVERIFIABLE" = "1" ]; then
+                echo "❌ deployed-version 回滚守卫:目标 $TAG 旧于宿主标记所记 $DEPLOYED_VERSION," >&2
+                echo "   但运行中 backend 的版本/兼容信息不可验证(实例存在、读取失败)——" >&2
+                echo "   无法排除运行实例实为更新且不兼容的发布 ⇒ 不能按标记的兼容声明放行" >&2
+            else
+                echo "❌ deployed-version 回滚守卫:目标 $TAG 旧于当前已部署 $DEPLOYED_VERSION," >&2
+                echo "   且其 previous_compatible 声明缺失/不可解析 ⇒ 无法排除不兼容" >&2
+            fi
+            echo "   零 rollout fail-closed(先于任何 mutation)。" >&2
+            exit 1
+        fi
+    else
+        echo "  ✅ deployed-version 回滚守卫:目标 $TAG 不旧于已部署 $DEPLOYED_VERSION(前向/重部署;先于任何 mutation)"
+        [ "$LIVE_UNVERIFIABLE" = "1" ] && echo "  ⚠️ 运行中 backend 事实不可验证;前向部署由目标发布自身 preflight 门承担" >&2
+        DEPLOYED_VERSION_ARGS=(--deployed-release-version "$DEPLOYED_VERSION")
     fi
-    echo "  ✅ deployed-version 回滚守卫:目标 $TAG 不旧于已部署 $DEPLOYED_VERSION(先于任何 mutation)"
-    DEPLOYED_VERSION_ARGS=(--deployed-release-version "$DEPLOYED_VERSION")
-elif [ -n "$DEPLOYED_VERSION" ]; then
-    echo "  ✅ deployed-version 回滚守卫:已部署 $DEPLOYED_VERSION 声明回退兼容,旧版回滚语义不变"
-    DEPLOYED_VERSION_ARGS=(--deployed-release-version "$DEPLOYED_VERSION")
 else
     echo "  ⚠️ deployed-version 回滚守卫:已部署版本不可证明(无宿主标记且无运行中" >&2
     echo "     backend)—— 仅 bootstrap 语境可达(宿主无任何已部署 r3 状态);显式告警后继续" >&2
