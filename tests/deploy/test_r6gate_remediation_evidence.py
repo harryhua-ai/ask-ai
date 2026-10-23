@@ -708,7 +708,28 @@ def test_workflow_wiring_v3():
     assert "deploy/prod/production-identity.json" in text
     assert "deploy/prod/uploads-unknown-guard.tsv" in text
     assert '"$H_ID:/tmp/askai-production-identity.json"' in text
-    assert '"$H_GUARD:/tmp/askai-uploads-unknown-guard.tsv"' in text
+    assert '"$H_GUARD:$GUARD_TARGET"' in text, '守卫完整性核对绑定身份声明路径'
+    # A 评审 D1/D2 修正后的送达/清理不变量(2026-10-23):fd 链式解析
+    # (dir_fd 定位,不沿路径字符串)+ inode 身份回收 + 检查式清理硬门。
+    for token in (
+        'GUARD_OWN',
+        'GUARD_IDENT',
+        'guard_release',
+        '__G3_CREATED__',
+        '__G3_PARENT_SYMLINK__',
+        '__G3_PARENT_UNSTABLE__',
+        '__G3_SYMLINK__',
+        '__G3_RACE_CONFLICT__',
+        '__G3_PARTIAL_HASH__',
+        '__G3_REL_IDENTITY_MISMATCH__',
+        '__G3_REL_OK__',
+        'O_NOFOLLOW',
+        'dir_fd=',
+        '.askai-guard-new-',
+        'trap cleanup EXIT',
+    ):
+        assert token in text, f'D1/D2 送达-清理标记缺失: {token}'
+    assert 'cat > $GUARD_TARGET' not in text, '旧式直达写入必须移除(D1 竞态面)'
     assert "--deployed-release-version" in text
     assert "已部署版本不可读" in text
     assert "--verify-upload-isolation" in text
