@@ -255,22 +255,63 @@ jobs:
           EVAL_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-preflight.XXXXXXXX")"
           ID_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-identity.XXXXXXXX")"
           GUARD_TMP="$(mktemp "${TMPDIR:-/tmp}/askai-uploads-guard.XXXXXXXX")"
-          # R2(A 评审 2026-10-22):容器内守卫工件精确所有权清理 ——
-          # ① 自有模式临时件(.askai-guard-new-*;仅普通文件,绝不触碰其它
-          #   文件/守卫本体);
-          # ② 仅当目标为「本次发布」(GUARD_OWN=1)且内容仍与冻结提取件逐字节
-          #   一致时才移除目标(被并发替换 ⇒ 不删非本次文件;复用/冲突场景
-          #   的既有文件绝不删除)。送达发生前 GUARD_TARGET 为空 ⇒ 无操作。
-          guard_container_cleanup() {
-            [ -n "${GUARD_TARGET:-}" ] || return 0
-            $COMPOSE exec -T backend sh -c 'D="$1"; for s in "$D"/.askai-guard-new-*; do [ -e "$s" ] && [ ! -L "$s" ] && rm -f "$s"; done; true' guard "$(dirname "$GUARD_TARGET")" 2>/dev/null || true
-            if [ "${GUARD_OWN:-0}" = "1" ]; then
-              $COMPOSE exec -T backend sh -c 'T="$1"; H="$2"; G="$(sha256sum "$T" 2>/dev/null | cut -d" " -f1)"; [ "$G" = "$H" ] && rm -f "$T" || true' guard "$GUARD_TARGET" "${H_GUARD:-}" 2>/dev/null || true
-            fi
+          # D2(A 评审 2026-10-23):精确所有权清理 —— 删除仅当对象清理时仍指向
+          # 本次发布记录的 inode(创建时捕获 dev:ino;清理经 fd 链式定位 +
+          # O_NOFOLLOW 打开 + 身份匹配)。同内容不同 inode/路径状态不可信 ⇒
+          # 拒删;可验证清理失败 ⇒ 无 PREFLIGHT PASS(绝不 || true 吞掉);
+          # 绝不按名称模式清理来源不明的陈旧文件(GUARD_IDENT 为空 = 本轮
+          # 未送达 ⇒ 对容器零删除操作)。
+          guard_release() {
+            [ -n "${GUARD_IDENT:-}" ] || return 0
+            $COMPOSE exec -T backend python3 -c 'exec(__import__("textwrap").dedent("""
+              # askai-guard-release-v2
+              import os, sys, stat
+              T = sys.argv[1]; IDENT = sys.argv[2]
+              D = os.path.dirname(T); NAME = os.path.basename(T)
+              want_dev, want_ino = map(int, IDENT.split(":"))
+              def xclose(fd):
+                  try: os.close(fd)
+                  except OSError: pass
+              def walk_to_parent():
+                  fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+                  try:
+                      for comp in [c for c in D.split("/") if c]:
+                          nfd = os.open(comp, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                          xclose(fd); fd = nfd
+                      return fd
+                  except OSError:
+                      xclose(fd); return None
+              fd = walk_to_parent()
+              if fd is None:
+                  print("__G3_REL_DIR_UNSTABLE__"); sys.exit(1)
+              try:
+                  f = os.open(NAME, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+              except FileNotFoundError:
+                  xclose(fd); print("__G3_REL_ABSENT__"); sys.exit(0)
+              except OSError:
+                  xclose(fd); print("__G3_REL_REFUSED__"); sys.exit(1)
+              try:
+                  s = os.fstat(f)
+              finally:
+                  xclose(f)
+              if not stat.S_ISREG(s.st_mode) or s.st_dev != want_dev or s.st_ino != want_ino:
+                  xclose(fd); print("__G3_REL_IDENTITY_MISMATCH__"); sys.exit(1)
+              try:
+                  os.unlink(NAME, dir_fd=fd)
+              except OSError:
+                  xclose(fd); print("__G3_REL_UNLINK_FAILED__"); sys.exit(1)
+              xclose(fd); print("__G3_REL_OK__"); sys.exit(0)
+              """))' "$GUARD_TARGET" "$GUARD_IDENT" 2>/dev/null
           }
           cleanup() {
             rm -f "$REL_TMP" "$MAN_TMP" "$EVAL_TMP" "$ID_TMP" "$GUARD_TMP"
-            guard_container_cleanup
+            if [ -n "${GUARD_IDENT:-}" ]; then
+              # 失败/中断路径的尽力回收(身份核对在容器内执行);失败如实告警,
+              # 不掩盖原退出状态,也绝不盲删
+              guard_release >/dev/null 2>&1 \
+                || echo "⚠ 本次守卫工件未能按身份回收($GUARD_TARGET)—— 留存待人工核验,绝不盲删" >&2
+              GUARD_IDENT=""
+            fi
           }
           trap cleanup EXIT
           # 1) 拉取冻结镜像;时代判定源 = 镜像内 RELEASE.json 旗标(blocker 3)
@@ -384,73 +425,173 @@ jobs:
             $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-preflight-evaluator.py' < "$EVAL_TMP"
             $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-preflight-manifest.json' < "$MAN_TMP"
             $COMPOSE exec -T backend sh -c 'cat > /tmp/askai-production-identity.json' < "$ID_TMP"
-            # 冻结守卫送达(A 评审 R1/R2 修正 2026-10-22):必须落位身份事实
-            # 声明的绝对路径(GUARD_TARGET),而非任意 /tmp 路径 —— 冻结
-            # evaluator 按声明路径读取。送达在【单次容器内执行】中完成:
-            #   祖先逐级真目录校验 → 自有模式陈旧临时件清扫 → 目标三态 →
-            #   同目录 PID 唯一临时名 noclobber(O_CREAT|O_EXCL)写入 →
-            #   容器侧哈希核对 → ln 硬链接原子发布。
-            # 竞态面收敛:检查与打开之间无跨 exec 往返窗口;末级绝不跟随
-            # symlink、绝不打开既有 inode;ln 发布 create-排他,失败 ⇒ 目标
-            # 被并发创建/替换,复核内容后裁决。部分写入/哈希不符绝不发布,
-            # 临时件按所有权清理(trap 覆盖异常退出)。
+            # 冻结守卫送达(A 评审 D1/D2 修正 2026-10-23):单次容器内 python
+            # 执行(旧 r2 backend 自带 python3,零新增依赖)——
+            #   fd 链式解析:自 / 逐级 O_NOFOLLOW|O_DIRECTORY openat,父目录
+            #   身份固定为已打开 inode,其后创建/链接/清理全部 dir_fd 相对,
+            #   不再沿路径字符串解析(检查后被替换为 symlink 也无法逃逸);
+            #   双次独立解析 + (dev,ino) 交叉核对,任何检查后替换 ⇒ UNSTABLE
+            #   fail-closed;
+            #   O_EXCL|O_NOFOLLOW 临时创建(绝不打开既有 inode)→ fsync →
+            #   读回哈希核对(部分写入绝不发布)→ linkat 排他原子发布 →
+            #   发布后 inode 复核 → 临时件按身份清理;
+            #   目标身份 ident=dev:ino 随 token 回传宿主,供 D2 精确回收。
             GUARD_OWN=0
-            GUARD_STATUS="$($COMPOSE exec -T backend sh -c '
-              set -eu
-              T="$1"; H="$2"
-              D="$(dirname "$T")"
-              N=".askai-guard-new-$$"
-              trap "rm -f \"$D/$N\" 2>/dev/null || true" 0 1 2 15
-              # R1:父目录链逐级校验 —— 从根到父目录每级必须是真实目录
-              _acc=""; _rest="${D#/}"
-              while [ -n "$_rest" ]; do
-                _seg="${_rest%%/*}"
-                if [ "$_seg" = "$_rest" ]; then _rest=""; else _rest="${_rest#*/}"; fi
-                _acc="$_acc/$_seg"
-                if [ -L "$_acc" ]; then echo __G3_PARENT_SYMLINK__; exit 9; fi
-                if [ ! -d "$_acc" ]; then echo __G3_PARENT_NOT_DIR__; exit 9; fi
-              done
-              # R2:自有模式陈旧临时件清扫(上一轮异常退出残留;模式独有,
-              # 绝不触碰守卫本体/其它文件;非普通文件 ⇒ 拒)
-              for _s in "$D"/.askai-guard-new-*; do
-                [ -e "$_s" ] || continue
-                if [ -L "$_s" ] || [ ! -f "$_s" ]; then echo __G3_STALE_INVALID__; exit 9; fi
-                rm -f "$_s" || { echo __G3_STALE_UNREMOVABLE__; exit 9; }
-              done
-              # 目标三态:末级 symlink ⇒ 逃逸拒;已存在 ⇒ 内容裁决;缺席 ⇒ 受控送达
-              if [ -L "$T" ]; then echo __G3_SYMLINK__; exit 9; fi
-              if [ -e "$T" ]; then
-                _g="$(sha256sum "$T" | cut -d" " -f1)"
-                if [ "$_g" = "$H" ]; then echo __G3_REUSE__; exit 0; fi
-                echo __G3_CONFLICT__; exit 9
-              fi
-              # 受控送达:同目录 PID 唯一临时名 + noclobber —— O_CREAT|O_EXCL,
-              # 末级绝不跟随 symlink/打开既有 inode;stdin = 冻结提取件字节流
-              set -C
-              cat > "$D/$N" || { echo __G3_WRITE_FAIL__; exit 9; }
-              set +C
-              # R2:发布前容器侧哈希核对 —— 部分写入/管道损坏绝不发布
-              _g="$(sha256sum "$D/$N" | cut -d" " -f1)"
-              if [ "$_g" != "$H" ]; then rm -f "$D/$N"; echo __G3_PARTIAL_HASH__; exit 9; fi
-              # R1:ln 硬链接发布 = create-排他(目标存在即 EEXIST,不跟随
-              # symlink);失败 ⇒ 探针后目标被并发创建/替换 —— 复核内容裁决
-              if ln "$D/$N" "$T" 2>/dev/null; then
-                rm -f "$D/$N"
-                echo __G3_CREATED__; exit 0
-              fi
-              _g2=""
-              if [ -f "$T" ] && [ ! -L "$T" ]; then _g2="$(sha256sum "$T" | cut -d" " -f1)"; fi
-              if [ "$_g2" = "$H" ]; then echo __G3_RACE_ALIGNED__; exit 0; fi
-              echo __G3_RACE_CONFLICT__; exit 9
-            ' guard "$GUARD_TARGET" "$H_GUARD" < "$GUARD_TMP" 2>/dev/null || true)"
+            GUARD_IDENT=""
+            GUARD_STATUS="$($COMPOSE exec -T backend python3 -c 'exec(__import__("textwrap").dedent("""
+              # askai-guard-delivery-v2
+              import os, sys, errno, hashlib, stat
+              T = sys.argv[1]; H = sys.argv[2]
+              D = os.path.dirname(T); NAME = os.path.basename(T)
+              PREFIX = ".askai-guard-new-"
+              def die(tok, rc=9):
+                  print(tok); sys.exit(rc)
+              def xclose(fd):
+                  if fd is None: return
+                  try: os.close(fd)
+                  except OSError: pass
+              WALK_ERRNO = [None]
+              def walk_to_parent():
+                  fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+                  try:
+                      for comp in [c for c in D.split("/") if c]:
+                          nfd = os.open(comp, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                          xclose(fd); fd = nfd
+                      return fd
+                  except OSError as exc:
+                      WALK_ERRNO[0] = exc.errno
+                      xclose(fd); return None
+              def parent_fail_tok():
+                  if WALK_ERRNO[0] == errno.ELOOP: return "__G3_PARENT_SYMLINK__"
+                  try:
+                      fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+                      try:
+                          for comp in [c for c in D.split("/") if c]:
+                              try:
+                                  os.readlink(comp, dir_fd=fd)
+                              except OSError:
+                                  pass
+                              else:
+                                  return "__G3_PARENT_SYMLINK__"
+                              nfd = os.open(comp, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                              xclose(fd); fd = nfd
+                      finally:
+                          xclose(fd)
+                  except OSError:
+                      pass
+                  return "__G3_PARENT_NOT_DIR__"
+              fd1 = walk_to_parent()
+              if fd1 is None:
+                  die(parent_fail_tok())
+              st1 = os.fstat(fd1)
+              fd2 = walk_to_parent()
+              if fd2 is None or os.fstat(fd2).st_dev != st1.st_dev or os.fstat(fd2).st_ino != st1.st_ino:
+                  xclose(fd1); xclose(fd2)
+                  die("__G3_PARENT_UNSTABLE__")
+              xclose(fd2)
+              def probe_name(name):
+                  try:
+                      f = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd1)
+                  except FileNotFoundError:
+                      return None
+                  except OSError:
+                      return "link_or_special"
+                  try:
+                      return os.fstat(f)
+                  finally:
+                      xclose(f)
+              def hash_name(name):
+                  f = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd1)
+                  try:
+                      hh = hashlib.sha256(); off = 0
+                      while True:
+                          b = os.pread(f, 65536, off)
+                          if not b: break
+                          hh.update(b); off += len(b)
+                      return hh.hexdigest()
+                  finally:
+                      xclose(f)
+              def unlink_own(name, own):
+                  try:
+                      f = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd1)
+                  except OSError:
+                      return False
+                  try:
+                      s = os.fstat(f)
+                  finally:
+                      xclose(f)
+                  if not stat.S_ISREG(s.st_mode) or s.st_dev != own.st_dev or s.st_ino != own.st_ino:
+                      return False
+                  try:
+                      os.unlink(name, dir_fd=fd1); return True
+                  except OSError:
+                      return False
+              cur = probe_name(NAME)
+              if cur == "link_or_special":
+                  xclose(fd1); die("__G3_SYMLINK__")
+              if cur is not None:
+                  try:
+                      same = (hash_name(NAME) == H)
+                  except OSError:
+                      same = False
+                  xclose(fd1)
+                  if same: die("__G3_REUSE__", 0)
+                  die("__G3_CONFLICT__")
+              TMP = PREFIX + str(os.getpid())
+              try:
+                  tfd = os.open(TMP, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd1)
+              except FileExistsError:
+                  xclose(fd1); die("__G3_TMP_EXISTS__")
+              except OSError:
+                  xclose(fd1); die("__G3_WRITE_FAIL__")
+              tst = os.fstat(tfd)
+              try:
+                  data = sys.stdin.buffer.read()
+                  if os.write(tfd, data) != len(data): raise OSError(errno.EIO, "short write")
+                  os.fsync(tfd)
+              except OSError:
+                  xclose(tfd); unlink_own(TMP, tst); xclose(fd1); die("__G3_WRITE_FAIL__")
+              if hash_name(TMP) != H:
+                  xclose(tfd); unlink_own(TMP, tst); xclose(fd1); die("__G3_PARTIAL_HASH__")
+              try:
+                  os.link(TMP, NAME, src_dir_fd=fd1, dst_dir_fd=fd1)
+              except FileExistsError:
+                  c2 = probe_name(NAME)
+                  if isinstance(c2, os.stat_result) and stat.S_ISREG(c2.st_mode):
+                      try:
+                          same = (hash_name(NAME) == H)
+                      except OSError:
+                          same = False
+                  else:
+                      same = False
+                  xclose(tfd); unlink_own(TMP, tst); xclose(fd1)
+                  if same: die("__G3_RACE_ALIGNED__", 0)
+                  die("__G3_RACE_CONFLICT__")
+              except OSError:
+                  xclose(tfd); unlink_own(TMP, tst); xclose(fd1); die("__G3_WRITE_FAIL__")
+              xclose(tfd)
+              pst = probe_name(NAME)
+              if not (isinstance(pst, os.stat_result) and pst.st_dev == tst.st_dev and pst.st_ino == tst.st_ino):
+                  xclose(fd1); die("__G3_PUBLISH_UNVERIFIED__")
+              if not unlink_own(TMP, tst):
+                  xclose(fd1); die("__G3_TMP_LEFT__")
+              xclose(fd1)
+              print("__G3_CREATED__ ident=%d:%d" % (tst.st_dev, tst.st_ino))
+              sys.exit(0)
+              """))' "$GUARD_TARGET" "$H_GUARD" < "$GUARD_TMP" 2>/dev/null || true)"
             case "$GUARD_STATUS" in
-              __G3_CREATED__)
+              __G3_CREATED__*)
                 GUARD_OWN=1
-                echo "守卫送达:$GUARD_TARGET(本次受控发布;SHA256=$H_GUARD)" ;;
+                GUARD_IDENT="${GUARD_STATUS#__G3_CREATED__ }"
+                GUARD_IDENT="${GUARD_IDENT#ident=}"
+                echo "守卫送达:$GUARD_TARGET(本次受控发布;SHA256=$H_GUARD;身份=$GUARD_IDENT)" ;;
               __G3_REUSE__|__G3_RACE_ALIGNED__)
                 echo "守卫送达:$GUARD_TARGET 已存在且内容与冻结工件一致(SHA256 相同)—— 复用不覆盖" ;;
               __G3_PARENT_SYMLINK__|__G3_PARENT_NOT_DIR__)
                 echo "❌ 守卫送达父目录链含符号链接或非目录($GUARD_STATUS:$GUARD_TARGET;路径逃逸风险)—— 绝不写入,fail-closed" >&2
+                exit 1 ;;
+              __G3_PARENT_UNSTABLE__)
+                echo "❌ 守卫送达父目录身份不稳定($GUARD_STATUS:校验通过后被替换,检查-使用竞态防御)—— 绝不写入,fail-closed" >&2
                 exit 1 ;;
               __G3_SYMLINK__)
                 echo "❌ 守卫送达目标 $GUARD_TARGET 为符号链接(路径逃逸风险)—— 绝不写入,fail-closed" >&2
@@ -459,8 +600,8 @@ jobs:
                 echo "❌ 守卫送达目标 $GUARD_TARGET 已存在但内容与冻结工件不一致($GUARD_STATUS)——" >&2
                 echo "   旧容器内同路径存在不可信未知文件,绝不覆盖/择一 ⇒ fail-closed,交操作员对账" >&2
                 exit 1 ;;
-              __G3_WRITE_FAIL__|__G3_PARTIAL_HASH__|__G3_STALE_UNREMOVABLE__|__G3_STALE_INVALID__)
-                echo "❌ 守卫送达失败($GUARD_STATUS):无法安全创建/部分写入哈希核对不匹配/陈旧临时件异常 —— 临时件已按所有权清理,绝不发布,fail-closed" >&2
+              __G3_WRITE_FAIL__|__G3_PARTIAL_HASH__|__G3_TMP_EXISTS__|__G3_TMP_LEFT__|__G3_PUBLISH_UNVERIFIED__)
+                echo "❌ 守卫送达失败($GUARD_STATUS):无法安全创建/部分写入哈希核对不匹配/发布未复核/临时件身份清理失败 —— 绝不发布,fail-closed" >&2
                 exit 1 ;;
               "")
                 echo "❌ 守卫送达执行失败:$GUARD_TARGET 状态不可判定(容器 exec 失败/异常退出)—— fail-closed" >&2
@@ -484,8 +625,8 @@ jobs:
             if [ "$INTEGRITY_OK" != 1 ]; then
               $COMPOSE exec -T backend rm -f /tmp/askai-preflight-evaluator.py \
                   /tmp/askai-preflight-manifest.json /tmp/askai-production-identity.json || true
-              # R2:精确所有权清理(临时件模式清扫 + 仅本次发布且内容一致才删)
-              guard_container_cleanup
+              # D2:已失败路径 —— 本次已发布守卫的回收经 EXIT trap 按身份
+              # 尽力执行(容器内 fd 定位 + inode 匹配),失败如实告警绝不盲删
               echo "❌ 评估器/manifest/身份事实/上传守卫 内容完整性核验失败 —— 绝不执行,fail-closed 中止" >&2
               exit 1
             fi
@@ -505,13 +646,26 @@ jobs:
                 || CONTAINER_RC=$?
             $COMPOSE exec -T backend rm -f /tmp/askai-preflight-evaluator.py \
                 /tmp/askai-preflight-manifest.json /tmp/askai-production-identity.json || true
-            # R2:精确所有权清理(临时件模式清扫 + 仅本次发布且内容一致才删;
-            # 复用/冲突场景的既有文件绝不删除)
-            guard_container_cleanup
             if [ "$CONTAINER_RC" -ne 0 ]; then
               echo "❌ 生产兼容性 preflight(容器内;数据隔离断言 + 已审核身份事实 + deployed-version 守卫)未通过" >&2
               echo "   —— 部署中止(DB migration / rollout 之前,零生产变更)" >&2
               exit "$CONTAINER_RC"
+            fi
+            # D2:成功路径的守卫回收 = 硬门 —— 身份不可证/被同内容替换/清理失败
+            # 一律非零退出,绝不输出 PREFLIGHT PASS(回收经 fd 链式定位 + inode
+            # 精确匹配;GUARD_OWN=0(复用/竞态对齐)时无删除权,跳过)
+            if [ "$GUARD_OWN" = "1" ]; then
+              REL_OUT="$(guard_release)" || {
+                echo "❌ 本次送达守卫的清理未通过($REL_OUT:身份不可证/已被替换/清理失败)——" >&2
+                echo "   绝不输出 PREFLIGHT PASS,fail-closed(留存工件待人工核验,绝不盲删)" >&2
+                exit 1
+              }
+              case "$REL_OUT" in
+                __G3_REL_OK__|__G3_REL_ABSENT__) GUARD_OWN=0; GUARD_IDENT="" ;;
+                *)
+                  echo "❌ 守卫清理返回未知状态($REL_OUT)—— fail-closed" >&2
+                  exit 1 ;;
+              esac
             fi
             echo "PREFLIGHT PASS:$DEPLOY_TAG(容器内评估;凭据零 SSH 传输;"
             echo "数据隔离断言含已审核身份事实与上传守卫;先于迁移/rollout;零 mutation)"

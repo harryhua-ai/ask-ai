@@ -558,6 +558,11 @@ def _volscan_embedded_script() -> str:
     return embedded
 
 
+FAULT_EXEC_BOOTSTRAP = '#!/usr/bin/env python3\n# D1/D2 沙箱故障注入执行器(A 评审 2026-10-23):原样真实执行被测\n# python -c 代码;注入全部发生在 wrapper 层,被测生产代码零钩子。\n#   TSL_GUARD_WRITE_FAIL   os.write 创建后失败(部分写入后 ENOSPC)\n#   TSL_GUARD_TRUNCATE     os.write 静默截断(写入提前成功结束)\n#   TSL_GUARD_LN_RACE      os.link 发布前目标被并发创建(conflict=异内容 /\n#                           aligned=与冻结工件逐字节一致),link 返回 EEXIST\n#   TSL_D1_SWAP_PARENT     walk_to_parent 首次返回后(trace)父目录被移走,\n#                           原位替换为 symlink(检查-使用竞态注入)\n#   TSL_D2_CLEANUP_FAIL    清理执行失败(容器 exec 层失败模拟)\nimport os, sys, errno\n\nroot, code = sys.argv[1], sys.argv[2]\nargs = sys.argv[3:]\nenv = os.environ\n\nif "# askai-guard-release" in code and env.get("TSL_D2_CLEANUP_FAIL"):\n    print("__G3_REL_UNLINK_FAILED__")\n    sys.exit(1)\n\nreal_write, real_link, real_open = os.write, os.link, os.open\n\nif env.get("TSL_GUARD_WRITE_FAIL"):\n    def fault_write(fd, data):\n        if data:\n            real_write(fd, data[:4])\n        raise OSError(errno.ENOSPC, "injected write failure")\n    os.write = fault_write\nelif env.get("TSL_GUARD_TRUNCATE"):\n    def trunc_write(fd, data):\n        real_write(fd, data[:5])\n        return len(data)\n    os.write = trunc_write\n\nrace = env.get("TSL_GUARD_LN_RACE", "")\nif race in ("conflict", "aligned"):\n    def fault_link(src, dst, **kw):\n        target = next((a for a in args if a.startswith("/")), None)\n        if target is None:\n            raise OSError(errno.EINVAL, "no path arg")\n        body = (b"RACE-ATTACKER" if race == "conflict"\n                else env.get("TSL_GUARD_CONTENT", "").encode())\n        fd = real_open(os.path.dirname(target), os.O_RDONLY | os.O_DIRECTORY)\n        try:\n            tfd = real_open(".d2-race-file", os.O_WRONLY | os.O_CREAT | os.O_TRUNC,\n                            0o600, dir_fd=fd)\n            try:\n                real_write(tfd, body)\n            finally:\n                os.close(tfd)\n            real_link(".d2-race-file", os.path.basename(target),\n                      src_dir_fd=fd, dst_dir_fd=fd)\n        finally:\n            os.close(fd)\n        raise FileExistsError(errno.EEXIST, "injected publish race")\n    os.link = fault_link\n\nif env.get("TSL_D1_SWAP_PARENT"):\n    def tracer(frame, event, arg):\n        if event == "return" and frame.f_code.co_name == "walk_to_parent":\n            target = next((a for a in args if a.startswith("/")), None)\n            if target:\n                d = os.path.dirname(target)\n                if os.path.isdir(d) and not os.path.islink(d):\n                    os.rename(d, d + ".moved-by-attacker")\n                    os.symlink(d + ".moved-by-attacker", d)\n            sys.settrace(None)\n            return None\n        return tracer\n    sys.settrace(tracer)\n\nsys.argv = ["guard"] + args\ntry:\n    exec(code, {"__name__": "__main__"})\nexcept SystemExit as exc:\n    sys.exit(exc.code)\n'
+
+D2_REPLACE_BOOTSTRAP = '#!/usr/bin/env python3\n# D2 注入:evaluator 运行前,目标守卫被【同内容、不同 inode】文件原子替换\n# (发布后-清理前的身份替换竞态确定性复现)。\nimport os, sys\nroot = sys.argv[1]\nd = os.path.join(root, "app", "deploy", "prod")\nbody = os.environ.get("TSL_GUARD_CONTENT", "").encode()\nfd = os.open(d, os.O_RDONLY | os.O_DIRECTORY)\ntry:\n    tfd = os.open(".d2-replace-tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC,\n                  0o600, dir_fd=fd)\n    try:\n        os.write(tfd, body)\n    finally:\n        os.close(tfd)\n    os.rename(".d2-replace-tmp", "uploads-unknown-guard.tsv",\n              src_dir_fd=fd, dst_dir_fd=fd)\nfinally:\n    os.close(fd)\nprint("[d2-inject] target replaced: same content, new inode", file=sys.stderr)\n'
+
+
 REAL_EVAL_BOOTSTRAP = '''#!/usr/bin/env python3
 # A 评审 R3 沙箱引导器:冻结 evaluator 真实执行(容器命名空间机械翻译)。
 # 只做路径映射,内容零改动:/tmp 工件 → 容器根内工作流真实送达的文件;
@@ -656,7 +661,11 @@ class ControlPlaneSandbox:
             REAL_EVAL_BOOTSTRAP,
             encoding="utf-8",
         )
-        for shim in ("psql", "askai-real-eval"):
+        (self.bin / "askai-fault-exec").write_text(
+            FAULT_EXEC_BOOTSTRAP, encoding="utf-8")
+        (self.bin / "askai-d2-replace").write_text(
+            D2_REPLACE_BOOTSTRAP, encoding="utf-8")
+        for shim in ("psql", "askai-real-eval", "askai-fault-exec", "askai-d2-replace"):
             (self.bin / shim).chmod(0o755)
 
     def _write_shims(self) -> None:
@@ -747,30 +756,6 @@ class ControlPlaneSandbox:
             '            else\n'
             '              exit 1\n'
             '            fi ;;\n'
-            '          *"set -eu"*|T=*|D=*)\n'
-            '            # A 评审 R1/R2/R3(2026-10-22):守卫送达/所有权清理/临时件\n'
-            '            # 清扫脚本原样真实执行 —— 容器绝对路径(位置参数)机械映射到\n'
-            '            # 沙箱容器根;故障注入以 prelude 前置进脚本文本(部分写入/\n'
-            '            # 静默截断/ln 发布竞态),非 rc 代答\n'
-            '            sargs=()\n'
-            '            for a in "${cmd[@]:4}"; do\n'
-            '              case "$a" in /*) sargs+=("$TSL_CONTAINER_ROOT$a") ;; *) sargs+=("$a") ;; esac\n'
-            '            done\n'
-            '            pre=""\n'
-            '            if [ -n "${TSL_GUARD_WRITE_FAIL:-}" ]; then\n'
-            '              pre="cat() { head -c 4; return 1; }; "\n'
-            '            elif [ -n "${TSL_GUARD_TRUNCATE:-}" ]; then\n'
-            '              pre="cat() { head -c 5; return 0; }; "\n'
-            '            fi\n'
-            '            _t="${sargs[0]}"\n'
-            '            if [ "${TSL_GUARD_LN_RACE:-}" = "conflict" ]; then\n'
-            '              printf -v pre \'%sln() { printf %s > "%s"; return 1; }; \' "$pre" RACE-ATTACKER "$_t"\n'
-            '            elif [ "${TSL_GUARD_LN_RACE:-}" = "aligned" ]; then\n'
-            '              printf -v pre \'%sln() { printf %%s "$TSL_GUARD_CONTENT" > "%s"; return 1; }; \' "$pre" "$_t"\n'
-            '            fi\n'
-            '            bash -c "$pre${cmd[2]}" guard "${sargs[@]}"\n'
-            '            exit $?\n'
-            '            ;;\n'
             '          *)\n'
             '            echo "fake compose sh: unexpected: ${cmd[2]}" >&2; exit 1 ;;\n'
             '        esac ;;\n'
@@ -780,16 +765,38 @@ class ControlPlaneSandbox:
             '          rm -f "$TSL_CONTAINER_ROOT$p" 2>/dev/null || true\n'
             "        done ;;\n"
             "      python3)\n"
-            '        printf \'%s\\n\' "${cmd[*]}" >> "$TSL_EVAL_ARGV_LOG"\n'
-            '        if [ "${TSL_EVAL_REAL:-0}" = "1" ]; then\n'
-            '          # A 评审 R3:真实执行冻结 evaluator —— 消费沙箱容器根内\n'
-            '          # 工作流真实送达的工件(evaluator/manifest/身份锚/guard TSV);\n'
-            '          # 只读通道替身 = PATH 内 psql(形状回放)+ TSL_WV_URL(fake 1.28)\n'
-            '          export WEAVIATE_URL="${TSL_WV_URL:-}"\n'
-            '          exec "$TSL_FAKEBIN/askai-real-eval" "$TSL_CONTAINER_ROOT" "${cmd[@]:1}"\n'
-            '        fi\n'
-            '        exit "${TSL_EVAL_RC:-0}"\n'
-            "        ;;\n"
+            '        case "${cmd[1]}" in\n'
+            '          -c)\n'
+            '            # A 评审 D1/D2(2026-10-23):守卫送达/清理 python 代码\n'
+            '            # 原样真实执行(容器绝对路径机械映射容器根);确定性故障\n'
+            '            # 注入全部在 wrapper 层(测试侧):os.write 部分写入/静默\n'
+            '            # 截断、os.link 发布竞态、父目录校验后替换(trace)、\n'
+            '            # 清理失败 —— 被测生产代码零钩子\n'
+            '            fargs=("${cmd[@]:3}")\n'
+            '            for i in "${!fargs[@]}"; do\n'
+            '              case "${fargs[$i]}" in /*) fargs[$i]="$TSL_CONTAINER_ROOT${fargs[$i]}" ;; esac\n'
+            '            done\n'
+            '            exec "$TSL_FAKEBIN/askai-fault-exec" "$TSL_CONTAINER_ROOT" "${cmd[2]}" "${fargs[@]}"\n'
+            '            ;;\n'
+            '          /tmp/askai-preflight-evaluator.py)\n'
+            '            printf \'%s\\n\' "${cmd[*]}" >> "$TSL_EVAL_ARGV_LOG"\n'
+            '            if [ "${TSL_D2_REPLACE_TARGET:-}" = "1" ]; then\n'
+            '              "$TSL_FAKEBIN/askai-d2-replace" "$TSL_CONTAINER_ROOT" >&2\n'
+            '            fi\n'
+            '            if [ "${TSL_EVAL_REAL:-0}" = "1" ]; then\n'
+            '              # A 评审 R3:真实执行冻结 evaluator —— 消费沙箱容器根内\n'
+            '              # 工作流真实送达的工件(evaluator/manifest/身份锚/guard TSV);\n'
+            '              # 只读通道替身 = PATH 内 psql(形状回放)+ TSL_WV_URL(fake 1.28)\n'
+            '              export WEAVIATE_URL="${TSL_WV_URL:-}"\n'
+            '              exec "$TSL_FAKEBIN/askai-real-eval" "$TSL_CONTAINER_ROOT" "${cmd[@]:1}"\n'
+            '            fi\n'
+            '            exit "${TSL_EVAL_RC:-0}"\n'
+            '            ;;\n'
+            '          *)\n'
+            '            printf \'%s\\n\' "${cmd[*]}" >> "$TSL_EVAL_ARGV_LOG"\n'
+            '            exit "${TSL_EVAL_RC:-0}"\n'
+            '            ;;\n'
+            '        esac ;;\n'
             "      *)\n"
             '        printf \'%s\\n\' "${cmd[*]}" >> "$TSL_EVAL_ARGV_LOG"\n'
             '        exit "${TSL_EVAL_RC:-0}"\n'
@@ -1195,30 +1202,104 @@ def test_r2_publish_race_aligned_reuses_and_never_deletes(cp_sandbox):
     assert target.read_text(encoding="utf-8") == cp_sandbox.step_env()["TSL_GUARD_CONTENT"]
 
 
-def test_r2_stale_temp_from_killed_run_swept_and_retry_succeeds(cp_sandbox):
-    """A 评审 R2 / AC2(重试):上一轮异常退出残留的自有模式临时件 ⇒
-    下轮送达前严格清扫(仅普通文件)后正常送达;成功后目标按所有权
-    清理,目录零残留。"""
+def test_d2_stale_temp_of_unknown_origin_never_deleted_retry_succeeds(cp_sandbox):
+    """A 评审 D2 / AC2(异常中止后重新执行):上一轮 SIGKILL 残留的来源不明
+    临时件 —— 不按名称模式猜测所有权、绝不盲删;本轮以 PID 唯一新名正常
+    送达,成功后按 inode 身份回收本次对象。陈旧件原样保留(所有权不可证
+    ⇒ 不触碰,交人工核验/受控 BLOCKED,而非静默清理)。"""
     prod = cp_sandbox.container / "app" / "deploy" / "prod"
-    (prod / ".askai-guard-new-999").write_bytes(b"stale-from-sigkill\n")
+    stale = prod / ".askai-guard-new-999"
+    stale.write_bytes(b"stale-from-sigkill\n")
     rc, out, err = cp_sandbox.run_step(cp_sandbox.step_env())
     assert rc == 0, f"{out}\n{err}"
-    assert not _delivered_guard_path(cp_sandbox).exists()
-    assert _stale_temps(cp_sandbox) == [], "陈旧临时件与本次临时件均零残留"
+    assert not _delivered_guard_path(cp_sandbox).exists(), "本次对象已按身份回收"
+    assert stale.read_bytes() == b"stale-from-sigkill\n", "来源不明陈旧件绝不盲删"
+    assert [p.name for p in prod.glob(".askai-guard-new-*")] == [stale.name]
 
 
-def test_r2_stale_symlink_temp_denies_delivery(cp_sandbox):
-    """A 评审 R2 / AC2:自有模式临时件位置被符号链接占用(攻击面)⇒
-    拒绝清扫/写入(__G3_STALE_INVALID__),链接目标零触碰。"""
+def test_d2_stale_symlink_temp_ignored_not_followed(cp_sandbox):
+    """A 评审 D2:自有模式名被符号链接占用(来源不明)⇒ 不清扫/不跟随,
+    本轮以不同 PID 名送达成功;链接与其目标零触碰。"""
     prod = cp_sandbox.container / "app" / "deploy" / "prod"
     outside = cp_sandbox.base / "outside-secret2"
     outside.write_text("do-not-touch\n", encoding="utf-8")
     (prod / ".askai-guard-new-777").symlink_to(outside)
     rc, out, err = cp_sandbox.run_step(cp_sandbox.step_env())
-    assert rc != 0
-    assert "__G3_STALE_INVALID__" in (out + err)
+    assert rc == 0, f"{out}\n{err}"
     assert outside.read_text(encoding="utf-8") == "do-not-touch\n"
     assert not _delivered_guard_path(cp_sandbox).exists()
+    assert (prod / ".askai-guard-new-777").is_symlink(), "来源不明链接原样保留"
+
+
+def test_d1_parent_replaced_after_check_fails_closed_no_escape(cp_sandbox):
+    """A 评审 D1 / AC2(检查-使用竞态):父目录校验通过【之后】、创建/发布
+    之前被替换为 symlink(trace 注入于 walk_to_parent 首次返回,被测代码
+    原样真实执行)⇒ 双次解析交叉核对捕获 ⇒ fail-closed;被移走目录与
+    链接目标目录均零新文件;evaluator 零执行。"""
+    rc, out, err = cp_sandbox.run_step(
+        cp_sandbox.step_env(TSL_D1_SWAP_PARENT="1"))
+    assert rc != 0
+    assert "__G3_PARENT_UNSTABLE__" in (out + err)
+    prod = cp_sandbox.container / "app" / "deploy" / "prod"
+    moved = cp_sandbox.container / "app" / "deploy" / "prod.moved-by-attacker"
+    assert prod.is_symlink() and moved.is_dir(), "注入确实发生在检查之后"
+    # 被移走目录内仅允许沙箱构造期 fixture(compatibility.json 随目录整体
+    # 被移走);本轮送达对象零新建 = 写入未发生
+    assert {p.name for p in moved.iterdir()} <= {"compatibility.json"}, \
+        "被移走目录零新文件(写入未发生)"
+    # 经替换后 symlink 解析也不得出现守卫文件
+    assert not (cp_sandbox.container / "app" / "deploy" / "prod"
+                / "uploads-unknown-guard.tsv").exists()
+    assert cp_sandbox.eval_argv_text() == ""
+    docker_argv = cp_sandbox.docker_argv.read_text(encoding="utf-8")
+    assert "up -d" not in docker_argv and "migrate" not in docker_argv
+
+
+def test_d2_same_content_replacement_not_deleted_and_no_pass(cp_sandbox):
+    """A 评审 D2 / AC2(发布后同内容替换):evaluator 运行前目标被【同内容
+    不同 inode】文件原子替换 ⇒ evaluator 判 clean(内容相同),但清理身份
+    核对失败(dev:ino 不匹配)⇒ 拒删替换文件 + 完整 preflight 非零,
+    绝不输出 PREFLIGHT PASS。内容相同 ≠ 文件身份相同。"""
+    rc, out, err = _run_real_eval_step(cp_sandbox, TSL_D2_REPLACE_TARGET="1")
+    assert rc != 0, "清理身份不可证必须阻断 PASS"
+    assert "__G3_REL_IDENTITY_MISMATCH__" in (out + err)
+    assert "PREFLIGHT PASS" not in out
+    assert cp_sandbox.eval_argv_text() != "", "evaluator 已真实执行(clean 联动)"
+    assert '"isolation_uploads_clean"' in out, "替换件内容与冻结件一致 ⇒ evaluator 判 clean"
+    target = _delivered_guard_path(cp_sandbox)
+    assert target.exists(), "同内容替换文件不得被误删"
+    assert target.read_text(encoding="utf-8") == cp_sandbox.step_env()["TSL_GUARD_CONTENT"]
+    assert _stale_temps(cp_sandbox) == []
+
+
+def test_d2_cleanup_failure_blocks_pass(cp_sandbox):
+    """A 评审 D2 / AC2(清理失败):容器清理执行失败(注入)⇒ 整体
+    preflight 非零退出、无 PREFLIGHT PASS,送达件如实留存待人工核验
+    (绝不 || true 吞掉清理失败)。"""
+    rc, out, err = _run_real_eval_step(cp_sandbox, TSL_D2_CLEANUP_FAIL="1")
+    assert rc != 0
+    assert "PREFLIGHT PASS" not in out
+    assert "清理未通过" in (out + err)
+    target = _delivered_guard_path(cp_sandbox)
+    assert target.exists(), "清理失败 ⇒ 工件如实留存(不谎报 clean)"
+
+
+def test_d2_pre_delivery_control_plane_failure_leaves_existing_files_untouched(cp_sandbox):
+    """A 评审 D2 / AC2(送达前控制面失败):preflight 在送达之前失败
+    (已部署版本不可读注入)⇒ EXIT trap 对容器零删除操作 —— 旧容器内
+    既有同路径守卫文件与陈旧临时名文件逐字节原样保留。"""
+    target = _delivered_guard_path(cp_sandbox)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(cp_sandbox.step_env()["TSL_GUARD_CONTENT"], encoding="utf-8")
+    stale = target.parent / ".askai-guard-new-999"
+    stale.write_bytes(b"pre-existing-unknown\n")
+    before_t, before_s = target.read_bytes(), stale.read_bytes()
+    rc, out, err = cp_sandbox.run_step(
+        cp_sandbox.step_env(TSL_DEPLOYED_UNREADABLE="1"))
+    assert rc != 0
+    assert "已部署版本不可读" in (out + err)
+    assert target.read_bytes() == before_t, "既有文件零改动"
+    assert stale.read_bytes() == before_s, "既有陈旧名文件零触碰"
     assert cp_sandbox.eval_argv_text() == ""
 
 
